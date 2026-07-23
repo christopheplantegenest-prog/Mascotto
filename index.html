@@ -242,6 +242,13 @@
     <div class="field-label">Image (URL, optionnel — remplace l'emoji si rempli)</div>
     <input type="text" id="editImageUrl" class="field-input" placeholder="https://...">
 
+    <div class="field-label">Ou choisis une photo depuis ton téléphone</div>
+    <input type="file" id="editImageFile" accept="image/*" class="field-input">
+    <div id="imagePreviewWrap" style="display:none; margin-top:8px;">
+      <img id="imagePreview" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
+      <button class="btn-secondary" id="clearImageBtn" style="margin-left:8px;">Retirer la photo</button>
+    </div>
+
     <div class="field-label">Dialogue (une phrase par ligne)</div>
     <textarea id="editDialogues" class="field-input" placeholder="Bonjour !
 Il fait beau aujourd'hui.
@@ -455,6 +462,39 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
 
+/* ---------- Photo depuis le téléphone (compressée, stockée dans Firestore) ---------- */
+let uploadedImageDataUrl = null;
+
+document.getElementById('editImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 160;
+      let w = img.width, h = img.height;
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      uploadedImageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      document.getElementById('imagePreview').src = uploadedImageDataUrl;
+      document.getElementById('imagePreviewWrap').style.display = 'block';
+      document.getElementById('editImageUrl').value = '';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('clearImageBtn').addEventListener('click', ()=>{
+  uploadedImageDataUrl = null;
+  document.getElementById('editImageFile').value = '';
+  document.getElementById('imagePreviewWrap').style.display = 'none';
+});
+
 /* ---------- Panneau éditeur ---------- */
 let editingId = null;
 let pendingLat = null, pendingLng = null;
@@ -492,7 +532,14 @@ function loadForEdit(id){
   editingId = id;
   document.getElementById('editEmoji').value = d.emoji || '';
   document.getElementById('editName').value = d.name || '';
-  document.getElementById('editImageUrl').value = d.imageUrl || '';
+  document.getElementById('editImageUrl').value = d.imageUrl && !d.imageUrl.startsWith('data:') ? d.imageUrl : '';
+  uploadedImageDataUrl = (d.imageUrl && d.imageUrl.startsWith('data:')) ? d.imageUrl : null;
+  if (d.imageUrl){
+    document.getElementById('imagePreview').src = d.imageUrl;
+    document.getElementById('imagePreviewWrap').style.display = 'block';
+  } else {
+    document.getElementById('imagePreviewWrap').style.display = 'none';
+  }
   document.getElementById('editDialogues').value = (d.dialogues || []).join('\n');
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
@@ -512,6 +559,9 @@ function loadForEdit(id){
 function resetForm(){
   editingId = null;
   pendingLat = null; pendingLng = null;
+  uploadedImageDataUrl = null;
+  document.getElementById('editImageFile').value = '';
+  document.getElementById('imagePreviewWrap').style.display = 'none';
   document.getElementById('editEmoji').value = '';
   document.getElementById('editName').value = '';
   document.getElementById('editImageUrl').value = '';
@@ -537,7 +587,7 @@ document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
 document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('editName').value.trim();
   const emoji = document.getElementById('editEmoji').value.trim() || '🐾';
-  const imageUrl = document.getElementById('editImageUrl').value.trim();
+  const imageUrl = uploadedImageDataUrl || document.getElementById('editImageUrl').value.trim();
   const dialogues = document.getElementById('editDialogues').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
