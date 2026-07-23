@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Mascotto</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0f1512">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  :root{
+    --bg:#0f1512;
+    --panel:#16201b;
+    --line:#26362c;
+    --text:#e9f2ea;
+    --muted:#7fa08c;
+    --accent:#5ee6a8;
+    --warn:#e6b85e;
+    --danger:#e6685e;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{
+    margin:0; height:100%; overscroll-behavior:none;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #app{
+    position:fixed; inset:0;
+    height:100vh; height:100dvh;
+  }
+
+  /* Header flottant */
+  header{
+    position:absolute; top:0; left:0; right:0; z-index:1000;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(14px, env(safe-area-inset-top)) 14px 0;
+    pointer-events:none;
+  }
+  header > *{ pointer-events:auto; }
+  .brand{
+    font-size:16px; font-weight:800; letter-spacing:.01em;
+    background:rgba(22,32,27,.85); border:1px solid var(--line);
+    padding:6px 12px; border-radius:999px;
+  }
+  .brand span{ color:var(--accent); }
+  .clockbox{
+    text-align:right; font-family:var(--mono);
+    background:rgba(22,32,27,.85); border:1px solid var(--line);
+    padding:6px 12px; border-radius:12px;
+  }
+  .clock{ font-size:14px; font-weight:700; }
+  .date{ font-size:9px; color:var(--muted); text-transform:capitalize; }
+
+  .warn{
+    position:absolute; top:60px; left:14px; right:14px; z-index:1000;
+    background:rgba(230,184,94,.15); backdrop-filter:blur(6px);
+    border:1px solid rgba(230,184,94,.3);
+    color:var(--warn); font-size:12px; padding:10px 12px; border-radius:10px; line-height:1.4;
+  }
+
+  /* Carte plein écran */
+  .map-wrap{ position:absolute; inset:0; }
+  #map{ width:100%; height:100%; background:#121c17; }
+
+  .status-pill{
+    position:absolute; top:64px; left:14px; z-index:1000;
+    display:flex; align-items:center; gap:6px;
+    background:rgba(22,32,27,.9); border:1px solid var(--line);
+    padding:5px 10px; border-radius:999px; font-size:11px; font-family:var(--mono);
+  }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.ok{ background:var(--accent); }
+  .dot.err{ background:var(--danger); }
+  .dot.pulse{ animation:pulse 1.4s infinite; }
+  @keyframes pulse{ 0%{opacity:.4;} 50%{opacity:1;} 100%{opacity:.4;} }
+
+  .acc-pill{
+    position:absolute; bottom:96px; left:14px; z-index:1000;
+    background:rgba(22,32,27,.9); border:1px solid var(--line);
+    padding:5px 10px; border-radius:999px; font-size:11px; font-family:var(--mono); color:var(--muted);
+  }
+
+  /* Icônes Leaflet custom */
+  .player-icon{
+    width:18px; height:18px; border-radius:50%;
+    background:var(--accent); border:3px solid rgba(94,230,168,.35);
+    box-shadow:0 0 0 2px rgba(15,21,18,.8);
+  }
+  .creature-icon{
+    font-size:26px; line-height:1; text-align:center;
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,.6));
+  }
+  .creature-icon.captureready{ filter:drop-shadow(0 0 6px var(--accent)); }
+  .leaflet-container{ background:#121c17; }
+
+  /* Bottom bar */
+  .bottombar{
+    position:absolute; left:14px; right:14px;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    z-index:1000;
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:rgba(22,32,27,.92); backdrop-filter:blur(6px);
+    border:1px solid var(--line); border-radius:14px;
+    padding:12px 16px;
+  }
+  .inv{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); white-space:nowrap; }
+  .inv b{ color:var(--text); font-size:16px; }
+  .btn-row{ display:flex; gap:8px; }
+  .locate-btn{
+    background:var(--accent); color:#0f1512; border:none; border-radius:10px;
+    padding:10px 14px; font-size:13px; font-weight:700; white-space:nowrap;
+  }
+  .locate-btn:active{ opacity:.85; }
+
+  /* Modal */
+  .overlay{
+    position:fixed; inset:0; background:rgba(9,13,10,.72);
+    display:none; align-items:flex-end; justify-content:center; z-index:2000;
+  }
+  .overlay.show{ display:flex; }
+  .sheet{
+    width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
+    border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
+  }
+  .sheet .emoji{ font-size:44px; }
+  .sheet h3{ margin:8px 0 2px; font-size:18px; }
+  .sheet .meta{ color:var(--muted); font-size:13px; font-family:var(--mono); margin-bottom:16px; }
+  .sheet .actions{ display:flex; gap:10px; }
+  .sheet button{
+    flex:1; padding:13px; border-radius:10px; border:none; font-size:14px; font-weight:700;
+  }
+  .btn-capture{ background:var(--accent); color:#0f1512; }
+  .btn-capture:disabled{ background:var(--line); color:var(--muted); }
+  .btn-close{ background:transparent; color:var(--muted); border:1px solid var(--line) !important; }
+
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--accent); color:#0f1512; font-weight:700; font-size:13px;
+    padding:10px 18px; border-radius:999px; z-index:3000; opacity:0; pointer-events:none;
+    transition:opacity .25s, transform .25s;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">Masc<span>otto</span></div>
+    <div style="display:flex; gap:8px; align-items:flex-start;">
+      <button id="editorBtn" style="background:rgba(22,32,27,.85); border:1px solid var(--line); color:var(--text); border-radius:999px; width:34px; height:34px; font-size:15px;">⚙️</button>
+      <div class="clockbox">
+        <div class="clock" id="clock">--:--:--</div>
+        <div class="date" id="date">—</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="warn" id="httpsWarn" style="display:none;">
+    ⚠️ Ouvre cette page en HTTPS (ou installe-la depuis un site hébergé) : en local (<code>file://</code>) le GPS et l'installation en appli ne fonctionnent pas. La carte a aussi besoin d'internet pour charger les tuiles.
+  </div>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="status-pill">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Localisation…</span>
+    </div>
+    <div class="acc-pill" id="accPill" style="display:none;"></div>
+  </div>
+
+  <div class="bottombar">
+    <div class="inv">Créatures&nbsp;<b id="invCount">0</b></div>
+    <div class="btn-row">
+      <button class="locate-btn" id="recenterBtn">Recentrer</button>
+      <button class="locate-btn" id="simBtn" style="background:var(--warn);">Simuler</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <div class="emoji" id="sheetEmoji">🐾</div>
+    <h3 id="sheetName">—</h3>
+    <div class="meta" id="sheetMeta">—</div>
+    <div class="actions">
+      <button class="btn-close" id="closeBtn">Fermer</button>
+      <button class="btn-capture" id="captureBtn">Capturer</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="editorOverlay">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">Éditeur de créatures</h3>
+    <div class="meta" id="editorStatus">Connexion…</div>
+
+    <div style="display:flex; gap:8px; margin:14px 0;">
+      <input type="text" id="editEmoji" placeholder="🔥" maxlength="4"
+        style="width:60px; text-align:center; font-size:18px; background:#0f1a15; border:1px solid var(--line); color:var(--text); border-radius:10px; padding:10px;">
+      <input type="text" id="editName" placeholder="Nom de la créature"
+        style="flex:1; background:#0f1a15; border:1px solid var(--line); color:var(--text); border-radius:10px; padding:10px; font-size:15px;">
+    </div>
+    <button class="btn-capture" id="editAddBtn" style="width:100%; margin-bottom:14px;">Ajouter</button>
+
+    <div id="editorList"></div>
+
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn-close" id="editorCloseBtn">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- Horloge ---------- */
+function pad(n){ return n.toString().padStart(2,'0'); }
+function updateClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+  document.getElementById('date').textContent = now.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+if (location.protocol === 'file:') {
+  document.getElementById('httpsWarn').style.display = 'block';
+}
+
+/* ---------- Service worker ---------- */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+}
+
+/* ---------- Maths géo ---------- */
+const R = 6371000;
+function toRad(d){ return d*Math.PI/180; }
+function toDeg(r){ return r*180/Math.PI; }
+function haversineDist(lat1, lon1, lat2, lon2){
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function destinationPoint(lat, lon, distM, bearingDeg){
+  const brng = toRad(bearingDeg);
+  const lat1 = toRad(lat), lon1 = toRad(lon);
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(distM/R) + Math.cos(lat1)*Math.sin(distM/R)*Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(distM/R)*Math.cos(lat1), Math.cos(distM/R)-Math.sin(lat1)*Math.sin(lat2));
+  return { lat: toDeg(lat2), lng: toDeg(lon2) };
+}
+
+/* ---------- Données créatures (chargées depuis Firestore, avec repli local) ---------- */
+const DEFAULT_CREATURE_TYPES = [
+  { name: "Braisillon",  emoji: "🔥" },
+  { name: "Ondulette",   emoji: "💧" },
+  { name: "Racinelle",   emoji: "🌿" },
+  { name: "Cailloutin",  emoji: "🪨" },
+  { name: "Zéphyrin",    emoji: "🌬️" },
+  { name: "Luciole d'or",emoji: "✨" },
+];
+let CREATURE_TYPES = DEFAULT_CREATURE_TYPES;
+const creatureCol = (typeof db !== 'undefined') ? db.collection('creature_types') : null;
+
+if (creatureCol){
+  creatureCol.onSnapshot((snap)=>{
+    if (!snap.empty){
+      CREATURE_TYPES = snap.docs.map(d => d.data());
+    }
+    renderEditorList(snap);
+  }, ()=>{ /* hors-ligne : on garde la liste par défaut */ });
+}
+
+/* ---------- Panneau éditeur (intégré) ---------- */
+function renderEditorList(snap){
+  const editorStatus = document.getElementById('editorStatus');
+  const listEl = document.getElementById('editorList');
+  if (!editorStatus || !listEl) return;
+
+  editorStatus.textContent = snap.empty ? 'Aucune créature dans Firebase — liste par défaut utilisée.' : snap.size + ' créature(s) dans Firebase';
+
+  if (snap.empty){ listEl.innerHTML = ''; return; }
+
+  listEl.innerHTML = '';
+  snap.forEach((doc)=>{
+    const d = doc.data();
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);';
+    row.innerHTML = `
+      <div style="font-size:22px;">${d.emoji || '🐾'}</div>
+      <div style="flex:1; font-size:14px;">${d.name || '(sans nom)'}</div>
+      <button data-id="${doc.id}" style="background:transparent; color:var(--danger); border:1px solid rgba(230,104,94,.35); border-radius:8px; padding:6px 10px; font-size:12px;">Suppr.</button>
+    `;
+    listEl.appendChild(row);
+  });
+  listEl.querySelectorAll('button[data-id]').forEach(btn=>{
+    btn.addEventListener('click', ()=> creatureCol.doc(btn.dataset.id).delete());
+  });
+}
+
+document.getElementById('editorBtn').addEventListener('click', ()=>{
+  document.getElementById('editorOverlay').classList.add('show');
+});
+document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('editorOverlay').classList.remove('show');
+});
+document.getElementById('editAddBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('editName').value.trim();
+  const emoji = document.getElementById('editEmoji').value.trim() || '🐾';
+  if (!name) return;
+  if (!creatureCol){
+    showToast('Firebase indisponible ici');
+    return;
+  }
+  creatureCol.add({ name, emoji, createdAt: Date.now() })
+    .then(()=>{
+      document.getElementById('editName').value = '';
+      document.getElementById('editEmoji').value = '';
+      showToast('Créature ajoutée');
+    })
+    .catch((err)=>{
+      showToast('Échec : ' + err.message);
+    });
+});
+
+let creatures = [];
+let creaturesSeeded = false;
+const CAPTURE_RANGE_M = 25;
+
+function seedCreatures(lat, lng){
+  if (creaturesSeeded) return;
+  creaturesSeeded = true;
+  const count = 5;
+  for (let i=0;i<count;i++){
+    const distM = 40 + Math.random()*180;
+    const bearing = Math.random()*360;
+    const pos = destinationPoint(lat, lng, distM, bearing);
+    const type = CREATURE_TYPES[Math.floor(Math.random()*CREATURE_TYPES.length)];
+    creatures.push({
+      id: 'c'+i,
+      name: type.name,
+      emoji: type.emoji,
+      lat: pos.lat,
+      lng: pos.lng,
+      captured: false,
+      marker: null
+    });
+  }
+  renderCreatureMarkers();
+}
+
+/* ---------- Carte Leaflet ---------- */
+let map, playerMarker, accCircle;
+let playerPos = null;
+let simMode = false;
+
+function initMap(){
+  map = L.map('map', { zoomControl:false, attributionControl:true })
+    .setView([48.8566, 2.3522], 17);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  L.control.zoom({ position:'topright' }).addTo(map);
+
+  const playerIcon = L.divIcon({ className:'', html:'<div class="player-icon"></div>', iconSize:[18,18] });
+  playerMarker = L.marker([48.8566, 2.3522], { icon: playerIcon, zIndexOffset: 1000 }).addTo(map);
+  playerMarker.on('drag', onPlayerDrag);
+}
+initMap();
+
+function renderCreatureMarkers(){
+  creatures.forEach(c=>{
+    if (c.marker || c.captured) return;
+    const icon = L.divIcon({ className:'', html:`<div class="creature-icon" id="icon-${c.id}">${c.emoji}</div>`, iconSize:[30,30] });
+    const marker = L.marker([c.lat, c.lng], { icon }).addTo(map);
+    marker.on('click', ()=> openSheet(c));
+    c.marker = marker;
+  });
+}
+
+function updateCreatureVisuals(){
+  if (!playerPos) return;
+  creatures.forEach(c=>{
+    if (c.captured || !c.marker) return;
+    const dist = haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng);
+    c._dist = dist;
+    const el = document.getElementById('icon-'+c.id);
+    if (el) el.classList.toggle('captureready', dist <= CAPTURE_RANGE_M);
+  });
+}
+
+/* ---------- Fiche créature ---------- */
+let activeCreature = null;
+function openSheet(c){
+  activeCreature = c;
+  const dist = playerPos ? Math.round(haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng)) : null;
+  c._dist = dist;
+  document.getElementById('sheetEmoji').textContent = c.emoji;
+  document.getElementById('sheetName').textContent = c.name;
+  document.getElementById('sheetMeta').textContent = dist !== null ? `à ${dist} m` : 'distance inconnue';
+  const captureBtn = document.getElementById('captureBtn');
+  const outOfRange = dist === null || dist > CAPTURE_RANGE_M;
+  captureBtn.disabled = outOfRange;
+  captureBtn.textContent = outOfRange ? `Rapproche-toi (${CAPTURE_RANGE_M} m)` : 'Capturer';
+  document.getElementById('overlay').classList.add('show');
+}
+document.getElementById('closeBtn').addEventListener('click', ()=>{
+  document.getElementById('overlay').classList.remove('show');
+});
+document.getElementById('captureBtn').addEventListener('click', ()=>{
+  if (!activeCreature) return;
+  activeCreature.captured = true;
+  if (activeCreature.marker){ map.removeLayer(activeCreature.marker); }
+  document.getElementById('overlay').classList.remove('show');
+  const countEl = document.getElementById('invCount');
+  countEl.textContent = (parseInt(countEl.textContent,10)+1);
+  showToast(`${activeCreature.name} capturé !`);
+});
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* ---------- Géolocalisation ---------- */
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const accPill = document.getElementById('accPill');
+let hasCentered = false;
+
+function setStatus(state, text, pulsing){
+  statusDot.className = 'dot' + (state ? ' '+state : '') + (pulsing ? ' pulse' : '');
+  statusText.textContent = text;
+}
+
+function onPosition(pos){
+  const { latitude, longitude, accuracy } = pos.coords;
+  playerPos = { lat: latitude, lng: longitude };
+  seedCreatures(latitude, longitude);
+
+  playerMarker.setLatLng([latitude, longitude]);
+  if (accCircle) map.removeLayer(accCircle);
+  accCircle = L.circle([latitude, longitude], { radius: accuracy, color:'#5ee6a8', weight:1, fillOpacity:0.08 }).addTo(map);
+
+  if (!hasCentered){
+    map.setView([latitude, longitude], 18);
+    hasCentered = true;
+  }
+
+  updateCreatureVisuals();
+  setStatus('ok', 'Position active', false);
+  accPill.style.display = 'block';
+  accPill.textContent = `± ${Math.round(accuracy)} m`;
+}
+
+function onError(err){
+  const messages = {
+    1: "Permission refusée",
+    2: "Position indisponible",
+    3: "Délai dépassé"
+  };
+  setStatus('err', messages[err.code] || 'Erreur GPS', false);
+}
+
+function simulatePosition(){
+  if (!simMode){
+    // Première activation : position de départ fictive (Paris) + on active le déplacement à la main
+    const fakeLat = 48.8556;
+    const fakeLng = 2.2986;
+    onPosition({ coords: { latitude: fakeLat, longitude: fakeLng, accuracy: 8 } });
+    simMode = true;
+    playerMarker.dragging.enable();
+    setStatus('ok', 'Position simulée — glisse le marqueur', false);
+  } else {
+    // Déjà en mode simulé : recentre juste la carte sur le marqueur actuel
+    if (playerPos) map.setView([playerPos.lat, playerPos.lng], map.getZoom());
+  }
+}
+
+function onPlayerDrag(e){
+  const latlng = e.target.getLatLng();
+  playerPos = { lat: latlng.lat, lng: latlng.lng };
+  if (accCircle) map.removeLayer(accCircle);
+  updateCreatureVisuals();
+  setStatus('ok', 'Position simulée — glisse le marqueur', false);
+}
+
+function startWatch(){
+  if (!('geolocation' in navigator)){
+    setStatus('', 'Pas de GPS ici — utilise Simuler', false);
+    return;
+  }
+  setStatus('', 'Localisation…', true);
+  navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 15000
+  });
+}
+
+document.getElementById('simBtn').addEventListener('click', simulatePosition);
+document.getElementById('recenterBtn').addEventListener('click', ()=>{
+  if (playerPos) map.setView([playerPos.lat, playerPos.lng], 18);
+  else startWatch();
+});
+startWatch();
+</script>
+</body>
+</html>
