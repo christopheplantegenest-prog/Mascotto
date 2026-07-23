@@ -138,6 +138,8 @@
     background:transparent; color:var(--accent); border:1px solid var(--accent) !important;
     border-radius:8px; padding:8px 10px; font-size:12px; font-weight:700; flex:1;
   }
+  .day-btn{ flex:none; padding:8px 12px; }
+  .day-btn.selected{ background:var(--accent); color:#fff; }
   .btn-capture{ background:var(--accent); color:#ffffff; border:none; border-radius:10px; padding:13px; font-weight:700; font-size:14px; }
   .editor-list-item{
     display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);
@@ -218,20 +220,10 @@
     <h3 style="margin-top:0;">Éditeur de PNJ</h3>
     <div class="meta" id="editorStatus">Connexion…</div>
 
-    <div class="field-row">
-      <div>
-        <div class="field-label">Emoji</div>
-        <input type="text" id="editEmoji" class="field-input" placeholder="🔥" maxlength="4">
-      </div>
-      <div style="flex:2;">
-        <div class="field-label">Nom</div>
-        <input type="text" id="editName" class="field-input" placeholder="Nom du PNJ">
-      </div>
-    </div>
+    <div class="field-label">Nom</div>
+    <input type="text" id="editName" class="field-input" placeholder="Nom du PNJ">
 
-    <div class="field-label">Image (URL, optionnel)</div>
-    <input type="text" id="editImageUrl" class="field-input" placeholder="https://...">
-    <div class="field-label">Ou choisis une photo depuis ton téléphone</div>
+    <div class="field-label">Photo depuis ton téléphone</div>
     <input type="file" id="editImageFile" accept="image/*" class="field-input">
     <div id="imagePreviewWrap" style="display:none; margin-top:8px;">
       <img id="imagePreview" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
@@ -251,6 +243,29 @@ Je suis le gardien de ce lieu.
     <div class="pos-actions">
       <button class="btn-secondary" id="placeNewBtn">Nouvel emplacement</button>
       <button class="btn-secondary" id="moveExistingBtn">Déplacer ce point</button>
+    </div>
+
+    <div class="field-label">Périmètres (mètres, laisser vide = illimité)</div>
+    <div class="field-row">
+      <div>
+        <div class="field-label" style="margin-top:0;">Visibilité</div>
+        <input type="number" id="editVisibleRadius" class="field-input" placeholder="ex. 200" min="0">
+      </div>
+      <div>
+        <div class="field-label" style="margin-top:0;">Interaction</div>
+        <input type="number" id="editInteractRadius" class="field-input" placeholder="ex. 20" min="0">
+      </div>
+    </div>
+
+    <div class="field-label">Jours d'apparition (aucun coché = tous les jours)</div>
+    <div id="daysRow" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
+      <button type="button" class="btn-secondary day-btn" data-day="1">Lun</button>
+      <button type="button" class="btn-secondary day-btn" data-day="2">Mar</button>
+      <button type="button" class="btn-secondary day-btn" data-day="3">Mer</button>
+      <button type="button" class="btn-secondary day-btn" data-day="4">Jeu</button>
+      <button type="button" class="btn-secondary day-btn" data-day="5">Ven</button>
+      <button type="button" class="btn-secondary day-btn" data-day="6">Sam</button>
+      <button type="button" class="btn-secondary day-btn" data-day="0">Dim</button>
     </div>
 
     <div class="field-label">Apparition (laisser vide = toujours visible)</div>
@@ -332,6 +347,9 @@ function haversineDist(lat1, lon1, lat2, lon2){
 /* ---------- Visibilité selon date / heure ---------- */
 function isActiveNow(d){
   const now = new Date();
+  if (Array.isArray(d.daysOfWeek) && d.daysOfWeek.length > 0){
+    if (!d.daysOfWeek.includes(now.getDay())) return false;
+  }
   if (d.startDate){
     const start = new Date(d.startDate + 'T' + (d.startTime || '00:00'));
     if (now < start) return false;
@@ -399,22 +417,42 @@ function renderAllCreatures(snap){
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
-    const cls = 'creature-icon' + (c.active ? '' : ' inactive');
     const inner = c.imageUrl
-      ? `<img src="${c.imageUrl}" id="icon-${c.id}" class="${c.active ? '' : 'inactive'}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid ${c.active ? 'var(--accent)' : 'var(--danger)'};">`
-      : `<div class="${cls}" id="icon-${c.id}">${c.emoji || '🐾'}</div>`;
+      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid var(--accent);">`
+      : `<div class="creature-icon" id="icon-${c.id}">${c.emoji || '🐾'}</div>`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[32,32] });
-    const marker = L.marker([c.lat, c.lng], { icon }).addTo(map);
-    marker.on('click', ()=> openSheet(c));
+    const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
+    marker.on('click', ()=> handleCreatureClick(c));
     c.marker = marker;
   });
 }
 
 function updateCreatureVisuals(){
-  if (!playerPos) return;
   creatures.forEach(c=>{
-    c._dist = haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng);
+    const dist = playerPos ? haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng) : null;
+    c._dist = dist;
+    if (!c.marker) return;
+    const visRadius = Number(c.visibleRadius) || 0;
+    const shouldShow = !visRadius || (dist !== null && dist <= visRadius);
+    const onMap = map.hasLayer(c.marker);
+    if (shouldShow && !onMap) c.marker.addTo(map);
+    if (!shouldShow && onMap) map.removeLayer(c.marker);
   });
+}
+
+function handleCreatureClick(c){
+  const interactRadius = Number(c.interactRadius) || 0;
+  if (interactRadius){
+    if (c._dist === null || c._dist === undefined){
+      showToast('Position GPS requise pour lui parler');
+      return;
+    }
+    if (c._dist > interactRadius){
+      showToast(`Trop loin pour lui parler (encore ${Math.round(c._dist - interactRadius)} m)`);
+      return;
+    }
+  }
+  openSheet(c);
 }
 
 /* ---------- Fiche PNJ + dialogues à choix (vue joueur) ---------- */
@@ -504,10 +542,9 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      uploadedImageDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      uploadedImageDataUrl = canvas.toDataURL('image/png');
       document.getElementById('imagePreview').src = uploadedImageDataUrl;
       document.getElementById('imagePreviewWrap').style.display = 'block';
-      document.getElementById('editImageUrl').value = '';
     };
     img.src = ev.target.result;
   };
@@ -546,21 +583,37 @@ function renderEditorList(snap){
   });
 }
 
+let selectedDays = new Set();
+document.querySelectorAll('.day-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const day = parseInt(btn.dataset.day, 10);
+    if (selectedDays.has(day)){ selectedDays.delete(day); btn.classList.remove('selected'); }
+    else { selectedDays.add(day); btn.classList.add('selected'); }
+  });
+});
+function setSelectedDays(days){
+  selectedDays = new Set(days || []);
+  document.querySelectorAll('.day-btn').forEach(btn=>{
+    btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day,10)));
+  });
+}
+
 function loadForEdit(id){
   const doc = latestSnap.docs.find(d=>d.id===id);
   if (!doc) return;
   const d = doc.data();
   editingId = id;
-  document.getElementById('editEmoji').value = d.emoji || '';
   document.getElementById('editName').value = d.name || '';
   document.getElementById('editDialogues').value = d.dialogueScript || '';
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
   document.getElementById('editStartTime').value = d.startTime || '';
   document.getElementById('editEndTime').value = d.endTime || '';
+  document.getElementById('editVisibleRadius').value = d.visibleRadius || '';
+  document.getElementById('editInteractRadius').value = d.interactRadius || '';
+  setSelectedDays(d.daysOfWeek);
 
-  document.getElementById('editImageUrl').value = d.imageUrl && !d.imageUrl.startsWith('data:') ? d.imageUrl : '';
-  uploadedImageDataUrl = (d.imageUrl && d.imageUrl.startsWith('data:')) ? d.imageUrl : null;
+  uploadedImageDataUrl = d.imageUrl || null;
   if (d.imageUrl){
     document.getElementById('imagePreview').src = d.imageUrl;
     document.getElementById('imagePreviewWrap').style.display = 'block';
@@ -586,14 +639,15 @@ function resetForm(){
   uploadedImageDataUrl = null;
   document.getElementById('editImageFile').value = '';
   document.getElementById('imagePreviewWrap').style.display = 'none';
-  document.getElementById('editEmoji').value = '';
   document.getElementById('editName').value = '';
-  document.getElementById('editImageUrl').value = '';
   document.getElementById('editDialogues').value = '';
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
   document.getElementById('editStartTime').value = '';
   document.getElementById('editEndTime').value = '';
+  document.getElementById('editVisibleRadius').value = '';
+  document.getElementById('editInteractRadius').value = '';
+  setSelectedDays([]);
   document.getElementById('posStatusText').textContent = 'Non définie';
   document.getElementById('editSaveBtn').textContent = 'Enregistrer le PNJ';
   document.getElementById('editCancelBtn').style.display = 'none';
@@ -609,19 +663,22 @@ document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
 
 document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('editName').value.trim();
-  const emoji = document.getElementById('editEmoji').value.trim() || '🐾';
-  const imageUrl = uploadedImageDataUrl || document.getElementById('editImageUrl').value.trim();
+  const emoji = '🐾';
+  const imageUrl = uploadedImageDataUrl || '';
   const dialogueScript = document.getElementById('editDialogues').value;
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
   const startTime = document.getElementById('editStartTime').value;
   const endTime = document.getElementById('editEndTime').value;
+  const visibleRadius = parseInt(document.getElementById('editVisibleRadius').value, 10) || 0;
+  const interactRadius = parseInt(document.getElementById('editInteractRadius').value, 10) || 0;
+  const daysOfWeek = Array.from(selectedDays);
 
   if (!name){ showToast('Donne un nom au PNJ'); return; }
   if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, imageUrl, dialogueScript, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, dialogueScript, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, visibleRadius, interactRadius, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -665,11 +722,17 @@ document.getElementById('moveExistingBtn').addEventListener('click', ()=>{
   document.getElementById('moveHint').style.display = 'block';
   document.getElementById('moveBar').style.display = 'flex';
   movingMarker = c.marker;
+  if (!map.hasLayer(movingMarker)) movingMarker.addTo(map);
   movingMarker.dragging.enable();
   map.setView(movingMarker.getLatLng(), map.getZoom());
 });
 document.getElementById('moveCancelBtn').addEventListener('click', ()=>{
-  if (movingMarker) movingMarker.dragging.disable();
+  if (movingMarker){
+    movingMarker.dragging.disable();
+    const c = creatures.find(cr=>cr.marker===movingMarker);
+    if (c) movingMarker.setLatLng([c.lat, c.lng]);
+    updateCreatureVisuals();
+  }
   document.getElementById('moveHint').style.display = 'none';
   document.getElementById('moveBar').style.display = 'none';
   document.getElementById('editorOverlay').classList.add('show');
