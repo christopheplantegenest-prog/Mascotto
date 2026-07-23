@@ -245,18 +245,6 @@ Je suis le gardien de ce lieu.
       <button class="btn-secondary" id="moveExistingBtn">Déplacer ce point</button>
     </div>
 
-    <div class="field-label">Périmètres (mètres, laisser vide = illimité)</div>
-    <div class="field-row">
-      <div>
-        <div class="field-label" style="margin-top:0;">Visibilité</div>
-        <input type="number" id="editVisibleRadius" class="field-input" placeholder="ex. 200" min="0">
-      </div>
-      <div>
-        <div class="field-label" style="margin-top:0;">Interaction</div>
-        <input type="number" id="editInteractRadius" class="field-input" placeholder="ex. 20" min="0">
-      </div>
-    </div>
-
     <div class="field-label">Jours d'apparition (aucun coché = tous les jours)</div>
     <div id="daysRow" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
       <button type="button" class="btn-secondary day-btn" data-day="1">Lun</button>
@@ -418,22 +406,24 @@ function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
     const inner = c.imageUrl
-      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid var(--accent);">`
+      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;">`
       : `<div class="creature-icon" id="icon-${c.id}">${c.emoji || '🐾'}</div>`;
-    const icon = L.divIcon({ className:'', html: inner, iconSize:[32,32] });
+    const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
     const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
     marker.on('click', ()=> handleCreatureClick(c));
     c.marker = marker;
   });
 }
 
+const VISIBLE_RADIUS_M = 200;
+const INTERACT_RADIUS_M = 40;
+
 function updateCreatureVisuals(){
   creatures.forEach(c=>{
     const dist = playerPos ? haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng) : null;
     c._dist = dist;
     if (!c.marker) return;
-    const visRadius = Number(c.visibleRadius) || 0;
-    const shouldShow = !visRadius || (dist !== null && dist <= visRadius);
+    const shouldShow = c.forceVisible || (dist !== null && dist <= VISIBLE_RADIUS_M);
     const onMap = map.hasLayer(c.marker);
     if (shouldShow && !onMap) c.marker.addTo(map);
     if (!shouldShow && onMap) map.removeLayer(c.marker);
@@ -441,16 +431,13 @@ function updateCreatureVisuals(){
 }
 
 function handleCreatureClick(c){
-  const interactRadius = Number(c.interactRadius) || 0;
-  if (interactRadius){
-    if (c._dist === null || c._dist === undefined){
-      showToast('Position GPS requise pour lui parler');
-      return;
-    }
-    if (c._dist > interactRadius){
-      showToast(`Trop loin pour lui parler (encore ${Math.round(c._dist - interactRadius)} m)`);
-      return;
-    }
+  if (c._dist === null || c._dist === undefined){
+    showToast('Position GPS requise pour lui parler');
+    return;
+  }
+  if (c._dist > INTERACT_RADIUS_M){
+    showToast(`Trop loin pour lui parler (encore ${Math.round(c._dist - INTERACT_RADIUS_M)} m)`);
+    return;
   }
   openSheet(c);
 }
@@ -472,7 +459,7 @@ function renderSheet(){
   const c = activeCreature;
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
   const emojiEl = document.getElementById('sheetEmoji');
-  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;">` : (c.emoji || '🐾');
+  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:320px;height:320px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
@@ -609,8 +596,6 @@ function loadForEdit(id){
   document.getElementById('editEndDate').value = d.endDate || '';
   document.getElementById('editStartTime').value = d.startTime || '';
   document.getElementById('editEndTime').value = d.endTime || '';
-  document.getElementById('editVisibleRadius').value = d.visibleRadius || '';
-  document.getElementById('editInteractRadius').value = d.interactRadius || '';
   setSelectedDays(d.daysOfWeek);
 
   uploadedImageDataUrl = d.imageUrl || null;
@@ -645,8 +630,6 @@ function resetForm(){
   document.getElementById('editEndDate').value = '';
   document.getElementById('editStartTime').value = '';
   document.getElementById('editEndTime').value = '';
-  document.getElementById('editVisibleRadius').value = '';
-  document.getElementById('editInteractRadius').value = '';
   setSelectedDays([]);
   document.getElementById('posStatusText').textContent = 'Non définie';
   document.getElementById('editSaveBtn').textContent = 'Enregistrer le PNJ';
@@ -670,15 +653,13 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const endDate = document.getElementById('editEndDate').value;
   const startTime = document.getElementById('editStartTime').value;
   const endTime = document.getElementById('editEndTime').value;
-  const visibleRadius = parseInt(document.getElementById('editVisibleRadius').value, 10) || 0;
-  const interactRadius = parseInt(document.getElementById('editInteractRadius').value, 10) || 0;
   const daysOfWeek = Array.from(selectedDays);
 
   if (!name){ showToast('Donne un nom au PNJ'); return; }
   if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, imageUrl, dialogueScript, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, visibleRadius, interactRadius, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, dialogueScript, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -722,6 +703,7 @@ document.getElementById('moveExistingBtn').addEventListener('click', ()=>{
   document.getElementById('moveHint').style.display = 'block';
   document.getElementById('moveBar').style.display = 'flex';
   movingMarker = c.marker;
+  c.forceVisible = true;
   if (!map.hasLayer(movingMarker)) movingMarker.addTo(map);
   movingMarker.dragging.enable();
   map.setView(movingMarker.getLatLng(), map.getZoom());
@@ -730,7 +712,7 @@ document.getElementById('moveCancelBtn').addEventListener('click', ()=>{
   if (movingMarker){
     movingMarker.dragging.disable();
     const c = creatures.find(cr=>cr.marker===movingMarker);
-    if (c) movingMarker.setLatLng([c.lat, c.lng]);
+    if (c){ movingMarker.setLatLng([c.lat, c.lng]); c.forceVisible = false; }
     updateCreatureVisuals();
   }
   document.getElementById('moveHint').style.display = 'none';
@@ -743,6 +725,8 @@ document.getElementById('moveConfirmBtn').addEventListener('click', ()=>{
     pendingLat = ll.lat; pendingLng = ll.lng;
     document.getElementById('posStatusText').textContent = `${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}`;
     movingMarker.dragging.disable();
+    const c = creatures.find(cr=>cr.marker===movingMarker);
+    if (c) c.forceVisible = false;
   }
   document.getElementById('moveHint').style.display = 'none';
   document.getElementById('moveBar').style.display = 'none';
