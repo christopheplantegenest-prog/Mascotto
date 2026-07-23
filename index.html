@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Mascotto</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0f1512">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root{
+    --bg:#0f1512;
+    --panel:#16201b;
+    --line:#26362c;
+    --text:#e9f2ea;
+    --muted:#7fa08c;
+    --accent:#5ee6a8;
+    --warn:#e6b85e;
+    --danger:#e6685e;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{
+    margin:0; height:100%; overscroll-behavior:none;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #app{
+    display:flex; flex-direction:column;
+    height:100vh; height:100dvh;
+    padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  }
+
+  /* Header */
+  header{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+  .brand{ font-size:19px; font-weight:800; letter-spacing:.01em; }
+  .brand span{ color:var(--accent); }
+  .clockbox{ text-align:right; font-family:var(--mono); }
+  .clock{ font-size:16px; font-weight:700; }
+  .date{ font-size:10px; color:var(--muted); text-transform:capitalize; }
+
+  .warn{
+    background:rgba(230,184,94,.1); border:1px solid rgba(230,184,94,.3);
+    color:var(--warn); font-size:12px; padding:10px 12px; border-radius:10px; margin-bottom:10px; line-height:1.4;
+  }
+
+  /* Radar */
+  .radar-wrap{
+    position:relative; flex:1; display:flex; align-items:center; justify-content:center;
+    min-height:0;
+  }
+  #radar{ width:100%; max-width:420px; aspect-ratio:1/1; touch-action:none; }
+
+  .radar-label{
+    position:absolute; font-family:var(--mono); font-size:10px; color:var(--muted);
+    pointer-events:none;
+  }
+  .n-label{ top:2px; left:50%; transform:translateX(-50%); }
+
+  .status-pill{
+    position:absolute; top:8px; left:8px;
+    display:flex; align-items:center; gap:6px;
+    background:rgba(22,32,27,.85); border:1px solid var(--line);
+    padding:5px 10px; border-radius:999px; font-size:11px; font-family:var(--mono);
+  }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.ok{ background:var(--accent); }
+  .dot.err{ background:var(--danger); }
+  .dot.pulse{ animation:pulse 1.4s infinite; }
+  @keyframes pulse{ 0%{opacity:.4;} 50%{opacity:1;} 100%{opacity:.4;} }
+
+  .acc-pill{
+    position:absolute; bottom:8px; left:8px;
+    background:rgba(22,32,27,.85); border:1px solid var(--line);
+    padding:5px 10px; border-radius:999px; font-size:11px; font-family:var(--mono); color:var(--muted);
+  }
+
+  /* Bottom bar */
+  .bottombar{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:12px 16px; margin-top:10px;
+  }
+  .inv{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .inv b{ color:var(--text); font-size:16px; }
+  .locate-btn{
+    background:var(--accent); color:#0f1512; border:none; border-radius:10px;
+    padding:10px 16px; font-size:13px; font-weight:700;
+  }
+  .locate-btn:active{ opacity:.85; }
+
+  /* Modal */
+  .overlay{
+    position:fixed; inset:0; background:rgba(9,13,10,.72);
+    display:none; align-items:flex-end; justify-content:center; z-index:20;
+  }
+  .overlay.show{ display:flex; }
+  .sheet{
+    width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
+    border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
+  }
+  .sheet .emoji{ font-size:44px; }
+  .sheet h3{ margin:8px 0 2px; font-size:18px; }
+  .sheet .meta{ color:var(--muted); font-size:13px; font-family:var(--mono); margin-bottom:16px; }
+  .sheet .actions{ display:flex; gap:10px; }
+  .sheet button{
+    flex:1; padding:13px; border-radius:10px; border:none; font-size:14px; font-weight:700;
+  }
+  .btn-capture{ background:var(--accent); color:#0f1512; }
+  .btn-capture:disabled{ background:var(--line); color:var(--muted); }
+  .btn-close{ background:transparent; color:var(--muted); border:1px solid var(--line) !important; }
+
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--accent); color:#0f1512; font-weight:700; font-size:13px;
+    padding:10px 18px; border-radius:999px; z-index:30; opacity:0; pointer-events:none;
+    transition:opacity .25s, transform .25s;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">Masc<span>otto</span></div>
+    <div class="clockbox">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="date">—</div>
+    </div>
+  </header>
+
+  <div class="warn" id="httpsWarn" style="display:none;">
+    ⚠️ Ouvre cette page en HTTPS (ou installe-la depuis un site hébergé) : en local (<code>file://</code>) le GPS et l'installation en appli ne fonctionnent pas.
+  </div>
+
+  <div class="radar-wrap">
+    <canvas id="radar" width="600" height="600"></canvas>
+    <div class="radar-label n-label">N</div>
+    <div class="status-pill">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Localisation…</span>
+    </div>
+    <div class="acc-pill" id="accPill" style="display:none;"></div>
+  </div>
+
+  <div class="bottombar">
+    <div class="inv">Créatures capturées&nbsp;<b id="invCount">0</b></div>
+    <button class="locate-btn" id="recenterBtn">Recentrer</button>
+  </div>
+
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <div class="emoji" id="sheetEmoji">🐾</div>
+    <h3 id="sheetName">—</h3>
+    <div class="meta" id="sheetMeta">—</div>
+    <div class="actions">
+      <button class="btn-close" id="closeBtn">Fermer</button>
+      <button class="btn-capture" id="captureBtn">Capturer</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- Horloge ---------- */
+function pad(n){ return n.toString().padStart(2,'0'); }
+function updateClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+  document.getElementById('date').textContent = now.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+if (location.protocol === 'file:') {
+  document.getElementById('httpsWarn').style.display = 'block';
+}
+
+/* ---------- Enregistrement du service worker ---------- */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+}
+
+/* ---------- Données créatures (mock, générées autour du joueur) ---------- */
+const CREATURE_TYPES = [
+  { name: "Braisillon",  emoji: "🔥" },
+  { name: "Ondulette",   emoji: "💧" },
+  { name: "Racinelle",   emoji: "🌿" },
+  { name: "Cailloutin",  emoji: "🪨" },
+  { name: "Zéphyrin",    emoji: "🌬️" },
+  { name: "Luciole d'or",emoji: "✨" },
+];
+let creatures = [];
+let creaturesSeeded = false;
+
+function seedCreatures(lat, lng){
+  if (creaturesSeeded) return;
+  creaturesSeeded = true;
+  const count = 5;
+  for (let i=0;i<count;i++){
+    // décalage aléatoire jusqu'à ~180m
+    const distM = 40 + Math.random()*180;
+    const bearing = Math.random()*360;
+    const pos = destinationPoint(lat, lng, distM, bearing);
+    const type = CREATURE_TYPES[Math.floor(Math.random()*CREATURE_TYPES.length)];
+    creatures.push({
+      id: 'c'+i,
+      name: type.name,
+      emoji: type.emoji,
+      lat: pos.lat,
+      lng: pos.lng,
+      captured: false
+    });
+  }
+}
+
+/* ---------- Maths géo ---------- */
+const R = 6371000;
+function toRad(d){ return d*Math.PI/180; }
+function toDeg(r){ return r*180/Math.PI; }
+
+function haversineDist(lat1, lon1, lat2, lon2){
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function bearingBetween(lat1, lon1, lat2, lon2){
+  const y = Math.sin(toRad(lon2-lon1))*Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+  return (toDeg(Math.atan2(y,x))+360)%360;
+}
+function destinationPoint(lat, lon, distM, bearingDeg){
+  const brng = toRad(bearingDeg);
+  const lat1 = toRad(lat), lon1 = toRad(lon);
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(distM/R) + Math.cos(lat1)*Math.sin(distM/R)*Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(distM/R)*Math.cos(lat1), Math.cos(distM/R)-Math.sin(lat1)*Math.sin(lat2));
+  return { lat: toDeg(lat2), lng: toDeg(lon2) };
+}
+
+/* ---------- Radar (canvas) ---------- */
+const canvas = document.getElementById('radar');
+const ctx = canvas.getContext('2d');
+const RADAR_RANGE_M = 250; // rayon max affiché
+const CAPTURE_RANGE_M = 25;
+let playerPos = null;
+
+function drawRadar(){
+  const size = canvas.width;
+  const cx = size/2, cy = size/2;
+  const radius = size*0.44;
+
+  ctx.clearRect(0,0,size,size);
+
+  // fond
+  ctx.fillStyle = '#121c17';
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI*2);
+  ctx.fill();
+
+  // anneaux de distance
+  const rings = [1/3, 2/3, 1];
+  ctx.strokeStyle = 'rgba(94,230,168,0.18)';
+  ctx.lineWidth = 1.5;
+  rings.forEach(f=>{
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius*f, 0, Math.PI*2);
+    ctx.stroke();
+  });
+
+  // croix cardinale
+  ctx.strokeStyle = 'rgba(94,230,168,0.12)';
+  ctx.beginPath();
+  ctx.moveTo(cx-radius, cy); ctx.lineTo(cx+radius, cy);
+  ctx.moveTo(cx, cy-radius); ctx.lineTo(cx, cy+radius);
+  ctx.stroke();
+
+  // joueur (centre)
+  ctx.fillStyle = '#5ee6a8';
+  ctx.beginPath();
+  ctx.arc(cx, cy, size*0.018, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(94,230,168,0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size*0.034, 0, Math.PI*2);
+  ctx.stroke();
+
+  if (!playerPos) return;
+
+  // créatures
+  creatures.forEach(c=>{
+    if (c.captured) return;
+    const dist = haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng);
+    const bearing = bearingBetween(playerPos.lat, playerPos.lng, c.lat, c.lng);
+    const clampedDist = Math.min(dist, RADAR_RANGE_M);
+    const r = (clampedDist / RADAR_RANGE_M) * radius;
+    const angle = toRad(bearing - 90); // 0° (nord) en haut
+    const px = cx + r*Math.cos(angle);
+    const py = cy + r*Math.sin(angle);
+
+    c._screenX = px; c._screenY = py; c._dist = dist;
+
+    // halo si à portée de capture
+    if (dist <= CAPTURE_RANGE_M){
+      ctx.fillStyle = 'rgba(94,230,168,0.18)';
+      ctx.beginPath();
+      ctx.arc(px, py, size*0.045, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    ctx.font = `${Math.round(size*0.05)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(c.emoji, px, py);
+  });
+
+  requestAnimationFrame(drawRadar);
+}
+requestAnimationFrame(drawRadar);
+
+/* ---------- Tap sur une créature ---------- */
+let activeCreature = null;
+canvas.addEventListener('click', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  const x = (e.clientX - rect.left)*scale;
+  const y = (e.clientY - rect.top)*scale;
+
+  let closest = null, closestD = Infinity;
+  creatures.forEach(c=>{
+    if (c.captured || c._screenX === undefined) return;
+    const d = Math.hypot(c._screenX - x, c._screenY - y);
+    if (d < closestD){ closestD = d; closest = c; }
+  });
+  if (closest && closestD < canvas.width*0.06){
+    openSheet(closest);
+  }
+});
+
+function openSheet(c){
+  activeCreature = c;
+  document.getElementById('sheetEmoji').textContent = c.emoji;
+  document.getElementById('sheetName').textContent = c.name;
+  const dist = Math.round(c._dist);
+  document.getElementById('sheetMeta').textContent = `à ${dist} m`;
+  const captureBtn = document.getElementById('captureBtn');
+  captureBtn.disabled = dist > CAPTURE_RANGE_M;
+  captureBtn.textContent = dist > CAPTURE_RANGE_M ? `Rapproche-toi (${CAPTURE_RANGE_M} m)` : 'Capturer';
+  document.getElementById('overlay').classList.add('show');
+}
+document.getElementById('closeBtn').addEventListener('click', ()=>{
+  document.getElementById('overlay').classList.remove('show');
+});
+document.getElementById('captureBtn').addEventListener('click', ()=>{
+  if (!activeCreature) return;
+  activeCreature.captured = true;
+  document.getElementById('overlay').classList.remove('show');
+  const countEl = document.getElementById('invCount');
+  countEl.textContent = (parseInt(countEl.textContent,10)+1);
+  showToast(`${activeCreature.name} capturé !`);
+});
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* ---------- Géolocalisation ---------- */
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const accPill = document.getElementById('accPill');
+
+function setStatus(state, text, pulsing){
+  statusDot.className = 'dot' + (state ? ' '+state : '') + (pulsing ? ' pulse' : '');
+  statusText.textContent = text;
+}
+
+function onPosition(pos){
+  const { latitude, longitude, accuracy } = pos.coords;
+  playerPos = { lat: latitude, lng: longitude };
+  seedCreatures(latitude, longitude);
+  setStatus('ok', 'Position active', false);
+  accPill.style.display = 'block';
+  accPill.textContent = `± ${Math.round(accuracy)} m`;
+}
+
+function onError(err){
+  const messages = {
+    1: "Permission refusée",
+    2: "Position indisponible",
+    3: "Délai dépassé"
+  };
+  setStatus('err', messages[err.code] || 'Erreur GPS', false);
+}
+
+function startWatch(){
+  if (!('geolocation' in navigator)){
+    setStatus('err', 'GPS non supporté', false);
+    return;
+  }
+  setStatus('', 'Localisation…', true);
+  navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 15000
+  });
+}
+startWatch();
+
+document.getElementById('recenterBtn').addEventListener('click', startWatch);
+</script>
+</body>
+</html>
