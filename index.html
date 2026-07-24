@@ -14,6 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="firebase-config.js"></script>
 <style>
   :root{
@@ -174,6 +175,23 @@
 <body>
 <div id="app">
 
+  <div class="overlay show" id="authOverlay" style="align-items:center;">
+    <div class="sheet" style="border-radius:20px; text-align:center;">
+      <h3 style="margin-top:0;">Bienvenue sur Mascotto</h3>
+      <p class="meta" id="authStatus">Connexion en cours…</p>
+      <button class="btn-capture" id="googleSignInBtn" style="width:100%; display:none;">Se connecter avec Google</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="pseudoOverlay">
+    <div class="sheet">
+      <h3 style="margin-top:0;">Choisis ton pseudo</h3>
+      <p class="meta">Il sera visible par les autres joueurs — pas ton vrai nom si tu préfères.</p>
+      <input type="text" id="pseudoInput" class="field-input" placeholder="Pseudo" maxlength="20">
+      <button class="btn-capture" id="pseudoSaveBtn" style="width:100%; margin-top:14px;">Valider</button>
+    </div>
+  </div>
+
   <header>
     <div class="brand-box">
       <div class="brand">Masc<span>otto</span></div>
@@ -306,6 +324,71 @@ Je suis le gardien de ce lieu.
 </div>
 
 <script>
+/* ---------- Authentification Google + pseudo ---------- */
+let currentUser = null;
+let currentPseudo = null;
+
+const authOverlay = document.getElementById('authOverlay');
+const authStatus = document.getElementById('authStatus');
+const googleSignInBtn = document.getElementById('googleSignInBtn');
+const pseudoOverlay = document.getElementById('pseudoOverlay');
+
+function showAuthScreen(text, showBtn){
+  authStatus.textContent = text;
+  googleSignInBtn.style.display = showBtn ? 'block' : 'none';
+  authOverlay.classList.add('show');
+}
+function hideAuthScreen(){
+  authOverlay.classList.remove('show');
+}
+
+googleSignInBtn.addEventListener('click', ()=>{
+  showAuthScreen('Redirection vers Google…', false);
+  auth.signInWithRedirect(googleProvider);
+});
+
+document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
+  const pseudo = document.getElementById('pseudoInput').value.trim();
+  if (!pseudo){ showToast('Choisis un pseudo'); return; }
+  db.collection('players').doc(currentUser.uid).set({ pseudo, createdAt: Date.now() }, { merge: true })
+    .then(()=>{
+      currentPseudo = pseudo;
+      document.getElementById('pseudoOverlay').classList.remove('show');
+    })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
+function onSignedIn(user){
+  currentUser = user;
+  db.collection('players').doc(user.uid).get().then((doc)=>{
+    if (doc.exists && doc.data().pseudo){
+      currentPseudo = doc.data().pseudo;
+      hideAuthScreen();
+    } else {
+      hideAuthScreen();
+      pseudoOverlay.classList.add('show');
+    }
+  }).catch(()=>{
+    hideAuthScreen();
+    pseudoOverlay.classList.add('show');
+  });
+}
+
+if (typeof auth !== 'undefined'){
+  auth.getRedirectResult().catch((err)=>{
+    showAuthScreen('Erreur de connexion : ' + err.message, true);
+  });
+  auth.onAuthStateChanged((user)=>{
+    if (user){
+      onSignedIn(user);
+    } else {
+      showAuthScreen('Connecte-toi pour jouer', true);
+    }
+  });
+} else {
+  showAuthScreen('Firebase indisponible ici', false);
+}
+
 /* ---------- Horloge ---------- */
 function pad(n){ return n.toString().padStart(2,'0'); }
 function updateClock(){
@@ -459,7 +542,7 @@ function renderSheet(){
   const c = activeCreature;
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
   const emojiEl = document.getElementById('sheetEmoji');
-  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:320px;height:320px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
+  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
