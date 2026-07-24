@@ -353,6 +353,7 @@ document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
     .then(()=>{
       currentPseudo = pseudo;
       document.getElementById('pseudoOverlay').classList.remove('show');
+      startMultiplayerSync();
     })
     .catch((err)=> showToast('Échec : ' + err.message));
 });
@@ -363,6 +364,7 @@ function onSignedIn(user){
     if (doc.exists && doc.data().pseudo){
       currentPseudo = doc.data().pseudo;
       hideAuthScreen();
+      startMultiplayerSync();
     } else {
       hideAuthScreen();
       pseudoOverlay.classList.add('show');
@@ -839,6 +841,54 @@ document.getElementById('moveConfirmBtn').addEventListener('click', ()=>{
 /* ---------- Carte Leaflet ---------- */
 let map, playerMarker, accCircle;
 let playerPos = null;
+
+/* ---------- Multijoueur : position des autres joueurs ---------- */
+let otherPlayerMarkers = {};
+let multiplayerStarted = false;
+const STALE_AFTER_MS = 2 * 60 * 1000; // 2 minutes sans nouvelle position = joueur ignoré
+
+function startMultiplayerSync(){
+  if (multiplayerStarted || !currentUser || !db) return;
+  multiplayerStarted = true;
+
+  setInterval(()=>{
+    if (!playerPos || !currentUser) return;
+    db.collection('players').doc(currentUser.uid).set({
+      pseudo: currentPseudo || 'Joueur',
+      lat: playerPos.lat,
+      lng: playerPos.lng,
+      lastSeen: Date.now()
+    }, { merge: true }).catch(()=>{});
+  }, 8000);
+
+  db.collection('players').onSnapshot((snap)=>{
+    const now = Date.now();
+    const seenIds = new Set();
+    snap.forEach((doc)=>{
+      if (doc.id === currentUser.uid) return;
+      const d = doc.data();
+      if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
+      if (now - (d.lastSeen || 0) > STALE_AFTER_MS) return;
+      seenIds.add(doc.id);
+      if (otherPlayerMarkers[doc.id]){
+        otherPlayerMarkers[doc.id].setLatLng([d.lat, d.lng]);
+      } else {
+        const icon = L.divIcon({
+          className:'',
+          html:`<div style="background:#2b6cb0;color:#fff;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);">${(d.pseudo||'Joueur')}</div>`,
+          iconSize:[0,0]
+        });
+        otherPlayerMarkers[doc.id] = L.marker([d.lat, d.lng], { icon }).addTo(map);
+      }
+    });
+    Object.keys(otherPlayerMarkers).forEach((id)=>{
+      if (!seenIds.has(id)){
+        map.removeLayer(otherPlayerMarkers[id]);
+        delete otherPlayerMarkers[id];
+      }
+    });
+  });
+}
 
 function initMap(){
   map = L.map('map', { zoomControl:false, attributionControl:true })
