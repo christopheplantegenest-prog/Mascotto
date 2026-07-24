@@ -304,6 +304,7 @@ Je suis le gardien de ce lieu.
 
     <div class="actions" style="margin-top:16px;">
       <button class="btn-secondary" id="editorCloseBtn" style="width:100%;">Fermer</button>
+      <button class="btn-secondary" id="linkGoogleBtn" style="width:100%; margin-top:8px; font-size:11px; opacity:.7;">Lier un compte Google (sauvegarder ma progression)</button>
     </div>
   </div>
 </div>
@@ -324,7 +325,7 @@ Je suis le gardien de ce lieu.
 </div>
 
 <script>
-/* ---------- Authentification Google + pseudo ---------- */
+/* ---------- Authentification anonyme (automatique) + pseudo ---------- */
 let currentUser = null;
 let currentPseudo = null;
 
@@ -333,25 +334,17 @@ const authStatus = document.getElementById('authStatus');
 const googleSignInBtn = document.getElementById('googleSignInBtn');
 const pseudoOverlay = document.getElementById('pseudoOverlay');
 
-function showAuthScreen(text, showBtn){
+function showAuthScreen(text, showRetryBtn){
   authStatus.textContent = text;
-  googleSignInBtn.style.display = showBtn ? 'block' : 'none';
+  googleSignInBtn.textContent = 'Réessayer';
+  googleSignInBtn.style.display = showRetryBtn ? 'block' : 'none';
   authOverlay.classList.add('show');
 }
 function hideAuthScreen(){
   authOverlay.classList.remove('show');
 }
 
-googleSignInBtn.addEventListener('click', ()=>{
-  if (!auth || !googleProvider){
-    location.reload();
-    return;
-  }
-  showAuthScreen('Redirection vers Google…', false);
-  auth.signInWithRedirect(googleProvider).catch((err)=>{
-    showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
-  });
-});
+googleSignInBtn.addEventListener('click', ()=> location.reload());
 
 document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
   const pseudo = document.getElementById('pseudoInput').value.trim();
@@ -380,24 +373,39 @@ function onSignedIn(user){
   });
 }
 
+/* Lien optionnel vers un compte Google, pour ne jamais perdre sa progression
+   (même identifiant, même données — juste une sauvegarde permanente en plus) */
+function linkGoogleAccount(){
+  if (!auth || !googleProvider || !currentUser){ showToast('Indisponible ici'); return; }
+  currentUser.linkWithRedirect(googleProvider);
+}
 if (auth){
   auth.getRedirectResult().then((result)=>{
     if (result && result.user){
-      onSignedIn(result.user);
+      showToast('Compte Google lié — ta progression est sauvegardée définitivement');
     }
   }).catch((err)=>{
-    showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
+    if (err.code === 'auth/credential-already-in-use'){
+      showToast('Ce compte Google est déjà lié à un autre profil');
+    } else if (err.code) {
+      showToast('Échec de la liaison : ' + err.message);
+    }
   });
+}
+
+if (auth){
   auth.onAuthStateChanged((user)=>{
     if (user){
       onSignedIn(user);
     } else {
-      showAuthScreen('Connecte-toi pour jouer', true);
+      showAuthScreen('Connexion en cours…', false);
+      auth.signInAnonymously().catch((err)=>{
+        showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
+      });
     }
   });
 } else {
   showAuthScreen('Connexion indisponible (réseau lent ou coupé)', true);
-  googleSignInBtn.textContent = 'Réessayer';
 }
 
 /* ---------- Horloge ---------- */
@@ -737,6 +745,7 @@ document.getElementById('editorBtn').addEventListener('click', ()=>{
 document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('editorOverlay').classList.remove('show');
 });
+document.getElementById('linkGoogleBtn').addEventListener('click', linkGoogleAccount);
 
 document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('editName').value.trim();
