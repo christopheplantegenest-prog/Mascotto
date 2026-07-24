@@ -10,5 +10,12 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const auth = firebase.auth();
-const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+let auth = null;
+let googleProvider = null;
+try {
+  auth = firebase.auth();
+  googleProvider = new firebase.auth.GoogleAuthProvider();
+} catch(e){
+  // Authentification indisponible (réseau lent/coupé) : Firestore reste utilisable
+}
