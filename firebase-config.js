@@ -1,6 +1,6 @@
 // Configuration Firebase du projet Mascotto
 const firebaseConfig = {
-  apiKey: "AIzaSyDYZ4YF0uL9s2TmgAyiEwC1PtZeeSgTc",
+  apiKey: "AIzaSyDYZ24YFOuL9s2TmgAyiEwCf1PtZeeSgTc",
   authDomain: "mascotto-a2afc.firebaseapp.com",
   projectId: "mascotto-a2afc",
   storageBucket: "mascotto-a2afc.firebasestorage.app",
