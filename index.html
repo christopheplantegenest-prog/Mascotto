@@ -142,6 +142,20 @@
   .day-btn{ flex:none; padding:8px 12px; }
   .day-btn.selected{ background:var(--accent); color:#fff; }
   .btn-capture{ background:var(--accent); color:#ffffff; border:none; border-radius:10px; padding:13px; font-weight:700; font-size:14px; }
+  .step-card{
+    background:var(--bg); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:12px;
+  }
+  .step-card-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .step-card-head b{ font-size:13px; }
+  .icon-del{ background:transparent; border:none; font-size:16px; color:var(--danger); padding:2px 6px; }
+  .choice-row{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px; margin-top:8px;
+  }
+  .choice-row .field-label{ margin:8px 0 3px; font-size:10px; }
+  .choice-row .field-input{ font-size:13px; padding:8px; }
+
   .editor-list-item{
     display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);
   }
@@ -373,13 +387,9 @@
         <button class="btn-secondary" id="clearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
       </div>
 
-      <div class="field-label">Dialogue — choix avec « > », étapes séparées par « --- », don d'objet avec « : item=Nom x2 »</div>
-      <textarea id="editDialogues" class="field-input" placeholder="Bonjour, aventurier !
-> Qui es-tu ? -> 1
-> Au revoir -> fin
----
-Je suis le gardien de ce lieu. Tiens, prends ceci.
-> Merci -> fin : item=Bois x2"></textarea>
+      <div class="field-label">Dialogue</div>
+      <div id="dialogueStepsBuilder"></div>
+      <button class="btn-secondary" id="addStepBtn" style="width:100%; margin-top:4px;">➕ Nouvelle étape</button>
 
       <div class="field-label">Position sur la carte</div>
       <div class="pos-status" id="posStatusText">Non définie</div>
@@ -593,6 +603,144 @@ function isActiveNow(d){
 }
 
 /* ---------- Dialogue à choix multiples (mini-syntaxe) ---------- */
+/* ---------- Constructeur visuel de dialogue (sans syntaxe) ---------- */
+let currentDialogueSteps = [ { text: '', choices: [] } ];
+
+function renderDialogueBuilder(){
+  const wrap = document.getElementById('dialogueStepsBuilder');
+  wrap.innerHTML = '';
+  currentDialogueSteps.forEach((step, stepIdx)=>{
+    const card = document.createElement('div');
+    card.className = 'step-card';
+
+    const head = document.createElement('div');
+    head.className = 'step-card-head';
+    head.innerHTML = `<b>Étape ${stepIdx}</b>`;
+    if (currentDialogueSteps.length > 1){
+      const delBtn = document.createElement('button');
+      delBtn.className = 'icon-del';
+      delBtn.textContent = '🗑️';
+      delBtn.addEventListener('click', ()=>{
+        currentDialogueSteps.splice(stepIdx, 1);
+        currentDialogueSteps.forEach(s=>{
+          s.choices.forEach(ch=>{
+            if (ch.next === stepIdx) ch.next = null;
+            else if (ch.next !== null && ch.next > stepIdx) ch.next -= 1;
+          });
+        });
+        renderDialogueBuilder();
+      });
+      head.appendChild(delBtn);
+    }
+    card.appendChild(head);
+
+    const textInput = document.createElement('textarea');
+    textInput.className = 'field-input';
+    textInput.placeholder = 'Ce que dit le PNJ à cette étape…';
+    textInput.style.minHeight = '54px';
+    textInput.value = step.text || '';
+    textInput.addEventListener('input', ()=>{ step.text = textInput.value; });
+    card.appendChild(textInput);
+
+    step.choices.forEach((choice, choiceIdx)=>{
+      const row = document.createElement('div');
+      row.className = 'choice-row';
+
+      const rowHead = document.createElement('div');
+      rowHead.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+      rowHead.innerHTML = `<span class="field-label" style="margin:0;">Choix ${choiceIdx+1}</span>`;
+      const delChoiceBtn = document.createElement('button');
+      delChoiceBtn.className = 'icon-del';
+      delChoiceBtn.textContent = '🗑️';
+      delChoiceBtn.addEventListener('click', ()=>{
+        step.choices.splice(choiceIdx, 1);
+        renderDialogueBuilder();
+      });
+      rowHead.appendChild(delChoiceBtn);
+      row.appendChild(rowHead);
+
+      const labelInput = document.createElement('input');
+      labelInput.type = 'text';
+      labelInput.className = 'field-input';
+      labelInput.placeholder = 'Texte du bouton (ex: "Qui es-tu ?")';
+      labelInput.value = choice.label || '';
+      labelInput.addEventListener('input', ()=>{ choice.label = labelInput.value; });
+      row.appendChild(labelInput);
+
+      const nextLabel = document.createElement('div');
+      nextLabel.className = 'field-label';
+      nextLabel.textContent = 'Ensuite';
+      row.appendChild(nextLabel);
+
+      const nextSelect = document.createElement('select');
+      nextSelect.className = 'field-input';
+      let optsHtml = '<option value="fin">Fin de la conversation</option>';
+      currentDialogueSteps.forEach((s, i)=>{
+        if (i === stepIdx) return;
+        optsHtml += `<option value="${i}">Étape ${i}</option>`;
+      });
+      nextSelect.innerHTML = optsHtml;
+      nextSelect.value = (choice.next === null || choice.next === undefined) ? 'fin' : String(choice.next);
+      nextSelect.addEventListener('change', ()=>{ choice.next = (nextSelect.value === 'fin') ? null : parseInt(nextSelect.value, 10); });
+      row.appendChild(nextSelect);
+
+      const itemLabel = document.createElement('div');
+      itemLabel.className = 'field-label';
+      itemLabel.textContent = 'Donner un objet';
+      row.appendChild(itemLabel);
+
+      const itemSelect = document.createElement('select');
+      itemSelect.className = 'field-input';
+      let itemOpts = '<option value="">Aucun</option>';
+      items.forEach(it=>{ itemOpts += `<option value="${it.name}">${it.emoji||'📦'} ${it.name}</option>`; });
+      itemSelect.innerHTML = itemOpts;
+      itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
+
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.className = 'field-input';
+      qtyInput.min = '1';
+      qtyInput.style.marginTop = '6px';
+      qtyInput.style.display = itemSelect.value ? 'block' : 'none';
+      qtyInput.value = (choice.itemGrant && choice.itemGrant.quantity) || 1;
+
+      itemSelect.addEventListener('change', ()=>{
+        if (!itemSelect.value){
+          choice.itemGrant = null;
+          qtyInput.style.display = 'none';
+        } else {
+          choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
+          qtyInput.style.display = 'block';
+        }
+      });
+      qtyInput.addEventListener('input', ()=>{
+        if (choice.itemGrant) choice.itemGrant.quantity = parseInt(qtyInput.value,10) || 1;
+      });
+
+      row.appendChild(itemSelect);
+      row.appendChild(qtyInput);
+      card.appendChild(row);
+    });
+
+    const addChoiceBtn = document.createElement('button');
+    addChoiceBtn.className = 'btn-secondary';
+    addChoiceBtn.style.cssText = 'width:100%; margin-top:10px;';
+    addChoiceBtn.textContent = '➕ Ajouter un choix';
+    addChoiceBtn.addEventListener('click', ()=>{
+      step.choices.push({ label:'', next:null, itemGrant:null });
+      renderDialogueBuilder();
+    });
+    card.appendChild(addChoiceBtn);
+
+    wrap.appendChild(card);
+  });
+}
+
+document.getElementById('addStepBtn').addEventListener('click', ()=>{
+  currentDialogueSteps.push({ text:'', choices:[] });
+  renderDialogueBuilder();
+});
+
 function parseDialogueScript(script){
   if (!script) return [];
   const stepsRaw = script.split(/\n\s*---\s*\n/).map(s=>s.trim()).filter(Boolean);
@@ -699,7 +847,7 @@ let currentStepIdx = 0;
 
 function openSheet(c){
   activeCreature = c;
-  activeSteps = parseDialogueScript(c.dialogueScript);
+  activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
   currentStepIdx = 0;
   renderSheet();
   document.getElementById('overlay').classList.add('show');
@@ -876,7 +1024,15 @@ function loadForEdit(id){
   const d = doc.data();
   editingId = id;
   document.getElementById('editName').value = d.name || '';
-  document.getElementById('editDialogues').value = d.dialogueScript || '';
+  if (Array.isArray(d.dialogueSteps) && d.dialogueSteps.length){
+    currentDialogueSteps = JSON.parse(JSON.stringify(d.dialogueSteps));
+  } else if (d.dialogueScript){
+    currentDialogueSteps = parseDialogueScript(d.dialogueScript).map(s=>({ text: s.text, choices: s.choices.map(c=>({ label: c.label, next: c.next, itemGrant: c.itemGrant || null })) }));
+    if (!currentDialogueSteps.length) currentDialogueSteps = [{ text:'', choices:[] }];
+  } else {
+    currentDialogueSteps = [ { text:'', choices:[] } ];
+  }
+  renderDialogueBuilder();
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
   document.getElementById('editStartTime').value = d.startTime || '';
@@ -910,7 +1066,8 @@ function resetForm(){
   document.getElementById('editImageFile').value = '';
   document.getElementById('imagePreviewWrap').style.display = 'none';
   document.getElementById('editName').value = '';
-  document.getElementById('editDialogues').value = '';
+  currentDialogueSteps = [ { text:'', choices:[] } ];
+  renderDialogueBuilder();
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
   document.getElementById('editStartTime').value = '';
@@ -932,6 +1089,7 @@ document.getElementById('hubPnjBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('editorOverlay').classList.add('show');
   showPnjSection('new');
+  renderDialogueBuilder();
 });
 document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
@@ -947,7 +1105,9 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('editName').value.trim();
   const emoji = '🐾';
   const imageUrl = uploadedImageDataUrl || '';
-  const dialogueScript = document.getElementById('editDialogues').value;
+  const dialogueSteps = currentDialogueSteps
+    .map(s=>({ text: (s.text||'').trim(), choices: s.choices.filter(c=>c.label && c.label.trim()) }))
+    .filter(s=> s.text || s.choices.length);
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
   const startTime = document.getElementById('editStartTime').value;
@@ -958,7 +1118,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, imageUrl, dialogueScript, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, dialogueSteps, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -1119,6 +1279,7 @@ if (itemsCol){
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
     renderPickupItemSelect();
+    if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
   }, (err)=>{
     document.getElementById('itemsStatus').textContent = 'Erreur : ' + err.message;
   });
