@@ -317,6 +317,17 @@
   </div>
 </div>
 
+<!-- Choix visuel d'un objet (avec image si disponible), réutilisé pour les entrées et la sortie d'une recette -->
+<div class="overlay" id="recipeItemChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Choisir un objet</h3>
+      <button class="sheet-x" id="recipeItemChooserCloseBtn">✕</button>
+    </div>
+    <div id="recipeItemChooserList" style="max-height:60vh; overflow-y:auto;"></div>
+  </div>
+</div>
+
 <!-- Éditeur de recettes -->
 <div class="overlay" id="recipesEditorOverlay">
   <div class="sheet" style="max-height:85vh; overflow-y:auto;">
@@ -336,18 +347,38 @@
       <div class="field-label">Emoji</div>
       <input type="text" id="recipeEmoji" class="field-input" placeholder="🪚" maxlength="4">
 
+      <div class="field-label">Photo (optionnel, remplace l'emoji)</div>
+      <input type="file" id="recipeImageFile" accept="image/*" class="field-input">
+      <div id="recipeImagePreviewWrap" style="display:none; margin-top:8px;">
+        <img id="recipeImagePreview" style="width:60px; height:60px; object-fit:contain;">
+        <button class="btn-secondary" id="recipeClearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+      </div>
+
       <div class="field-label">Ressources nécessaires</div>
       <div id="recipeInputsList"></div>
       <button class="btn-secondary" id="recipeAddInputBtn" style="width:100%; margin-top:4px;">➕ Ajouter une ressource</button>
 
       <div class="field-label">Objet produit</div>
-      <select id="recipeOutputItem" class="field-input"></select>
+      <button type="button" class="btn-secondary" id="recipeOutputPickBtn" style="width:100%; justify-content:flex-start; display:flex; align-items:center; gap:8px;">— choisir —</button>
 
       <div class="field-label">Quantité produite</div>
       <input type="number" id="recipeOutputQty" class="field-input" value="1" min="1">
 
-      <div class="field-label">Durée de fabrication (secondes)</div>
-      <input type="number" id="recipeDuration" class="field-input" value="10" min="1">
+      <div class="field-label">Durée de fabrication</div>
+      <div class="field-row">
+        <div>
+          <div class="field-label" style="margin-top:0;">Jours</div>
+          <input type="number" id="recipeDurationDays" class="field-input" value="0" min="0">
+        </div>
+        <div>
+          <div class="field-label" style="margin-top:0;">Minutes</div>
+          <input type="number" id="recipeDurationMinutes" class="field-input" value="0" min="0">
+        </div>
+        <div>
+          <div class="field-label" style="margin-top:0;">Secondes</div>
+          <input type="number" id="recipeDurationSeconds" class="field-input" value="10" min="0">
+        </div>
+      </div>
 
       <div class="field-label">Métiers autorisés à fabriquer cette recette</div>
       <div id="recipeMetiersList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
@@ -1457,7 +1488,7 @@ if (itemsCol){
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
     renderPickupItemSelect();
-    if (document.getElementById('recipeOutputItem')) renderRecipeOutputSelect();
+    if (document.getElementById('recipeOutputPickBtn')) renderRecipeOutputSelect();
     if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
   }, (err)=>{
     document.getElementById('itemsStatus').textContent = 'Erreur : ' + err.message;
@@ -1932,30 +1963,63 @@ if (recipesCol){
   });
 }
 
+let recipeOutputItemId = '';
 function renderRecipeOutputSelect(){
-  const sel = document.getElementById('recipeOutputItem');
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = items.map(it=>`<option value="${it.id}">${it.emoji||'📦'} ${it.name}</option>`).join('');
-  if (current) sel.value = current;
+  const btn = document.getElementById('recipeOutputPickBtn');
+  if (!btn) return;
+  const chosen = items.find(i=>i.id===recipeOutputItemId);
+  btn.innerHTML = `${itemThumbHtml(chosen)} ${chosen ? chosen.name : '— choisir —'}`;
 }
+document.getElementById('recipeOutputPickBtn').addEventListener('click', ()=> openRecipeItemChooser((itemId)=>{
+  recipeOutputItemId = itemId;
+  renderRecipeOutputSelect();
+}));
 
+let recipeItemChooserCallback = null;
+function openRecipeItemChooser(onPick){
+  recipeItemChooserCallback = onPick;
+  const listEl = document.getElementById('recipeItemChooserList');
+  listEl.innerHTML = items.length ? items.map(it=>`
+    <div class="editor-list-item" data-choose-item="${it.id}" style="cursor:pointer;">
+      <div class="thumb">${it.imageUrl ? `<img src="${it.imageUrl}">` : (it.emoji||'📦')}</div>
+      <div class="name">${it.name}</div>
+    </div>
+  `).join('') : '<p class="meta">Crée d\'abord un objet dans l\'éditeur d\'objets.</p>';
+  listEl.querySelectorAll('[data-choose-item]').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      if (recipeItemChooserCallback) recipeItemChooserCallback(row.dataset.chooseItem);
+      document.getElementById('recipeItemChooserOverlay').classList.remove('show');
+    });
+  });
+  document.getElementById('recipeItemChooserOverlay').classList.add('show');
+}
+document.getElementById('recipeItemChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('recipeItemChooserOverlay').classList.remove('show');
+});
+
+function itemThumbHtml(it){
+  if (!it) return '📦';
+  return it.imageUrl ? `<img src="${it.imageUrl}" style="width:22px; height:22px; object-fit:contain; vertical-align:middle;">` : (it.emoji || '📦');
+}
 function renderRecipeInputsBuilder(){
   const wrap = document.getElementById('recipeInputsList');
   wrap.innerHTML = '';
   currentRecipeInputs.forEach((inp, idx)=>{
     const row = document.createElement('div');
     row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
-    const itemOptions = items.map(it=>`<option value="${it.id}" ${it.id===inp.itemId?'selected':''}>${it.emoji||'📦'} ${it.name}</option>`).join('');
+    const chosen = items.find(i=>i.id===inp.itemId);
     row.innerHTML = `
-      <select class="field-input" data-input-item="${idx}" style="flex:2; margin:0;"><option value="">— choisir —</option>${itemOptions}</select>
+      <button type="button" class="btn-secondary" data-input-pick="${idx}" style="flex:2; display:flex; align-items:center; gap:6px; justify-content:flex-start;">${itemThumbHtml(chosen)} ${chosen ? chosen.name : '— choisir —'}</button>
       <input type="number" class="field-input" data-input-qty="${idx}" value="${inp.qty}" min="1" style="flex:1; margin:0;">
       <button class="btn-secondary" data-input-remove="${idx}" style="flex:none; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
     `;
     wrap.appendChild(row);
   });
-  wrap.querySelectorAll('select[data-input-item]').forEach(sel=>{
-    sel.addEventListener('change', (e)=>{ currentRecipeInputs[parseInt(sel.dataset.inputItem,10)].itemId = e.target.value; });
+  wrap.querySelectorAll('button[data-input-pick]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openRecipeItemChooser((itemId)=>{
+      currentRecipeInputs[parseInt(btn.dataset.inputPick,10)].itemId = itemId;
+      renderRecipeInputsBuilder();
+    }));
   });
   wrap.querySelectorAll('input[data-input-qty]').forEach(inp=>{
     inp.addEventListener('change', (e)=>{ currentRecipeInputs[parseInt(inp.dataset.inputQty,10)].qty = parseInt(e.target.value,10) || 1; });
@@ -2009,7 +2073,7 @@ function renderRecipesListView(){
     const row = document.createElement('div');
     row.className = 'editor-list-item';
     row.innerHTML = `
-      <div class="thumb">${r.emoji || '📦'}</div>
+      <div class="thumb">${r.imageUrl ? `<img src="${r.imageUrl}">` : (r.emoji || '📦')}</div>
       <div class="name">${r.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${metierNames}</span></div>
       <button class="btn-secondary" data-recipe-edit="${r.id}">Modifier</button>
       <button class="btn-secondary" data-recipe-del="${r.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
@@ -2030,12 +2094,25 @@ function loadRecipeForEdit(id){
   editingRecipeId = id;
   document.getElementById('recipeName').value = r.name || '';
   document.getElementById('recipeEmoji').value = r.emoji || '';
+  uploadedRecipeImageDataUrl = r.imageUrl || null;
+  document.getElementById('recipeImageFile').value = '';
+  if (r.imageUrl){
+    document.getElementById('recipeImagePreview').src = r.imageUrl;
+    document.getElementById('recipeImagePreviewWrap').style.display = 'block';
+  } else {
+    document.getElementById('recipeImagePreviewWrap').style.display = 'none';
+  }
   currentRecipeInputs = (r.inputs && r.inputs.length) ? JSON.parse(JSON.stringify(r.inputs)) : [{ itemId:'', qty:1 }];
+  recipeOutputItemId = r.outputItemId || '';
   renderRecipeOutputSelect();
   renderRecipeInputsBuilder();
-  document.getElementById('recipeOutputItem').value = r.outputItemId || '';
   document.getElementById('recipeOutputQty').value = r.outputQty || 1;
-  document.getElementById('recipeDuration').value = r.duration || 10;
+  {
+    const total = r.duration || 10;
+    document.getElementById('recipeDurationDays').value = Math.floor(total / 86400);
+    document.getElementById('recipeDurationMinutes').value = Math.floor((total % 86400) / 60);
+    document.getElementById('recipeDurationSeconds').value = total % 60;
+  }
   selectedRecipeMetiers = new Set(r.allowedMetiers || []);
   renderRecipeMetiers();
   document.getElementById('recipeSaveBtn').textContent = 'Mettre à jour la recette';
@@ -2045,11 +2122,17 @@ function resetRecipeForm(){
   editingRecipeId = null;
   document.getElementById('recipeName').value = '';
   document.getElementById('recipeEmoji').value = '';
+  uploadedRecipeImageDataUrl = null;
+  document.getElementById('recipeImageFile').value = '';
+  document.getElementById('recipeImagePreviewWrap').style.display = 'none';
   currentRecipeInputs = [ { itemId:'', qty:1 } ];
+  recipeOutputItemId = '';
   renderRecipeOutputSelect();
   renderRecipeInputsBuilder();
   document.getElementById('recipeOutputQty').value = 1;
-  document.getElementById('recipeDuration').value = 10;
+  document.getElementById('recipeDurationDays').value = 0;
+  document.getElementById('recipeDurationMinutes').value = 0;
+  document.getElementById('recipeDurationSeconds').value = 10;
   selectedRecipeMetiers = new Set();
   renderRecipeMetiers();
   document.getElementById('recipeSaveBtn').textContent = 'Enregistrer la recette';
@@ -2057,20 +2140,54 @@ function resetRecipeForm(){
 }
 document.getElementById('recipeCancelBtn').addEventListener('click', resetRecipeForm);
 
+let uploadedRecipeImageDataUrl = null;
+document.getElementById('recipeImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 160;
+      let w = img.width, h = img.height;
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      uploadedRecipeImageDataUrl = canvas.toDataURL('image/png');
+      document.getElementById('recipeImagePreview').src = uploadedRecipeImageDataUrl;
+      document.getElementById('recipeImagePreviewWrap').style.display = 'block';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('recipeClearImageBtn').addEventListener('click', ()=>{
+  uploadedRecipeImageDataUrl = null;
+  document.getElementById('recipeImageFile').value = '';
+  document.getElementById('recipeImagePreviewWrap').style.display = 'none';
+});
+
 document.getElementById('recipeSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('recipeName').value.trim();
   const emoji = document.getElementById('recipeEmoji').value.trim() || '📦';
+  const imageUrl = uploadedRecipeImageDataUrl || '';
   const inputs = currentRecipeInputs.filter(i=>i.itemId && i.qty > 0);
-  const outputItemId = document.getElementById('recipeOutputItem').value;
+  const outputItemId = recipeOutputItemId;
   const outputQty = parseInt(document.getElementById('recipeOutputQty').value, 10) || 1;
-  const duration = parseInt(document.getElementById('recipeDuration').value, 10) || 10;
+  const durDays = parseInt(document.getElementById('recipeDurationDays').value, 10) || 0;
+  const durMinutes = parseInt(document.getElementById('recipeDurationMinutes').value, 10) || 0;
+  const durSeconds = parseInt(document.getElementById('recipeDurationSeconds').value, 10) || 0;
+  const duration = (durDays*86400) + (durMinutes*60) + durSeconds;
   const allowedMetiers = Array.from(selectedRecipeMetiers);
 
   if (!name){ showToast('Donne un nom à la recette'); return; }
   if (!outputItemId){ showToast('Choisis l\'objet produit'); return; }
+  if (duration <= 0){ showToast('La durée doit être supérieure à 0'); return; }
   if (!recipesCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, inputs, outputItemId, outputQty, duration, allowedMetiers, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, inputs, outputItemId, outputQty, duration, allowedMetiers, updatedAt: Date.now() };
   const op = editingRecipeId ? recipesCol.doc(editingRecipeId).set(data) : recipesCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingRecipeId ? 'Recette mise à jour' : 'Recette ajoutée'); resetRecipeForm(); showRecipesSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
@@ -2097,18 +2214,21 @@ document.getElementById('hubRecipesBtn').addEventListener('click', ()=>{
   showRecipesSection('new');
 });
 
-/* ---------- Base : ressources partagées ---------- */
-const gameStateDoc = (typeof db !== 'undefined') ? db.collection('gameState').doc('resources') : null;
+/* ---------- Base : ressources = ton vrai inventaire joueur ---------- */
 let baseResources = {};
-if (gameStateDoc){
-  gameStateDoc.onSnapshot((doc)=>{
-    baseResources = doc.exists ? (doc.data().amounts || {}) : {};
+let playerDocRef = null;
+function watchPlayerInventoryForBase(){
+  if (!currentUser || playerDocRef) return;
+  playerDocRef = db.collection('players').doc(currentUser.uid);
+  playerDocRef.onSnapshot((doc)=>{
+    baseResources = (doc.exists && doc.data().inventory) || {};
     renderBaseResources();
   });
 }
 function renderBaseResources(){
   const el = document.getElementById('baseResources');
   if (!el) return;
+  if (!currentUser){ el.innerHTML = '<span class="meta">Connexion requise.</span>'; return; }
   if (!items.length){ el.innerHTML = '<span class="meta">Crée des objets dans l\'éditeur pour les voir ici.</span>'; return; }
   el.innerHTML = items.map(it=>{
     const qty = baseResources[it.id] || 0;
@@ -2116,10 +2236,10 @@ function renderBaseResources(){
   }).join('');
 }
 function addTestResources(){
-  if (!gameStateDoc || !items.length) return;
-  const amounts = { ...baseResources };
-  items.forEach(it=>{ amounts[it.id] = (amounts[it.id]||0) + 5; });
-  gameStateDoc.set({ amounts }, { merge:true });
+  if (!playerDocRef || !items.length) return;
+  const inc = {};
+  items.forEach(it=>{ inc[it.id] = firebase.firestore.FieldValue.increment(5); });
+  playerDocRef.set({ inventory: inc }, { merge:true });
 }
 
 /* ---------- Base : roster des PNJ recrutés ---------- */
@@ -2204,7 +2324,7 @@ function renderRecruitSheet(){
     const pct = Math.round(recruitCraftProgress(recruit)*100);
     craftEl.innerHTML = `
       <div class="field-label">Fabrication en cours</div>
-      <div class="pos-status">${recipe ? recipe.emoji+' '+recipe.name : '…'} — ${pct}%</div>
+      <div class="pos-status">${recipe ? (recipe.imageUrl ? `<img src="${recipe.imageUrl}" style="width:20px; height:20px; object-fit:contain; vertical-align:middle;"> ` : recipe.emoji+' ')+recipe.name : '…'} — ${pct}%</div>
       <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
         <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
       </div>
@@ -2220,8 +2340,8 @@ function renderRecruitSheet(){
       }).join(' + ') || 'Aucune ressource';
       return `
         <div class="choice-row">
-          <b>${r.emoji||'📦'} ${r.name}</b>
-          <div class="meta">${inputsLabel} → ${r.outputQty} × ${(items.find(i=>i.id===r.outputItemId)||{}).emoji||'📦'} (${r.duration}s)</div>
+          <b>${r.imageUrl ? `<img src="${r.imageUrl}" style="width:18px; height:18px; object-fit:contain; vertical-align:middle;">` : (r.emoji||'📦')} ${r.name}</b>
+          <div class="meta">${inputsLabel} → ${r.outputQty} × ${(items.find(i=>i.id===r.outputItemId)||{}).emoji||'📦'} (${formatDuration(r.duration)})</div>
           <button class="btn-capture" data-launch-recipe="${r.id}" style="width:100%; margin-top:6px;" ${canAfford ? '' : 'disabled'}>Lancer</button>
         </div>
       `;
@@ -2251,24 +2371,35 @@ function renderRecruitSheet(){
   }
 }
 
+function formatDuration(totalSeconds){
+  const d = Math.floor(totalSeconds / 86400);
+  const h = Math.floor((totalSeconds % 86400) / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const parts = [];
+  if (d) parts.push(d + 'j');
+  if (h) parts.push(h + 'h');
+  if (m) parts.push(m + 'min');
+  if (s || !parts.length) parts.push(s + 's');
+  return parts.join(' ');
+}
+
 function launchRecruitCraft(recruit, recipeId){
   const recipe = recipes.find(r=>r.id===recipeId);
-  if (!recipe || !gameStateDoc) return;
+  if (!recipe || !playerDocRef) return;
   const missing = (recipe.inputs||[]).find(inp => (baseResources[inp.itemId]||0) < inp.qty);
   if (missing){ showToast('Ressources insuffisantes'); return; }
-  const amounts = { ...baseResources };
-  (recipe.inputs||[]).forEach(inp=>{ amounts[inp.itemId] = (amounts[inp.itemId]||0) - inp.qty; });
-  gameStateDoc.set({ amounts }, { merge:true }).then(()=>{
+  const inc = {};
+  (recipe.inputs||[]).forEach(inp=>{ inc[inp.itemId] = firebase.firestore.FieldValue.increment(-inp.qty); });
+  playerDocRef.set({ inventory: inc }, { merge:true }).then(()=>{
     const duration = recruitEffectiveDuration(recruit, recipe.duration*1000);
     recruitsCol.doc(recruit.id).update({ craftingRecipeId: recipeId, craftingStartedAt: Date.now(), craftingDuration: duration });
   });
 }
 
 function returnItemToStock(itemId){
-  if (!gameStateDoc) return;
-  const amounts = { ...baseResources };
-  amounts[itemId] = (amounts[itemId]||0) + 1;
-  gameStateDoc.set({ amounts }, { merge:true });
+  if (!playerDocRef) return;
+  playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
 }
 
 function openBaseEquipChooser(recruit){
@@ -2286,9 +2417,7 @@ function openBaseEquipChooser(recruit){
   listEl.querySelectorAll('button[data-equip-item]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const itemId = btn.dataset.equipItem;
-      const amounts = { ...baseResources };
-      amounts[itemId] = (amounts[itemId]||0) - 1;
-      gameStateDoc.set({ amounts }, { merge:true }).then(()=>{
+      playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
         recruitsCol.doc(recruit.id).update({ equippedItemId: itemId });
         document.getElementById('baseEquipChooserOverlay').classList.remove('show');
       });
@@ -2319,10 +2448,8 @@ setInterval(()=>{
   recruits.forEach(recruit=>{
     if (recruit.craftingRecipeId && recruitCraftProgress(recruit) >= 1){
       const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
-      if (recipe && gameStateDoc){
-        const amounts = { ...baseResources };
-        amounts[recipe.outputItemId] = (amounts[recipe.outputItemId]||0) + recipe.outputQty;
-        gameStateDoc.set({ amounts }, { merge:true });
+      if (recipe && playerDocRef){
+        playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
       }
       recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
     }
@@ -2332,6 +2459,7 @@ setInterval(()=>{
 
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
 document.getElementById('baseBtn').addEventListener('click', ()=>{
+  watchPlayerInventoryForBase();
   renderBaseResources();
   renderBaseRoster();
   document.getElementById('baseOverlay').classList.add('show');
