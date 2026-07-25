@@ -1,0 +1,2052 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Mascotto</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#eef3ef">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  :root{
+    --bg:#eef3ef; --panel:#ffffff; --line:#c9d6cc; --text:#12241a;
+    --muted:#3f6350; --accent:#0f8a52; --warn:#a85d00; --danger:#c0392b;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{
+    margin:0; height:100%; overscroll-behavior:none;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #app{ position:fixed; inset:0; height:100vh; height:100dvh; }
+
+  header{
+    position:absolute; top:0; left:0; right:0; z-index:1000;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(14px, env(safe-area-inset-top)) 14px 0;
+    pointer-events:none;
+  }
+  header > *{ pointer-events:auto; }
+  .brand-box{
+    background:rgba(255,255,255,.92); border:1px solid var(--line);
+    padding:6px 14px; border-radius:14px;
+  }
+  .brand{ font-size:15px; font-weight:800; letter-spacing:.01em; }
+  .brand span{ color:var(--accent); }
+  .clock{ font-size:11px; font-weight:700; color:var(--muted); font-family:var(--mono); margin-top:1px; }
+  .date{ font-size:9px; color:var(--muted); text-transform:capitalize; font-family:var(--mono); }
+
+  .icon-row{ display:flex; gap:8px; }
+  .icon-btn{
+    width:34px; height:34px; border-radius:50%;
+    background:rgba(255,255,255,.92); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; color:var(--text);
+  }
+  .icon-btn .dot{ width:10px; height:10px; border-radius:50%; background:var(--muted); }
+  .icon-btn .dot.ok{ background:var(--accent); }
+  .icon-btn .dot.err{ background:var(--danger); }
+  .icon-btn .dot.pulse{ animation:pulse 1.4s infinite; }
+  @keyframes pulse{ 0%{opacity:.35;} 50%{opacity:1;} 100%{opacity:.35;} }
+
+  .warn{
+    position:absolute; top:60px; left:14px; right:14px; z-index:1000;
+    background:rgba(168,93,0,.12); backdrop-filter:blur(6px);
+    border:1px solid rgba(168,93,0,.3);
+    color:var(--warn); font-size:12px; padding:10px 12px; border-radius:10px; line-height:1.4;
+  }
+
+  .map-wrap{ position:absolute; inset:0; }
+  #map{ width:100%; height:100%; background:#cfe3d6; }
+
+  .acc-pill{
+    position:absolute; bottom:max(14px, env(safe-area-inset-bottom)); left:14px; z-index:1000;
+    background:rgba(255,255,255,.94); border:1px solid var(--line);
+    padding:6px 12px; border-radius:999px; font-size:11px; font-family:var(--mono); color:var(--muted);
+  }
+
+  .player-icon{
+    width:18px; height:18px; border-radius:50%;
+    background:var(--accent); border:3px solid rgba(15,138,82,.3);
+    box-shadow:0 0 0 2px rgba(255,255,255,.9);
+  }
+  .creature-icon{
+    font-size:26px; line-height:1; text-align:center;
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));
+  }
+  .creature-icon.inactive{
+    opacity:.4; filter:grayscale(1) drop-shadow(0 0 5px var(--danger));
+  }
+  .leaflet-container{ background:#cfe3d6; }
+
+  .overlay{
+    position:fixed; inset:0; background:rgba(18,36,26,.45);
+    display:none; align-items:flex-end; justify-content:center; z-index:2000;
+  }
+  .overlay.show{ display:flex; }
+  .sheet{
+    width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
+    border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
+  }
+  .sheet-top{ display:flex; justify-content:space-between; align-items:flex-start; }
+  .sheet .emoji{ font-size:44px; }
+  .sheet-x{
+    background:var(--bg); border:1px solid var(--line); border-radius:50%;
+    width:30px; height:30px; font-size:14px; color:var(--muted);
+  }
+  .sheet h3{ margin:8px 0 2px; font-size:18px; }
+  .sheet .meta{ color:var(--muted); font-size:13px; font-family:var(--mono); margin-bottom:6px; }
+  .sheet .dist{ color:var(--muted); font-size:11px; font-family:var(--mono); margin-bottom:14px; }
+  .choice-btn{
+    display:block; width:100%; text-align:left; padding:13px 14px; border-radius:10px;
+    border:1px solid var(--line); background:var(--bg); color:var(--text);
+    font-size:14px; margin-bottom:8px; font-weight:600;
+  }
+  .choice-btn:active{ opacity:.8; }
+  .choice-btn.end{ background:var(--accent); color:#fff; border-color:var(--accent); text-align:center; }
+
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--accent); color:#ffffff; font-weight:700; font-size:13px;
+    padding:10px 18px; border-radius:999px; z-index:3000; opacity:0; pointer-events:none;
+    transition:opacity .25s, transform .25s;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
+
+  .field-label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 4px; }
+  .field-input{
+    width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text);
+    border-radius:10px; padding:10px; font-size:14px;
+  }
+  textarea.field-input{ resize:vertical; min-height:110px; font-family:var(--mono); font-size:13px; }
+  .field-row{ display:flex; gap:8px; }
+  .field-row > *{ flex:1; }
+  .pos-status{
+    background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px; font-size:13px;
+  }
+  .pos-actions{ display:flex; gap:8px; margin-top:8px; }
+  .btn-secondary{
+    background:transparent; color:var(--accent); border:1px solid var(--accent) !important;
+    border-radius:8px; padding:8px 10px; font-size:12px; font-weight:700; flex:1;
+  }
+  .day-btn{ flex:none; padding:8px 12px; }
+  .day-btn.selected{ background:var(--accent); color:#fff; }
+  .btn-capture{ background:var(--accent); color:#ffffff; border:none; border-radius:10px; padding:13px; font-weight:700; font-size:14px; }
+  .step-card{
+    background:var(--bg); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:12px;
+  }
+  .step-card-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .step-card-head b{ font-size:13px; }
+  .icon-del{ background:transparent; border:none; font-size:16px; color:var(--danger); padding:2px 6px; }
+  .choice-row{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px; margin-top:8px;
+  }
+  .choice-row .field-label{ margin:8px 0 3px; font-size:10px; }
+  .choice-row .field-input{ font-size:13px; padding:8px; }
+
+  .editor-list-item{
+    display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);
+  }
+  .editor-list-item .thumb{ font-size:22px; width:34px; text-align:center; }
+  .editor-list-item .thumb img{ width:30px; height:30px; border-radius:50%; object-fit:cover; }
+  .editor-list-item .name{ flex:1; font-size:14px; }
+  .editor-list-item .tag{ font-size:9px; padding:2px 6px; border-radius:6px; font-weight:700; text-transform:uppercase; }
+  .editor-list-item .tag.on{ background:rgba(15,138,82,.15); color:var(--accent); }
+  .editor-list-item .tag.off{ background:rgba(192,57,43,.12); color:var(--danger); }
+  .editor-list-item button{ font-size:12px; padding:6px 10px; border-radius:8px; }
+
+  .crosshair{
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-100%);
+    font-size:34px; z-index:2500; pointer-events:none;
+    filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));
+  }
+  .placement-bar{
+    position:fixed; left:14px; right:14px; bottom:max(14px, env(safe-area-inset-bottom));
+    z-index:2500; display:flex; gap:10px;
+  }
+  .placement-bar button{
+    flex:1; padding:14px; border-radius:12px; border:none; font-size:14px; font-weight:700;
+  }
+  .placement-hint{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:rgba(255,255,255,.95); border:1px solid var(--line);
+    padding:8px 16px; border-radius:999px; font-size:12px; z-index:2500; color:var(--text);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div class="overlay show" id="authOverlay" style="align-items:center;">
+    <div class="sheet" style="border-radius:20px; text-align:center;">
+      <h3 style="margin-top:0;">Bienvenue sur Mascotto</h3>
+      <p class="meta" id="authStatus">Connexion en cours…</p>
+      <button class="btn-capture" id="googleSignInBtn" style="width:100%; display:none;">Se connecter avec Google</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="pseudoOverlay">
+    <div class="sheet">
+      <h3 style="margin-top:0;">Choisis ton pseudo</h3>
+      <p class="meta">Il sera visible par les autres joueurs — pas ton vrai nom si tu préfères.</p>
+      <input type="text" id="pseudoInput" class="field-input" placeholder="Pseudo" maxlength="20">
+      <button class="btn-capture" id="pseudoSaveBtn" style="width:100%; margin-top:14px;">Valider</button>
+    </div>
+  </div>
+
+  <header>
+    <div class="brand-box">
+      <div class="brand">Masc<span>otto</span></div>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="date">—</div>
+    </div>
+    <div class="icon-row">
+      <div class="icon-btn" id="gpsIcon" title="État GPS"><div class="dot" id="statusDot"></div></div>
+      <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
+      <button class="icon-btn" id="recenterBtn" title="Recentrer">📍</button>
+      <button class="icon-btn" id="editHubBtn" title="Édition">✏️</button>
+    </div>
+  </header>
+
+  <div class="warn" id="httpsWarn" style="display:none;">
+    ⚠️ Ouvre cette page en HTTPS (site hébergé) : en local (<code>file://</code>) le GPS ne fonctionne pas.
+  </div>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="acc-pill" id="accPill" style="display:none;"></div>
+  </div>
+
+</div>
+
+<!-- Fiche PNJ (vue joueur) -->
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <div class="emoji" id="sheetEmoji">🐾</div>
+      <button class="sheet-x" id="closeBtn">✕</button>
+    </div>
+    <h3 id="sheetName">—</h3>
+    <div class="meta" id="sheetMeta">—</div>
+    <div class="dist" id="sheetDist"></div>
+    <div id="sheetChoices"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Éditeur de PNJ -->
+<!-- Inventaire du joueur -->
+<div class="overlay" id="inventoryOverlay">
+  <div class="sheet" style="max-height:75vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">Mon inventaire</h3>
+    <div id="inventoryList"><p class="meta">Vide pour l'instant.</p></div>
+    <button class="btn-secondary" id="inventoryCloseBtn" style="width:100%; margin-top:12px;">Fermer</button>
+  </div>
+</div>
+
+<!-- Hub d'édition : point d'entrée unique vers tous les éditeurs -->
+<div class="overlay" id="editHubOverlay">
+  <div class="sheet">
+    <h3 style="margin-top:0;">Édition</h3>
+    <button class="btn-capture" id="hubPnjBtn" style="width:100%; margin-bottom:10px;">PNJ</button>
+    <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
+    <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
+    <button class="btn-secondary" id="editHubCloseBtn" style="width:100%;">Fermer</button>
+  </div>
+</div>
+
+<!-- Éditeur de recettes -->
+<div class="overlay" id="recipesEditorOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">Recettes</h3>
+    <div class="meta" id="recipesStatus">Connexion…</div>
+
+    <div id="recipesNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+      <button class="btn-capture" data-recipesection="new" style="flex:1 1 45%;">Nouvelle recette</button>
+      <button class="btn-secondary" data-recipesection="list" style="flex:1 1 45%;">Liste des recettes</button>
+    </div>
+
+    <!-- Section : Nouvelle recette -->
+    <div class="recipes-section" id="recipesection-new" style="display:none;">
+      <div class="field-label">Nom de la recette</div>
+      <input type="text" id="recipeName" class="field-input" placeholder="Planches">
+
+      <div class="field-label">Emoji</div>
+      <input type="text" id="recipeEmoji" class="field-input" placeholder="🪚" maxlength="4">
+
+      <div class="field-label">Ressources nécessaires</div>
+      <div id="recipeInputsList"></div>
+      <button class="btn-secondary" id="recipeAddInputBtn" style="width:100%; margin-top:4px;">➕ Ajouter une ressource</button>
+
+      <div class="field-label">Objet produit</div>
+      <select id="recipeOutputItem" class="field-input"></select>
+
+      <div class="field-label">Quantité produite</div>
+      <input type="number" id="recipeOutputQty" class="field-input" value="1" min="1">
+
+      <div class="field-label">Durée de fabrication (secondes)</div>
+      <input type="number" id="recipeDuration" class="field-input" value="10" min="1">
+
+      <div class="field-label">Métiers autorisés à fabriquer cette recette</div>
+      <div id="recipeMetiersList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="newMetierName" class="field-input" placeholder="Nouveau métier (ex. Charpentier)" style="flex:1;">
+        <button class="btn-secondary" id="addMetierBtn" style="flex:none;">+ Créer</button>
+      </div>
+
+      <button class="btn-capture" id="recipeSaveBtn" style="width:100%; margin-top:16px;">Enregistrer la recette</button>
+      <button class="btn-secondary" id="recipeCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
+    </div>
+
+    <!-- Section : Liste des recettes -->
+    <div class="recipes-section" id="recipesection-list" style="display:none;">
+      <div id="recipesList"></div>
+    </div>
+
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn-secondary" id="recipesEditorCloseBtn" style="width:100%;">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Éditeur d'objets + points de ramassage -->
+<div class="overlay" id="itemsEditorOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">Objets</h3>
+    <div class="meta" id="itemsStatus">Connexion…</div>
+
+    <!-- Navigation par boutons -->
+    <div id="itemsNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+      <button class="btn-capture" data-section="new" style="flex:1 1 45%;">Nouvel objet</button>
+      <button class="btn-capture" data-section="place" style="flex:1 1 45%;">Placer un objet</button>
+      <button class="btn-secondary" data-section="list" style="flex:1 1 45%;">Liste d'objets</button>
+      <button class="btn-secondary" data-section="placed" style="flex:1 1 45%;">Objets placés</button>
+      <button class="btn-secondary" data-section="inactive" style="flex:1 1 100%;">Objets inactifs</button>
+    </div>
+
+    <!-- Section : Nouvel objet -->
+    <div class="items-section" id="section-new" style="display:none;">
+      <div class="field-label">Nom de l'objet</div>
+      <input type="text" id="itemName" class="field-input" placeholder="Bois">
+
+      <div class="field-label">Emoji</div>
+      <input type="text" id="itemEmoji" class="field-input" placeholder="🪵" maxlength="4">
+
+      <div class="field-label">Photo (optionnel, remplace l'emoji)</div>
+      <input type="file" id="itemImageFile" accept="image/*" class="field-input">
+      <div id="itemImagePreviewWrap" style="display:none; margin-top:8px;">
+        <img id="itemImagePreview" style="width:60px; height:60px; object-fit:contain;">
+        <button class="btn-secondary" id="itemClearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+      </div>
+
+      <div class="field-label">Type</div>
+      <select id="itemType" class="field-input">
+        <option value="ressource">Ressource de craft</option>
+        <option value="quete">Objet de quête</option>
+        <option value="consommable">Consommable</option>
+      </select>
+
+      <div class="field-label">Description</div>
+      <textarea id="itemDescription" class="field-input" style="min-height:60px;" placeholder="Un morceau de bois brut."></textarea>
+
+      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="itemEquippable" style="width:auto;">
+        <label for="itemEquippable" style="margin:0;">Cet objet est équipable (donne un effet à un PNJ)</label>
+      </div>
+      <div id="itemEffectWrap" style="display:none;">
+        <div class="field-label">Effet</div>
+        <select id="itemEffectType" class="field-input">
+          <option value="speed_boost">Réduit le temps de fabrication</option>
+        </select>
+
+        <div class="field-label">Valeur (%)</div>
+        <input type="number" id="itemEffectValue" class="field-input" value="20" min="1" max="90">
+
+        <div class="field-label">Durée de l'effet</div>
+        <select id="itemEffectDuration" class="field-input">
+          <option value="permanent">Permanent tant qu'équipé</option>
+          <option value="temporary">Temporaire (objet consommé à l'usage)</option>
+        </select>
+        <div id="itemEffectSecondsWrap" style="display:none;">
+          <div class="field-label">Durée du boost (secondes)</div>
+          <input type="number" id="itemEffectSeconds" class="field-input" value="45" min="5">
+        </div>
+
+        <div class="field-label">Métiers pouvant l'équiper (aucun coché = tous les métiers)</div>
+        <div id="itemEquipMetiers" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      </div>
+
+      <button class="btn-capture" id="itemSaveBtn" style="width:100%; margin-top:14px;">Enregistrer l'objet</button>
+      <button class="btn-secondary" id="itemCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
+    </div>
+
+    <!-- Section : Liste d'objets existants -->
+    <div class="items-section" id="section-list" style="display:none;">
+      <div id="itemsList"></div>
+    </div>
+
+    <!-- Section : Placer un objet -->
+    <div class="items-section" id="section-place" style="display:none;">
+      <div class="field-label">Objet à placer</div>
+      <select id="pickupItemSelect" class="field-input"></select>
+
+      <div class="field-label">Quantité</div>
+      <input type="number" id="pickupQuantity" class="field-input" value="1" min="1">
+
+      <div class="field-label">Position sur la carte</div>
+      <div class="pos-status" id="pickupPosStatusText">Non définie</div>
+      <div class="pos-actions">
+        <button class="btn-secondary" id="pickupPlaceNewBtn">Nouvel emplacement</button>
+        <button class="btn-secondary" id="pickupMoveBtn">Déplacer ce point</button>
+      </div>
+
+      <div class="field-label">Comportement après ramassage</div>
+      <select id="pickupRespawnMode" class="field-input">
+        <option value="once">Disparaît pour toujours (une seule fois, par n'importe qui)</option>
+        <option value="timed">Réapparaît après un délai</option>
+        <option value="perPlayer">Chaque joueur peut le ramasser une fois</option>
+      </select>
+      <div id="pickupRespawnMinutesWrap" style="display:none;">
+        <div class="field-label">Délai avant réapparition (minutes)</div>
+        <input type="number" id="pickupRespawnMinutes" class="field-input" value="60" min="1">
+      </div>
+
+      <button class="btn-capture" id="pickupSaveBtn" style="width:100%; margin-top:14px;">Enregistrer le point</button>
+      <button class="btn-secondary" id="pickupCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
+    </div>
+
+    <!-- Section : Objets placés (actifs) -->
+    <div class="items-section" id="section-placed" style="display:none;">
+      <div id="pickupsListActive"></div>
+    </div>
+
+    <!-- Section : Objets inactifs -->
+    <div class="items-section" id="section-inactive" style="display:none;">
+      <p class="meta">Objets qui ne peuvent plus jamais réapparaître (mode "une seule fois", déjà ramassés).</p>
+      <div id="pickupsListInactive"></div>
+    </div>
+
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn-secondary" id="itemsEditorCloseBtn" style="width:100%;">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="editorOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">Éditeur de PNJ</h3>
+    <div class="meta" id="editorStatus">Connexion…</div>
+
+    <!-- Navigation par boutons -->
+    <div id="pnjNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+      <button class="btn-capture" data-pnjsection="new" style="flex:1 1 45%;">Nouveau PNJ</button>
+      <button class="btn-secondary" data-pnjsection="list" style="flex:1 1 45%;">PNJ existants</button>
+      <button class="btn-secondary" data-pnjsection="inactive" style="flex:1 1 100%;">PNJ inactifs</button>
+    </div>
+
+    <!-- Section : Nouveau PNJ -->
+    <div class="pnj-section" id="pnjsection-new" style="display:none;">
+      <div class="field-label">Nom</div>
+      <input type="text" id="editName" class="field-input" placeholder="Nom du PNJ">
+
+      <div class="field-label">Métier (optionnel — pour les PNJ artisans du jeu Base)</div>
+      <select id="editMetier" class="field-input">
+        <option value="">Aucun métier</option>
+      </select>
+
+      <div class="field-label">Photo depuis ton téléphone</div>
+      <input type="file" id="editImageFile" accept="image/*" class="field-input">
+      <div id="imagePreviewWrap" style="display:none; margin-top:8px;">
+        <img id="imagePreview" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
+        <button class="btn-secondary" id="clearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+      </div>
+
+      <div class="field-label">Dialogue</div>
+      <div id="dialogueStepsBuilder"></div>
+      <button class="btn-secondary" id="addStepBtn" style="width:100%; margin-top:4px;">➕ Nouvelle étape</button>
+
+      <div class="field-label">Position sur la carte</div>
+      <div class="pos-status" id="posStatusText">Non définie</div>
+      <div class="pos-actions">
+        <button class="btn-secondary" id="placeNewBtn">Nouvel emplacement</button>
+        <button class="btn-secondary" id="moveExistingBtn">Déplacer ce point</button>
+      </div>
+
+      <div class="field-label">Jours d'apparition (aucun coché = tous les jours)</div>
+      <div id="daysRow" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
+        <button type="button" class="btn-secondary day-btn" data-day="1">Lun</button>
+        <button type="button" class="btn-secondary day-btn" data-day="2">Mar</button>
+        <button type="button" class="btn-secondary day-btn" data-day="3">Mer</button>
+        <button type="button" class="btn-secondary day-btn" data-day="4">Jeu</button>
+        <button type="button" class="btn-secondary day-btn" data-day="5">Ven</button>
+        <button type="button" class="btn-secondary day-btn" data-day="6">Sam</button>
+        <button type="button" class="btn-secondary day-btn" data-day="0">Dim</button>
+      </div>
+
+      <div class="field-label">Apparition (laisser vide = toujours visible)</div>
+      <div class="field-row">
+        <div>
+          <div class="field-label" style="margin-top:0;">Date début</div>
+          <input type="date" id="editStartDate" class="field-input">
+        </div>
+        <div>
+          <div class="field-label" style="margin-top:0;">Date fin</div>
+          <input type="date" id="editEndDate" class="field-input">
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label" style="margin-top:0;">Heure début</div>
+          <input type="time" id="editStartTime" class="field-input">
+        </div>
+        <div>
+          <div class="field-label" style="margin-top:0;">Heure fin</div>
+          <input type="time" id="editEndTime" class="field-input">
+        </div>
+      </div>
+
+      <button class="btn-capture" id="editSaveBtn" style="width:100%; margin-top:16px;">Enregistrer le PNJ</button>
+      <button class="btn-secondary" id="editCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
+    </div>
+
+    <!-- Section : PNJ existants (actifs) -->
+    <div class="pnj-section" id="pnjsection-list" style="display:none;">
+      <div id="editorListActive"></div>
+    </div>
+
+    <!-- Section : PNJ inactifs -->
+    <div class="pnj-section" id="pnjsection-inactive" style="display:none;">
+      <p class="meta">PNJ actuellement hors de leur créneau (date, heure ou jour configuré).</p>
+      <div id="editorListInactive"></div>
+    </div>
+
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn-secondary" id="editorCloseBtn" style="width:100%;">Fermer</button>
+      <button class="btn-secondary" id="linkGoogleBtn" style="width:100%; margin-top:8px; font-size:11px; opacity:.7;">Lier un compte Google (sauvegarder ma progression)</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mode placement (nouveau point) -->
+<div class="crosshair" id="crosshair" style="display:none;">📍</div>
+<div class="placement-hint" id="placementHint" style="display:none;">Déplace la carte pour viser l'emplacement</div>
+<div class="placement-bar" id="placementBar" style="display:none;">
+  <button id="placeCancelBtn" style="background:var(--panel); color:var(--text); border:1px solid var(--line);">Annuler</button>
+  <button class="btn-capture" id="placeConfirmBtn" style="flex:1;">Valider cet emplacement</button>
+</div>
+
+<!-- Mode déplacement (point existant) -->
+<div class="placement-hint" id="moveHint" style="display:none;">Fais glisser le point sur la carte</div>
+<div class="placement-bar" id="moveBar" style="display:none;">
+  <button id="moveCancelBtn" style="background:var(--panel); color:var(--text); border:1px solid var(--line);">Annuler</button>
+  <button class="btn-capture" id="moveConfirmBtn" style="flex:1;">Valider le déplacement</button>
+</div>
+
+<script>
+/* ---------- Authentification anonyme (automatique) + pseudo ---------- */
+let currentUser = null;
+let currentPseudo = null;
+
+const authOverlay = document.getElementById('authOverlay');
+const authStatus = document.getElementById('authStatus');
+const googleSignInBtn = document.getElementById('googleSignInBtn');
+const pseudoOverlay = document.getElementById('pseudoOverlay');
+
+function showAuthScreen(text, showRetryBtn){
+  authStatus.textContent = text;
+  googleSignInBtn.textContent = 'Réessayer';
+  googleSignInBtn.style.display = showRetryBtn ? 'block' : 'none';
+  authOverlay.classList.add('show');
+}
+function hideAuthScreen(){
+  authOverlay.classList.remove('show');
+}
+
+googleSignInBtn.addEventListener('click', ()=> location.reload());
+
+document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
+  const pseudo = document.getElementById('pseudoInput').value.trim();
+  if (!pseudo){ showToast('Choisis un pseudo'); return; }
+  db.collection('players').doc(currentUser.uid).set({ pseudo, createdAt: Date.now() }, { merge: true })
+    .then(()=>{
+      currentPseudo = pseudo;
+      document.getElementById('pseudoOverlay').classList.remove('show');
+      startMultiplayerSync();
+    })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
+function onSignedIn(user){
+  currentUser = user;
+  db.collection('players').doc(user.uid).get().then((doc)=>{
+    if (doc.exists && doc.data().pseudo){
+      currentPseudo = doc.data().pseudo;
+      hideAuthScreen();
+      startMultiplayerSync();
+    } else {
+      hideAuthScreen();
+      pseudoOverlay.classList.add('show');
+    }
+  }).catch(()=>{
+    hideAuthScreen();
+    pseudoOverlay.classList.add('show');
+  });
+}
+
+/* Lien optionnel vers un compte Google, pour ne jamais perdre sa progression
+   (même identifiant, même données — juste une sauvegarde permanente en plus) */
+function linkGoogleAccount(){
+  if (!auth || !googleProvider || !currentUser){ showToast('Indisponible ici'); return; }
+  currentUser.linkWithRedirect(googleProvider);
+}
+if (auth){
+  auth.getRedirectResult().then((result)=>{
+    if (result && result.user){
+      showToast('Compte Google lié — ta progression est sauvegardée définitivement');
+    }
+  }).catch((err)=>{
+    if (err.code === 'auth/credential-already-in-use'){
+      showToast('Ce compte Google est déjà lié à un autre profil');
+    } else if (err.code) {
+      showToast('Échec de la liaison : ' + err.message);
+    }
+  });
+}
+
+if (auth){
+  auth.onAuthStateChanged((user)=>{
+    if (user){
+      onSignedIn(user);
+    } else {
+      showAuthScreen('Connexion en cours…', false);
+      auth.signInAnonymously().catch((err)=>{
+        showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
+      });
+    }
+  });
+} else {
+  showAuthScreen('Connexion indisponible (réseau lent ou coupé)', true);
+}
+
+/* ---------- Horloge ---------- */
+function pad(n){ return n.toString().padStart(2,'0'); }
+function updateClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+  document.getElementById('date').textContent = now.toLocaleDateString('fr-FR', { weekday:'short', day:'numeric', month:'short' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+if (location.protocol === 'file:') {
+  document.getElementById('httpsWarn').style.display = 'block';
+}
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+}
+
+/* ---------- Maths géo ---------- */
+const R = 6371000;
+function toRad(d){ return d*Math.PI/180; }
+function haversineDist(lat1, lon1, lat2, lon2){
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+/* ---------- Visibilité selon date / heure ---------- */
+function isActiveNow(d){
+  const now = new Date();
+  if (Array.isArray(d.daysOfWeek) && d.daysOfWeek.length > 0){
+    if (!d.daysOfWeek.includes(now.getDay())) return false;
+  }
+  if (d.startDate){
+    const start = new Date(d.startDate + 'T' + (d.startTime || '00:00'));
+    if (now < start) return false;
+  }
+  if (d.endDate){
+    const end = new Date(d.endDate + 'T' + (d.endTime || '23:59'));
+    if (now > end) return false;
+  }
+  if (!d.startDate && !d.endDate && (d.startTime || d.endTime)){
+    const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
+    if (d.startTime && nowT < d.startTime) return false;
+    if (d.endTime && nowT > d.endTime) return false;
+  }
+  return true;
+}
+
+/* ---------- Dialogue à choix multiples (mini-syntaxe) ---------- */
+/* ---------- Constructeur visuel de dialogue (sans syntaxe) ---------- */
+let currentDialogueSteps = [ { text: '', choices: [] } ];
+
+function renderDialogueBuilder(){
+  const wrap = document.getElementById('dialogueStepsBuilder');
+  wrap.innerHTML = '';
+  currentDialogueSteps.forEach((step, stepIdx)=>{
+    const card = document.createElement('div');
+    card.className = 'step-card';
+
+    const head = document.createElement('div');
+    head.className = 'step-card-head';
+    head.innerHTML = `<b>Étape ${stepIdx}</b>`;
+    if (currentDialogueSteps.length > 1){
+      const delBtn = document.createElement('button');
+      delBtn.className = 'icon-del';
+      delBtn.textContent = '🗑️';
+      delBtn.addEventListener('click', ()=>{
+        currentDialogueSteps.splice(stepIdx, 1);
+        currentDialogueSteps.forEach(s=>{
+          s.choices.forEach(ch=>{
+            if (ch.next === stepIdx) ch.next = null;
+            else if (ch.next !== null && ch.next > stepIdx) ch.next -= 1;
+          });
+        });
+        renderDialogueBuilder();
+      });
+      head.appendChild(delBtn);
+    }
+    card.appendChild(head);
+
+    const textInput = document.createElement('textarea');
+    textInput.className = 'field-input';
+    textInput.placeholder = 'Ce que dit le PNJ à cette étape…';
+    textInput.style.minHeight = '54px';
+    textInput.value = step.text || '';
+    textInput.addEventListener('input', ()=>{ step.text = textInput.value; });
+    card.appendChild(textInput);
+
+    step.choices.forEach((choice, choiceIdx)=>{
+      const row = document.createElement('div');
+      row.className = 'choice-row';
+
+      const rowHead = document.createElement('div');
+      rowHead.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+      rowHead.innerHTML = `<span class="field-label" style="margin:0;">Choix ${choiceIdx+1}</span>`;
+      const delChoiceBtn = document.createElement('button');
+      delChoiceBtn.className = 'icon-del';
+      delChoiceBtn.textContent = '🗑️';
+      delChoiceBtn.addEventListener('click', ()=>{
+        step.choices.splice(choiceIdx, 1);
+        renderDialogueBuilder();
+      });
+      rowHead.appendChild(delChoiceBtn);
+      row.appendChild(rowHead);
+
+      const labelInput = document.createElement('input');
+      labelInput.type = 'text';
+      labelInput.className = 'field-input';
+      labelInput.placeholder = 'Texte du bouton (ex: "Qui es-tu ?")';
+      labelInput.value = choice.label || '';
+      labelInput.addEventListener('input', ()=>{ choice.label = labelInput.value; });
+      row.appendChild(labelInput);
+
+      const nextLabel = document.createElement('div');
+      nextLabel.className = 'field-label';
+      nextLabel.textContent = 'Ensuite';
+      row.appendChild(nextLabel);
+
+      const nextSelect = document.createElement('select');
+      nextSelect.className = 'field-input';
+      let optsHtml = '<option value="fin">Fin de la conversation</option>';
+      currentDialogueSteps.forEach((s, i)=>{
+        if (i === stepIdx) return;
+        optsHtml += `<option value="${i}">Étape ${i}</option>`;
+      });
+      nextSelect.innerHTML = optsHtml;
+      nextSelect.value = (choice.next === null || choice.next === undefined) ? 'fin' : String(choice.next);
+      nextSelect.addEventListener('change', ()=>{ choice.next = (nextSelect.value === 'fin') ? null : parseInt(nextSelect.value, 10); });
+      row.appendChild(nextSelect);
+
+      const itemLabel = document.createElement('div');
+      itemLabel.className = 'field-label';
+      itemLabel.textContent = 'Donner un objet';
+      row.appendChild(itemLabel);
+
+      const itemSelect = document.createElement('select');
+      itemSelect.className = 'field-input';
+      let itemOpts = '<option value="">Aucun</option>';
+      items.forEach(it=>{ itemOpts += `<option value="${it.name}">${it.emoji||'📦'} ${it.name}</option>`; });
+      itemSelect.innerHTML = itemOpts;
+      itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
+
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.className = 'field-input';
+      qtyInput.min = '1';
+      qtyInput.style.marginTop = '6px';
+      qtyInput.style.display = itemSelect.value ? 'block' : 'none';
+      qtyInput.value = (choice.itemGrant && choice.itemGrant.quantity) || 1;
+
+      itemSelect.addEventListener('change', ()=>{
+        if (!itemSelect.value){
+          choice.itemGrant = null;
+          qtyInput.style.display = 'none';
+        } else {
+          choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
+          qtyInput.style.display = 'block';
+        }
+      });
+      qtyInput.addEventListener('input', ()=>{
+        if (choice.itemGrant) choice.itemGrant.quantity = parseInt(qtyInput.value,10) || 1;
+      });
+
+      row.appendChild(itemSelect);
+      row.appendChild(qtyInput);
+      card.appendChild(row);
+    });
+
+    const addChoiceBtn = document.createElement('button');
+    addChoiceBtn.className = 'btn-secondary';
+    addChoiceBtn.style.cssText = 'width:100%; margin-top:10px;';
+    addChoiceBtn.textContent = '➕ Ajouter un choix';
+    addChoiceBtn.addEventListener('click', ()=>{
+      step.choices.push({ label:'', next:null, itemGrant:null });
+      renderDialogueBuilder();
+    });
+    card.appendChild(addChoiceBtn);
+
+    wrap.appendChild(card);
+  });
+}
+
+document.getElementById('addStepBtn').addEventListener('click', ()=>{
+  currentDialogueSteps.push({ text:'', choices:[] });
+  renderDialogueBuilder();
+});
+
+function parseDialogueScript(script){
+  if (!script) return [];
+  const stepsRaw = script.split(/\n\s*---\s*\n/).map(s=>s.trim()).filter(Boolean);
+  return stepsRaw.map((block)=>{
+    const lines = block.split('\n').map(l=>l.trim()).filter(Boolean);
+    const choiceLines = lines.filter(l=>l.startsWith('>'));
+    const textLines = lines.filter(l=>!l.startsWith('>'));
+    const text = textLines.join(' ');
+    const choices = choiceLines.map(l=>{
+      const parts = l.slice(1).split('->');
+      const label = (parts[0]||'').trim();
+      let rest = (parts[1]||'').trim();
+      let itemGrant = null;
+      const colonIdx = rest.indexOf(':');
+      let nextRaw = rest;
+      if (colonIdx !== -1){
+        nextRaw = rest.slice(0, colonIdx).trim();
+        const spec = rest.slice(colonIdx+1).trim();
+        const m = spec.match(/^item=(.+?)(?:\s+x(\d+))?$/i);
+        if (m){
+          itemGrant = { itemName: m[1].trim(), quantity: parseInt(m[2]||'1',10) };
+        }
+      }
+      const nextLower = nextRaw.toLowerCase();
+      const next = (nextLower === '' || nextLower === 'fin') ? null : parseInt(nextRaw,10);
+      return { label, next, itemGrant };
+    });
+    return { text, choices };
+  });
+}
+
+/* ---------- Firestore : PNJ ---------- */
+let creatures = [];
+const creatureCol = (typeof db !== 'undefined') ? db.collection('creature_types') : null;
+let latestSnap = null;
+
+if (creatureCol){
+  creatureCol.onSnapshot((snap)=>{
+    latestSnap = snap;
+    renderAllCreatures(snap);
+    renderEditorList(snap);
+  }, (err)=>{
+    document.getElementById('editorStatus').textContent = 'Erreur Firebase : ' + err.message;
+  });
+}
+
+function renderAllCreatures(snap){
+  creatures.forEach(c=>{ if (c.marker) map.removeLayer(c.marker); });
+  creatures = [];
+  snap.forEach((doc)=>{
+    const d = doc.data();
+    if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
+    if (!isActiveNow(d)) return; // PNJ inactif : pas affiché sur la carte
+    creatures.push({ id: doc.id, ...d, marker:null, active: true });
+  });
+  renderCreatureMarkers();
+  updateCreatureVisuals();
+}
+
+function renderCreatureMarkers(){
+  creatures.forEach(c=>{
+    if (c.marker) return;
+    const inner = c.imageUrl
+      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;">`
+      : `<div class="creature-icon" id="icon-${c.id}">${c.emoji || '🐾'}</div>`;
+    const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
+    const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
+    marker.on('click', ()=> handleCreatureClick(c));
+    c.marker = marker;
+  });
+}
+
+const VISIBLE_RADIUS_M = 200;
+const INTERACT_RADIUS_M = 40;
+
+function updateCreatureVisuals(){
+  creatures.forEach(c=>{
+    const dist = playerPos ? haversineDist(playerPos.lat, playerPos.lng, c.lat, c.lng) : null;
+    c._dist = dist;
+    if (!c.marker) return;
+    const shouldShow = c.forceVisible || (dist !== null && dist <= VISIBLE_RADIUS_M);
+    const onMap = map.hasLayer(c.marker);
+    if (shouldShow && !onMap) c.marker.addTo(map);
+    if (!shouldShow && onMap) map.removeLayer(c.marker);
+  });
+}
+
+function handleCreatureClick(c){
+  if (c._dist === null || c._dist === undefined){
+    showToast('Position GPS requise pour lui parler');
+    return;
+  }
+  if (c._dist > INTERACT_RADIUS_M){
+    showToast(`Trop loin pour lui parler (encore ${Math.round(c._dist - INTERACT_RADIUS_M)} m)`);
+    return;
+  }
+  openSheet(c);
+}
+
+/* ---------- Fiche PNJ + dialogues à choix (vue joueur) ---------- */
+let activeCreature = null;
+let activeSteps = [];
+let currentStepIdx = 0;
+
+function openSheet(c){
+  activeCreature = c;
+  activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
+  currentStepIdx = 0;
+  renderSheet();
+  document.getElementById('overlay').classList.add('show');
+}
+
+function renderSheet(){
+  const c = activeCreature;
+  const dist = c._dist !== undefined ? Math.round(c._dist) : null;
+  const emojiEl = document.getElementById('sheetEmoji');
+  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
+  document.getElementById('sheetName').textContent = c.name || '(sans nom)';
+  document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
+
+  const choicesEl = document.getElementById('sheetChoices');
+  choicesEl.innerHTML = '';
+
+  if (!activeSteps.length){
+    document.getElementById('sheetMeta').textContent = '(pas de dialogue défini)';
+    return;
+  }
+
+  const step = activeSteps[currentStepIdx];
+  document.getElementById('sheetMeta').textContent = step.text;
+
+  if (step.choices.length === 0){
+    const btn = document.createElement('button');
+    btn.className = 'choice-btn end';
+    btn.textContent = 'Fermer';
+    btn.addEventListener('click', ()=> document.getElementById('overlay').classList.remove('show'));
+    choicesEl.appendChild(btn);
+    return;
+  }
+
+  step.choices.forEach(ch=>{
+    const btn = document.createElement('button');
+    btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
+    btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
+    btn.addEventListener('click', ()=>{
+      if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
+      if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
+        document.getElementById('overlay').classList.remove('show');
+      } else {
+        currentStepIdx = ch.next;
+        renderSheet();
+      }
+    });
+    choicesEl.appendChild(btn);
+  });
+}
+
+function grantItemToPlayer(itemName, quantity){
+  if (!currentUser || !db) return;
+  const it = items.find(i=>i.name === itemName);
+  if (!it){ showToast('Objet "' + itemName + '" introuvable'); return; }
+  db.collection('players').doc(currentUser.uid).set({
+    inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
+  }, { merge: true })
+    .then(()=> showToast(`+${quantity} ${it.emoji || ''} ${it.name}`))
+    .catch((err)=> showToast('Échec : ' + err.message));
+}
+
+document.getElementById('closeBtn').addEventListener('click', ()=>{
+  document.getElementById('overlay').classList.remove('show');
+});
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* ---------- Panneau éditeur ---------- */
+let editingId = null;
+let pendingLat = null, pendingLng = null;
+let uploadedImageDataUrl = null;
+
+document.getElementById('editImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 160;
+      let w = img.width, h = img.height;
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      uploadedImageDataUrl = canvas.toDataURL('image/png');
+      document.getElementById('imagePreview').src = uploadedImageDataUrl;
+      document.getElementById('imagePreviewWrap').style.display = 'block';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('clearImageBtn').addEventListener('click', ()=>{
+  uploadedImageDataUrl = null;
+  document.getElementById('editImageFile').value = '';
+  document.getElementById('imagePreviewWrap').style.display = 'none';
+});
+
+function renderEditorList(snap){
+  const editorStatus = document.getElementById('editorStatus');
+  editorStatus.textContent = snap.empty ? 'Aucun PNJ pour le moment.' : snap.size + ' PNJ dans Firebase';
+
+  const activeEl = document.getElementById('editorListActive');
+  const inactiveEl = document.getElementById('editorListInactive');
+  if (!activeEl || !inactiveEl) return;
+  activeEl.innerHTML = '';
+  inactiveEl.innerHTML = '';
+
+  let hasActive = false, hasInactive = false;
+  snap.forEach((doc)=>{
+    const d = doc.data();
+    const active = isActiveNow(d);
+    if (active) hasActive = true; else hasInactive = true;
+    const row = document.createElement('div');
+    row.className = 'editor-list-item';
+    const thumb = d.imageUrl ? `<img src="${d.imageUrl}">` : (d.emoji || '🐾');
+    row.innerHTML = `
+      <div class="thumb">${thumb}</div>
+      <div class="name">${d.name || '(sans nom)'}</div>
+      <button class="btn-secondary" data-edit="${doc.id}">Modifier</button>
+      <button class="btn-secondary" data-del="${doc.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+    `;
+    (active ? activeEl : inactiveEl).appendChild(row);
+  });
+
+  if (!hasActive) activeEl.innerHTML = '<p class="meta">Aucun PNJ actif pour le moment.</p>';
+  if (!hasInactive) inactiveEl.innerHTML = '<p class="meta">Aucun PNJ inactif pour le moment.</p>';
+
+  [activeEl, inactiveEl].forEach(el=>{
+    el.querySelectorAll('button[data-del]').forEach(btn=>{
+      btn.addEventListener('click', ()=> creatureCol.doc(btn.dataset.del).delete());
+    });
+    el.querySelectorAll('button[data-edit]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ loadForEdit(btn.dataset.edit); showPnjSection('new'); });
+    });
+  });
+}
+
+function showPnjSection(name){
+  document.querySelectorAll('.pnj-section').forEach(el=> el.style.display = 'none');
+  const target = document.getElementById('pnjsection-' + name);
+  if (target) target.style.display = 'block';
+}
+document.querySelectorAll('#pnjNav button[data-pnjsection]').forEach(btn=>{
+  btn.addEventListener('click', ()=> showPnjSection(btn.dataset.pnjsection));
+});
+
+
+let selectedDays = new Set();
+document.querySelectorAll('.day-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const day = parseInt(btn.dataset.day, 10);
+    if (selectedDays.has(day)){ selectedDays.delete(day); btn.classList.remove('selected'); }
+    else { selectedDays.add(day); btn.classList.add('selected'); }
+  });
+});
+function setSelectedDays(days){
+  selectedDays = new Set(days || []);
+  document.querySelectorAll('.day-btn').forEach(btn=>{
+    btn.classList.toggle('selected', selectedDays.has(parseInt(btn.dataset.day,10)));
+  });
+}
+
+function loadForEdit(id){
+  const doc = latestSnap.docs.find(d=>d.id===id);
+  if (!doc) return;
+  const d = doc.data();
+  editingId = id;
+  document.getElementById('editName').value = d.name || '';
+  document.getElementById('editMetier').value = d.metier || '';
+  if (Array.isArray(d.dialogueSteps) && d.dialogueSteps.length){
+    currentDialogueSteps = JSON.parse(JSON.stringify(d.dialogueSteps));
+  } else if (d.dialogueScript){
+    currentDialogueSteps = parseDialogueScript(d.dialogueScript).map(s=>({ text: s.text, choices: s.choices.map(c=>({ label: c.label, next: c.next, itemGrant: c.itemGrant || null })) }));
+    if (!currentDialogueSteps.length) currentDialogueSteps = [{ text:'', choices:[] }];
+  } else {
+    currentDialogueSteps = [ { text:'', choices:[] } ];
+  }
+  renderDialogueBuilder();
+  document.getElementById('editStartDate').value = d.startDate || '';
+  document.getElementById('editEndDate').value = d.endDate || '';
+  document.getElementById('editStartTime').value = d.startTime || '';
+  document.getElementById('editEndTime').value = d.endTime || '';
+  setSelectedDays(d.daysOfWeek);
+
+  uploadedImageDataUrl = d.imageUrl || null;
+  if (d.imageUrl){
+    document.getElementById('imagePreview').src = d.imageUrl;
+    document.getElementById('imagePreviewWrap').style.display = 'block';
+  } else {
+    document.getElementById('imagePreviewWrap').style.display = 'none';
+  }
+
+  if (typeof d.lat === 'number' && typeof d.lng === 'number'){
+    pendingLat = d.lat; pendingLng = d.lng;
+    document.getElementById('posStatusText').textContent = `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}`;
+  } else {
+    pendingLat = null; pendingLng = null;
+    document.getElementById('posStatusText').textContent = 'Non définie';
+  }
+  document.getElementById('editSaveBtn').textContent = 'Mettre à jour le PNJ';
+  document.getElementById('editCancelBtn').style.display = 'block';
+  document.getElementById('editorOverlay').classList.add('show');
+}
+
+function resetForm(){
+  editingId = null;
+  pendingLat = null; pendingLng = null;
+  uploadedImageDataUrl = null;
+  document.getElementById('editImageFile').value = '';
+  document.getElementById('imagePreviewWrap').style.display = 'none';
+  document.getElementById('editName').value = '';
+  document.getElementById('editMetier').value = '';
+  currentDialogueSteps = [ { text:'', choices:[] } ];
+  renderDialogueBuilder();
+  document.getElementById('editStartDate').value = '';
+  document.getElementById('editEndDate').value = '';
+  document.getElementById('editStartTime').value = '';
+  document.getElementById('editEndTime').value = '';
+  setSelectedDays([]);
+  document.getElementById('posStatusText').textContent = 'Non définie';
+  document.getElementById('editSaveBtn').textContent = 'Enregistrer le PNJ';
+  document.getElementById('editCancelBtn').style.display = 'none';
+}
+document.getElementById('editCancelBtn').addEventListener('click', resetForm);
+
+document.getElementById('editHubBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.add('show');
+});
+document.getElementById('editHubCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.remove('show');
+});
+document.getElementById('hubPnjBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.remove('show');
+  document.getElementById('editorOverlay').classList.add('show');
+  showPnjSection('new');
+  renderDialogueBuilder();
+});
+document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.remove('show');
+  document.getElementById('itemsEditorOverlay').classList.add('show');
+  showItemsSection('new');
+});
+document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('editorOverlay').classList.remove('show');
+});
+document.getElementById('linkGoogleBtn').addEventListener('click', linkGoogleAccount);
+
+document.getElementById('editSaveBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('editName').value.trim();
+  const metier = document.getElementById('editMetier').value || '';
+  const emoji = '🐾';
+  const imageUrl = uploadedImageDataUrl || '';
+  const dialogueSteps = currentDialogueSteps
+    .map(s=>({ text: (s.text||'').trim(), choices: s.choices.filter(c=>c.label && c.label.trim()) }))
+    .filter(s=> s.text || s.choices.length);
+  const startDate = document.getElementById('editStartDate').value;
+  const endDate = document.getElementById('editEndDate').value;
+  const startTime = document.getElementById('editStartTime').value;
+  const endTime = document.getElementById('editEndTime').value;
+  const daysOfWeek = Array.from(selectedDays);
+
+  if (!name){ showToast('Donne un nom au PNJ'); return; }
+  if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
+  if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+
+  const data = { name, metier, emoji, imageUrl, dialogueSteps, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
+  op.then(()=>{
+    showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
+    resetForm();
+  }).catch((err)=>{
+    showToast('Échec : ' + err.message);
+  });
+});
+
+/* ---------- Placement : nouvel emplacement (crosshair) ---------- */
+let placementTarget = 'creature'; // 'creature' ou 'pickup'
+
+document.getElementById('placeNewBtn').addEventListener('click', ()=>{
+  placementTarget = 'creature';
+  document.getElementById('editorOverlay').classList.remove('show');
+  document.getElementById('crosshair').style.display = 'block';
+  document.getElementById('placementHint').style.display = 'block';
+  document.getElementById('placementBar').style.display = 'flex';
+  if (playerPos) map.setView([playerPos.lat, playerPos.lng], map.getZoom());
+});
+document.getElementById('placeCancelBtn').addEventListener('click', ()=>{
+  document.getElementById('crosshair').style.display = 'none';
+  document.getElementById('placementHint').style.display = 'none';
+  document.getElementById('placementBar').style.display = 'none';
+  if (placementTarget === 'pickup') document.getElementById('itemsEditorOverlay').classList.add('show');
+  else document.getElementById('editorOverlay').classList.add('show');
+});
+document.getElementById('placeConfirmBtn').addEventListener('click', ()=>{
+  const center = map.getCenter();
+  document.getElementById('crosshair').style.display = 'none';
+  document.getElementById('placementHint').style.display = 'none';
+  document.getElementById('placementBar').style.display = 'none';
+  if (placementTarget === 'pickup'){
+    pendingPickupLat = center.lat; pendingPickupLng = center.lng;
+    document.getElementById('pickupPosStatusText').textContent = `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}`;
+    document.getElementById('itemsEditorOverlay').classList.add('show');
+  } else {
+    pendingLat = center.lat; pendingLng = center.lng;
+    document.getElementById('posStatusText').textContent = `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}`;
+    document.getElementById('editorOverlay').classList.add('show');
+  }
+});
+
+/* ---------- Déplacement d'un point existant ---------- */
+let movingMarker = null;
+let movingMarkerTarget = 'creature';
+document.getElementById('moveExistingBtn').addEventListener('click', ()=>{
+  if (!editingId){ showToast('Sélectionne d\'abord un PNJ existant'); return; }
+  const c = creatures.find(cr=>cr.id===editingId);
+  if (!c || !c.marker){ showToast('Pas de point existant à déplacer — utilise "Nouvel emplacement"'); return; }
+  movingMarkerTarget = 'creature';
+  document.getElementById('editorOverlay').classList.remove('show');
+  document.getElementById('moveHint').style.display = 'block';
+  document.getElementById('moveBar').style.display = 'flex';
+  movingMarker = c.marker;
+  c.forceVisible = true;
+  if (!map.hasLayer(movingMarker)) movingMarker.addTo(map);
+  movingMarker.dragging.enable();
+  map.setView(movingMarker.getLatLng(), map.getZoom());
+});
+document.getElementById('moveCancelBtn').addEventListener('click', ()=>{
+  if (movingMarker){
+    movingMarker.dragging.disable();
+    if (movingMarkerTarget === 'creature'){
+      const c = creatures.find(cr=>cr.marker===movingMarker);
+      if (c){ movingMarker.setLatLng([c.lat, c.lng]); c.forceVisible = false; }
+      updateCreatureVisuals();
+    } else {
+      const p = pickups.find(pk=>pickupMarkers[pk.id]===movingMarker);
+      if (p) movingMarker.setLatLng([p.lat, p.lng]);
+    }
+  }
+  document.getElementById('moveHint').style.display = 'none';
+  document.getElementById('moveBar').style.display = 'none';
+  if (movingMarkerTarget === 'pickup') document.getElementById('itemsEditorOverlay').classList.add('show');
+  else document.getElementById('editorOverlay').classList.add('show');
+});
+document.getElementById('moveConfirmBtn').addEventListener('click', ()=>{
+  if (movingMarker){
+    const ll = movingMarker.getLatLng();
+    movingMarker.dragging.disable();
+    if (movingMarkerTarget === 'creature'){
+      pendingLat = ll.lat; pendingLng = ll.lng;
+      document.getElementById('posStatusText').textContent = `${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}`;
+      const c = creatures.find(cr=>cr.marker===movingMarker);
+      if (c) c.forceVisible = false;
+    } else {
+      pendingPickupLat = ll.lat; pendingPickupLng = ll.lng;
+      document.getElementById('pickupPosStatusText').textContent = `${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}`;
+    }
+  }
+  document.getElementById('moveHint').style.display = 'none';
+  document.getElementById('moveBar').style.display = 'none';
+  if (movingMarkerTarget === 'pickup') document.getElementById('itemsEditorOverlay').classList.add('show');
+  else document.getElementById('editorOverlay').classList.add('show');
+});
+
+/* ---------- Carte Leaflet ---------- */
+let map, playerMarker, accCircle;
+let playerPos = null;
+
+/* ---------- Multijoueur : position des autres joueurs ---------- */
+let otherPlayerMarkers = {};
+let multiplayerStarted = false;
+const STALE_AFTER_MS = 2 * 60 * 1000; // 2 minutes sans nouvelle position = joueur ignoré
+
+function startMultiplayerSync(){
+  if (multiplayerStarted || !currentUser || !db) return;
+  multiplayerStarted = true;
+
+  setInterval(()=>{
+    if (!playerPos || !currentUser) return;
+    db.collection('players').doc(currentUser.uid).set({
+      pseudo: currentPseudo || 'Joueur',
+      lat: playerPos.lat,
+      lng: playerPos.lng,
+      lastSeen: Date.now()
+    }, { merge: true }).catch(()=>{});
+  }, 8000);
+
+  db.collection('players').onSnapshot((snap)=>{
+    const now = Date.now();
+    const seenIds = new Set();
+    snap.forEach((doc)=>{
+      if (doc.id === currentUser.uid) return;
+      const d = doc.data();
+      if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
+      if (now - (d.lastSeen || 0) > STALE_AFTER_MS) return;
+      seenIds.add(doc.id);
+      if (otherPlayerMarkers[doc.id]){
+        otherPlayerMarkers[doc.id].setLatLng([d.lat, d.lng]);
+      } else {
+        const icon = L.divIcon({
+          className:'',
+          html:`<div style="background:#2b6cb0;color:#fff;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);">${(d.pseudo||'Joueur')}</div>`,
+          iconSize:[0,0]
+        });
+        otherPlayerMarkers[doc.id] = L.marker([d.lat, d.lng], { icon }).addTo(map);
+      }
+    });
+    Object.keys(otherPlayerMarkers).forEach((id)=>{
+      if (!seenIds.has(id)){
+        map.removeLayer(otherPlayerMarkers[id]);
+        delete otherPlayerMarkers[id];
+      }
+    });
+  });
+}
+
+/* ---------- Métiers (partagés entre PNJ, Objets, Recettes) ---------- */
+const metiersCol = (typeof db !== 'undefined') ? db.collection('metiers') : null;
+let metiers = [];
+if (metiersCol){
+  metiersCol.onSnapshot((snap)=>{
+    metiers = snap.docs.map(d=>({ id: d.id, ...d.data() })).sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+    renderPnjMetierSelect();
+    renderItemEquipMetiers();
+    renderRecipeMetiers();
+  });
+}
+function renderPnjMetierSelect(){
+  const sel = document.getElementById('editMetier');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Aucun métier</option>' + metiers.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  if (current) sel.value = current;
+}
+
+function renderItemEquipMetiers(){
+  const wrap = document.getElementById('itemEquipMetiers');
+  if (!wrap) return;
+  const checked = new Set(Array.from(wrap.querySelectorAll('input:checked')).map(i=>i.value));
+  wrap.innerHTML = metiers.map(m=>`
+    <label style="display:flex; align-items:center; gap:4px; border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px;">
+      <input type="checkbox" value="${m.id}" style="width:auto;"> ${m.name}
+    </label>
+  `).join('') || '<p class="meta">Aucun métier créé pour l\'instant (crée-en un depuis l\'éditeur de recettes).</p>';
+  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+    if (checked.has(cb.value)) cb.checked = true;
+  });
+}
+document.getElementById('itemEquippable').addEventListener('change', (e)=>{
+  document.getElementById('itemEffectWrap').style.display = e.target.checked ? 'block' : 'none';
+});
+document.getElementById('itemEffectDuration').addEventListener('change', (e)=>{
+  document.getElementById('itemEffectSecondsWrap').style.display = (e.target.value === 'temporary') ? 'block' : 'none';
+});
+
+/* ---------- Objets (items) ---------- */
+const itemsCol = (typeof db !== 'undefined') ? db.collection('items') : null;
+let items = [];
+let editingItemId = null;
+
+if (itemsCol){
+  itemsCol.onSnapshot((snap)=>{
+    items = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
+    renderItemsListView();
+    renderPickupItemSelect();
+    if (document.getElementById('recipeOutputItem')) renderRecipeOutputSelect();
+    if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
+  }, (err)=>{
+    document.getElementById('itemsStatus').textContent = 'Erreur : ' + err.message;
+  });
+}
+
+function renderItemsListView(){
+  const listEl = document.getElementById('itemsList');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  items.forEach((it)=>{
+    const row = document.createElement('div');
+    row.className = 'editor-list-item';
+    const thumb = it.imageUrl ? `<img src="${it.imageUrl}" style="width:30px;height:30px;object-fit:contain;">` : (it.emoji || '📦');
+    row.innerHTML = `
+      <div class="thumb">${thumb}</div>
+      <div class="name">${it.name || '(sans nom)'}</div>
+      <button class="btn-secondary" data-edit="${it.id}">Modifier</button>
+      <button class="btn-secondary" data-del="${it.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+    `;
+    listEl.appendChild(row);
+  });
+  listEl.querySelectorAll('button[data-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=> itemsCol.doc(btn.dataset.del).delete());
+  });
+  listEl.querySelectorAll('button[data-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ loadItemForEdit(btn.dataset.edit); showItemsSection('new'); });
+  });
+}
+
+let uploadedItemImageDataUrl = null;
+
+document.getElementById('itemImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 160;
+      let w = img.width, h = img.height;
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      uploadedItemImageDataUrl = canvas.toDataURL('image/png');
+      document.getElementById('itemImagePreview').src = uploadedItemImageDataUrl;
+      document.getElementById('itemImagePreviewWrap').style.display = 'block';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('itemClearImageBtn').addEventListener('click', ()=>{
+  uploadedItemImageDataUrl = null;
+  document.getElementById('itemImageFile').value = '';
+  document.getElementById('itemImagePreviewWrap').style.display = 'none';
+});
+
+function loadItemForEdit(id){
+  const it = items.find(i=>i.id===id);
+  if (!it) return;
+  editingItemId = id;
+  document.getElementById('itemName').value = it.name || '';
+  document.getElementById('itemEmoji').value = it.emoji || '';
+  document.getElementById('itemType').value = it.type || 'ressource';
+  document.getElementById('itemDescription').value = it.description || '';
+  const equippable = !!it.equippable;
+  document.getElementById('itemEquippable').checked = equippable;
+  document.getElementById('itemEffectWrap').style.display = equippable ? 'block' : 'none';
+  document.getElementById('itemEffectType').value = it.effectType || 'speed_boost';
+  document.getElementById('itemEffectValue').value = it.effectValue || 20;
+  document.getElementById('itemEffectDuration').value = it.effectDuration || 'permanent';
+  document.getElementById('itemEffectSecondsWrap').style.display = (it.effectDuration === 'temporary') ? 'block' : 'none';
+  document.getElementById('itemEffectSeconds').value = it.effectSeconds || 45;
+  renderItemEquipMetiers();
+  const allowed = new Set(it.effectMetiers || []);
+  document.querySelectorAll('#itemEquipMetiers input[type="checkbox"]').forEach(cb=>{ cb.checked = allowed.has(cb.value); });
+  uploadedItemImageDataUrl = it.imageUrl || null;
+  document.getElementById('itemImageFile').value = '';
+  if (it.imageUrl){
+    document.getElementById('itemImagePreview').src = it.imageUrl;
+    document.getElementById('itemImagePreviewWrap').style.display = 'block';
+  } else {
+    document.getElementById('itemImagePreviewWrap').style.display = 'none';
+  }
+  document.getElementById('itemSaveBtn').textContent = 'Mettre à jour l\'objet';
+  document.getElementById('itemCancelBtn').style.display = 'block';
+}
+function resetItemForm(){
+  editingItemId = null;
+  uploadedItemImageDataUrl = null;
+  document.getElementById('itemImageFile').value = '';
+  document.getElementById('itemImagePreviewWrap').style.display = 'none';
+  document.getElementById('itemName').value = '';
+  document.getElementById('itemEmoji').value = '';
+  document.getElementById('itemType').value = 'ressource';
+  document.getElementById('itemDescription').value = '';
+  document.getElementById('itemEquippable').checked = false;
+  document.getElementById('itemEffectWrap').style.display = 'none';
+  document.getElementById('itemEffectType').value = 'speed_boost';
+  document.getElementById('itemEffectValue').value = 20;
+  document.getElementById('itemEffectDuration').value = 'permanent';
+  document.getElementById('itemEffectSecondsWrap').style.display = 'none';
+  document.getElementById('itemEffectSeconds').value = 45;
+  renderItemEquipMetiers();
+  document.getElementById('itemSaveBtn').textContent = 'Enregistrer l\'objet';
+  document.getElementById('itemCancelBtn').style.display = 'none';
+}
+document.getElementById('itemCancelBtn').addEventListener('click', resetItemForm);
+
+document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('itemName').value.trim();
+  const emoji = document.getElementById('itemEmoji').value.trim() || '📦';
+  const imageUrl = uploadedItemImageDataUrl || '';
+  const type = document.getElementById('itemType').value;
+  const description = document.getElementById('itemDescription').value.trim();
+  const equippable = document.getElementById('itemEquippable').checked;
+  const effectType = document.getElementById('itemEffectType').value;
+  const effectValue = parseInt(document.getElementById('itemEffectValue').value, 10) || 0;
+  const effectDuration = document.getElementById('itemEffectDuration').value;
+  const effectSeconds = parseInt(document.getElementById('itemEffectSeconds').value, 10) || 45;
+  const effectMetiers = Array.from(document.querySelectorAll('#itemEquipMetiers input[type="checkbox"]:checked')).map(cb=>cb.value);
+  if (!name){ showToast('Donne un nom à l\'objet'); return; }
+  if (!itemsCol){ showToast('Firebase indisponible ici'); return; }
+  const data = { name, emoji, imageUrl, type, description, equippable, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, updatedAt: Date.now() };
+  const op = editingItemId ? itemsCol.doc(editingItemId).set(data) : itemsCol.add({ ...data, createdAt: Date.now() });
+  op.then(()=>{ showToast(editingItemId ? 'Objet mis à jour' : 'Objet ajouté'); resetItemForm(); showItemsSection('list'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
+function renderPickupItemSelect(){
+  const sel = document.getElementById('pickupItemSelect');
+  const current = sel.value;
+  sel.innerHTML = items.map(it=>`<option value="${it.id}">${it.emoji||'📦'} ${it.name}</option>`).join('');
+  if (current) sel.value = current;
+}
+
+/* ---------- Points de ramassage (pickups) ---------- */
+const pickupsCol = (typeof db !== 'undefined') ? db.collection('pickups') : null;
+let pickups = [];
+let editingPickupId = null;
+let pendingPickupLat = null, pendingPickupLng = null;
+
+document.getElementById('pickupRespawnMode').addEventListener('change', (e)=>{
+  document.getElementById('pickupRespawnMinutesWrap').style.display = (e.target.value === 'timed') ? 'block' : 'none';
+});
+
+if (pickupsCol){
+  pickupsCol.onSnapshot((snap)=>{
+    pickups = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    renderPickupsSplitLists();
+    renderPickupMarkers();
+  });
+}
+
+function isPickupAvailable(p){
+  const uid = currentUser ? currentUser.uid : null;
+  if (p.respawnMode === 'perPlayer'){
+    return !(p.collectedBy && uid && p.collectedBy[uid]);
+  }
+  if (p.respawnMode === 'timed'){
+    if (!p.collectedAt) return true;
+    return (Date.now() - p.collectedAt) > (p.respawnMinutes || 60) * 60000;
+  }
+  // 'once'
+  return !p.collectedAt;
+}
+
+let pickupMarkers = {};
+function renderPickupMarkers(){
+  const validIds = new Set();
+  pickups.forEach(p=>{
+    if (typeof p.lat !== 'number' || typeof p.lng !== 'number') return;
+    validIds.add(p.id);
+    const available = isPickupAvailable(p);
+    if (!available){
+      if (pickupMarkers[p.id]){ map.removeLayer(pickupMarkers[p.id]); delete pickupMarkers[p.id]; }
+      return;
+    }
+    if (pickupMarkers[p.id]){
+      pickupMarkers[p.id].setLatLng([p.lat, p.lng]);
+      return;
+    }
+    const inner = p.itemImageUrl
+      ? `<img src="${p.itemImageUrl}" style="width:36px;height:36px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));">`
+      : `<div style="font-size:28px; filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));">${p.itemEmoji || '📦'}</div>`;
+    const icon = L.divIcon({ className:'', html: inner, iconSize:[36,36] });
+    const marker = L.marker([p.lat, p.lng], { icon });
+    marker.on('click', ()=> handlePickupClick(p));
+    pickupMarkers[p.id] = marker;
+  });
+  Object.keys(pickupMarkers).forEach(id=>{
+    if (!validIds.has(id)){ map.removeLayer(pickupMarkers[id]); delete pickupMarkers[id]; }
+  });
+  updatePickupVisibility();
+}
+
+function updatePickupVisibility(){
+  pickups.forEach(p=>{
+    const marker = pickupMarkers[p.id];
+    if (!marker) return;
+    const dist = playerPos ? haversineDist(playerPos.lat, playerPos.lng, p.lat, p.lng) : null;
+    const shouldShow = dist !== null && dist <= VISIBLE_RADIUS_M;
+    const onMap = map.hasLayer(marker);
+    if (shouldShow && !onMap) marker.addTo(map);
+    if (!shouldShow && onMap) map.removeLayer(marker);
+  });
+}
+
+function handlePickupClick(p){
+  if (!currentUser){ showToast('Connexion requise'); return; }
+  const dist = playerPos ? haversineDist(playerPos.lat, playerPos.lng, p.lat, p.lng) : null;
+  if (dist === null || dist > INTERACT_RADIUS_M){
+    showToast(`Trop loin pour ramasser (${INTERACT_RADIUS_M} m)`);
+    return;
+  }
+  if (!isPickupAvailable(p)){ showToast('Déjà ramassé'); return; }
+
+  const uid = currentUser.uid;
+  const playerRef = db.collection('players').doc(uid);
+  const pickupRef = pickupsCol.doc(p.id);
+  const qty = p.quantity || 1;
+
+  const playerUpdate = playerRef.set({
+    inventory: { [p.itemId]: firebase.firestore.FieldValue.increment(qty) }
+  }, { merge: true });
+
+  let pickupUpdate;
+  if (p.respawnMode === 'perPlayer'){
+    pickupUpdate = pickupRef.set({ collectedBy: { [uid]: Date.now() } }, { merge: true });
+  } else {
+    pickupUpdate = pickupRef.set({ collectedAt: Date.now() }, { merge: true });
+  }
+
+  Promise.all([playerUpdate, pickupUpdate])
+    .then(()=> showToast(`+${qty} ${p.itemEmoji || ''} ${p.itemName || ''}`))
+    .catch((err)=> showToast('Échec : ' + err.message));
+}
+
+function isPermanentlyGone(p){
+  return p.respawnMode === 'once' && !!p.collectedAt;
+}
+
+function renderPickupsSplitLists(){
+  const activeEl = document.getElementById('pickupsListActive');
+  const inactiveEl = document.getElementById('pickupsListInactive');
+  if (!activeEl || !inactiveEl) return;
+  activeEl.innerHTML = '';
+  inactiveEl.innerHTML = '';
+
+  pickups.forEach((p)=>{
+    const gone = isPermanentlyGone(p);
+    const thumb = p.itemImageUrl ? `<img src="${p.itemImageUrl}" style="width:30px;height:30px;object-fit:contain;">` : (p.itemEmoji || '📦');
+    const row = document.createElement('div');
+    row.className = 'editor-list-item';
+    row.innerHTML = `
+      <div class="thumb">${thumb}</div>
+      <div class="name">${p.itemName || '(objet)'} × ${p.quantity || 1}</div>
+      <button class="btn-secondary" data-edit="${p.id}">Modifier</button>
+      <button class="btn-secondary" data-del="${p.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+    `;
+    (gone ? inactiveEl : activeEl).appendChild(row);
+  });
+
+  if (!pickups.some(p=>!isPermanentlyGone(p))) activeEl.innerHTML = '<p class="meta">Aucun point placé pour le moment.</p>';
+  if (!pickups.some(p=>isPermanentlyGone(p))) inactiveEl.innerHTML = '<p class="meta">Aucun objet définitivement disparu pour le moment.</p>';
+
+  [activeEl, inactiveEl].forEach(el=>{
+    el.querySelectorAll('button[data-del]').forEach(btn=>{
+      btn.addEventListener('click', ()=> pickupsCol.doc(btn.dataset.del).delete());
+    });
+    el.querySelectorAll('button[data-edit]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ loadPickupForEdit(btn.dataset.edit); showItemsSection('place'); });
+    });
+  });
+}
+
+function loadPickupForEdit(id){
+  const p = pickups.find(pk=>pk.id===id);
+  if (!p) return;
+  editingPickupId = id;
+  document.getElementById('pickupItemSelect').value = p.itemId || '';
+  document.getElementById('pickupQuantity').value = p.quantity || 1;
+  document.getElementById('pickupRespawnMode').value = p.respawnMode || 'once';
+  document.getElementById('pickupRespawnMinutesWrap').style.display = (p.respawnMode === 'timed') ? 'block' : 'none';
+  document.getElementById('pickupRespawnMinutes').value = p.respawnMinutes || 60;
+  if (typeof p.lat === 'number'){
+    pendingPickupLat = p.lat; pendingPickupLng = p.lng;
+    document.getElementById('pickupPosStatusText').textContent = `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+  }
+  document.getElementById('pickupSaveBtn').textContent = 'Mettre à jour le point';
+  document.getElementById('pickupCancelBtn').style.display = 'block';
+}
+function resetPickupForm(){
+  editingPickupId = null;
+  pendingPickupLat = null; pendingPickupLng = null;
+  document.getElementById('pickupQuantity').value = 1;
+  document.getElementById('pickupRespawnMode').value = 'once';
+  document.getElementById('pickupRespawnMinutesWrap').style.display = 'none';
+  document.getElementById('pickupPosStatusText').textContent = 'Non définie';
+  document.getElementById('pickupSaveBtn').textContent = 'Enregistrer le point';
+  document.getElementById('pickupCancelBtn').style.display = 'none';
+}
+document.getElementById('pickupCancelBtn').addEventListener('click', resetPickupForm);
+
+document.getElementById('pickupSaveBtn').addEventListener('click', ()=>{
+  const itemId = document.getElementById('pickupItemSelect').value;
+  const item = items.find(i=>i.id===itemId);
+  if (!item){ showToast('Choisis un objet'); return; }
+  if (pendingPickupLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
+  const quantity = parseInt(document.getElementById('pickupQuantity').value, 10) || 1;
+  const respawnMode = document.getElementById('pickupRespawnMode').value;
+  const respawnMinutes = parseInt(document.getElementById('pickupRespawnMinutes').value, 10) || 60;
+
+  const data = {
+    itemId, itemName: item.name, itemEmoji: item.emoji, itemImageUrl: item.imageUrl || '',
+    quantity, lat: pendingPickupLat, lng: pendingPickupLng,
+    respawnMode, respawnMinutes, updatedAt: Date.now()
+  };
+  const op = editingPickupId ? pickupsCol.doc(editingPickupId).set(data, { merge: true }) : pickupsCol.add({ ...data, createdAt: Date.now() });
+  op.then(()=>{ showToast(editingPickupId ? 'Point mis à jour' : 'Point ajouté'); resetPickupForm(); showItemsSection('placed'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
+document.getElementById('pickupPlaceNewBtn').addEventListener('click', ()=>{
+  document.getElementById('itemsEditorOverlay').classList.remove('show');
+  document.getElementById('crosshair').style.display = 'block';
+  document.getElementById('placementHint').style.display = 'block';
+  document.getElementById('placementBar').style.display = 'flex';
+  placementTarget = 'pickup';
+  if (playerPos) map.setView([playerPos.lat, playerPos.lng], map.getZoom());
+});
+document.getElementById('pickupMoveBtn').addEventListener('click', ()=>{
+  if (!editingPickupId){ showToast('Sélectionne d\'abord un point existant'); return; }
+  const marker = pickupMarkers[editingPickupId];
+  if (!marker){ showToast('Ce point n\'est pas affiché actuellement'); return; }
+  document.getElementById('itemsEditorOverlay').classList.remove('show');
+  document.getElementById('moveHint').style.display = 'block';
+  document.getElementById('moveBar').style.display = 'flex';
+  movingMarker = marker;
+  movingMarkerTarget = 'pickup';
+  if (!map.hasLayer(movingMarker)) movingMarker.addTo(map);
+  movingMarker.dragging.enable();
+  map.setView(movingMarker.getLatLng(), map.getZoom());
+});
+
+/* ---------- Inventaire (vue joueur) ---------- */
+document.getElementById('inventoryBtn').addEventListener('click', ()=>{
+  renderInventory();
+  document.getElementById('inventoryOverlay').classList.add('show');
+});
+document.getElementById('inventoryCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('inventoryOverlay').classList.remove('show');
+});
+function renderInventory(){
+  const listEl = document.getElementById('inventoryList');
+  if (!currentUser){ listEl.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
+  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+    const inv = (doc.exists && doc.data().inventory) || {};
+    const entries = Object.entries(inv).filter(([,q])=>q > 0);
+    if (!entries.length){ listEl.innerHTML = '<p class="meta">Vide pour l\'instant.</p>'; return; }
+    listEl.innerHTML = '';
+    entries.forEach(([itemId, qty])=>{
+      const it = items.find(i=>i.id===itemId);
+      const row = document.createElement('div');
+      row.className = 'editor-list-item';
+      row.innerHTML = `<div class="thumb">${it ? it.emoji : '📦'}</div><div class="name">${it ? it.name : itemId}</div><div style="font-weight:700;">× ${qty}</div>`;
+      listEl.appendChild(row);
+    });
+  });
+}
+
+/* ---------- Navigation par sections dans le panneau Objets ---------- */
+function showItemsSection(name){
+  document.querySelectorAll('.items-section').forEach(el=> el.style.display = 'none');
+  const target = document.getElementById('section-' + name);
+  if (target) target.style.display = 'block';
+  if (name === 'list') renderItemsListView();
+  if (name === 'placed' || name === 'inactive') renderPickupsSplitLists();
+}
+document.querySelectorAll('#itemsNav button[data-section]').forEach(btn=>{
+  btn.addEventListener('click', ()=> showItemsSection(btn.dataset.section));
+});
+
+document.getElementById('itemsEditorCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('itemsEditorOverlay').classList.remove('show');
+});
+
+function initMap(){
+  map = L.map('map', { zoomControl:false, attributionControl:true })
+    .setView([48.8566, 2.3522], 17);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  L.control.zoom({ position:'bottomright' }).addTo(map);
+
+  const playerIcon = L.divIcon({ className:'', html:'<div class="player-icon"></div>', iconSize:[18,18] });
+  playerMarker = L.marker([48.8566, 2.3522], { icon: playerIcon, zIndexOffset: 1000 }).addTo(map);
+}
+initMap();
+
+/* ---------- Géolocalisation ---------- */
+const statusDot = document.getElementById('statusDot');
+const accPill = document.getElementById('accPill');
+let hasCentered = false;
+
+function setStatus(state, pulsing){
+  statusDot.className = 'dot' + (state ? ' '+state : '') + (pulsing ? ' pulse' : '');
+}
+
+function onPosition(pos){
+  const { latitude, longitude, accuracy } = pos.coords;
+  playerPos = { lat: latitude, lng: longitude };
+
+  playerMarker.setLatLng([latitude, longitude]);
+  if (accCircle) map.removeLayer(accCircle);
+  accCircle = L.circle([latitude, longitude], { radius: accuracy, color:'#0f8a52', weight:1, fillOpacity:0.08 }).addTo(map);
+
+  if (!hasCentered){
+    map.setView([latitude, longitude], 18);
+    hasCentered = true;
+  }
+
+  updateCreatureVisuals();
+  if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  setStatus('ok', false);
+  accPill.style.display = 'block';
+  accPill.textContent = `± ${Math.round(accuracy)} m`;
+}
+
+function onError(err){
+  setStatus('err', false);
+}
+
+function startWatch(){
+  if (!('geolocation' in navigator)){
+    setStatus('err', false);
+    return;
+  }
+  setStatus('', true);
+  navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 15000
+  });
+}
+startWatch();
+
+document.getElementById('recenterBtn').addEventListener('click', ()=>{
+  if (playerPos) map.setView([playerPos.lat, playerPos.lng], 18);
+  else startWatch();
+});
+
+/* ---------- Recettes ---------- */
+const recipesCol = (typeof db !== 'undefined') ? db.collection('recipes') : null;
+let recipes = [];
+let editingRecipeId = null;
+let currentRecipeInputs = [ { itemId:'', qty:1 } ];
+
+if (recipesCol){
+  recipesCol.onSnapshot((snap)=>{
+    recipes = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    document.getElementById('recipesStatus').textContent = recipes.length ? recipes.length + ' recette(s)' : 'Aucune recette pour le moment.';
+    renderRecipesListView();
+  }, (err)=>{
+    document.getElementById('recipesStatus').textContent = 'Erreur : ' + err.message;
+  });
+}
+
+function renderRecipeOutputSelect(){
+  const sel = document.getElementById('recipeOutputItem');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = items.map(it=>`<option value="${it.id}">${it.emoji||'📦'} ${it.name}</option>`).join('');
+  if (current) sel.value = current;
+}
+
+function renderRecipeInputsBuilder(){
+  const wrap = document.getElementById('recipeInputsList');
+  wrap.innerHTML = '';
+  currentRecipeInputs.forEach((inp, idx)=>{
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
+    const itemOptions = items.map(it=>`<option value="${it.id}" ${it.id===inp.itemId?'selected':''}>${it.emoji||'📦'} ${it.name}</option>`).join('');
+    row.innerHTML = `
+      <select class="field-input" data-input-item="${idx}" style="flex:2; margin:0;"><option value="">— choisir —</option>${itemOptions}</select>
+      <input type="number" class="field-input" data-input-qty="${idx}" value="${inp.qty}" min="1" style="flex:1; margin:0;">
+      <button class="btn-secondary" data-input-remove="${idx}" style="flex:none; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+    `;
+    wrap.appendChild(row);
+  });
+  wrap.querySelectorAll('select[data-input-item]').forEach(sel=>{
+    sel.addEventListener('change', (e)=>{ currentRecipeInputs[parseInt(sel.dataset.inputItem,10)].itemId = e.target.value; });
+  });
+  wrap.querySelectorAll('input[data-input-qty]').forEach(inp=>{
+    inp.addEventListener('change', (e)=>{ currentRecipeInputs[parseInt(inp.dataset.inputQty,10)].qty = parseInt(e.target.value,10) || 1; });
+  });
+  wrap.querySelectorAll('button[data-input-remove]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      currentRecipeInputs.splice(parseInt(btn.dataset.inputRemove,10), 1);
+      if (!currentRecipeInputs.length) currentRecipeInputs.push({ itemId:'', qty:1 });
+      renderRecipeInputsBuilder();
+    });
+  });
+}
+document.getElementById('recipeAddInputBtn').addEventListener('click', ()=>{
+  currentRecipeInputs.push({ itemId:'', qty:1 });
+  renderRecipeInputsBuilder();
+});
+
+let selectedRecipeMetiers = new Set();
+function renderRecipeMetiers(){
+  const wrap = document.getElementById('recipeMetiersList');
+  if (!wrap) return;
+  wrap.innerHTML = metiers.map(m=>`
+    <button type="button" class="btn-secondary recipe-metier-btn" data-metier="${m.id}" style="${selectedRecipeMetiers.has(m.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${m.name}</button>
+  `).join('') || '<p class="meta">Aucun métier créé pour l\'instant — crée-en un ci-dessous.</p>';
+  wrap.querySelectorAll('.recipe-metier-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.metier;
+      if (selectedRecipeMetiers.has(id)) selectedRecipeMetiers.delete(id);
+      else selectedRecipeMetiers.add(id);
+      renderRecipeMetiers();
+    });
+  });
+}
+document.getElementById('addMetierBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('newMetierName').value.trim();
+  if (!name){ showToast('Donne un nom au métier'); return; }
+  if (!metiersCol){ showToast('Firebase indisponible ici'); return; }
+  metiersCol.add({ name, createdAt: Date.now() }).then((ref)=>{
+    document.getElementById('newMetierName').value = '';
+    selectedRecipeMetiers.add(ref.id);
+    showToast('Métier "' + name + '" créé');
+  }).catch((err)=> showToast('Échec : ' + err.message));
+});
+
+function renderRecipesListView(){
+  const listEl = document.getElementById('recipesList');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  recipes.forEach((r)=>{
+    const metierNames = (r.allowedMetiers||[]).map(id => (metiers.find(m=>m.id===id)||{}).name).filter(Boolean).join(', ') || 'Tous les métiers';
+    const row = document.createElement('div');
+    row.className = 'editor-list-item';
+    row.innerHTML = `
+      <div class="thumb">${r.emoji || '📦'}</div>
+      <div class="name">${r.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${metierNames}</span></div>
+      <button class="btn-secondary" data-recipe-edit="${r.id}">Modifier</button>
+      <button class="btn-secondary" data-recipe-del="${r.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+    `;
+    listEl.appendChild(row);
+  });
+  listEl.querySelectorAll('button[data-recipe-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=> recipesCol.doc(btn.dataset.recipeDel).delete());
+  });
+  listEl.querySelectorAll('button[data-recipe-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ loadRecipeForEdit(btn.dataset.recipeEdit); showRecipesSection('new'); });
+  });
+}
+
+function loadRecipeForEdit(id){
+  const r = recipes.find(x=>x.id===id);
+  if (!r) return;
+  editingRecipeId = id;
+  document.getElementById('recipeName').value = r.name || '';
+  document.getElementById('recipeEmoji').value = r.emoji || '';
+  currentRecipeInputs = (r.inputs && r.inputs.length) ? JSON.parse(JSON.stringify(r.inputs)) : [{ itemId:'', qty:1 }];
+  renderRecipeOutputSelect();
+  renderRecipeInputsBuilder();
+  document.getElementById('recipeOutputItem').value = r.outputItemId || '';
+  document.getElementById('recipeOutputQty').value = r.outputQty || 1;
+  document.getElementById('recipeDuration').value = r.duration || 10;
+  selectedRecipeMetiers = new Set(r.allowedMetiers || []);
+  renderRecipeMetiers();
+  document.getElementById('recipeSaveBtn').textContent = 'Mettre à jour la recette';
+  document.getElementById('recipeCancelBtn').style.display = 'block';
+}
+function resetRecipeForm(){
+  editingRecipeId = null;
+  document.getElementById('recipeName').value = '';
+  document.getElementById('recipeEmoji').value = '';
+  currentRecipeInputs = [ { itemId:'', qty:1 } ];
+  renderRecipeOutputSelect();
+  renderRecipeInputsBuilder();
+  document.getElementById('recipeOutputQty').value = 1;
+  document.getElementById('recipeDuration').value = 10;
+  selectedRecipeMetiers = new Set();
+  renderRecipeMetiers();
+  document.getElementById('recipeSaveBtn').textContent = 'Enregistrer la recette';
+  document.getElementById('recipeCancelBtn').style.display = 'none';
+}
+document.getElementById('recipeCancelBtn').addEventListener('click', resetRecipeForm);
+
+document.getElementById('recipeSaveBtn').addEventListener('click', ()=>{
+  const name = document.getElementById('recipeName').value.trim();
+  const emoji = document.getElementById('recipeEmoji').value.trim() || '📦';
+  const inputs = currentRecipeInputs.filter(i=>i.itemId && i.qty > 0);
+  const outputItemId = document.getElementById('recipeOutputItem').value;
+  const outputQty = parseInt(document.getElementById('recipeOutputQty').value, 10) || 1;
+  const duration = parseInt(document.getElementById('recipeDuration').value, 10) || 10;
+  const allowedMetiers = Array.from(selectedRecipeMetiers);
+
+  if (!name){ showToast('Donne un nom à la recette'); return; }
+  if (!outputItemId){ showToast('Choisis l\'objet produit'); return; }
+  if (!recipesCol){ showToast('Firebase indisponible ici'); return; }
+
+  const data = { name, emoji, inputs, outputItemId, outputQty, duration, allowedMetiers, updatedAt: Date.now() };
+  const op = editingRecipeId ? recipesCol.doc(editingRecipeId).set(data) : recipesCol.add({ ...data, createdAt: Date.now() });
+  op.then(()=>{ showToast(editingRecipeId ? 'Recette mise à jour' : 'Recette ajoutée'); resetRecipeForm(); showRecipesSection('list'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
+function showRecipesSection(name){
+  document.querySelectorAll('.recipes-section').forEach(el=> el.style.display = 'none');
+  const target = document.getElementById('recipesection-' + name);
+  if (target) target.style.display = 'block';
+  if (name === 'list') renderRecipesListView();
+}
+document.querySelectorAll('#recipesNav button[data-recipesection]').forEach(btn=>{
+  btn.addEventListener('click', ()=> showRecipesSection(btn.dataset.recipesection));
+});
+document.getElementById('recipesEditorCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('recipesEditorOverlay').classList.remove('show');
+});
+document.getElementById('hubRecipesBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.remove('show');
+  document.getElementById('recipesEditorOverlay').classList.add('show');
+  renderRecipeOutputSelect();
+  renderRecipeInputsBuilder();
+  renderRecipeMetiers();
+  showRecipesSection('new');
+});
+</script>
+</body>
+</html>
