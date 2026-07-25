@@ -215,6 +215,7 @@
     <div class="icon-row">
       <div class="icon-btn" id="gpsIcon" title="État GPS"><div class="dot" id="statusDot"></div></div>
       <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
+      <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
       <button class="icon-btn" id="recenterBtn" title="Recentrer">📍</button>
       <button class="icon-btn" id="editHubBtn" title="Édition">✏️</button>
     </div>
@@ -265,6 +266,54 @@
     <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
     <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%;">Fermer</button>
+  </div>
+</div>
+
+<!-- Base : roster de PNJ recrutés + craft -->
+<div class="overlay" id="baseOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Base</h3>
+      <button class="sheet-x" id="baseCloseBtn">✕</button>
+    </div>
+    <div class="meta" id="baseStatus">Connexion…</div>
+
+    <div class="field-label">Ressources</div>
+    <div id="baseResources" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
+    <button class="btn-secondary" id="baseAddResBtn" style="width:100%; margin-bottom:14px;">+5 de chaque ressource (test)</button>
+
+    <div id="baseRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
+
+    <button class="btn-capture" id="recruitTestBtn" style="width:100%;">➕ Recruter (test)</button>
+  </div>
+</div>
+
+<!-- Fiche d'un PNJ recruté -->
+<div class="overlay" id="recruitSheetOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 id="recruitSheetName" style="margin-top:0;">—</h3>
+      <button class="sheet-x" id="recruitSheetCloseBtn">✕</button>
+    </div>
+    <div class="meta" id="recruitSheetMetier">—</div>
+
+    <div id="recruitCraftSection"></div>
+
+    <div class="field-label">Équipement</div>
+    <div id="recruitEquipSection"></div>
+
+    <button class="btn-secondary" id="recruitDismissBtn" style="width:100%; margin-top:14px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Renvoyer ce PNJ</button>
+  </div>
+</div>
+
+<!-- Choix d'un objet à équiper -->
+<div class="overlay" id="baseEquipChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Équiper un objet</h3>
+      <button class="sheet-x" id="baseEquipChooserCloseBtn">✕</button>
+    </div>
+    <div id="baseEquipChooserList"></div>
   </div>
 </div>
 
@@ -2046,6 +2095,249 @@ document.getElementById('hubRecipesBtn').addEventListener('click', ()=>{
   renderRecipeInputsBuilder();
   renderRecipeMetiers();
   showRecipesSection('new');
+});
+
+/* ---------- Base : ressources partagées ---------- */
+const gameStateDoc = (typeof db !== 'undefined') ? db.collection('gameState').doc('resources') : null;
+let baseResources = {};
+if (gameStateDoc){
+  gameStateDoc.onSnapshot((doc)=>{
+    baseResources = doc.exists ? (doc.data().amounts || {}) : {};
+    renderBaseResources();
+  });
+}
+function renderBaseResources(){
+  const el = document.getElementById('baseResources');
+  if (!el) return;
+  if (!items.length){ el.innerHTML = '<span class="meta">Crée des objets dans l\'éditeur pour les voir ici.</span>'; return; }
+  el.innerHTML = items.map(it=>{
+    const qty = baseResources[it.id] || 0;
+    return `<span style="background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:12px; font-weight:700;">${it.emoji||'📦'} ${qty}</span>`;
+  }).join('');
+}
+function addTestResources(){
+  if (!gameStateDoc || !items.length) return;
+  const amounts = { ...baseResources };
+  items.forEach(it=>{ amounts[it.id] = (amounts[it.id]||0) + 5; });
+  gameStateDoc.set({ amounts }, { merge:true });
+}
+
+/* ---------- Base : roster des PNJ recrutés ---------- */
+const recruitsCol = (typeof db !== 'undefined') ? db.collection('recruits') : null;
+let recruits = [];
+if (recruitsCol){
+  recruitsCol.onSnapshot((snap)=>{
+    recruits = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    document.getElementById('baseStatus').textContent = recruits.length ? recruits.length + ' PNJ recruté(s)' : 'Aucun PNJ recruté pour le moment.';
+    renderBaseRoster();
+    if (activeRecruitId) renderRecruitSheet();
+  });
+}
+
+const TEST_FIRST_NAMES = ['Marc','Julie','Sam','Aïcha','Karim','Léo','Nadia','Théo','Inès','Paul'];
+document.getElementById('recruitTestBtn').addEventListener('click', ()=>{
+  if (!recruitsCol){ showToast('Firebase indisponible ici'); return; }
+  if (!metiers.length){ showToast('Crée d\'abord un métier depuis l\'éditeur de recettes'); return; }
+  const name = TEST_FIRST_NAMES[Math.floor(Math.random()*TEST_FIRST_NAMES.length)];
+  const metier = metiers[Math.floor(Math.random()*metiers.length)];
+  recruitsCol.add({ name, metierId: metier.id, equippedItemId: null, craftingRecipeId: null, craftingStartedAt: null, createdAt: Date.now() })
+    .then(()=> showToast(name + ' recruté(e) comme ' + metier.name));
+});
+
+function renderBaseRoster(){
+  const grid = document.getElementById('baseRoster');
+  if (!grid) return;
+  grid.innerHTML = recruits.map(r=>{
+    const metier = metiers.find(m=>m.id===r.metierId);
+    return `
+      <div class="editor-list-item" data-recruit-open="${r.id}" style="flex-direction:column; text-align:center; border:1px solid var(--line); border-radius:12px; padding:10px 6px; cursor:pointer;">
+        <div style="font-size:28px;">🧑</div>
+        <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
+        <div class="meta" style="font-size:10px;">${metier ? metier.name : 'Sans métier'}</div>
+      </div>
+    `;
+  }).join('');
+  grid.querySelectorAll('[data-recruit-open]').forEach(el=>{
+    el.addEventListener('click', ()=> openRecruitSheet(el.dataset.recruitOpen));
+  });
+}
+
+/* ---------- Fiche d'un PNJ recruté : craft + équipement ---------- */
+let activeRecruitId = null;
+function openRecruitSheet(id){
+  activeRecruitId = id;
+  renderRecruitSheet();
+  document.getElementById('recruitSheetOverlay').classList.add('show');
+}
+function currentRecruit(){ return recruits.find(r=>r.id===activeRecruitId); }
+
+function recruitEffectiveDuration(recruit, baseDuration){
+  let mult = 1;
+  if (recruit.equippedItemId){
+    const it = items.find(i=>i.id===recruit.equippedItemId);
+    if (it && it.equippable && it.effectType === 'speed_boost'){
+      mult *= (1 - (it.effectValue||0)/100);
+    }
+  }
+  return Math.round(baseDuration * mult);
+}
+function recruitCraftProgress(recruit){
+  if (!recruit.craftingRecipeId || !recruit.craftingStartedAt) return 0;
+  const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
+  if (!recipe) return 0;
+  const duration = recruit.craftingDuration || recipe.duration*1000;
+  return Math.max(0, Math.min(1, (Date.now() - recruit.craftingStartedAt) / duration));
+}
+
+function renderRecruitSheet(){
+  const recruit = currentRecruit();
+  if (!recruit) return;
+  const metier = metiers.find(m=>m.id===recruit.metierId);
+  document.getElementById('recruitSheetName').textContent = recruit.name;
+  document.getElementById('recruitSheetMetier').textContent = metier ? metier.name : 'Sans métier';
+
+  const craftEl = document.getElementById('recruitCraftSection');
+  const eligibleRecipes = recipes.filter(r => !r.allowedMetiers || !r.allowedMetiers.length || r.allowedMetiers.includes(recruit.metierId));
+
+  if (recruit.craftingRecipeId){
+    const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
+    const pct = Math.round(recruitCraftProgress(recruit)*100);
+    craftEl.innerHTML = `
+      <div class="field-label">Fabrication en cours</div>
+      <div class="pos-status">${recipe ? recipe.emoji+' '+recipe.name : '…'} — ${pct}%</div>
+      <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
+        <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+      </div>
+    `;
+  } else if (!eligibleRecipes.length){
+    craftEl.innerHTML = `<p class="meta">Aucune recette ne correspond à ce métier pour l'instant.</p>`;
+  } else {
+    craftEl.innerHTML = `<div class="field-label">Recettes disponibles</div>` + eligibleRecipes.map(r=>{
+      const canAfford = (r.inputs||[]).every(inp => (baseResources[inp.itemId]||0) >= inp.qty);
+      const inputsLabel = (r.inputs||[]).map(inp=>{
+        const it = items.find(i=>i.id===inp.itemId);
+        return `${inp.qty} ${it ? it.emoji : '?'}`;
+      }).join(' + ') || 'Aucune ressource';
+      return `
+        <div class="choice-row">
+          <b>${r.emoji||'📦'} ${r.name}</b>
+          <div class="meta">${inputsLabel} → ${r.outputQty} × ${(items.find(i=>i.id===r.outputItemId)||{}).emoji||'📦'} (${r.duration}s)</div>
+          <button class="btn-capture" data-launch-recipe="${r.id}" style="width:100%; margin-top:6px;" ${canAfford ? '' : 'disabled'}>Lancer</button>
+        </div>
+      `;
+    }).join('');
+    craftEl.querySelectorAll('button[data-launch-recipe]').forEach(btn=>{
+      btn.addEventListener('click', ()=> launchRecruitCraft(recruit, btn.dataset.launchRecipe));
+    });
+  }
+
+  const equipEl = document.getElementById('recruitEquipSection');
+  if (recruit.equippedItemId){
+    const it = items.find(i=>i.id===recruit.equippedItemId);
+    equipEl.innerHTML = `
+      <div class="choice-row">
+        <b>${it ? it.emoji+' '+it.name : 'Objet inconnu'}</b>
+        <div class="meta">${it && it.effectDuration==='permanent' ? '-'+it.effectValue+'% de temps (équipé en continu)' : 'Effet temporaire'}</div>
+        <button class="btn-secondary" id="baseUnequipBtn" style="width:100%; margin-top:6px;">Retirer</button>
+      </div>
+    `;
+    document.getElementById('baseUnequipBtn').addEventListener('click', ()=>{
+      returnItemToStock(recruit.equippedItemId);
+      recruitsCol.doc(recruit.id).update({ equippedItemId: null });
+    });
+  } else {
+    equipEl.innerHTML = `<button class="btn-secondary" id="baseEquipBtn" style="width:100%;">🎒 Équiper depuis le sac</button>`;
+    document.getElementById('baseEquipBtn').addEventListener('click', ()=> openBaseEquipChooser(recruit));
+  }
+}
+
+function launchRecruitCraft(recruit, recipeId){
+  const recipe = recipes.find(r=>r.id===recipeId);
+  if (!recipe || !gameStateDoc) return;
+  const missing = (recipe.inputs||[]).find(inp => (baseResources[inp.itemId]||0) < inp.qty);
+  if (missing){ showToast('Ressources insuffisantes'); return; }
+  const amounts = { ...baseResources };
+  (recipe.inputs||[]).forEach(inp=>{ amounts[inp.itemId] = (amounts[inp.itemId]||0) - inp.qty; });
+  gameStateDoc.set({ amounts }, { merge:true }).then(()=>{
+    const duration = recruitEffectiveDuration(recruit, recipe.duration*1000);
+    recruitsCol.doc(recruit.id).update({ craftingRecipeId: recipeId, craftingStartedAt: Date.now(), craftingDuration: duration });
+  });
+}
+
+function returnItemToStock(itemId){
+  if (!gameStateDoc) return;
+  const amounts = { ...baseResources };
+  amounts[itemId] = (amounts[itemId]||0) + 1;
+  gameStateDoc.set({ amounts }, { merge:true });
+}
+
+function openBaseEquipChooser(recruit){
+  const listEl = document.getElementById('baseEquipChooserList');
+  const eligible = items.filter(it => it.equippable
+    && (baseResources[it.id]||0) > 0
+    && (!it.effectMetiers || !it.effectMetiers.length || it.effectMetiers.includes(recruit.metierId)));
+  listEl.innerHTML = eligible.length ? eligible.map(it=>`
+    <div class="choice-row">
+      <b>${it.emoji||'📦'} ${it.name}</b>
+      <div class="meta">Stock : ${baseResources[it.id]||0} — ${it.effectDuration==='permanent' ? '-'+it.effectValue+'% en continu' : '-'+it.effectValue+'% pendant '+it.effectSeconds+'s (consommé)'}</div>
+      <button class="btn-capture" data-equip-item="${it.id}" style="width:100%; margin-top:6px;">Équiper</button>
+    </div>
+  `).join('') : '<p class="meta">Aucun objet équipable disponible pour ce métier dans le sac.</p>';
+  listEl.querySelectorAll('button[data-equip-item]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const itemId = btn.dataset.equipItem;
+      const amounts = { ...baseResources };
+      amounts[itemId] = (amounts[itemId]||0) - 1;
+      gameStateDoc.set({ amounts }, { merge:true }).then(()=>{
+        recruitsCol.doc(recruit.id).update({ equippedItemId: itemId });
+        document.getElementById('baseEquipChooserOverlay').classList.remove('show');
+      });
+    });
+  });
+  document.getElementById('baseEquipChooserOverlay').classList.add('show');
+}
+document.getElementById('baseEquipChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('baseEquipChooserOverlay').classList.remove('show');
+});
+
+document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
+  const recruit = currentRecruit();
+  if (!recruit) return;
+  if (recruit.equippedItemId) returnItemToStock(recruit.equippedItemId);
+  recruitsCol.doc(recruit.id).delete().then(()=>{
+    document.getElementById('recruitSheetOverlay').classList.remove('show');
+    activeRecruitId = null;
+  });
+});
+document.getElementById('recruitSheetCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('recruitSheetOverlay').classList.remove('show');
+  activeRecruitId = null;
+});
+
+/* Vérifie régulièrement si une fabrication est terminée */
+setInterval(()=>{
+  recruits.forEach(recruit=>{
+    if (recruit.craftingRecipeId && recruitCraftProgress(recruit) >= 1){
+      const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
+      if (recipe && gameStateDoc){
+        const amounts = { ...baseResources };
+        amounts[recipe.outputItemId] = (amounts[recipe.outputItemId]||0) + recipe.outputQty;
+        gameStateDoc.set({ amounts }, { merge:true });
+      }
+      recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
+    }
+  });
+  if (activeRecruitId && document.getElementById('recruitSheetOverlay').classList.contains('show')) renderRecruitSheet();
+}, 1000);
+
+document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
+document.getElementById('baseBtn').addEventListener('click', ()=>{
+  renderBaseResources();
+  renderBaseRoster();
+  document.getElementById('baseOverlay').classList.add('show');
+});
+document.getElementById('baseCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('baseOverlay').classList.remove('show');
 });
 </script>
 </body>
