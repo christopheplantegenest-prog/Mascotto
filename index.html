@@ -371,6 +371,10 @@
           <input type="number" id="recipeDurationDays" class="field-input" value="0" min="0">
         </div>
         <div>
+          <div class="field-label" style="margin-top:0;">Heures</div>
+          <input type="number" id="recipeDurationHours" class="field-input" value="0" min="0">
+        </div>
+        <div>
           <div class="field-label" style="margin-top:0;">Minutes</div>
           <input type="number" id="recipeDurationMinutes" class="field-input" value="0" min="0">
         </div>
@@ -1263,6 +1267,7 @@ document.getElementById('hubPnjBtn').addEventListener('click', ()=>{
 document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('itemsEditorOverlay').classList.add('show');
+  resetItemForm();
   showItemsSection('new');
 });
 document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
@@ -1872,7 +1877,10 @@ function showItemsSection(name){
   if (name === 'placed' || name === 'inactive') renderPickupsSplitLists();
 }
 document.querySelectorAll('#itemsNav button[data-section]').forEach(btn=>{
-  btn.addEventListener('click', ()=> showItemsSection(btn.dataset.section));
+  btn.addEventListener('click', ()=>{
+    if (btn.dataset.section === 'new') resetItemForm();
+    showItemsSection(btn.dataset.section);
+  });
 });
 
 document.getElementById('itemsEditorCloseBtn').addEventListener('click', ()=>{
@@ -2070,13 +2078,27 @@ function renderRecipesListView(){
   listEl.innerHTML = '';
   recipes.forEach((r)=>{
     const metierNames = (r.allowedMetiers||[]).map(id => (metiers.find(m=>m.id===id)||{}).name).filter(Boolean).join(', ') || 'Tous les métiers';
+    const inProgress = (typeof recruits !== 'undefined') ? recruits.find(rec => rec.craftingRecipeId === r.id) : null;
     const row = document.createElement('div');
     row.className = 'editor-list-item';
+    row.style.flexDirection = 'column';
+    row.style.alignItems = 'stretch';
+    const pct = inProgress ? Math.round(recruitCraftProgress(inProgress)*100) : 0;
     row.innerHTML = `
-      <div class="thumb">${r.imageUrl ? `<img src="${r.imageUrl}">` : (r.emoji || '📦')}</div>
-      <div class="name">${r.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${metierNames}</span></div>
-      <button class="btn-secondary" data-recipe-edit="${r.id}">Modifier</button>
-      <button class="btn-secondary" data-recipe-del="${r.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+      <div style="display:flex; align-items:center; gap:10px; width:100%;">
+        <div class="thumb">${r.imageUrl ? `<img src="${r.imageUrl}">` : (r.emoji || '📦')}</div>
+        <div class="name">${r.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${metierNames}</span></div>
+        <button class="btn-secondary" data-recipe-edit="${r.id}">Modifier</button>
+        <button class="btn-secondary" data-recipe-del="${r.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
+      </div>
+      ${inProgress ? `
+        <div style="margin-top:8px;">
+          <div class="meta" style="font-size:11px;">${inProgress.name} fabrique — ${pct}%</div>
+          <div style="height:6px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:4px;">
+            <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+          </div>
+        </div>
+      ` : ''}
     `;
     listEl.appendChild(row);
   });
@@ -2110,7 +2132,8 @@ function loadRecipeForEdit(id){
   {
     const total = r.duration || 10;
     document.getElementById('recipeDurationDays').value = Math.floor(total / 86400);
-    document.getElementById('recipeDurationMinutes').value = Math.floor((total % 86400) / 60);
+    document.getElementById('recipeDurationHours').value = Math.floor((total % 86400) / 3600);
+    document.getElementById('recipeDurationMinutes').value = Math.floor((total % 3600) / 60);
     document.getElementById('recipeDurationSeconds').value = total % 60;
   }
   selectedRecipeMetiers = new Set(r.allowedMetiers || []);
@@ -2131,6 +2154,7 @@ function resetRecipeForm(){
   renderRecipeInputsBuilder();
   document.getElementById('recipeOutputQty').value = 1;
   document.getElementById('recipeDurationDays').value = 0;
+  document.getElementById('recipeDurationHours').value = 0;
   document.getElementById('recipeDurationMinutes').value = 0;
   document.getElementById('recipeDurationSeconds').value = 10;
   selectedRecipeMetiers = new Set();
@@ -2177,9 +2201,10 @@ document.getElementById('recipeSaveBtn').addEventListener('click', ()=>{
   const outputItemId = recipeOutputItemId;
   const outputQty = parseInt(document.getElementById('recipeOutputQty').value, 10) || 1;
   const durDays = parseInt(document.getElementById('recipeDurationDays').value, 10) || 0;
+  const durHours = parseInt(document.getElementById('recipeDurationHours').value, 10) || 0;
   const durMinutes = parseInt(document.getElementById('recipeDurationMinutes').value, 10) || 0;
   const durSeconds = parseInt(document.getElementById('recipeDurationSeconds').value, 10) || 0;
-  const duration = (durDays*86400) + (durMinutes*60) + durSeconds;
+  const duration = (durDays*86400) + (durHours*3600) + (durMinutes*60) + durSeconds;
   const allowedMetiers = Array.from(selectedRecipeMetiers);
 
   if (!name){ showToast('Donne un nom à la recette'); return; }
@@ -2200,7 +2225,10 @@ function showRecipesSection(name){
   if (name === 'list') renderRecipesListView();
 }
 document.querySelectorAll('#recipesNav button[data-recipesection]').forEach(btn=>{
-  btn.addEventListener('click', ()=> showRecipesSection(btn.dataset.recipesection));
+  btn.addEventListener('click', ()=>{
+    if (btn.dataset.recipesection === 'new') resetRecipeForm();
+    showRecipesSection(btn.dataset.recipesection);
+  });
 });
 document.getElementById('recipesEditorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('recipesEditorOverlay').classList.remove('show');
@@ -2208,9 +2236,7 @@ document.getElementById('recipesEditorCloseBtn').addEventListener('click', ()=>{
 document.getElementById('hubRecipesBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('recipesEditorOverlay').classList.add('show');
-  renderRecipeOutputSelect();
-  renderRecipeInputsBuilder();
-  renderRecipeMetiers();
+  resetRecipeForm();
   showRecipesSection('new');
 });
 
@@ -2232,7 +2258,8 @@ function renderBaseResources(){
   if (!items.length){ el.innerHTML = '<span class="meta">Crée des objets dans l\'éditeur pour les voir ici.</span>'; return; }
   el.innerHTML = items.map(it=>{
     const qty = baseResources[it.id] || 0;
-    return `<span style="background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:12px; font-weight:700;">${it.emoji||'📦'} ${qty}</span>`;
+    const thumb = it.imageUrl ? `<img src="${it.imageUrl}" style="width:16px; height:16px; object-fit:contain; vertical-align:middle;">` : (it.emoji||'📦');
+    return `<span style="background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:12px; font-weight:700;">${thumb} ${qty}</span>`;
   }).join('');
 }
 function addTestResources(){
@@ -2455,6 +2482,8 @@ setInterval(()=>{
     }
   });
   if (activeRecruitId && document.getElementById('recruitSheetOverlay').classList.contains('show')) renderRecruitSheet();
+  const recipesListSection = document.getElementById('recipesection-list');
+  if (recipesListSection && recipesListSection.style.display !== 'none') renderRecipesListView();
 }, 1000);
 
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
@@ -2470,5 +2499,3 @@ document.getElementById('baseCloseBtn').addEventListener('click', ()=>{
 </script>
 </body>
 </html>
-
-
