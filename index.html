@@ -293,6 +293,7 @@
 <div class="overlay" id="recruitSheetOverlay">
   <div class="sheet">
     <div class="sheet-top">
+      <div id="recruitSheetFace" style="width:44px; height:44px; border-radius:50%; overflow:hidden; display:none;"></div>
       <h3 id="recruitSheetName" style="margin-top:0;">—</h3>
       <button class="sheet-x" id="recruitSheetCloseBtn">✕</button>
     </div>
@@ -888,6 +889,23 @@ function renderDialogueBuilder(){
 
       row.appendChild(itemSelect);
       row.appendChild(qtyInput);
+
+      const recruitLabel = document.createElement('div');
+      recruitLabel.className = 'field-label';
+      recruitLabel.textContent = 'Recruter ce PNJ';
+      row.appendChild(recruitLabel);
+
+      const recruitSelect = document.createElement('select');
+      recruitSelect.className = 'field-input';
+      let recruitOpts = '<option value="">Ne recrute pas</option>';
+      metiers.forEach(m=>{ recruitOpts += `<option value="${m.id}">${m.name}</option>`; });
+      recruitSelect.innerHTML = recruitOpts;
+      recruitSelect.value = (choice.recruit && choice.recruit.metierId) || '';
+      recruitSelect.addEventListener('change', ()=>{
+        choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value } : null;
+      });
+      row.appendChild(recruitSelect);
+
       card.appendChild(row);
     });
 
@@ -896,7 +914,7 @@ function renderDialogueBuilder(){
     addChoiceBtn.style.cssText = 'width:100%; margin-top:10px;';
     addChoiceBtn.textContent = '➕ Ajouter un choix';
     addChoiceBtn.addEventListener('click', ()=>{
-      step.choices.push({ label:'', next:null, itemGrant:null });
+      step.choices.push({ label:'', next:null, itemGrant:null, recruit:null });
       renderDialogueBuilder();
     });
     card.appendChild(addChoiceBtn);
@@ -962,6 +980,7 @@ function renderAllCreatures(snap){
   snap.forEach((doc)=>{
     const d = doc.data();
     if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
+    if (d.recruited) return; // recruté : disparaît définitivement de la carte
     if (!isActiveNow(d)) return; // PNJ inactif : pas affiché sur la carte
     creatures.push({ id: doc.id, ...d, marker:null, active: true });
   });
@@ -1056,6 +1075,7 @@ function renderSheet(){
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
     btn.addEventListener('click', ()=>{
       if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
+      if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
       if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
         document.getElementById('overlay').classList.remove('show');
       } else {
@@ -1076,6 +1096,26 @@ function grantItemToPlayer(itemName, quantity){
   }, { merge: true })
     .then(()=> showToast(`+${quantity} ${it.emoji || ''} ${it.name}`))
     .catch((err)=> showToast('Échec : ' + err.message));
+}
+function recruitCreature(creature, metierId){
+  if (!creature || !creature.id || !db) return;
+  const recruitsColRef = db.collection('recruits');
+  recruitsColRef.add({
+    name: creature.name || 'PNJ',
+    metierId: metierId,
+    imageUrl: creature.imageUrl || '',
+    equippedItemId: null,
+    assignedBed: null,
+    task: null,
+    taskTarget: null,
+    craftingRecipeId: null,
+    craftingStartedAt: null,
+    createdAt: Date.now(),
+  }).then(()=>{
+    return db.collection('creature_types').doc(creature.id).update({ recruited: true });
+  }).then(()=>{
+    showToast(`${creature.name} recruté(e) !`);
+  }).catch((err)=> showToast('Échec du recrutement : ' + err.message));
 }
 
 document.getElementById('closeBtn').addEventListener('click', ()=>{
@@ -1450,6 +1490,7 @@ if (metiersCol){
     renderPnjMetierSelect();
     renderItemEquipMetiers();
     renderRecipeMetiers();
+    if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
   });
 }
 function renderPnjMetierSelect(){
@@ -2293,11 +2334,17 @@ function renderBaseRoster(){
   if (!grid) return;
   grid.innerHTML = recruits.map(r=>{
     const metier = metiers.find(m=>m.id===r.metierId);
+    const pct = r.craftingRecipeId ? Math.round(recruitCraftProgress(r)*100) : 0;
     return `
       <div class="editor-list-item" data-recruit-open="${r.id}" style="flex-direction:column; text-align:center; border:1px solid var(--line); border-radius:12px; padding:10px 6px; cursor:pointer;">
-        <div style="font-size:28px;">🧑</div>
+        <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '🧑'}</div>
         <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
         <div class="meta" style="font-size:10px;">${metier ? metier.name : 'Sans métier'}</div>
+        ${r.craftingRecipeId ? `
+          <div style="height:5px; width:100%; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
+            <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+          </div>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -2338,6 +2385,13 @@ function renderRecruitSheet(){
   if (!recruit) return;
   const metier = metiers.find(m=>m.id===recruit.metierId);
   document.getElementById('recruitSheetName').textContent = recruit.name;
+  const faceEl = document.getElementById('recruitSheetFace');
+  if (recruit.imageUrl){
+    faceEl.innerHTML = `<img src="${recruit.imageUrl}" style="width:100%;height:100%;object-fit:contain;">`;
+    faceEl.style.display = 'block';
+  } else {
+    faceEl.style.display = 'none';
+  }
   document.getElementById('recruitSheetMetier').textContent = metier ? metier.name : 'Sans métier';
 
   const craftEl = document.getElementById('recruitCraftSection');
@@ -2482,6 +2536,7 @@ setInterval(()=>{
   if (activeRecruitId && document.getElementById('recruitSheetOverlay').classList.contains('show')) renderRecruitSheet();
   const recipesListSection = document.getElementById('recipesection-list');
   if (recipesListSection && recipesListSection.style.display !== 'none') renderRecipesListView();
+  if (document.getElementById('baseOverlay').classList.contains('show')) renderBaseRoster();
 }, 1000);
 
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
