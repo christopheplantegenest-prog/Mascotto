@@ -51,7 +51,12 @@
     width:34px; height:34px; border-radius:50%;
     background:rgba(255,255,255,.92); border:1px solid var(--line);
     display:flex; align-items:center; justify-content:center;
-    font-size:15px; color:var(--text);
+    font-size:15px; color:var(--text); position:relative;
+  }
+  .icon-btn .badge{
+    position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; padding:0 3px;
+    border-radius:8px; background:var(--danger); color:#fff; font-size:10px; line-height:16px;
+    text-align:center; font-weight:bold;
   }
   .icon-btn .dot{ width:10px; height:10px; border-radius:50%; background:var(--muted); }
   .icon-btn .dot.ok{ background:var(--accent); }
@@ -219,6 +224,8 @@
       <div class="icon-btn" id="gpsIcon" title="État GPS"><div class="dot" id="statusDot"></div></div>
       <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
       <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
+      <button class="icon-btn" id="nearbyPlayersBtn" title="Joueurs proches">👥</button>
+      <button class="icon-btn" id="tradeOffersBtn" title="Offres d'échange">📨<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
       <button class="icon-btn" id="recenterBtn" title="Recentrer">📍</button>
       <button class="icon-btn" id="editHubBtn" title="Édition">✏️</button>
     </div>
@@ -257,6 +264,7 @@
       <button class="sheet-x" id="shopCloseBtn">✕</button>
     </div>
     <h3 id="shopName" style="margin-top:0;">—</h3>
+    <p class="meta" id="shopPhrase" style="font-style:italic; display:none;"></p>
     <div class="meta" id="shopCoinsLabel">💰 —</div>
     <div style="display:flex; gap:8px; margin:10px 0;">
       <button class="btn-secondary" id="shopTabBuyBtn" style="flex:1;">Acheter</button>
@@ -264,6 +272,49 @@
     </div>
     <div id="shopBuyList"></div>
     <div id="shopSellList" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- Joueurs proches -->
+<div class="overlay" id="nearbyPlayersOverlay">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">👥 Joueurs proches</h3>
+      <button class="sheet-x" id="nearbyPlayersCloseBtn">✕</button>
+    </div>
+    <div id="nearbyPlayersList"></div>
+  </div>
+</div>
+
+<!-- Composer une proposition d'échange -->
+<div class="overlay" id="tradeComposeOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Proposer un échange à <span id="tradeComposeTarget">—</span></h3>
+      <button class="sheet-x" id="tradeComposeCloseBtn">✕</button>
+    </div>
+    <div class="field-label">💰 Pièces à proposer</div>
+    <input type="number" id="tradeComposeCoins" class="field-input" value="0" min="0">
+    <div class="field-label">Objets à proposer</div>
+    <div id="tradeComposeItemsList"></div>
+    <button class="btn-secondary" id="tradeComposeAddItemBtn" style="width:100%; margin-top:4px;">➕ Ajouter un objet</button>
+    <div class="field-label" style="margin-top:14px;">Personnages de la Base à proposer</div>
+    <div id="tradeComposeRecruitsList"></div>
+    <button class="btn-capture" id="tradeComposeSendBtn" style="width:100%; margin-top:16px;">Envoyer la proposition</button>
+  </div>
+</div>
+
+<!-- Offres d'échange (reçues / envoyées) -->
+<div class="overlay" id="tradeOffersOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">📨 Offres d'échange</h3>
+      <button class="sheet-x" id="tradeOffersCloseBtn">✕</button>
+    </div>
+    <div class="field-label">Reçues</div>
+    <div id="tradeOffersReceivedList"></div>
+    <div class="field-label" style="margin-top:14px;">Envoyées</div>
+    <div id="tradeOffersSentList"></div>
   </div>
 </div>
 
@@ -660,6 +711,8 @@
       </div>
 
       <div id="shopBlock" style="display:none;">
+        <div class="field-label">Phrase d'accueil du marchand (optionnel)</div>
+        <textarea id="editShopPhrase" class="field-input" style="min-height:50px;" placeholder="Bienvenue chez moi, jette un œil à mes marchandises !"></textarea>
         <div class="field-label">Objets en vente (onglet "Acheter" du joueur)</div>
         <div id="shopItemsList"></div>
         <button class="btn-secondary" id="addShopItemBtn" style="width:100%; margin-top:4px;">➕ Ajouter un objet en vente</button>
@@ -794,6 +847,7 @@ document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
 function onSignedIn(user){
   currentUser = user;
   watchPlayerQuests(user.uid);
+  if (typeof attachTradeListeners === 'function') attachTradeListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
     if (typeof renderBaseRoster === 'function') renderBaseRoster();
@@ -1251,6 +1305,9 @@ function openShopWindow(c){
   activeShopCreature = c;
   document.getElementById('shopEmoji').innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🛒');
   document.getElementById('shopName').textContent = c.name || 'Boutique';
+  const phraseEl = document.getElementById('shopPhrase');
+  if (c.shopPhrase){ phraseEl.textContent = '« ' + c.shopPhrase + ' »'; phraseEl.style.display = 'block'; }
+  else { phraseEl.style.display = 'none'; }
   refreshShopCoinsLabel();
   showShopTab('buy');
   document.getElementById('shopOverlay').classList.add('show');
@@ -1279,32 +1336,39 @@ document.getElementById('shopCloseBtn').addEventListener('click', ()=>{
 function renderShopBuyList(){
   const c = activeShopCreature;
   const wrap = document.getElementById('shopBuyList');
-  const rows = Array.isArray(c && c.shopItems) ? c.shopItems : [];
+  const rows = (Array.isArray(c && c.shopItems) ? c.shopItems : [])
+    .filter(row=> items.find(i=>i.id===row.itemId))
+    .slice()
+    .sort((a,b)=> items.find(i=>i.id===a.itemId).name.localeCompare(items.find(i=>i.id===b.itemId).name, 'fr'));
   wrap.innerHTML = rows.length ? rows.map((row,idx)=>{
     const it = items.find(i=>i.id===row.itemId);
-    if (!it) return '';
     return `
       <div class="editor-list-item" style="align-items:center;">
         <div class="thumb">${itemThumbHtml(it)}</div>
-        <div class="name" style="flex:1;">${it.name}<span class="meta" style="display:block;">💰 ${row.price}</span></div>
-        <button class="btn-secondary" data-shop-buy="${idx}">Acheter</button>
+        <div class="name" style="flex:1;">${it.name}<span class="meta" style="display:block;">💰 ${row.price} / u.</span></div>
+        <input type="number" min="1" value="1" class="field-input" data-shop-buy-qty="${idx}" style="width:56px; margin:0; flex:none;">
+        <button class="btn-secondary" data-shop-buy="${idx}" style="flex:none;">Acheter</button>
       </div>
     `;
   }).join('') : '<p class="meta">Ce marchand ne vend rien pour l\'instant.</p>';
   wrap.querySelectorAll('[data-shop-buy]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const row = rows[parseInt(btn.dataset.shopBuy, 10)];
+      const idx = parseInt(btn.dataset.shopBuy, 10);
+      const row = rows[idx];
       const it = items.find(i=>i.id===row.itemId);
+      const qtyInput = wrap.querySelector(`[data-shop-buy-qty="${idx}"]`);
+      const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
+      const totalPrice = row.price * qty;
       if (!it || !currentUser || !db) return;
       // On revérifie le solde réel juste avant l'achat (jamais la variable en mémoire, qui peut être en retard)
       db.collection('players').doc(currentUser.uid).get().then((doc)=>{
         const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
-        if (coins < row.price){ showToast(`Pas assez de pièces (tu as 💰 ${coins})`); return; }
+        if (coins < totalPrice){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${totalPrice})`); return; }
         db.collection('players').doc(currentUser.uid).set({
-          coins: firebase.firestore.FieldValue.increment(-row.price),
-          inventory: { [it.id]: firebase.firestore.FieldValue.increment(1) }
+          coins: firebase.firestore.FieldValue.increment(-totalPrice),
+          inventory: { [it.id]: firebase.firestore.FieldValue.increment(qty) }
         }, { merge: true })
-          .then(()=>{ showToast(`Acheté : ${it.name}`); refreshShopCoinsLabel(); })
+          .then(()=>{ showToast(`Acheté : ${qty} × ${it.name}`); refreshShopCoinsLabel(); })
           .catch((err)=> showToast('Échec : ' + err.message));
       });
     });
@@ -1323,7 +1387,7 @@ function renderShopSellList(){
     const sellable = Object.entries(inv).filter(([,q])=>q > 0).map(([itemId, qty])=>{
       const it = items.find(i=>i.id===itemId);
       return (it && it.sellable) ? { it, qty } : null;
-    }).filter(Boolean);
+    }).filter(Boolean).sort((a,b)=> a.it.name.localeCompare(b.it.name, 'fr'));
     wrap.innerHTML = sellable.length ? sellable.map(({it,qty})=>{
       const shopRow = shopRows.find(r=>r.itemId===it.id);
       const price = Math.floor((shopRow ? shopRow.price : (it.basePrice||0)) / 2);
@@ -1331,7 +1395,8 @@ function renderShopSellList(){
         <div class="editor-list-item" style="align-items:center;">
           <div class="thumb">${itemThumbHtml(it)}</div>
           <div class="name" style="flex:1;">${it.name}<span class="meta" style="display:block;">Tu en as ${qty} · rachat 💰 ${price}/u.</span></div>
-          <button class="btn-secondary" data-shop-sell="${it.id}" data-shop-sell-price="${price}">Vendre 1</button>
+          <input type="number" min="1" max="${qty}" value="1" class="field-input" data-shop-sell-qty="${it.id}" style="width:56px; margin:0; flex:none;">
+          <button class="btn-secondary" data-shop-sell="${it.id}" data-shop-sell-price="${price}" style="flex:none;">Vendre</button>
         </div>
       `;
     }).join('') : '<p class="meta">Tu n\'as aucun objet vendable pour l\'instant.</p>';
@@ -1339,12 +1404,16 @@ function renderShopSellList(){
       btn.addEventListener('click', ()=>{
         const itemId = btn.dataset.shopSell;
         const price = parseInt(btn.dataset.shopSellPrice, 10) || 0;
+        const qtyInput = wrap.querySelector(`[data-shop-sell-qty="${itemId}"]`);
+        const maxQty = parseInt(qtyInput.max, 10) || 1;
+        const qty = Math.min(maxQty, Math.max(1, parseInt(qtyInput.value, 10) || 1));
+        const total = price * qty;
         if (!currentUser || !db) return;
         db.collection('players').doc(currentUser.uid).set({
-          coins: firebase.firestore.FieldValue.increment(price),
-          inventory: { [itemId]: firebase.firestore.FieldValue.increment(-1) }
+          coins: firebase.firestore.FieldValue.increment(total),
+          inventory: { [itemId]: firebase.firestore.FieldValue.increment(-qty) }
         }, { merge: true })
-          .then(()=>{ showToast(`Vendu pour 💰 ${price}`); renderShopSellList(); })
+          .then(()=>{ showToast(`Vendu ${qty} × pour 💰 ${total}`); renderShopSellList(); })
           .catch((err)=> showToast('Échec : ' + err.message));
       });
     });
@@ -1681,6 +1750,7 @@ function loadForEdit(id){
   document.getElementById('shopBlock').style.display = (interactionType === 'shop') ? 'block' : 'none';
   currentShopItems = Array.isArray(d.shopItems) ? JSON.parse(JSON.stringify(d.shopItems)) : [];
   renderShopItemsBuilder();
+  document.getElementById('editShopPhrase').value = d.shopPhrase || '';
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
   document.getElementById('editStartTime').value = d.startTime || '';
@@ -1728,6 +1798,7 @@ function resetForm(){
   document.getElementById('shopBlock').style.display = 'none';
   currentShopItems = [];
   renderShopItemsBuilder();
+  document.getElementById('editShopPhrase').value = '';
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
   document.getElementById('editStartTime').value = '';
@@ -1790,6 +1861,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
     .filter(s=> s.text || s.choices.length);
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
+  const shopPhrase = document.getElementById('editShopPhrase').value.trim();
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
   const startTime = document.getElementById('editStartTime').value;
@@ -1800,7 +1872,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -1907,6 +1979,7 @@ let otherPlayerMarkers = {};
 let multiplayerStarted = false;
 const STALE_AFTER_MS = 2 * 60 * 1000; // 2 minutes sans nouvelle position = joueur ignoré
 
+let otherPlayersCache = {}; // { uid: {pseudo, lat, lng, lastSeen} }
 function startMultiplayerSync(){
   if (multiplayerStarted || !currentUser || !db) return;
   multiplayerStarted = true;
@@ -1924,12 +1997,14 @@ function startMultiplayerSync(){
   db.collection('players').onSnapshot((snap)=>{
     const now = Date.now();
     const seenIds = new Set();
+    otherPlayersCache = {};
     snap.forEach((doc)=>{
       if (doc.id === currentUser.uid) return;
       const d = doc.data();
       if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
       if (now - (d.lastSeen || 0) > STALE_AFTER_MS) return;
       seenIds.add(doc.id);
+      otherPlayersCache[doc.id] = d;
       if (otherPlayerMarkers[doc.id]){
         otherPlayerMarkers[doc.id].setLatLng([d.lat, d.lng]);
       } else {
@@ -1947,6 +2022,7 @@ function startMultiplayerSync(){
         delete otherPlayerMarkers[id];
       }
     });
+    if (document.getElementById('nearbyPlayersOverlay').classList.contains('show')) renderNearbyPlayersList();
   });
 }
 
@@ -2405,6 +2481,7 @@ function renderInventoryList(){
   const listEl = document.getElementById('inventoryList');
   const search = document.getElementById('inventorySearch').value.trim().toLowerCase();
   let entries = inventoryEntriesCache.map(([itemId, qty])=>({ itemId, qty, it: items.find(i=>i.id===itemId) }));
+  entries.sort((a,b)=> (a.it?a.it.name:a.itemId).localeCompare(b.it?b.it.name:b.itemId, 'fr'));
   if (search) entries = entries.filter(e => (e.it ? e.it.name : e.itemId).toLowerCase().includes(search));
 
   if (!entries.length){
@@ -2575,6 +2652,7 @@ function renderRecipeItemChooserList(){
   const listEl = document.getElementById('recipeItemChooserList');
   const search = (document.getElementById('recipeItemChooserSearch').value || '').trim().toLowerCase();
   let pool = recipeItemChooserFilterFn ? items.filter(recipeItemChooserFilterFn) : items;
+  pool = pool.slice().sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'fr'));
   if (search) pool = pool.filter(it=> (it.name||'').toLowerCase().includes(search));
   listEl.innerHTML = pool.length ? pool.map(it=>`
     <div class="editor-list-item" data-choose-item="${it.id}" style="cursor:pointer;">
@@ -3121,6 +3199,234 @@ document.getElementById('baseBtn').addEventListener('click', ()=>{
 document.getElementById('baseCloseBtn').addEventListener('click', ()=>{
   document.getElementById('baseOverlay').classList.remove('show');
 });
+
+/* ---------- Joueurs proches + échanges ---------- */
+document.getElementById('nearbyPlayersBtn').addEventListener('click', ()=>{
+  renderNearbyPlayersList();
+  document.getElementById('nearbyPlayersOverlay').classList.add('show');
+});
+document.getElementById('nearbyPlayersCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+});
+function renderNearbyPlayersList(){
+  const wrap = document.getElementById('nearbyPlayersList');
+  if (!playerPos){ wrap.innerHTML = '<p class="meta">Position inconnue pour l\'instant.</p>'; return; }
+  const nearby = Object.entries(otherPlayersCache).map(([uid, d])=>{
+    const dist = haversineDist(playerPos.lat, playerPos.lng, d.lat, d.lng);
+    return { uid, pseudo: d.pseudo || 'Joueur', dist };
+  }).filter(p=> p.dist <= VISIBLE_RADIUS_M).sort((a,b)=> a.dist - b.dist);
+  wrap.innerHTML = nearby.length ? nearby.map(p=>`
+    <div class="editor-list-item" style="align-items:center;">
+      <div class="thumb">🧑</div>
+      <div class="name" style="flex:1;">${p.pseudo}<span class="meta" style="display:block;">${Math.round(p.dist)} m</span></div>
+      <button class="btn-secondary" data-trade-with="${p.uid}" data-trade-pseudo="${p.pseudo}">Échanger</button>
+      <button class="btn-secondary" disabled style="opacity:.4;" title="Bientôt disponible">Combattre</button>
+    </div>
+  `).join('') : '<p class="meta">Aucun joueur à proximité pour l\'instant.</p>';
+  wrap.querySelectorAll('[data-trade-with]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      openTradeComposer(btn.dataset.tradeWith, btn.dataset.tradePseudo);
+    });
+  });
+}
+
+let tradeComposeTargetUid = null;
+let tradeComposeTargetPseudo = '';
+let tradeComposeItems = []; // { itemId, qty }
+let tradeComposeRecruitIds = new Set();
+function openTradeComposer(uid, pseudo){
+  tradeComposeTargetUid = uid;
+  tradeComposeTargetPseudo = pseudo;
+  tradeComposeItems = [];
+  tradeComposeRecruitIds = new Set();
+  document.getElementById('tradeComposeTarget').textContent = pseudo;
+  document.getElementById('tradeComposeCoins').value = 0;
+  renderTradeComposeItems();
+  renderTradeComposeRecruits();
+  document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+  document.getElementById('tradeComposeOverlay').classList.add('show');
+}
+document.getElementById('tradeComposeCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('tradeComposeOverlay').classList.remove('show');
+});
+function renderTradeComposeItems(){
+  const wrap = document.getElementById('tradeComposeItemsList');
+  wrap.innerHTML = tradeComposeItems.map((row, idx)=>{
+    const it = items.find(i=>i.id===row.itemId);
+    return `
+      <div class="field-row" style="align-items:center; margin-bottom:6px;">
+        <button class="btn-secondary" data-tci-pick="${idx}" style="flex:2;">${it ? itemThumbHtml(it) + ' ' + it.name : '— choisir —'}</button>
+        <input type="number" class="field-input" data-tci-qty="${idx}" value="${row.qty || 1}" min="1" style="flex:1;">
+        <button class="btn-secondary" data-tci-del="${idx}" style="flex:none; color:var(--danger);">✕</button>
+      </div>
+    `;
+  }).join('') || '<p class="meta">Aucun objet ajouté.</p>';
+  wrap.querySelectorAll('[data-tci-pick]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.dataset.tciPick, 10);
+      openRecipeItemChooser((itemId)=>{ tradeComposeItems[idx].itemId = itemId; renderTradeComposeItems(); });
+    });
+  });
+  wrap.querySelectorAll('[data-tci-qty]').forEach(input=>{
+    input.addEventListener('input', ()=>{
+      tradeComposeItems[parseInt(input.dataset.tciQty, 10)].qty = parseInt(input.value, 10) || 1;
+    });
+  });
+  wrap.querySelectorAll('[data-tci-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      tradeComposeItems.splice(parseInt(btn.dataset.tciDel, 10), 1);
+      renderTradeComposeItems();
+    });
+  });
+}
+document.getElementById('tradeComposeAddItemBtn').addEventListener('click', ()=>{
+  tradeComposeItems.push({ itemId: '', qty: 1 });
+  renderTradeComposeItems();
+});
+function renderTradeComposeRecruits(){
+  const wrap = document.getElementById('tradeComposeRecruitsList');
+  wrap.innerHTML = recruits.length ? recruits.map(r=>{
+    const metier = metiers.find(m=>m.id===r.metierId);
+    return `
+      <label style="display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:6px;">
+        <input type="checkbox" data-tcr="${r.id}" style="width:auto;">
+        ${r.name}${metier ? ' · ' + metier.name : ''}
+      </label>
+    `;
+  }).join('') : '<p class="meta">Tu n\'as aucun personnage recruté pour l\'instant.</p>';
+  wrap.querySelectorAll('[data-tcr]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      if (cb.checked) tradeComposeRecruitIds.add(cb.dataset.tcr);
+      else tradeComposeRecruitIds.delete(cb.dataset.tcr);
+    });
+  });
+}
+document.getElementById('tradeComposeSendBtn').addEventListener('click', ()=>{
+  if (!currentUser || !db || !tradeComposeTargetUid) return;
+  const coins = Math.max(0, parseInt(document.getElementById('tradeComposeCoins').value, 10) || 0);
+  const tradeItems = tradeComposeItems.filter(r=> r.itemId && r.qty > 0);
+  const recruitIds = Array.from(tradeComposeRecruitIds);
+  if (!coins && !tradeItems.length && !recruitIds.length){ showToast('Propose au moins quelque chose'); return; }
+  tradeOffersCol.add({
+    fromUid: currentUser.uid,
+    fromPseudo: currentPseudo || 'Joueur',
+    toUid: tradeComposeTargetUid,
+    toPseudo: tradeComposeTargetPseudo,
+    coins, items: tradeItems, recruitIds,
+    status: 'pending',
+    createdAt: Date.now()
+  }).then(()=>{
+    showToast('Proposition envoyée à ' + tradeComposeTargetPseudo);
+    document.getElementById('tradeComposeOverlay').classList.remove('show');
+  }).catch((err)=> showToast('Échec : ' + err.message));
+});
+
+const tradeOffersCol = (typeof db !== 'undefined') ? db.collection('tradeOffers') : null;
+let receivedTradeOffers = [];
+let sentTradeOffers = [];
+function attachTradeListeners(){
+  if (!currentUser || !tradeOffersCol) return;
+  tradeOffersCol.where('toUid','==',currentUser.uid).onSnapshot((snap)=>{
+    receivedTradeOffers = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    const pendingCount = receivedTradeOffers.filter(o=>o.status==='pending').length;
+    const badge = document.getElementById('tradeOffersBadge');
+    badge.style.display = pendingCount ? 'flex' : 'none';
+    badge.textContent = pendingCount;
+    if (document.getElementById('tradeOffersOverlay').classList.contains('show')) renderTradeOffers();
+  });
+  tradeOffersCol.where('fromUid','==',currentUser.uid).onSnapshot((snap)=>{
+    sentTradeOffers = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    if (document.getElementById('tradeOffersOverlay').classList.contains('show')) renderTradeOffers();
+  });
+}
+document.getElementById('tradeOffersBtn').addEventListener('click', ()=>{
+  renderTradeOffers();
+  document.getElementById('tradeOffersOverlay').classList.add('show');
+});
+document.getElementById('tradeOffersCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('tradeOffersOverlay').classList.remove('show');
+});
+function describeTradeOffer(o){
+  const parts = [];
+  if (o.coins) parts.push('💰 ' + o.coins);
+  (o.items||[]).forEach(row=>{
+    const it = items.find(i=>i.id===row.itemId);
+    parts.push((it ? it.name : '?') + ' ×' + row.qty);
+  });
+  (o.recruitIds||[]).forEach(rid=>{
+    const r = allRecruitsRaw.find(x=>x.id===rid);
+    parts.push('🧑 ' + (r ? r.name : '?'));
+  });
+  return parts.length ? parts.join(', ') : '(rien)';
+}
+function renderTradeOffers(){
+  const recWrap = document.getElementById('tradeOffersReceivedList');
+  recWrap.innerHTML = receivedTradeOffers.length ? receivedTradeOffers.map(o=>`
+    <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
+      <div class="name">${o.fromPseudo} te propose :<span class="meta" style="display:block;">${describeTradeOffer(o)}</span><span class="meta" style="display:block;">${o.status === 'pending' ? 'En attente' : (o.status === 'accepted' ? '✅ Acceptée' : '❌ Refusée')}</span></div>
+      ${o.status === 'pending' ? `
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn-capture" data-trade-accept="${o.id}" style="flex:1;">Accepter</button>
+          <button class="btn-secondary" data-trade-decline="${o.id}" style="flex:1;">Refuser</button>
+        </div>
+      ` : ''}
+    </div>
+  `).join('') : '<p class="meta">Aucune offre reçue.</p>';
+  recWrap.querySelectorAll('[data-trade-accept]').forEach(btn=>{
+    btn.addEventListener('click', ()=> acceptTradeOffer(btn.dataset.tradeAccept));
+  });
+  recWrap.querySelectorAll('[data-trade-decline]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      tradeOffersCol.doc(btn.dataset.tradeDecline).update({ status:'declined' });
+    });
+  });
+
+  const sentWrap = document.getElementById('tradeOffersSentList');
+  sentWrap.innerHTML = sentTradeOffers.length ? sentTradeOffers.map(o=>`
+    <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
+      <div class="name">À ${o.toPseudo} :<span class="meta" style="display:block;">${describeTradeOffer(o)}</span><span class="meta" style="display:block;">${o.status === 'pending' ? 'En attente' : (o.status === 'accepted' ? '✅ Acceptée' : '❌ Refusée')}</span></div>
+      ${o.status === 'pending' ? `<button class="btn-secondary" data-trade-cancel="${o.id}" style="width:100%; margin-top:8px;">Annuler</button>` : ''}
+    </div>
+  `).join('') : '<p class="meta">Aucune offre envoyée.</p>';
+  sentWrap.querySelectorAll('[data-trade-cancel]').forEach(btn=>{
+    btn.addEventListener('click', ()=> tradeOffersCol.doc(btn.dataset.tradeCancel).delete());
+  });
+}
+function acceptTradeOffer(offerId){
+  const offer = receivedTradeOffers.find(o=>o.id===offerId);
+  if (!offer || !currentUser || !db) return;
+  db.collection('players').doc(offer.fromUid).get().then((fromDoc)=>{
+    const fromData = fromDoc.exists ? fromDoc.data() : {};
+    const fromCoins = typeof fromData.coins === 'number' ? fromData.coins : 0;
+    if (fromCoins < (offer.coins||0)){ showToast(`${offer.fromPseudo} n'a plus assez de pièces pour cette offre`); return; }
+    const fromInv = fromData.inventory || {};
+    for (const row of (offer.items||[])){
+      if ((fromInv[row.itemId]||0) < row.qty){ showToast(`${offer.fromPseudo} n'a plus assez de ${(items.find(i=>i.id===row.itemId)||{}).name || row.itemId}`); return; }
+    }
+    const checkRecruits = Promise.all((offer.recruitIds||[]).map(rid=>
+      db.collection('recruits').doc(rid).get().then(d=> (d.exists && d.data().ownerUid === offer.fromUid) ? d : null)
+    ));
+    checkRecruits.then((results)=>{
+      if (results.some(r=>!r)){ showToast(`${offer.fromPseudo} ne possède plus un des personnages proposés`); return; }
+      const fromUpdate = {};
+      const toUpdate = {};
+      if (offer.coins){
+        fromUpdate.coins = firebase.firestore.FieldValue.increment(-offer.coins);
+        toUpdate.coins = firebase.firestore.FieldValue.increment(offer.coins);
+      }
+      (offer.items||[]).forEach(row=>{
+        fromUpdate['inventory.' + row.itemId] = firebase.firestore.FieldValue.increment(-row.qty);
+        toUpdate['inventory.' + row.itemId] = firebase.firestore.FieldValue.increment(row.qty);
+      });
+      const writes = [];
+      if (Object.keys(fromUpdate).length) writes.push(db.collection('players').doc(offer.fromUid).update(fromUpdate));
+      if (Object.keys(toUpdate).length) writes.push(db.collection('players').doc(offer.toUid).update(toUpdate));
+      (offer.recruitIds||[]).forEach(rid=> writes.push(db.collection('recruits').doc(rid).update({ ownerUid: offer.toUid })));
+      writes.push(tradeOffersCol.doc(offerId).update({ status:'accepted', respondedAt: Date.now() }));
+      Promise.all(writes).then(()=> showToast('Échange effectué !')).catch((err)=> showToast('Échec : ' + err.message));
+    });
+  });
+}
 
 /* ---------- Quêtes ---------- */
 const questsCol = (typeof db !== 'undefined') ? db.collection('quests') : null;
