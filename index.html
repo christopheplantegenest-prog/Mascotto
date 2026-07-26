@@ -544,7 +544,7 @@
     <!-- Section : Placer un objet -->
     <div class="items-section" id="section-place" style="display:none;">
       <div class="field-label">Objet à placer</div>
-      <select id="pickupItemSelect" class="field-input"></select>
+      <button type="button" class="btn-secondary" id="pickupItemPickBtn" style="width:100%; justify-content:flex-start; display:flex; align-items:center; gap:8px;">— choisir —</button>
 
       <div class="field-label">Quantité</div>
       <input type="number" id="pickupQuantity" class="field-input" value="1" min="1">
@@ -1185,7 +1185,19 @@ function renderSheet(){
   const step = activeSteps[currentStepIdx];
   document.getElementById('sheetMeta').textContent = step.text;
 
-  if (step.choices.length === 0){
+  const visibleChoices = step.choices.filter(ch=>{
+    if (ch.questGive){
+      const state = playerQuestsState[ch.questGive.questId];
+      if (state === 'active' || state === 'completed') return false; // déjà acceptée ou terminée : ne plus proposer
+    }
+    if (ch.questValidate){
+      const state = playerQuestsState[ch.questValidate.questId];
+      if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
+    }
+    return true;
+  });
+
+  if (visibleChoices.length === 0){
     const btn = document.createElement('button');
     btn.className = 'choice-btn end';
     btn.textContent = 'Fermer';
@@ -1194,7 +1206,7 @@ function renderSheet(){
     return;
   }
 
-  step.choices.forEach(ch=>{
+  visibleChoices.forEach(ch=>{
     const btn = document.createElement('button');
     btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
@@ -1252,6 +1264,8 @@ function watchPlayerQuests(uid){
   db.collection('players').doc(uid).onSnapshot((doc)=>{
     playerQuestsState = (doc.exists && doc.data().quests) || {};
     if (typeof latestSnap !== 'undefined' && latestSnap) renderAllCreatures(latestSnap);
+    const questsListSection = document.getElementById('questsection-list');
+    if (questsListSection && questsListSection.style.display !== 'none') renderQuestsListView();
   });
 }
 
@@ -1891,12 +1905,17 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
     .catch((err)=> showToast('Échec : ' + err.message));
 });
 
+let pickupItemId = '';
 function renderPickupItemSelect(){
-  const sel = document.getElementById('pickupItemSelect');
-  const current = sel.value;
-  sel.innerHTML = items.map(it=>`<option value="${it.id}">${it.emoji||'📦'} ${it.name}</option>`).join('');
-  if (current) sel.value = current;
+  const btn = document.getElementById('pickupItemPickBtn');
+  if (!btn) return;
+  const chosen = items.find(i=>i.id===pickupItemId);
+  btn.innerHTML = `${itemThumbHtml(chosen)} ${chosen ? chosen.name : '— choisir —'}`;
 }
+document.getElementById('pickupItemPickBtn').addEventListener('click', ()=> openRecipeItemChooser((itemId)=>{
+  pickupItemId = itemId;
+  renderPickupItemSelect();
+}));
 
 /* ---------- Points de ramassage (pickups) ---------- */
 const pickupsCol = (typeof db !== 'undefined') ? db.collection('pickups') : null;
@@ -2042,7 +2061,8 @@ function loadPickupForEdit(id){
   const p = pickups.find(pk=>pk.id===id);
   if (!p) return;
   editingPickupId = id;
-  document.getElementById('pickupItemSelect').value = p.itemId || '';
+  pickupItemId = p.itemId || '';
+  renderPickupItemSelect();
   document.getElementById('pickupQuantity').value = p.quantity || 1;
   document.getElementById('pickupRespawnMode').value = p.respawnMode || 'once';
   document.getElementById('pickupRespawnMinutesWrap').style.display = (p.respawnMode === 'timed') ? 'block' : 'none';
@@ -2067,7 +2087,7 @@ function resetPickupForm(){
 document.getElementById('pickupCancelBtn').addEventListener('click', resetPickupForm);
 
 document.getElementById('pickupSaveBtn').addEventListener('click', ()=>{
-  const itemId = document.getElementById('pickupItemSelect').value;
+  const itemId = pickupItemId;
   const item = items.find(i=>i.id===itemId);
   if (!item){ showToast('Choisis un objet'); return; }
   if (pendingPickupLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
@@ -2944,19 +2964,31 @@ function renderQuestsListView(){
   if (!listEl) return;
   listEl.innerHTML = quests.map(q=>{
     const nextName = q.nextQuestId ? (quests.find(x=>x.id===q.nextQuestId)||{}).name : null;
+    const myState = playerQuestsState[q.id];
+    const stateLabel = myState === 'completed' ? '✅ Terminée (toi)' : myState === 'active' ? '🔸 En cours (toi)' : 'Pas commencée (toi)';
     return `
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div class="thumb">📜</div>
-          <div class="name">${q.name || '(sans nom)'}${nextName ? `<span class="meta" style="display:block; font-size:11px;">→ débloque : ${nextName}</span>` : ''}</div>
+          <div class="name">${q.name || '(sans nom)'}<span class="meta" style="display:block; font-size:11px;">${stateLabel}${nextName ? ` · → débloque : ${nextName}` : ''}</span></div>
           <button class="btn-secondary" data-quest-edit="${q.id}">Modifier</button>
           <button class="btn-secondary" data-quest-del="${q.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
         </div>
+        ${myState ? `<button class="btn-secondary" data-quest-reset="${q.id}" style="width:100%; margin-top:8px;">↺ Réinitialiser cette quête pour moi (test)</button>` : ''}
       </div>
     `;
   }).join('');
   listEl.querySelectorAll('button[data-quest-del]').forEach(btn=>{
     btn.addEventListener('click', ()=> questsCol.doc(btn.dataset.questDel).delete());
+  });
+  listEl.querySelectorAll('button[data-quest-reset]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if (!currentUser || !db) return;
+      db.collection('players').doc(currentUser.uid).update({
+        [`quests.${btn.dataset.questReset}`]: firebase.firestore.FieldValue.delete()
+      }).then(()=> showToast('Quête réinitialisée pour toi'))
+        .catch((err)=> showToast('Échec : ' + err.message));
+    });
   });
   listEl.querySelectorAll('button[data-quest-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=>{ loadQuestForEdit(btn.dataset.questEdit); showQuestsSection('new'); });
