@@ -1251,9 +1251,17 @@ function openShopWindow(c){
   activeShopCreature = c;
   document.getElementById('shopEmoji').innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🛒');
   document.getElementById('shopName').textContent = c.name || 'Boutique';
-  document.getElementById('shopCoinsLabel').textContent = '💰 ' + playerCoins;
+  refreshShopCoinsLabel();
   showShopTab('buy');
   document.getElementById('shopOverlay').classList.add('show');
+}
+function refreshShopCoinsLabel(){
+  if (!currentUser || !db) return;
+  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+    const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+    playerCoins = coins; // garde la variable globale synchronisée avec la vraie valeur
+    document.getElementById('shopCoinsLabel').textContent = '💰 ' + coins;
+  });
 }
 function showShopTab(tab){
   document.getElementById('shopBuyList').style.display = (tab==='buy') ? 'block' : 'none';
@@ -1272,7 +1280,6 @@ function renderShopBuyList(){
   const c = activeShopCreature;
   const wrap = document.getElementById('shopBuyList');
   const rows = Array.isArray(c && c.shopItems) ? c.shopItems : [];
-  document.getElementById('shopCoinsLabel').textContent = '💰 ' + playerCoins;
   wrap.innerHTML = rows.length ? rows.map((row,idx)=>{
     const it = items.find(i=>i.id===row.itemId);
     if (!it) return '';
@@ -1289,13 +1296,17 @@ function renderShopBuyList(){
       const row = rows[parseInt(btn.dataset.shopBuy, 10)];
       const it = items.find(i=>i.id===row.itemId);
       if (!it || !currentUser || !db) return;
-      if (playerCoins < row.price){ showToast('Pas assez de pièces'); return; }
-      db.collection('players').doc(currentUser.uid).set({
-        coins: firebase.firestore.FieldValue.increment(-row.price),
-        inventory: { [it.id]: firebase.firestore.FieldValue.increment(1) }
-      }, { merge: true })
-        .then(()=> showToast(`Acheté : ${it.name}`))
-        .catch((err)=> showToast('Échec : ' + err.message));
+      // On revérifie le solde réel juste avant l'achat (jamais la variable en mémoire, qui peut être en retard)
+      db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+        const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+        if (coins < row.price){ showToast(`Pas assez de pièces (tu as 💰 ${coins})`); return; }
+        db.collection('players').doc(currentUser.uid).set({
+          coins: firebase.firestore.FieldValue.increment(-row.price),
+          inventory: { [it.id]: firebase.firestore.FieldValue.increment(1) }
+        }, { merge: true })
+          .then(()=>{ showToast(`Acheté : ${it.name}`); refreshShopCoinsLabel(); })
+          .catch((err)=> showToast('Échec : ' + err.message));
+      });
     });
   });
 }
@@ -1448,10 +1459,16 @@ function recruitCreature(creature, metierId){
 /* ---------- Suivi permanent de la progression du joueur (quêtes) ---------- */
 let playerQuestsState = {}; // { questId: 'active' | 'completed' }
 let playerCoins = 0;
+let coinsBackfillDone = false;
 function watchPlayerQuests(uid){
   if (!db) return;
   db.collection('players').doc(uid).onSnapshot((doc)=>{
     playerQuestsState = (doc.exists && doc.data().quests) || {};
+    if (doc.exists && typeof doc.data().coins !== 'number' && !coinsBackfillDone){
+      // Compte créé avant l'ajout de la monnaie : on lui donne les 500 de départ une seule fois
+      coinsBackfillDone = true;
+      db.collection('players').doc(uid).set({ coins: 500 }, { merge: true }).catch(()=>{});
+    }
     if (typeof latestSnap !== 'undefined' && latestSnap) renderAllCreatures(latestSnap);
     const questsListSection = document.getElementById('questsection-list');
     if (questsListSection && questsListSection.style.display !== 'none') renderQuestsListView();
