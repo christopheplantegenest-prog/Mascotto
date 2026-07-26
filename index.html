@@ -94,6 +94,7 @@
     display:none; align-items:flex-end; justify-content:center; z-index:2000;
   }
   .overlay.show{ display:flex; }
+  #recipeItemChooserOverlay{ z-index:2100; }
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
     border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
@@ -426,10 +427,7 @@
       <div class="field-label">Nom de l'objet</div>
       <input type="text" id="itemName" class="field-input" placeholder="Bois">
 
-      <div class="field-label">Emoji</div>
-      <input type="text" id="itemEmoji" class="field-input" placeholder="🪵" maxlength="4">
-
-      <div class="field-label">Photo (optionnel, remplace l'emoji)</div>
+      <div class="field-label">Photo</div>
       <input type="file" id="itemImageFile" accept="image/*" class="field-input">
       <div id="itemImagePreviewWrap" style="display:none; margin-top:8px;">
         <img id="itemImagePreview" style="width:60px; height:60px; object-fit:contain;">
@@ -1559,7 +1557,6 @@ function loadItemForEdit(id){
   if (!it) return;
   editingItemId = id;
   document.getElementById('itemName').value = it.name || '';
-  document.getElementById('itemEmoji').value = it.emoji || '';
   document.getElementById('itemType').value = it.type || 'ressource';
   document.getElementById('itemDescription').value = it.description || '';
   const equippable = !!it.equippable;
@@ -1590,7 +1587,6 @@ function resetItemForm(){
   document.getElementById('itemImageFile').value = '';
   document.getElementById('itemImagePreviewWrap').style.display = 'none';
   document.getElementById('itemName').value = '';
-  document.getElementById('itemEmoji').value = '';
   document.getElementById('itemType').value = 'ressource';
   document.getElementById('itemDescription').value = '';
   document.getElementById('itemEquippable').checked = false;
@@ -1608,7 +1604,7 @@ document.getElementById('itemCancelBtn').addEventListener('click', resetItemForm
 
 document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   const name = document.getElementById('itemName').value.trim();
-  const emoji = document.getElementById('itemEmoji').value.trim() || '📦';
+  const emoji = '📦';
   const imageUrl = uploadedItemImageDataUrl || '';
   const type = document.getElementById('itemType').value;
   const description = document.getElementById('itemDescription').value.trim();
@@ -1860,9 +1856,10 @@ function renderInventory(){
     listEl.innerHTML = '';
     entries.forEach(([itemId, qty])=>{
       const it = items.find(i=>i.id===itemId);
+      const thumb = it && it.imageUrl ? `<img src="${it.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : (it ? it.emoji : '📦');
       const row = document.createElement('div');
       row.className = 'editor-list-item';
-      row.innerHTML = `<div class="thumb">${it ? it.emoji : '📦'}</div><div class="name">${it ? it.name : itemId}</div><div style="font-weight:700;">× ${qty}</div>`;
+      row.innerHTML = `<div class="thumb">${thumb}</div><div class="name">${it ? it.name : itemId}</div><div style="font-weight:700;">× ${qty}</div>`;
       listEl.appendChild(row);
     });
   });
@@ -2363,12 +2360,13 @@ function renderRecruitSheet(){
       const canAfford = (r.inputs||[]).every(inp => (baseResources[inp.itemId]||0) >= inp.qty);
       const inputsLabel = (r.inputs||[]).map(inp=>{
         const it = items.find(i=>i.id===inp.itemId);
-        return `${inp.qty} ${it ? it.emoji : '?'}`;
+        const thumb = it && it.imageUrl ? `<img src="${it.imageUrl}" style="width:14px; height:14px; object-fit:contain; vertical-align:middle;">` : (it ? it.emoji : '?');
+        return `${inp.qty} ${thumb}`;
       }).join(' + ') || 'Aucune ressource';
       return `
         <div class="choice-row">
           <b>${r.imageUrl ? `<img src="${r.imageUrl}" style="width:18px; height:18px; object-fit:contain; vertical-align:middle;">` : (r.emoji||'📦')} ${r.name}</b>
-          <div class="meta">${inputsLabel} → ${r.outputQty} × ${(items.find(i=>i.id===r.outputItemId)||{}).emoji||'📦'} (${formatDuration(r.duration)})</div>
+          <div class="meta">${inputsLabel} → ${r.outputQty} × ${itemThumbHtml(items.find(i=>i.id===r.outputItemId))} (${formatDuration(r.duration)})</div>
           <button class="btn-capture" data-launch-recipe="${r.id}" style="width:100%; margin-top:6px;" ${canAfford ? '' : 'disabled'}>Lancer</button>
         </div>
       `;
@@ -2383,7 +2381,7 @@ function renderRecruitSheet(){
     const it = items.find(i=>i.id===recruit.equippedItemId);
     equipEl.innerHTML = `
       <div class="choice-row">
-        <b>${it ? it.emoji+' '+it.name : 'Objet inconnu'}</b>
+        <b>${it ? itemThumbHtml(it)+' '+it.name : 'Objet inconnu'}</b>
         <div class="meta">${it && it.effectDuration==='permanent' ? '-'+it.effectValue+'% de temps (équipé en continu)' : 'Effet temporaire'}</div>
         <button class="btn-secondary" id="baseUnequipBtn" style="width:100%; margin-top:6px;">Retirer</button>
       </div>
@@ -2436,7 +2434,7 @@ function openBaseEquipChooser(recruit){
     && (!it.effectMetiers || !it.effectMetiers.length || it.effectMetiers.includes(recruit.metierId)));
   listEl.innerHTML = eligible.length ? eligible.map(it=>`
     <div class="choice-row">
-      <b>${it.emoji||'📦'} ${it.name}</b>
+      <b>${itemThumbHtml(it)} ${it.name}</b>
       <div class="meta">Stock : ${baseResources[it.id]||0} — ${it.effectDuration==='permanent' ? '-'+it.effectValue+'% en continu' : '-'+it.effectValue+'% pendant '+it.effectSeconds+'s (consommé)'}</div>
       <button class="btn-capture" data-equip-item="${it.id}" style="width:100%; margin-top:6px;">Équiper</button>
     </div>
