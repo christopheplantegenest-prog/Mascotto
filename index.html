@@ -365,16 +365,21 @@
 
 <!-- Hub d'édition : point d'entrée unique vers tous les éditeurs -->
 <div class="overlay" id="editHubOverlay">
-  <div class="sheet">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
     <h3 style="margin-top:0;">Édition</h3>
+
+    <div class="field-label">Contenu du jeu</div>
     <button class="btn-capture" id="hubPnjBtn" style="width:100%; margin-bottom:10px;">PNJ</button>
     <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
     <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
     <button class="btn-capture" id="hubQuestsBtn" style="width:100%; margin-bottom:10px;">Quêtes</button>
-    <button class="btn-secondary" id="cleanupOldScenarioBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer l'ancien scénario du trésor</button>
-    <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
+
+    <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
-    <button class="btn-secondary" id="editHubCloseBtn" style="width:100%;">Fermer</button>
+    <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
+    <button class="btn-secondary" id="cleanupFeteBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer le scénario "La fête de Lanville"</button>
+
+    <button class="btn-secondary" id="editHubCloseBtn" style="width:100%; margin-top:6px;">Fermer</button>
   </div>
 </div>
 
@@ -387,8 +392,6 @@
     </div>
     <div class="meta" id="baseStatus">Connexion…</div>
 
-    <div class="field-label">Ressources</div>
-    <div id="baseResources" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px;"></div>
     <button class="btn-secondary" id="baseAddResBtn" style="width:100%; margin-bottom:14px;">+5 de chaque ressource (test)</button>
 
     <div id="baseRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
@@ -476,6 +479,11 @@
       <select id="questNextQuest" class="field-input">
         <option value="">Aucune</option>
       </select>
+
+      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="questShowInJournal" style="width:auto;" checked>
+        <label for="questShowInJournal" style="margin:0;">Afficher dans le journal de suivi</label>
+      </div>
 
       <button class="btn-capture" id="questSaveBtn" style="width:100%; margin-top:16px;">Enregistrer la quête</button>
       <button class="btn-secondary" id="questCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
@@ -983,7 +991,7 @@ function isActiveNow(d){
 
 /* ---------- Dialogue à choix multiples (mini-syntaxe) ---------- */
 /* ---------- Constructeur visuel de dialogue (sans syntaxe) ---------- */
-let currentDialogueSteps = [ { text: '', choices: [] } ];
+let currentDialogueSteps = [ { text: '', choices: [], textVariants: [] } ];
 let currentShopItems = []; // { itemId, price }
 function renderShopItemsBuilder(){
   const wrap = document.getElementById('shopItemsList');
@@ -1062,6 +1070,64 @@ function renderDialogueBuilder(){
     textInput.value = step.text || '';
     textInput.addEventListener('input', ()=>{ step.text = textInput.value; });
     card.appendChild(textInput);
+
+    if (!step.textVariants) step.textVariants = [];
+    const variantsLabel = document.createElement('div');
+    variantsLabel.className = 'field-label';
+    variantsLabel.textContent = 'Variantes de ce texte selon une quête (optionnel)';
+    card.appendChild(variantsLabel);
+
+    step.textVariants.forEach((variant, vIdx)=>{
+      const vRow = document.createElement('div');
+      vRow.style.cssText = 'border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:6px;';
+
+      const selRow = document.createElement('div');
+      selRow.style.cssText = 'display:flex; gap:6px; margin-bottom:6px;';
+      const qSel = document.createElement('select');
+      qSel.className = 'field-input';
+      qSel.innerHTML = quests.map(q=>`<option value="${q.id}">${q.name}</option>`).join('');
+      qSel.value = variant.questId || '';
+      qSel.style.flex = '2';
+      qSel.addEventListener('change', ()=>{ variant.questId = qSel.value; });
+
+      const stSel = document.createElement('select');
+      stSel.className = 'field-input';
+      stSel.innerHTML = `<option value="active">en cours</option><option value="completed">terminée</option><option value="not_active">pas commencée</option>`;
+      stSel.value = variant.state || 'active';
+      stSel.style.flex = '1';
+      stSel.addEventListener('change', ()=>{ variant.state = stSel.value; });
+
+      selRow.appendChild(qSel); selRow.appendChild(stSel);
+      vRow.appendChild(selRow);
+
+      const vText = document.createElement('textarea');
+      vText.className = 'field-input';
+      vText.style.minHeight = '46px';
+      vText.placeholder = 'Texte à dire dans ce cas...';
+      vText.value = variant.text || '';
+      vText.addEventListener('input', ()=>{ variant.text = vText.value; });
+      vRow.appendChild(vText);
+
+      const delVBtn = document.createElement('button');
+      delVBtn.className = 'btn-secondary';
+      delVBtn.textContent = '✕ Retirer cette variante';
+      delVBtn.style.cssText = 'width:100%; margin-top:6px; color:var(--danger);';
+      delVBtn.addEventListener('click', ()=>{ step.textVariants.splice(vIdx,1); renderDialogueBuilder(); });
+      vRow.appendChild(delVBtn);
+
+      card.appendChild(vRow);
+    });
+
+    const addVariantBtn = document.createElement('button');
+    addVariantBtn.className = 'btn-secondary';
+    addVariantBtn.textContent = '+ Ajouter une variante de texte';
+    addVariantBtn.style.cssText = 'width:100%; margin-bottom:10px;';
+    addVariantBtn.addEventListener('click', ()=>{
+      if (!quests.length){ showToast('Crée d\'abord une quête'); return; }
+      step.textVariants.push({ questId: quests[0].id, state:'active', text:'' });
+      renderDialogueBuilder();
+    });
+    card.appendChild(addVariantBtn);
 
     step.choices.forEach((choice, choiceIdx)=>{
       const row = document.createElement('div');
@@ -1249,7 +1315,7 @@ function renderDialogueBuilder(){
 }
 
 document.getElementById('addStepBtn').addEventListener('click', ()=>{
-  currentDialogueSteps.push({ text:'', choices:[] });
+  currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
   renderDialogueBuilder();
 });
 
@@ -1506,6 +1572,29 @@ function openSheet(c){
   document.getElementById('overlay').classList.add('show');
 }
 
+let lastLoggedStepKey = null;
+function logToActiveQuestJournals(text, npcId){
+  if (!currentUser || !db || !text) return;
+  const activeQuestIds = Object.keys(playerQuestsState).filter(qid => playerQuestsState[qid] === 'active');
+  if (!activeQuestIds.length) return;
+  const updates = {};
+  activeQuestIds.forEach(qid=>{
+    const quest = quests.find(q=>q.id===qid);
+    if (quest && quest.showInJournal === false) return; // cette quête exclut le journal
+    updates['questJournals.' + qid] = firebase.firestore.FieldValue.arrayUnion({ text, npcId: npcId || null, ts: Date.now() });
+  });
+  if (Object.keys(updates).length) db.collection('players').doc(currentUser.uid).update(updates).catch(()=>{});
+}
+function resolveStepText(step){
+  const variants = step.textVariants || [];
+  for (const v of variants){
+    const state = playerQuestsState[v.questId] || 'none';
+    if (v.state === 'active' && state === 'active') return v.text;
+    if (v.state === 'completed' && state === 'completed') return v.text;
+    if (v.state === 'not_active' && state !== 'active') return v.text;
+  }
+  return step.text;
+}
 function renderSheet(){
   const c = activeCreature;
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
@@ -1523,7 +1612,13 @@ function renderSheet(){
   }
 
   const step = activeSteps[currentStepIdx];
-  document.getElementById('sheetMeta').textContent = step.text;
+  const resolvedText = resolveStepText(step);
+  document.getElementById('sheetMeta').textContent = resolvedText;
+  const stepKey = c.id + '_' + currentStepIdx;
+  if (stepKey !== lastLoggedStepKey){
+    lastLoggedStepKey = stepKey;
+    logToActiveQuestJournals(resolvedText, c.id);
+  }
 
   const visibleChoices = step.choices.filter(ch=>{
     if (ch.questGive){
@@ -1697,6 +1792,7 @@ function renderQuestTracker(){
   wrap.innerHTML = '<p class="meta">Chargement…</p>';
   db.collection('players').doc(currentUser.uid).get().then((doc)=>{
     const inv = (doc.exists && doc.data().inventory) || {};
+    const journals = (doc.exists && doc.data().questJournals) || {};
     const active = quests.filter(q=> playerQuestsState[q.id] === 'active');
     const completed = quests.filter(q=> playerQuestsState[q.id] === 'completed');
     const describeObjectives = (q)=> (q.objectives||[]).map(o=>{
@@ -1704,17 +1800,43 @@ function renderQuestTracker(){
       const have = inv[o.itemId] || 0;
       return `${it ? it.name : '?'} : ${Math.min(have,o.qty)}/${o.qty}`;
     }).join(' · ');
-    const renderGroup = (list, emptyMsg)=> list.length ? list.map(q=>`
+    const journalHtml = (q)=>{
+      if (q.showInJournal === false) return '';
+      const entries = journals[q.id] || [];
+      if (!entries.length) return '';
+      const rows = entries.slice().sort((a,b)=>(a.ts||0)-(b.ts||0)).map(entry=>{
+        let distLabel = '';
+        let itineraryBtn = '';
+        if (entry.npcId){
+          const npc = creatures.find(c=>c.id===entry.npcId);
+          if (npc && typeof npc.lat === 'number' && playerPos){
+            const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
+            distLabel = ` · ${npc.name || 'PNJ'} à ${dist} m`;
+            itineraryBtn = `<button class="btn-secondary" data-itinerary-lat="${npc.lat}" data-itinerary-lng="${npc.lng}" style="margin-top:4px; font-size:11px;">🧭 Itinéraire</button>`;
+          }
+        }
+        return `<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid var(--line);"><span class="meta">${entry.text}${distLabel}</span>${itineraryBtn}</div>`;
+      }).join('');
+      return `<div style="margin-top:8px;"><div class="meta" style="font-weight:700;">📓 Journal</div>${rows}</div>`;
+    };
+    const renderGroup = (list, emptyMsg, showJournal)=> list.length ? list.map(q=>`
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
+        ${showJournal ? journalHtml(q) : ''}
       </div>
     `).join('') : `<p class="meta">${emptyMsg}</p>`;
     wrap.innerHTML = `
       <div class="field-label">En cours</div>
-      ${renderGroup(active, 'Aucune quête en cours.')}
+      ${renderGroup(active, 'Aucune quête en cours.', true)}
       <div class="field-label" style="margin-top:14px;">Terminées</div>
-      ${renderGroup(completed, 'Aucune quête terminée pour l\'instant.')}
+      ${renderGroup(completed, 'Aucune quête terminée pour l\'instant.', false)}
     `;
+    wrap.querySelectorAll('[data-itinerary-lat]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${btn.dataset.itineraryLat},${btn.dataset.itineraryLng}`;
+        window.open(url, '_blank');
+      });
+    });
   });
 }
 
@@ -1851,11 +1973,12 @@ function loadForEdit(id){
   document.getElementById('editMetier').value = d.metier || '';
   if (Array.isArray(d.dialogueSteps) && d.dialogueSteps.length){
     currentDialogueSteps = JSON.parse(JSON.stringify(d.dialogueSteps));
+    currentDialogueSteps.forEach(s=>{ if (!s.textVariants) s.textVariants = []; });
   } else if (d.dialogueScript){
     currentDialogueSteps = parseDialogueScript(d.dialogueScript).map(s=>({ text: s.text, choices: s.choices.map(c=>({ label: c.label, next: c.next, itemGrant: c.itemGrant || null, recruit: null, questGive: null, questValidate: null })) }));
-    if (!currentDialogueSteps.length) currentDialogueSteps = [{ text:'', choices:[] }];
+    if (!currentDialogueSteps.length) currentDialogueSteps = [{ text:'', choices:[], textVariants:[] }];
   } else {
-    currentDialogueSteps = [ { text:'', choices:[] } ];
+    currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
   }
   renderDialogueBuilder();
   const interactionType = d.interactionType || 'dialogue';
@@ -1905,7 +2028,7 @@ function resetForm(){
   document.getElementById('editVisibilityState').value = 'not_completed';
   document.getElementById('editHideImmediately').checked = false;
   document.getElementById('editDuplicateBtn').style.display = 'none';
-  currentDialogueSteps = [ { text:'', choices:[] } ];
+  currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
   renderDialogueBuilder();
   document.getElementById('editInteractionType').value = 'dialogue';
   document.getElementById('dialogueBlock').style.display = 'block';
@@ -1971,8 +2094,8 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const hideOnExitRadius = document.getElementById('editHideImmediately').checked;
   const dupeGroup = currentDupeGroup;
   const dialogueSteps = currentDialogueSteps
-    .map(s=>({ text: (s.text||'').trim(), choices: s.choices.filter(c=>c.label && c.label.trim()) }))
-    .filter(s=> s.text || s.choices.length);
+    .map(s=>({ text: (s.text||'').trim(), choices: s.choices.filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=>v.questId && v.text && v.text.trim()) }))
+    .filter(s=> s.text || s.choices.length || s.textVariants.length);
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
   const shopPhrase = document.getElementById('editShopPhrase').value.trim();
@@ -2262,23 +2385,28 @@ document.getElementById('items50TestBtn').addEventListener('click', ()=>{
   }))).then(()=> showToast(batch.length + ' objets de test créés — modifiables comme les autres'));
 });
 
-/* ---------- Nettoyage de l'ancien scénario "Le trésor du kiosque" ---------- */
-document.getElementById('cleanupOldScenarioBtn').addEventListener('click', async ()=>{
-  if (!creatureCol || !questsCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
-  if (!confirm('Supprimer définitivement les PNJ, la quête et les objets de l\'ancien scénario "Le trésor du kiosque" ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
+/* ---------- Nettoyage du scénario "La fête de Lanville" ---------- */
+document.getElementById('cleanupFeteBtn').addEventListener('click', async ()=>{
+  if (!creatureCol || !questsCol || !itemsCol || !recipesCol){ showToast('Firebase indisponible ici'); return; }
+  if (!confirm('Supprimer définitivement les PNJ, les quêtes, les objets et les recettes du scénario "La fête de Lanville" ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
   try {
-    const oldNames = ['Le Maire','La marchande','Odette','Léo',"L'institutrice",'La postière','Le forgeron',"L'aventurière",'La guérisseuse','Le gardien'];
+    const oldNames = ['Le Maire','La marchande du Marcivil','Mémée Suzanne','La cuisinière','Nino','Le Barde',"La maîtresse d'école",'Léa, la postière','Maître Ferrand','Iris, la voyageuse','Le sacristain'];
     const creatureSnap = await creatureCol.get();
     const toDeleteCreatures = creatureSnap.docs.filter(d => oldNames.includes(d.data().name));
     await Promise.all(toDeleteCreatures.map(d => creatureCol.doc(d.id).delete()));
+    const oldQuestNames = ['Un repas à sauver','Le violon perdu','La route de Lanville','Le jour de la fête'];
     const questSnap = await questsCol.get();
-    const oldQuest = questSnap.docs.find(d => d.data().name === 'Le trésor du kiosque');
-    if (oldQuest) await questsCol.doc(oldQuest.id).delete();
+    const oldQuests = questSnap.docs.filter(d => oldQuestNames.includes(d.data().name));
+    await Promise.all(oldQuests.map(d => questsCol.doc(d.id).delete()));
+    const oldItemNames = ['Pain frais','Fromage de la ferme','Vieux violon','Bouteille de Pineau','Ruban de fête','Costume de fête','Fer','Bois','Farine','Pomme','Clochette de fête','Tarte aux pommes'];
     const itemSnap = await itemsCol.get();
-    const oldItemNames = ['Fragment de carte','Trésor oublié'];
     const oldItemDocs = itemSnap.docs.filter(d => oldItemNames.includes(d.data().name));
     await Promise.all(oldItemDocs.map(d => itemsCol.doc(d.id).delete()));
-    showToast(`Ancien scénario supprimé : ${toDeleteCreatures.length} PNJ, ${oldQuest?1:0} quête, ${oldItemDocs.length} objets.`);
+    const oldRecipeNames = ['Clochette de fête','Tarte aux pommes'];
+    const recipeSnap = await recipesCol.get();
+    const oldRecipeDocs = recipeSnap.docs.filter(d => oldRecipeNames.includes(d.data().name));
+    await Promise.all(oldRecipeDocs.map(d => recipesCol.doc(d.id).delete()));
+    showToast(`Scénario supprimé : ${toDeleteCreatures.length} PNJ, ${oldQuests.length} quêtes, ${oldItemDocs.length} objets, ${oldRecipeDocs.length} recettes.`);
   } catch(err){ showToast('Échec : ' + err.message); }
 });
 
@@ -3113,12 +3241,10 @@ function renderRecipesListView(){
   listEl.innerHTML = '';
   recipes.forEach((r)=>{
     const metierNames = (r.allowedMetiers||[]).map(id => (metiers.find(m=>m.id===id)||{}).name).filter(Boolean).join(', ') || 'Tous les métiers';
-    const inProgress = (typeof recruits !== 'undefined') ? recruits.find(rec => rec.craftingRecipeId === r.id) : null;
     const row = document.createElement('div');
     row.className = 'editor-list-item';
     row.style.flexDirection = 'column';
     row.style.alignItems = 'stretch';
-    const pct = inProgress ? Math.round(recruitCraftProgress(inProgress)*100) : 0;
     row.innerHTML = `
       <div style="display:flex; align-items:center; gap:10px; width:100%;">
         <div class="thumb">${r.imageUrl ? `<img src="${r.imageUrl}">` : (r.emoji || '📦')}</div>
@@ -3126,15 +3252,6 @@ function renderRecipesListView(){
         <button class="btn-secondary" data-recipe-edit="${r.id}">Modifier</button>
         <button class="btn-secondary" data-recipe-del="${r.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
       </div>
-      ${inProgress ? `
-        <div style="margin-top:8px;">
-          <div class="meta" style="font-size:11px;">${inProgress.name} fabrique — ${pct}%</div>
-          <div style="height:6px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:4px;">
-            <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
-          </div>
-          <button class="btn-secondary" data-cancel-craft="${inProgress.id}" style="width:100%; margin-top:6px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler ce craft</button>
-        </div>
-      ` : ''}
     `;
     listEl.appendChild(row);
   });
@@ -3143,12 +3260,6 @@ function renderRecipesListView(){
   });
   listEl.querySelectorAll('button[data-recipe-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=>{ loadRecipeForEdit(btn.dataset.recipeEdit); showRecipesSection('new'); });
-  });
-  listEl.querySelectorAll('button[data-cancel-craft]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      recruitsCol.doc(btn.dataset.cancelCraft).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null })
-        .then(()=> showToast('Craft annulé (les ressources déjà utilisées ne sont pas remboursées)'));
-    });
   });
 }
 
@@ -3397,6 +3508,27 @@ function recruitCraftProgress(recruit){
   const duration = recruit.craftingDuration || recipe.duration*1000;
   return Math.max(0, Math.min(1, (Date.now() - recruit.craftingStartedAt) / duration));
 }
+function recruitCraftRemainingMs(recruit){
+  if (!recruit.craftingRecipeId || !recruit.craftingStartedAt) return 0;
+  const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
+  if (!recipe) return 0;
+  const duration = recruit.craftingDuration || recipe.duration*1000;
+  return Math.max(0, duration - (Date.now() - recruit.craftingStartedAt));
+}
+function formatRemainingDuration(ms){
+  const totalSeconds = Math.ceil(ms/1000);
+  if (totalSeconds <= 0) return 'Terminé';
+  const d = Math.floor(totalSeconds/86400);
+  const h = Math.floor((totalSeconds%86400)/3600);
+  const m = Math.floor((totalSeconds%3600)/60);
+  const s = totalSeconds%60;
+  const parts = [];
+  if (d) parts.push(d+'j');
+  if (h) parts.push(h+'h');
+  if (m) parts.push(m+'min');
+  if (!d && !h) parts.push(s+'s');
+  return 'Reste : ' + parts.join(' ');
+}
 
 function renderRecruitSheet(){
   const recruit = currentRecruit();
@@ -3418,9 +3550,10 @@ function renderRecruitSheet(){
   if (recruit.craftingRecipeId){
     const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
     const pct = Math.round(recruitCraftProgress(recruit)*100);
+    const remainingLabel = formatRemainingDuration(recruitCraftRemainingMs(recruit));
     craftEl.innerHTML = `
       <div class="field-label">Fabrication en cours</div>
-      <div class="pos-status">${recipe ? (recipe.imageUrl ? `<img src="${recipe.imageUrl}" style="width:20px; height:20px; object-fit:contain; vertical-align:middle;"> ` : recipe.emoji+' ')+recipe.name : '…'} — ${pct}%</div>
+      <div class="pos-status">${recipe ? (recipe.imageUrl ? `<img src="${recipe.imageUrl}" style="width:20px; height:20px; object-fit:contain; vertical-align:middle;"> ` : recipe.emoji+' ')+recipe.name : '…'} — ${remainingLabel}</div>
       <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
         <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
       </div>
@@ -4036,6 +4169,7 @@ function loadQuestForEdit(id){
   renderQuestObjectivesBuilder();
   renderQuestRewardsBuilder();
   document.getElementById('questObjectiveMode').value = q.objectiveMode || 'all';
+  document.getElementById('questShowInJournal').checked = q.showInJournal !== false;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = q.nextQuestId || '';
   document.getElementById('questSaveBtn').textContent = 'Mettre à jour la quête';
@@ -4050,6 +4184,7 @@ function resetQuestForm(){
   renderQuestObjectivesBuilder();
   renderQuestRewardsBuilder();
   document.getElementById('questObjectiveMode').value = 'all';
+  document.getElementById('questShowInJournal').checked = true;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = '';
   document.getElementById('questSaveBtn').textContent = 'Enregistrer la quête';
@@ -4064,12 +4199,13 @@ document.getElementById('questSaveBtn').addEventListener('click', ()=>{
   const objectiveMode = document.getElementById('questObjectiveMode').value;
   const rewards = currentQuestRewards.filter(r=>r.itemId && r.qty > 0);
   const nextQuestId = document.getElementById('questNextQuest').value || null;
+  const showInJournal = document.getElementById('questShowInJournal').checked;
 
   if (!name){ showToast('Donne un nom à la quête'); return; }
   if (!objectives.length){ showToast('Ajoute au moins un objectif'); return; }
   if (!questsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, updatedAt: Date.now() };
+  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, updatedAt: Date.now() };
   const op = editingQuestId ? questsCol.doc(editingQuestId).set(data) : questsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingQuestId ? 'Quête mise à jour' : 'Quête ajoutée'); resetQuestForm(); showQuestsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
