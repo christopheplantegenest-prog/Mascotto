@@ -370,7 +370,9 @@
     <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
     <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
     <button class="btn-capture" id="hubQuestsBtn" style="width:100%; margin-bottom:10px;">Quêtes</button>
-    <button class="btn-secondary" id="scenarioKiosqueBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "Le trésor du kiosque" (10 PNJ)</button>
+    <button class="btn-secondary" id="cleanupOldScenarioBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer l'ancien scénario du trésor</button>
+    <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
+    <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%;">Fermer</button>
   </div>
 </div>
@@ -2259,9 +2261,30 @@ document.getElementById('items50TestBtn').addEventListener('click', ()=>{
   }))).then(()=> showToast(batch.length + ' objets de test créés — modifiables comme les autres'));
 });
 
-/* ---------- Scénario de test : "Le trésor du kiosque" (10 PNJ à Marcillac-Lanville) ---------- */
-document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()=>{
-  if (!itemsCol || !questsCol || !metiersCol || !creatureCol){ showToast('Firebase indisponible ici'); return; }
+/* ---------- Nettoyage de l'ancien scénario "Le trésor du kiosque" ---------- */
+document.getElementById('cleanupOldScenarioBtn').addEventListener('click', async ()=>{
+  if (!creatureCol || !questsCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
+  if (!confirm('Supprimer définitivement les PNJ, la quête et les objets de l\'ancien scénario "Le trésor du kiosque" ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
+  try {
+    const oldNames = ['Le Maire','La marchande','Odette','Léo',"L'institutrice",'La postière','Le forgeron',"L'aventurière",'La guérisseuse','Le gardien'];
+    const creatureSnap = await creatureCol.get();
+    const toDeleteCreatures = creatureSnap.docs.filter(d => oldNames.includes(d.data().name));
+    await Promise.all(toDeleteCreatures.map(d => creatureCol.doc(d.id).delete()));
+    const questSnap = await questsCol.get();
+    const oldQuest = questSnap.docs.find(d => d.data().name === 'Le trésor du kiosque');
+    if (oldQuest) await questsCol.doc(oldQuest.id).delete();
+    const itemSnap = await itemsCol.get();
+    const oldItemNames = ['Fragment de carte','Trésor oublié'];
+    const oldItemDocs = itemSnap.docs.filter(d => oldItemNames.includes(d.data().name));
+    await Promise.all(oldItemDocs.map(d => itemsCol.doc(d.id).delete()));
+    showToast(`Ancien scénario supprimé : ${toDeleteCreatures.length} PNJ, ${oldQuest?1:0} quête, ${oldItemDocs.length} objets.`);
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
+
+/* ---------- Scénario de test : "La fête de Lanville" (12 PNJ + 4 quêtes chaînées + craft) ---------- */
+document.getElementById('scenarioFeteBtn').addEventListener('click', async ()=>{
+  if (!itemsCol || !questsCol || !metiersCol || !creatureCol || !recipesCol){ showToast('Firebase indisponible ici'); return; }
+  if (quests.find(q=>q.name==='Un repas à sauver')){ showToast('Ce scénario a déjà été créé.'); return; }
   try {
     async function ensureMetier(name){
       const existing = metiers.find(x=>x.name===name);
@@ -2277,77 +2300,116 @@ document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()
     }
 
     const forgeronId = await ensureMetier('Forgeron');
-    const guerisseurId = await ensureMetier('Guérisseur');
-    const fragmentId = await ensureItem('Fragment de carte', { emoji:'🗺️', type:'quete', description:'Un morceau déchiré d\'une vieille carte.', sellable:false, basePrice:0 });
-    const treasureId = await ensureItem('Trésor oublié', { emoji:'💰', type:'ressource', description:'Un vieux trésor enfin retrouvé.', sellable:true, basePrice:200 });
+    const bardeId = await ensureMetier('Barde');
 
-    let quest = quests.find(q=>q.name==='Le trésor du kiosque');
-    let questId;
-    if (quest){ questId = quest.id; }
-    else {
-      const ref = await questsCol.add({
-        name:'Le trésor du kiosque',
-        description:'Réunis 3 fragments de carte pour percer le secret du vieux trésor.',
-        objectives:[{ itemId: fragmentId, qty:3 }],
-        objectiveMode:'all',
-        rewards:[{ itemId: treasureId, qty:1 }],
-        nextQuestId: null,
-        createdAt: Date.now()
-      });
-      questId = ref.id;
+    const painId = await ensureItem('Pain frais', { emoji:'🥖', type:'consommable', description:'Du pain tout juste sorti du four.', sellable:true, basePrice:6 });
+    const fromageId = await ensureItem('Fromage de la ferme', { emoji:'🧀', type:'consommable', description:'Un fromage fermier bien affiné.', sellable:true, basePrice:9 });
+    const violonId = await ensureItem('Vieux violon', { emoji:'🎻', type:'quete', description:'Un violon un peu abîmé mais encore jouable.', sellable:false, basePrice:0 });
+    const pineauId = await ensureItem('Bouteille de Pineau', { emoji:'🍾', type:'quete', description:'Une bouteille de Pineau des Charentes.', sellable:false, basePrice:0 });
+    const rubanId = await ensureItem('Ruban de fête', { emoji:'🎀', type:'quete', description:'Un ruban doré pour décorer le kiosque.', sellable:false, basePrice:0 });
+    const costumeId = await ensureItem('Costume de fête', { emoji:'🥻', type:'ressource', description:'Un bel habit porté lors des grandes occasions.', sellable:true, basePrice:150 });
+    const ferId = await ensureItem('Fer', { emoji:'⛓️', type:'ressource', description:'Un lingot de fer brut.', sellable:true, basePrice:8 });
+    const boisId = await ensureItem('Bois', { emoji:'🪵', type:'ressource', description:'Une bûche de bois solide.', sellable:true, basePrice:5 });
+    const farineId = await ensureItem('Farine', { emoji:'🌾', type:'ressource', description:'De la farine fraîchement moulue.', sellable:true, basePrice:4 });
+    const pommeId = await ensureItem('Pomme', { emoji:'🍎', type:'ressource', description:'Une pomme bien juteuse.', sellable:true, basePrice:3 });
+    const clochetteId = await ensureItem('Clochette de fête', { emoji:'🔔', type:'ressource', description:'Une clochette forgée pour l\'occasion.', sellable:true, basePrice:40 });
+    const tarteId = await ensureItem('Tarte aux pommes', { emoji:'🥧', type:'consommable', description:'Une tarte aux pommes maison.', sellable:true, basePrice:20 });
+
+    // Quêtes créées à l'envers pour pouvoir chaîner les nextQuestId
+    const q4 = await questsCol.add({
+      name:'Le jour de la fête', description:'Apporte le ruban de fête pour terminer les préparatifs.',
+      objectives:[{ itemId: rubanId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: costumeId, qty:1 }],
+      nextQuestId:null, createdAt: Date.now()
+    });
+    const q3 = await questsCol.add({
+      name:'La route de Lanville', description:'Porte une bouteille de Pineau au sacristain de Lanville.',
+      objectives:[{ itemId: pineauId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: rubanId, qty:1 }],
+      nextQuestId:q4.id, createdAt: Date.now()
+    });
+    const q2 = await questsCol.add({
+      name:'Le violon perdu', description:'Retrouve le violon du Barde et rends-le lui.',
+      objectives:[{ itemId: violonId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: ferId, qty:2 }],
+      nextQuestId:q3.id, createdAt: Date.now()
+    });
+    const q1 = await questsCol.add({
+      name:'Un repas à sauver', description:'Réunis du pain et du fromage pour le repas de la fête.',
+      objectives:[{ itemId: painId, qty:1 }, { itemId: fromageId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: boisId, qty:2 }],
+      nextQuestId:q2.id, createdAt: Date.now()
+    });
+    const q1Id = q1.id, q2Id = q2.id, q3Id = q3.id, q4Id = q4.id;
+
+    // Recettes de test (pour essayer le craft)
+    await recipesCol.add({ name:'Clochette de fête', emoji:'🔔', imageUrl:'', inputs:[{itemId:ferId,qty:2},{itemId:boisId,qty:1}], outputItemId:clochetteId, outputQty:1, duration:600, allowedMetiers:[forgeronId], updatedAt: Date.now(), createdAt: Date.now() });
+    await recipesCol.add({ name:'Tarte aux pommes', emoji:'🥧', imageUrl:'', inputs:[{itemId:farineId,qty:2},{itemId:pommeId,qty:3}], outputItemId:tarteId, outputQty:1, duration:900, allowedMetiers:[], updatedAt: Date.now(), createdAt: Date.now() });
+
+    // Un peu de matière première offerte pour tester le craft tout de suite
+    if (currentUser){
+      await db.collection('players').doc(currentUser.uid).set({
+        inventory: {
+          [ferId]: firebase.firestore.FieldValue.increment(5),
+          [boisId]: firebase.firestore.FieldValue.increment(5),
+          [farineId]: firebase.firestore.FieldValue.increment(5),
+          [pommeId]: firebase.firestore.FieldValue.increment(5),
+        }
+      }, { merge:true });
     }
 
     const step = (text, choices)=> ({ text, choices });
-    const noOp = { label:'Fermer', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null };
+    const noOp = { label:'Fermer', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null };
     const npcs = [
       { name:'Le Maire', lat:45.8463, lng:0.0191, dialogueSteps:[ step(
-        "Ah, un nouveau visage ! On raconte qu'un trésor serait caché près du village... Va donc voir la marchande du Marcivil, sur la place — elle en sait plus sur cette vieille histoire.",
-        [ { label:'Merci, j\'y vais', next:null, itemGrant:null, recruit:null, questGive:{questId}, questValidate:null } ]
+        "La fête du village approche à grands pas, mais on a un souci avec le repas communal — il manque des ingrédients ! Tu veux bien nous donner un coup de main ?",
+        [ { label:'Bien sûr, je m\'en occupe', next:null, itemGrant:null, recruit:null, questGive:{questId:q1Id}, questValidate:null, showIf:null } ]
       )]},
-      { name:'La marchande', lat:45.8464, lng:0.0194, dialogueSteps:[ step(
-        "Le trésor ? Une vieille histoire de grand-mère... Odette, juste sur la place, doit s'en souvenir mieux que moi.",
-        [ noOp ]
+      { name:'La marchande du Marcivil', lat:45.8464, lng:0.0194, dialogueSteps:[ step(
+        "Ah, la fête ! Tiens, prends ce pain frais, ça aidera pour le repas.",
+        [ { label:'Merci !', next:null, itemGrant:{itemName:'Pain frais', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ]
       )]},
-      { name:'Odette', lat:45.8462, lng:0.0192, dialogueSteps:[ step(
-        "Ce trésor... Oui, je me souviens vaguement. Va voir du côté du kiosque, dans le petit parc — les enfants jouent souvent là-bas.",
-        [ noOp ]
+      { name:'Mémée Suzanne', lat:45.8462, lng:0.0192, dialogueSteps:[ step(
+        "La fête ? Ah, il faut bien un peu de bon fromage pour un repas digne de ce nom ! Tiens, prends ça.",
+        [ { label:'Merci Mémée !', next:null, itemGrant:{itemName:'Fromage de la ferme', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ]
       )]},
-      { name:'Léo', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
-        "J'ai trouvé un vieux bout de carte en jouant ici ! Tiens, prends-le. J'ai vu quelqu'un faire pareil du côté de l'école.",
-        [ { label:'Merci Léo !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
-      )]},
-      { name:'L\'institutrice', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
-        "Un trésor ? J'ai vu quelqu'un rôder du côté de la Poste, tard un soir.",
-        [ noOp ]
-      )]},
-      { name:'La postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
-        "Tiens, ce fragment traînait au fond d'un tiroir depuis des années. Le forgeron, à la salle des fêtes, en sait plus que moi.",
-        [ { label:'Merci', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
-      )]},
-      { name:'Le forgeron', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
-        "Ce trésor, encore ? Une voyageuse loge chez Caramelo's, elle posait les mêmes questions que toi. Si tu veux, je peux me joindre à toi.",
+      { name:'La cuisinière', lat:45.8464, lng:0.0189, dialogueSteps:[ step(
+        "Alors, ces ingrédients pour le repas de fête ?",
         [
-          { label:'Rejoins-moi !', next:null, itemGrant:null, recruit:{metierId: forgeronId}, questGive:null, questValidate:null },
-          { label:'Merci, une autre fois', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+          { label:'Voici le pain et le fromage', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q1Id}, showIf:null },
+          { label:'Quelle est la suite ?', next:null, itemGrant:null, recruit:null, questGive:{questId:q2Id}, questValidate:null, showIf:{questId:q1Id, state:'completed'} },
+          { label:'Le ruban est prêt !', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q4Id}, showIf:null }
         ]
       )]},
-      { name:'L\'aventurière', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
-        "Toi aussi tu cherches ce trésor ? Tiens, prends ce fragment, je n'en ai plus besoin. La guérisseuse, sur la route du cimetière, doit avoir la dernière pièce du puzzle.",
-        [ { label:'Merci !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
+      { name:'Nino', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
+        "J'ai retrouvé un vieux violon caché sous le kiosque ! Il doit bien appartenir à quelqu'un...",
+        [ { label:'Je vais le rendre', next:null, itemGrant:{itemName:'Vieux violon', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'active'} } ]
       )]},
-      { name:'La guérisseuse', lat:45.8484, lng:0.0168, metier: guerisseurId, dialogueSteps:[ step(
-        "Le trésor du kiosque... Je connais l'histoire, mais c'est le vieux gardien du cimetière qui garde le secret final. Je peux te suivre si tu le souhaites.",
+      { name:'Le Barde', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
+        "Mon violon ! Je le cherchais partout, merci mille fois !",
         [
-          { label:'Rejoins-moi !', next:null, itemGrant:null, recruit:{metierId: guerisseurId}, questGive:null, questValidate:null },
-          { label:'Merci, une autre fois', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+          { label:'Le voici', next:null, itemGrant:null, recruit:null, questGive:{questId:q3Id}, questValidate:{questId:q2Id}, showIf:null },
+          { label:'Je peux jouer avec vous ?', next:null, itemGrant:null, recruit:{metierId:bardeId}, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'completed'} }
         ]
       )]},
-      { name:'Le gardien', lat:45.8504, lng:0.0148, dialogueSteps:[ step(
-        "Alors, as-tu réuni les fragments ?",
+      { name:'La maîtresse d\'école', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
+        "La fête ? J'ai grandi à Lanville, à un peu plus d'un kilomètre d'ici — il paraît que le sacristain sait toujours tout ce qui se passe au village.",
+        [ noOp ]
+      )]},
+      { name:'Léa, la postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
+        "Bon courage pour les préparatifs ! Si tu passes par Lanville, dis bonjour au sacristain de ma part.",
+        [ noOp ]
+      )]},
+      { name:'Maître Ferrand', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
+        "La fête approche ! Tiens, j'ai justement une bouteille de Pineau à faire porter à mon vieil ami le sacristain, à Lanville.",
         [
-          { label:'Voici mes fragments', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId} },
-          { label:'Pas encore', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+          { label:'Je la lui apporterai', next:null, itemGrant:{itemName:'Bouteille de Pineau', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q3Id, state:'active'} },
+          { label:'Je peux te rejoindre ?', next:null, itemGrant:null, recruit:{metierId:forgeronId}, questGive:null, questValidate:null, showIf:null }
         ]
+      )]},
+      { name:'Iris, la voyageuse', lat:45.8505, lng:0.0160, dialogueSteps:[ step(
+        "Tu vas voir le sacristain ? Continue tout droit, l'église de Lanville n'est plus très loin.",
+        [ noOp ]
+      )]},
+      { name:'Le sacristain', lat:45.8555, lng:0.0127, dialogueSteps:[ step(
+        "Une bouteille de Pineau de la part de Ferrand ? Quelle bonne surprise ! Tiens, en échange, voici un beau ruban doré pour décorer le kiosque.",
+        [ { label:'Merci beaucoup', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q3Id}, showIf:null } ]
       )]},
     ];
 
@@ -2361,12 +2423,13 @@ document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()
       });
     }
 
-    showToast('Scénario "Le trésor du kiosque" créé : 10 PNJ, 1 quête, 2 objets — modifiable comme le reste');
+    showToast('Scénario "La fête de Lanville" créé : 11 PNJ, 4 quêtes, 2 recettes — modifiable comme le reste');
     document.getElementById('editHubOverlay').classList.remove('show');
   } catch(err){
     showToast('Échec : ' + err.message);
   }
 });
+
 
 document.getElementById('itemImageFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
@@ -2831,6 +2894,7 @@ function setStatus(state, pulsing){
 }
 
 function onPosition(pos){
+  if (freeModeActive) return; // en mode libre (test), on ignore le vrai GPS
   const { latitude, longitude, accuracy } = pos.coords;
   playerPos = { lat: latitude, lng: longitude };
 
@@ -2853,6 +2917,33 @@ function onPosition(pos){
 function onError(err){
   setStatus('err', false);
 }
+
+/* ---------- Mode libre (test) : simuler sa position en tapant sur la carte ---------- */
+let freeModeActive = false;
+function onFreeModeClick(e){
+  playerPos = { lat: e.latlng.lat, lng: e.latlng.lng };
+  playerMarker.setLatLng([e.latlng.lat, e.latlng.lng]);
+  if (accCircle){ map.removeLayer(accCircle); accCircle = null; }
+  updateCreatureVisuals();
+  if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  accPill.style.display = 'block';
+  accPill.textContent = 'Mode libre';
+}
+document.getElementById('freeModeToggleBtn').addEventListener('click', ()=>{
+  freeModeActive = !freeModeActive;
+  const btn = document.getElementById('freeModeToggleBtn');
+  if (freeModeActive){
+    btn.textContent = '🧭 Désactiver le mode libre (test)';
+    map.on('click', onFreeModeClick);
+    showToast('Mode libre activé : tape sur la carte pour te déplacer virtuellement');
+  } else {
+    btn.textContent = '🧭 Activer le mode libre (test)';
+    map.off('click', onFreeModeClick);
+    accPill.style.display = 'none';
+    showToast('Mode libre désactivé — retour au vrai GPS');
+  }
+  document.getElementById('editHubOverlay').classList.remove('show');
+});
 
 function startWatch(){
   if (!('geolocation' in navigator)){
