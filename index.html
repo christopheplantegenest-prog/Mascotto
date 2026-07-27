@@ -234,6 +234,7 @@
       <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
       <button class="icon-btn" id="nearbyPlayersBtn" title="Joueurs proches">👥</button>
       <button class="icon-btn" id="tradeOffersBtn" title="Négociations">🤝<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
+      <button class="icon-btn" id="questTrackerBtn" title="Suivi des quêtes">🧭</button>
       <button class="icon-btn" id="recenterBtn" title="Recentrer">📍</button>
       <button class="icon-btn" id="editHubBtn" title="Édition">✏️</button>
     </div>
@@ -329,6 +330,17 @@
       <button class="sheet-x" id="negoListCloseBtn">✕</button>
     </div>
     <div id="negotiationsList"></div>
+  </div>
+</div>
+
+<!-- Suivi des quêtes en cours (vue joueur) -->
+<div class="overlay" id="questTrackerOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">🧭 Suivi des quêtes</h3>
+      <button class="sheet-x" id="questTrackerCloseBtn">✕</button>
+    </div>
+    <div id="questTrackerList"></div>
   </div>
 </div>
 
@@ -1073,6 +1085,48 @@ function renderDialogueBuilder(){
       labelInput.addEventListener('input', ()=>{ choice.label = labelInput.value; });
       row.appendChild(labelInput);
 
+      const showIfLabel = document.createElement('div');
+      showIfLabel.className = 'field-label';
+      showIfLabel.textContent = 'N\'afficher ce choix que si (optionnel)';
+      row.appendChild(showIfLabel);
+
+      const showIfRow = document.createElement('div');
+      showIfRow.style.cssText = 'display:flex; gap:6px;';
+      const showIfQuestSelect = document.createElement('select');
+      showIfQuestSelect.className = 'field-input';
+      let showIfQuestOpts = '<option value="">Aucune condition</option>';
+      quests.forEach(q=>{ showIfQuestOpts += `<option value="${q.id}">${q.name}</option>`; });
+      showIfQuestSelect.innerHTML = showIfQuestOpts;
+      showIfQuestSelect.value = (choice.showIf && choice.showIf.questId) || '';
+      showIfQuestSelect.style.flex = '2';
+
+      const showIfStateSelect = document.createElement('select');
+      showIfStateSelect.className = 'field-input';
+      showIfStateSelect.innerHTML = `
+        <option value="active">est en cours</option>
+        <option value="completed">est terminée</option>
+        <option value="not_active">n'est pas (encore) en cours</option>
+      `;
+      showIfStateSelect.value = (choice.showIf && choice.showIf.state) || 'active';
+      showIfStateSelect.style.flex = '2';
+      showIfStateSelect.style.display = showIfQuestSelect.value ? 'block' : 'none';
+
+      showIfQuestSelect.addEventListener('change', ()=>{
+        if (!showIfQuestSelect.value){
+          choice.showIf = null;
+          showIfStateSelect.style.display = 'none';
+        } else {
+          choice.showIf = { questId: showIfQuestSelect.value, state: showIfStateSelect.value };
+          showIfStateSelect.style.display = 'block';
+        }
+      });
+      showIfStateSelect.addEventListener('change', ()=>{
+        if (choice.showIf) choice.showIf.state = showIfStateSelect.value;
+      });
+      showIfRow.appendChild(showIfQuestSelect);
+      showIfRow.appendChild(showIfStateSelect);
+      row.appendChild(showIfRow);
+
       const nextLabel = document.createElement('div');
       nextLabel.className = 'field-label';
       nextLabel.textContent = 'Ensuite';
@@ -1182,7 +1236,7 @@ function renderDialogueBuilder(){
     addChoiceBtn.style.cssText = 'width:100%; margin-top:10px;';
     addChoiceBtn.textContent = '➕ Ajouter un choix';
     addChoiceBtn.addEventListener('click', ()=>{
-      step.choices.push({ label:'', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null });
+      step.choices.push({ label:'', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null });
       renderDialogueBuilder();
     });
     card.appendChild(addChoiceBtn);
@@ -1477,6 +1531,12 @@ function renderSheet(){
       const state = playerQuestsState[ch.questValidate.questId];
       if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
     }
+    if (ch.showIf && ch.showIf.questId){
+      const state = playerQuestsState[ch.showIf.questId] || 'none';
+      if (ch.showIf.state === 'active' && state !== 'active') return false;
+      if (ch.showIf.state === 'completed' && state !== 'completed') return false;
+      if (ch.showIf.state === 'not_active' && state === 'active') return false;
+    }
     return true;
   });
 
@@ -1617,6 +1677,41 @@ function validateQuestForPlayer(questId){
     }, { merge: true }).then(()=>{
       showToast(`Quête terminée : ${quest.name} !`);
     }).catch((err)=> showToast('Échec : ' + err.message));
+  });
+}
+
+/* ---------- Suivi des quêtes (vue joueur) ---------- */
+document.getElementById('questTrackerBtn').addEventListener('click', ()=>{
+  renderQuestTracker();
+  document.getElementById('questTrackerOverlay').classList.add('show');
+});
+document.getElementById('questTrackerCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('questTrackerOverlay').classList.remove('show');
+});
+function renderQuestTracker(){
+  const wrap = document.getElementById('questTrackerList');
+  if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
+  wrap.innerHTML = '<p class="meta">Chargement…</p>';
+  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+    const inv = (doc.exists && doc.data().inventory) || {};
+    const active = quests.filter(q=> playerQuestsState[q.id] === 'active');
+    const completed = quests.filter(q=> playerQuestsState[q.id] === 'completed');
+    const describeObjectives = (q)=> (q.objectives||[]).map(o=>{
+      const it = items.find(i=>i.id===o.itemId);
+      const have = inv[o.itemId] || 0;
+      return `${it ? it.name : '?'} : ${Math.min(have,o.qty)}/${o.qty}`;
+    }).join(' · ');
+    const renderGroup = (list, emptyMsg)=> list.length ? list.map(q=>`
+      <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
+        <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
+      </div>
+    `).join('') : `<p class="meta">${emptyMsg}</p>`;
+    wrap.innerHTML = `
+      <div class="field-label">En cours</div>
+      ${renderGroup(active, 'Aucune quête en cours.')}
+      <div class="field-label" style="margin-top:14px;">Terminées</div>
+      ${renderGroup(completed, 'Aucune quête terminée pour l\'instant.')}
+    `;
   });
 }
 
@@ -2219,7 +2314,7 @@ document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()
       )]},
       { name:'Léo', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
         "J'ai trouvé un vieux bout de carte en jouant ici ! Tiens, prends-le. J'ai vu quelqu'un faire pareil du côté de l'école.",
-        [ { label:'Merci Léo !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+        [ { label:'Merci Léo !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
       )]},
       { name:'L\'institutrice', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
         "Un trésor ? J'ai vu quelqu'un rôder du côté de la Poste, tard un soir.",
@@ -2227,7 +2322,7 @@ document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()
       )]},
       { name:'La postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
         "Tiens, ce fragment traînait au fond d'un tiroir depuis des années. Le forgeron, à la salle des fêtes, en sait plus que moi.",
-        [ { label:'Merci', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+        [ { label:'Merci', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
       )]},
       { name:'Le forgeron', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
         "Ce trésor, encore ? Une voyageuse loge chez Caramelo's, elle posait les mêmes questions que toi. Si tu veux, je peux me joindre à toi.",
@@ -2238,7 +2333,7 @@ document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()
       )]},
       { name:'L\'aventurière', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
         "Toi aussi tu cherches ce trésor ? Tiens, prends ce fragment, je n'en ai plus besoin. La guérisseuse, sur la route du cimetière, doit avoir la dernière pièce du puzzle.",
-        [ { label:'Merci !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+        [ { label:'Merci !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId, state:'active'} } ]
       )]},
       { name:'La guérisseuse', lat:45.8484, lng:0.0168, metier: guerisseurId, dialogueSteps:[ step(
         "Le trésor du kiosque... Je connais l'histoire, mais c'est le vieux gardien du cimetière qui garde le secret final. Je peux te suivre si tu le souhaites.",
