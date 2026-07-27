@@ -233,7 +233,7 @@
       <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
       <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
       <button class="icon-btn" id="nearbyPlayersBtn" title="Joueurs proches">👥</button>
-      <button class="icon-btn" id="tradeOffersBtn" title="Offres d'échange">📨<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
+      <button class="icon-btn" id="tradeOffersBtn" title="Négociations">🤝<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
       <button class="icon-btn" id="recenterBtn" title="Recentrer">📍</button>
       <button class="icon-btn" id="editHubBtn" title="Édition">✏️</button>
     </div>
@@ -295,34 +295,40 @@
 </div>
 
 <!-- Composer une proposition d'échange -->
-<div class="overlay" id="tradeComposeOverlay">
-  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+<!-- Fenêtre de négociation d'échange (les deux joueurs voient/valident en direct) -->
+<div class="overlay" id="negotiationOverlay">
+  <div class="sheet" style="max-height:88vh; overflow-y:auto;">
     <div class="sheet-top">
-      <h3 style="margin-top:0;">Proposer un échange à <span id="tradeComposeTarget">—</span></h3>
-      <button class="sheet-x" id="tradeComposeCloseBtn">✕</button>
+      <h3 style="margin-top:0;">🤝 Négociation avec <span id="negoTargetName">—</span></h3>
+      <button class="sheet-x" id="negoCloseBtn">✕</button>
     </div>
-    <div class="field-label">💰 Pièces à proposer</div>
-    <input type="number" id="tradeComposeCoins" class="field-input" value="0" min="0">
-    <div class="field-label">Objets à proposer</div>
-    <div id="tradeComposeItemsList"></div>
-    <button class="btn-secondary" id="tradeComposeAddItemBtn" style="width:100%; margin-top:4px;">➕ Ajouter un objet</button>
-    <div class="field-label" style="margin-top:14px;">Personnages de la Base à proposer</div>
-    <div id="tradeComposeRecruitsList"></div>
-    <button class="btn-capture" id="tradeComposeSendBtn" style="width:100%; margin-top:16px;">Envoyer la proposition</button>
+    <p class="meta" id="negoStatusLine"></p>
+
+    <div class="field-label">Ta proposition</div>
+    <div id="negoMineLocked" style="display:none;" class="meta">🔒 Verrouillée — annule ta validation pour la modifier.</div>
+    <input type="number" id="negoMyCoins" class="field-input" value="0" min="0">
+    <div id="negoMyItemsList"></div>
+    <button class="btn-secondary" id="negoAddItemBtn" style="width:100%; margin-top:4px;">➕ Ajouter un objet</button>
+    <div class="field-label" style="margin-top:8px;">Personnages de ta Base</div>
+    <div id="negoMyRecruitsList"></div>
+    <button class="btn-capture" id="negoValidateBtn" style="width:100%; margin-top:12px;">✅ Valider ma proposition</button>
+    <button class="btn-secondary" id="negoUnvalidateBtn" style="width:100%; margin-top:6px; display:none;">Modifier ma proposition</button>
+
+    <div class="field-label" style="margin-top:18px;">Sa proposition</div>
+    <div id="negoTheirSummary"></div>
+
+    <button class="btn-secondary" id="negoCancelBtn" style="width:100%; margin-top:16px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler la négociation</button>
   </div>
 </div>
 
-<!-- Offres d'échange (reçues / envoyées) -->
-<div class="overlay" id="tradeOffersOverlay">
+<!-- Liste des négociations en cours -->
+<div class="overlay" id="negotiationsListOverlay">
   <div class="sheet" style="max-height:85vh; overflow-y:auto;">
     <div class="sheet-top">
-      <h3 style="margin-top:0;">📨 Offres d'échange</h3>
-      <button class="sheet-x" id="tradeOffersCloseBtn">✕</button>
+      <h3 style="margin-top:0;">🤝 Négociations en cours</h3>
+      <button class="sheet-x" id="negoListCloseBtn">✕</button>
     </div>
-    <div class="field-label">Reçues</div>
-    <div id="tradeOffersReceivedList"></div>
-    <div class="field-label" style="margin-top:14px;">Envoyées</div>
-    <div id="tradeOffersSentList"></div>
+    <div id="negotiationsList"></div>
   </div>
 </div>
 
@@ -855,7 +861,7 @@ document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
 function onSignedIn(user){
   currentUser = user;
   watchPlayerQuests(user.uid);
-  if (typeof attachTradeListeners === 'function') attachTradeListeners();
+  if (typeof attachNegotiationListeners === 'function') attachNegotiationListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
     if (typeof renderBaseRoster === 'function') renderBaseRoster();
@@ -2779,6 +2785,7 @@ function renderRecipesListView(){
           <div style="height:6px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:4px;">
             <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
           </div>
+          <button class="btn-secondary" data-cancel-craft="${inProgress.id}" style="width:100%; margin-top:6px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler ce craft</button>
         </div>
       ` : ''}
     `;
@@ -2789,6 +2796,12 @@ function renderRecipesListView(){
   });
   listEl.querySelectorAll('button[data-recipe-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=>{ loadRecipeForEdit(btn.dataset.recipeEdit); showRecipesSection('new'); });
+  });
+  listEl.querySelectorAll('button[data-cancel-craft]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      recruitsCol.doc(btn.dataset.cancelCraft).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null })
+        .then(()=> showToast('Craft annulé (les ressources déjà utilisées ne sont pas remboursées)'));
+    });
   });
 }
 
@@ -3064,7 +3077,12 @@ function renderRecruitSheet(){
       <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
         <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
       </div>
+      <button class="btn-secondary" id="cancelCraftBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler ce craft</button>
     `;
+    document.getElementById('cancelCraftBtn').addEventListener('click', ()=>{
+      recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null })
+        .then(()=> showToast('Craft annulé (les ressources déjà utilisées ne sont pas remboursées)'));
+    });
   } else if (!eligibleRecipes.length){
     craftEl.innerHTML = `<p class="meta">Aucune recette ne correspond à ce métier pour l'instant.</p>`;
   } else {
@@ -3208,7 +3226,7 @@ document.getElementById('baseCloseBtn').addEventListener('click', ()=>{
   document.getElementById('baseOverlay').classList.remove('show');
 });
 
-/* ---------- Joueurs proches + échanges ---------- */
+/* ---------- Joueurs proches ---------- */
 document.getElementById('nearbyPlayersBtn').addEventListener('click', ()=>{
   renderNearbyPlayersList();
   document.getElementById('nearbyPlayersOverlay').classList.add('show');
@@ -3227,211 +3245,300 @@ function renderNearbyPlayersList(){
     <div class="editor-list-item" style="align-items:center;">
       <div class="thumb">🧑</div>
       <div class="name" style="flex:1;">${p.pseudo}<span class="meta" style="display:block;">${Math.round(p.dist)} m</span></div>
-      <button class="btn-secondary" data-trade-with="${p.uid}" data-trade-pseudo="${p.pseudo}">Échanger</button>
+      <button class="btn-secondary" data-trade-with="${p.uid}" data-trade-pseudo="${p.pseudo}">🤝 Négocier</button>
       <button class="btn-secondary" disabled style="opacity:.4;" title="Bientôt disponible">Combattre</button>
     </div>
   `).join('') : '<p class="meta">Aucun joueur à proximité pour l\'instant.</p>';
   wrap.querySelectorAll('[data-trade-with]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      openTradeComposer(btn.dataset.tradeWith, btn.dataset.tradePseudo);
+      document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+      openOrCreateNegotiation(btn.dataset.tradeWith, btn.dataset.tradePseudo);
     });
   });
 }
 
-let tradeComposeTargetUid = null;
-let tradeComposeTargetPseudo = '';
-let tradeComposeItems = []; // { itemId, qty }
-let tradeComposeRecruitIds = new Set();
-function openTradeComposer(uid, pseudo){
-  tradeComposeTargetUid = uid;
-  tradeComposeTargetPseudo = pseudo;
-  tradeComposeItems = [];
-  tradeComposeRecruitIds = new Set();
-  document.getElementById('tradeComposeTarget').textContent = pseudo;
-  document.getElementById('tradeComposeCoins').value = 0;
-  renderTradeComposeItems();
-  renderTradeComposeRecruits();
-  document.getElementById('nearbyPlayersOverlay').classList.remove('show');
-  document.getElementById('tradeComposeOverlay').classList.add('show');
-}
-document.getElementById('tradeComposeCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('tradeComposeOverlay').classList.remove('show');
-});
-function renderTradeComposeItems(){
-  const wrap = document.getElementById('tradeComposeItemsList');
-  wrap.innerHTML = tradeComposeItems.map((row, idx)=>{
-    const it = items.find(i=>i.id===row.itemId);
-    return `
-      <div class="field-row" style="align-items:center; margin-bottom:6px;">
-        <button class="btn-secondary" data-tci-pick="${idx}" style="flex:2;">${it ? itemThumbHtml(it) + ' ' + it.name : '— choisir —'}</button>
-        <input type="number" class="field-input" data-tci-qty="${idx}" value="${row.qty || 1}" min="1" style="flex:1;">
-        <button class="btn-secondary" data-tci-del="${idx}" style="flex:none; color:var(--danger);">✕</button>
-      </div>
-    `;
-  }).join('') || '<p class="meta">Aucun objet ajouté.</p>';
-  wrap.querySelectorAll('[data-tci-pick]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const idx = parseInt(btn.dataset.tciPick, 10);
-      openRecipeItemChooser((itemId)=>{ tradeComposeItems[idx].itemId = itemId; renderTradeComposeItems(); });
-    });
+/* ---------- Négociation d'échange (les deux joueurs composent et valident en direct) ---------- */
+const negotiationsCol = (typeof db !== 'undefined') ? db.collection('negotiations') : null;
+let negotiationsAsA = [];
+let negotiationsAsB = [];
+function allMyNegotiations(){ return [...negotiationsAsA, ...negotiationsAsB]; }
+function attachNegotiationListeners(){
+  if (!currentUser || !negotiationsCol) return;
+  negotiationsCol.where('playerAUid','==',currentUser.uid).onSnapshot((snap)=>{
+    negotiationsAsA = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    refreshNegotiationBadgeAndLists();
   });
-  wrap.querySelectorAll('[data-tci-qty]').forEach(input=>{
-    input.addEventListener('input', ()=>{
-      tradeComposeItems[parseInt(input.dataset.tciQty, 10)].qty = parseInt(input.value, 10) || 1;
-    });
-  });
-  wrap.querySelectorAll('[data-tci-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      tradeComposeItems.splice(parseInt(btn.dataset.tciDel, 10), 1);
-      renderTradeComposeItems();
-    });
+  negotiationsCol.where('playerBUid','==',currentUser.uid).onSnapshot((snap)=>{
+    negotiationsAsB = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    refreshNegotiationBadgeAndLists();
   });
 }
-document.getElementById('tradeComposeAddItemBtn').addEventListener('click', ()=>{
-  tradeComposeItems.push({ itemId: '', qty: 1 });
-  renderTradeComposeItems();
-});
-function renderTradeComposeRecruits(){
-  const wrap = document.getElementById('tradeComposeRecruitsList');
-  wrap.innerHTML = recruits.length ? recruits.map(r=>{
-    const metier = metiers.find(m=>m.id===r.metierId);
-    return `
-      <label style="display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:6px;">
-        <input type="checkbox" data-tcr="${r.id}" style="width:auto;">
-        ${r.name}${metier ? ' · ' + metier.name : ''}
-      </label>
-    `;
-  }).join('') : '<p class="meta">Tu n\'as aucun personnage recruté pour l\'instant.</p>';
-  wrap.querySelectorAll('[data-tcr]').forEach(cb=>{
-    cb.addEventListener('change', ()=>{
-      if (cb.checked) tradeComposeRecruitIds.add(cb.dataset.tcr);
-      else tradeComposeRecruitIds.delete(cb.dataset.tcr);
-    });
-  });
-}
-document.getElementById('tradeComposeSendBtn').addEventListener('click', ()=>{
-  if (!currentUser || !db || !tradeComposeTargetUid) return;
-  const coins = Math.max(0, parseInt(document.getElementById('tradeComposeCoins').value, 10) || 0);
-  const tradeItems = tradeComposeItems.filter(r=> r.itemId && r.qty > 0);
-  const recruitIds = Array.from(tradeComposeRecruitIds);
-  if (!coins && !tradeItems.length && !recruitIds.length){ showToast('Propose au moins quelque chose'); return; }
-  tradeOffersCol.add({
-    fromUid: currentUser.uid,
-    fromPseudo: currentPseudo || 'Joueur',
-    toUid: tradeComposeTargetUid,
-    toPseudo: tradeComposeTargetPseudo,
-    coins, items: tradeItems, recruitIds,
-    status: 'pending',
-    createdAt: Date.now()
-  }).then(()=>{
-    showToast('Proposition envoyée à ' + tradeComposeTargetPseudo);
-    document.getElementById('tradeComposeOverlay').classList.remove('show');
-  }).catch((err)=> showToast('Échec : ' + err.message));
-});
-
-const tradeOffersCol = (typeof db !== 'undefined') ? db.collection('tradeOffers') : null;
-let receivedTradeOffers = [];
-let sentTradeOffers = [];
-function attachTradeListeners(){
-  if (!currentUser || !tradeOffersCol) return;
-  tradeOffersCol.where('toUid','==',currentUser.uid).onSnapshot((snap)=>{
-    receivedTradeOffers = snap.docs.map(d=>({ id: d.id, ...d.data() }));
-    const pendingCount = receivedTradeOffers.filter(o=>o.status==='pending').length;
-    const badge = document.getElementById('tradeOffersBadge');
-    badge.style.display = pendingCount ? 'flex' : 'none';
-    badge.textContent = pendingCount;
-    if (document.getElementById('tradeOffersOverlay').classList.contains('show')) renderTradeOffers();
-  });
-  tradeOffersCol.where('fromUid','==',currentUser.uid).onSnapshot((snap)=>{
-    sentTradeOffers = snap.docs.map(d=>({ id: d.id, ...d.data() }));
-    if (document.getElementById('tradeOffersOverlay').classList.contains('show')) renderTradeOffers();
-  });
+function refreshNegotiationBadgeAndLists(){
+  const openOnes = allMyNegotiations().filter(n=>n.status==='open');
+  const badge = document.getElementById('tradeOffersBadge');
+  badge.style.display = openOnes.length ? 'flex' : 'none';
+  badge.textContent = openOnes.length;
+  if (document.getElementById('negotiationsListOverlay').classList.contains('show')) renderNegotiationsList();
+  // essaie d'exécuter automatiquement tout échange déjà doublement validé (ex. après reconnexion)
+  openOnes.forEach(n=>{ if (n.validatedA && n.validatedB) tryExecuteNegotiation(n.id); });
 }
 document.getElementById('tradeOffersBtn').addEventListener('click', ()=>{
-  renderTradeOffers();
-  document.getElementById('tradeOffersOverlay').classList.add('show');
+  renderNegotiationsList();
+  document.getElementById('negotiationsListOverlay').classList.add('show');
 });
-document.getElementById('tradeOffersCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('tradeOffersOverlay').classList.remove('show');
+document.getElementById('negoListCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('negotiationsListOverlay').classList.remove('show');
 });
-function describeTradeOffer(o){
+function describeOfferSummary(offer){
   const parts = [];
-  if (o.coins) parts.push('💰 ' + o.coins);
-  (o.items||[]).forEach(row=>{
+  if (offer.coins) parts.push('💰 ' + offer.coins);
+  (offer.items||[]).forEach(row=>{
     const it = items.find(i=>i.id===row.itemId);
     parts.push((it ? it.name : '?') + ' ×' + row.qty);
   });
-  (o.recruitIds||[]).forEach(rid=>{
+  (offer.recruitIds||[]).forEach(rid=>{
     const r = allRecruitsRaw.find(x=>x.id===rid);
     parts.push('🧑 ' + (r ? r.name : '?'));
   });
   return parts.length ? parts.join(', ') : '(rien)';
 }
-function renderTradeOffers(){
-  const recWrap = document.getElementById('tradeOffersReceivedList');
-  recWrap.innerHTML = receivedTradeOffers.length ? receivedTradeOffers.map(o=>`
-    <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
-      <div class="name">${o.fromPseudo} te propose :<span class="meta" style="display:block;">${describeTradeOffer(o)}</span><span class="meta" style="display:block;">${o.status === 'pending' ? 'En attente' : (o.status === 'accepted' ? '✅ Acceptée' : '❌ Refusée')}</span></div>
-      ${o.status === 'pending' ? `
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button class="btn-capture" data-trade-accept="${o.id}" style="flex:1;">Accepter</button>
-          <button class="btn-secondary" data-trade-decline="${o.id}" style="flex:1;">Refuser</button>
-        </div>
-      ` : ''}
-    </div>
-  `).join('') : '<p class="meta">Aucune offre reçue.</p>';
-  recWrap.querySelectorAll('[data-trade-accept]').forEach(btn=>{
-    btn.addEventListener('click', ()=> acceptTradeOffer(btn.dataset.tradeAccept));
-  });
-  recWrap.querySelectorAll('[data-trade-decline]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      tradeOffersCol.doc(btn.dataset.tradeDecline).update({ status:'declined' });
+function renderNegotiationsList(){
+  const wrap = document.getElementById('negotiationsList');
+  const openOnes = allMyNegotiations().filter(n=>n.status==='open');
+  wrap.innerHTML = openOnes.length ? openOnes.map(n=>{
+    const isA = n.playerAUid === currentUser.uid;
+    const otherName = isA ? n.playerBPseudo : n.playerAPseudo;
+    const myValidated = isA ? n.validatedA : n.validatedB;
+    const theirValidated = isA ? n.validatedB : n.validatedA;
+    return `
+      <div class="editor-list-item" data-nego-open="${n.id}" style="cursor:pointer;">
+        <div class="thumb">🤝</div>
+        <div class="name" style="flex:1;">${otherName}<span class="meta" style="display:block;">${myValidated ? '✅ toi' : '✏️ toi'} · ${theirValidated ? '✅ lui/elle' : '✏️ lui/elle'}</span></div>
+        <button class="btn-secondary" data-nego-open-btn="${n.id}">Ouvrir</button>
+      </div>
+    `;
+  }).join('') : '<p class="meta">Aucune négociation en cours.</p>';
+  wrap.querySelectorAll('[data-nego-open], [data-nego-open-btn]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.dataset.negoOpen || el.dataset.negoOpenBtn;
+      document.getElementById('negotiationsListOverlay').classList.remove('show');
+      openNegotiationWindow(id);
     });
   });
-
-  const sentWrap = document.getElementById('tradeOffersSentList');
-  sentWrap.innerHTML = sentTradeOffers.length ? sentTradeOffers.map(o=>`
-    <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
-      <div class="name">À ${o.toPseudo} :<span class="meta" style="display:block;">${describeTradeOffer(o)}</span><span class="meta" style="display:block;">${o.status === 'pending' ? 'En attente' : (o.status === 'accepted' ? '✅ Acceptée' : '❌ Refusée')}</span></div>
-      ${o.status === 'pending' ? `<button class="btn-secondary" data-trade-cancel="${o.id}" style="width:100%; margin-top:8px;">Annuler</button>` : ''}
-    </div>
-  `).join('') : '<p class="meta">Aucune offre envoyée.</p>';
-  sentWrap.querySelectorAll('[data-trade-cancel]').forEach(btn=>{
-    btn.addEventListener('click', ()=> tradeOffersCol.doc(btn.dataset.tradeCancel).delete());
-  });
 }
-function acceptTradeOffer(offerId){
-  const offer = receivedTradeOffers.find(o=>o.id===offerId);
-  if (!offer || !currentUser || !db) return;
-  db.collection('players').doc(offer.fromUid).get().then((fromDoc)=>{
-    const fromData = fromDoc.exists ? fromDoc.data() : {};
-    const fromCoins = typeof fromData.coins === 'number' ? fromData.coins : 0;
-    if (fromCoins < (offer.coins||0)){ showToast(`${offer.fromPseudo} n'a plus assez de pièces pour cette offre`); return; }
-    const fromInv = fromData.inventory || {};
-    for (const row of (offer.items||[])){
-      if ((fromInv[row.itemId]||0) < row.qty){ showToast(`${offer.fromPseudo} n'a plus assez de ${(items.find(i=>i.id===row.itemId)||{}).name || row.itemId}`); return; }
+function openOrCreateNegotiation(targetUid, targetPseudo){
+  if (!currentUser || !negotiationsCol) return;
+  const existing = allMyNegotiations().find(n=> n.status==='open' && (n.playerAUid===targetUid || n.playerBUid===targetUid));
+  if (existing){ openNegotiationWindow(existing.id); return; }
+  negotiationsCol.add({
+    playerAUid: currentUser.uid, playerAPseudo: currentPseudo || 'Joueur',
+    playerBUid: targetUid, playerBPseudo: targetPseudo,
+    offerA: { coins:0, items:[], recruitIds:[] },
+    offerB: { coins:0, items:[], recruitIds:[] },
+    validatedA:false, validatedB:false, status:'open', createdAt: Date.now()
+  }).then((ref)=> openNegotiationWindow(ref.id))
+    .catch((err)=> showToast('Échec : ' + err.message));
+}
+
+let activeNegotiationId = null;
+let activeNegotiationUnsub = null;
+function openNegotiationWindow(id){
+  activeNegotiationId = id;
+  if (activeNegotiationUnsub) activeNegotiationUnsub();
+  activeNegotiationUnsub = negotiationsCol.doc(id).onSnapshot((doc)=>{
+    if (!doc.exists){ closeNegotiationWindow(); return; }
+    renderNegotiationWindow({ id: doc.id, ...doc.data() });
+  });
+  document.getElementById('negotiationOverlay').classList.add('show');
+}
+function closeNegotiationWindow(){
+  if (activeNegotiationUnsub) activeNegotiationUnsub();
+  activeNegotiationUnsub = null;
+  activeNegotiationId = null;
+  document.getElementById('negotiationOverlay').classList.remove('show');
+}
+document.getElementById('negoCloseBtn').addEventListener('click', closeNegotiationWindow);
+
+function renderNegotiationWindow(n){
+  if (!currentUser) return;
+  const isA = n.playerAUid === currentUser.uid;
+  const myOffer = isA ? n.offerA : n.offerB;
+  const theirOffer = isA ? n.offerB : n.offerA;
+  const myValidated = isA ? n.validatedA : n.validatedB;
+  const theirValidated = isA ? n.validatedB : n.validatedA;
+  const otherName = isA ? n.playerBPseudo : n.playerAPseudo;
+
+  document.getElementById('negoTargetName').textContent = otherName;
+
+  let statusLine = '';
+  if (n.status === 'completed') statusLine = '✅ Échange terminé !';
+  else if (n.status === 'cancelled') statusLine = '❌ Négociation annulée.';
+  else statusLine = (myValidated ? 'Toi : ✅ validé' : 'Toi : ✏️ en cours de composition') + ' · ' + (theirValidated ? `${otherName} : ✅ validé` : `${otherName} : ✏️ en cours de composition`);
+  if (n.lastError) statusLine += ` — ⚠️ ${n.lastError}`;
+  document.getElementById('negoStatusLine').textContent = statusLine;
+
+  const locked = myValidated || n.status !== 'open';
+  document.getElementById('negoMineLocked').style.display = locked ? 'block' : 'none';
+  document.getElementById('negoValidateBtn').style.display = (n.status==='open' && !myValidated) ? 'block' : 'none';
+  document.getElementById('negoUnvalidateBtn').style.display = (n.status==='open' && myValidated) ? 'block' : 'none';
+  document.getElementById('negoCancelBtn').style.display = n.status==='open' ? 'block' : 'none';
+
+  const coinsInput = document.getElementById('negoMyCoins');
+  coinsInput.value = myOffer.coins || 0;
+  coinsInput.disabled = locked;
+
+  const itemsWrap = document.getElementById('negoMyItemsList');
+  itemsWrap.innerHTML = (myOffer.items||[]).map((row, idx)=>{
+    const it = items.find(i=>i.id===row.itemId);
+    return `
+      <div class="field-row" style="align-items:center; margin-bottom:6px;">
+        <button class="btn-secondary" data-nmi-pick="${idx}" ${locked?'disabled':''} style="flex:2;">${it ? itemThumbHtml(it) + ' ' + it.name : '— choisir —'}</button>
+        <input type="number" class="field-input" data-nmi-qty="${idx}" value="${row.qty||1}" min="1" ${locked?'disabled':''} style="flex:1;">
+        <button class="btn-secondary" data-nmi-del="${idx}" ${locked?'disabled':''} style="flex:none; color:var(--danger);">✕</button>
+      </div>
+    `;
+  }).join('') || '<p class="meta">Aucun objet ajouté.</p>';
+  document.getElementById('negoAddItemBtn').disabled = locked;
+
+  const recruitsWrap = document.getElementById('negoMyRecruitsList');
+  const myRecruits = allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid);
+  recruitsWrap.innerHTML = myRecruits.length ? myRecruits.map(r=>{
+    const busy = !!r.craftingRecipeId;
+    const checked = (myOffer.recruitIds||[]).includes(r.id);
+    return `
+      <label style="display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:6px; ${busy?'opacity:.5;':''}">
+        <input type="checkbox" data-nmr="${r.id}" ${checked?'checked':''} ${(locked||busy)?'disabled':''} style="width:auto;">
+        ${r.name}${busy ? ' · 🔧 en fabrication, indisponible' : ''}
+      </label>
+    `;
+  }).join('') : '<p class="meta">Tu n\'as aucun personnage recruté pour l\'instant.</p>';
+
+  document.getElementById('negoTheirSummary').innerHTML = `<p class="meta">${describeOfferSummary(theirOffer)}</p>`;
+
+  // --- écouteurs (attachés à chaque rendu, sur le DOM frais) ---
+  function saveMyOffer(patch){
+    const newOffer = { ...myOffer, ...patch };
+    const field = isA ? 'offerA' : 'offerB';
+    negotiationsCol.doc(n.id).update({ [field]: newOffer, validatedA:false, validatedB:false, lastError: firebase.firestore.FieldValue.delete() });
+  }
+  if (!locked){
+    coinsInput.addEventListener('change', ()=> saveMyOffer({ coins: Math.max(0, parseInt(coinsInput.value,10)||0) }));
+    itemsWrap.querySelectorAll('[data-nmi-pick]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.dataset.nmiPick, 10);
+        openRecipeItemChooser((itemId)=>{
+          const newItems = (myOffer.items||[]).slice();
+          newItems[idx] = { itemId, qty: newItems[idx].qty || 1 };
+          saveMyOffer({ items: newItems });
+        });
+      });
+    });
+    itemsWrap.querySelectorAll('[data-nmi-qty]').forEach(input=>{
+      input.addEventListener('change', ()=>{
+        const idx = parseInt(input.dataset.nmiQty, 10);
+        const newItems = (myOffer.items||[]).slice();
+        newItems[idx] = { ...newItems[idx], qty: parseInt(input.value,10)||1 };
+        saveMyOffer({ items: newItems });
+      });
+    });
+    itemsWrap.querySelectorAll('[data-nmi-del]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.dataset.nmiDel, 10);
+        const newItems = (myOffer.items||[]).slice();
+        newItems.splice(idx, 1);
+        saveMyOffer({ items: newItems });
+      });
+    });
+    recruitsWrap.querySelectorAll('[data-nmr]').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        const ids = new Set(myOffer.recruitIds||[]);
+        if (cb.checked) ids.add(cb.dataset.nmr); else ids.delete(cb.dataset.nmr);
+        saveMyOffer({ recruitIds: Array.from(ids) });
+      });
+    });
+  }
+  document.getElementById('negoAddItemBtn').onclick = locked ? null : ()=>{
+    const newItems = (myOffer.items||[]).concat([{ itemId:'', qty:1 }]);
+    saveMyOffer({ items: newItems });
+  };
+  document.getElementById('negoValidateBtn').onclick = ()=>{
+    const field = isA ? 'validatedA' : 'validatedB';
+    negotiationsCol.doc(n.id).update({ [field]: true }).then(()=> tryExecuteNegotiation(n.id));
+  };
+  document.getElementById('negoUnvalidateBtn').onclick = ()=>{
+    const field = isA ? 'validatedA' : 'validatedB';
+    negotiationsCol.doc(n.id).update({ [field]: false });
+  };
+  document.getElementById('negoCancelBtn').onclick = ()=>{
+    negotiationsCol.doc(n.id).delete().then(()=>{ closeNegotiationWindow(); showToast('Négociation annulée'); });
+  };
+}
+
+function tryExecuteNegotiation(id){
+  const negoRef = negotiationsCol.doc(id);
+  db.runTransaction((tx)=> tx.get(negoRef).then((doc)=>{
+    if (!doc.exists) return null;
+    const d = doc.data();
+    if (d.status !== 'open' || !d.validatedA || !d.validatedB) return null;
+    tx.update(negoRef, { status:'executing' });
+    return d;
+  })).then((d)=>{
+    if (d) executeNegotiationTransfer(id, d);
+  }).catch(()=>{ /* une autre tentative a probablement déjà pris la main, ou conflit temporaire : sans gravité */ });
+}
+function executeNegotiationTransfer(id, d){
+  const negoRef = negotiationsCol.doc(id);
+  const aRef = db.collection('players').doc(d.playerAUid);
+  const bRef = db.collection('players').doc(d.playerBUid);
+  Promise.all([aRef.get(), bRef.get()]).then(([aDoc, bDoc])=>{
+    const aData = aDoc.exists ? aDoc.data() : {};
+    const bData = bDoc.exists ? bDoc.data() : {};
+    const aCoins = typeof aData.coins === 'number' ? aData.coins : 0;
+    const bCoins = typeof bData.coins === 'number' ? bData.coins : 0;
+    const aInv = aData.inventory || {};
+    const bInv = bData.inventory || {};
+    let error = null;
+    if (aCoins < (d.offerA.coins||0)) error = `${d.playerAPseudo} n'a plus assez de pièces`;
+    else if (bCoins < (d.offerB.coins||0)) error = `${d.playerBPseudo} n'a plus assez de pièces`;
+    else {
+      for (const row of (d.offerA.items||[])){ if ((aInv[row.itemId]||0) < row.qty){ error = `${d.playerAPseudo} n'a plus assez de ${(items.find(i=>i.id===row.itemId)||{}).name || row.itemId}`; break; } }
+      if (!error) for (const row of (d.offerB.items||[])){ if ((bInv[row.itemId]||0) < row.qty){ error = `${d.playerBPseudo} n'a plus assez de ${(items.find(i=>i.id===row.itemId)||{}).name || row.itemId}`; break; } }
     }
-    const checkRecruits = Promise.all((offer.recruitIds||[]).map(rid=>
-      db.collection('recruits').doc(rid).get().then(d=> (d.exists && d.data().ownerUid === offer.fromUid) ? d : null)
-    ));
-    checkRecruits.then((results)=>{
-      if (results.some(r=>!r)){ showToast(`${offer.fromPseudo} ne possède plus un des personnages proposés`); return; }
-      const fromUpdate = {};
-      const toUpdate = {};
-      if (offer.coins){
-        fromUpdate.coins = firebase.firestore.FieldValue.increment(-offer.coins);
-        toUpdate.coins = firebase.firestore.FieldValue.increment(offer.coins);
+    const allRecruitIds = [...(d.offerA.recruitIds||[]), ...(d.offerB.recruitIds||[])];
+    const recruitsCheck = Promise.all(allRecruitIds.map(rid=> db.collection('recruits').doc(rid).get()));
+    recruitsCheck.then((recruitDocs)=>{
+      if (!error){
+        recruitDocs.forEach((rd, i)=>{
+          const rid = allRecruitIds[i];
+          const expectedOwner = (d.offerA.recruitIds||[]).includes(rid) ? d.playerAUid : d.playerBUid;
+          if (!rd.exists || rd.data().ownerUid !== expectedOwner){ error = 'Un des personnages proposés n\'est plus disponible'; }
+          else if (rd.data().craftingRecipeId){ error = 'Un des personnages proposés est en train de fabriquer quelque chose'; }
+        });
       }
-      (offer.items||[]).forEach(row=>{
-        fromUpdate['inventory.' + row.itemId] = firebase.firestore.FieldValue.increment(-row.qty);
-        toUpdate['inventory.' + row.itemId] = firebase.firestore.FieldValue.increment(row.qty);
+      if (error){
+        negoRef.update({ status:'open', validatedA:false, validatedB:false, lastError: error });
+        return;
+      }
+      const aUpdate = {}; const bUpdate = {};
+      if (d.offerA.coins || d.offerB.coins){
+        aUpdate.coins = firebase.firestore.FieldValue.increment((d.offerB.coins||0) - (d.offerA.coins||0));
+        bUpdate.coins = firebase.firestore.FieldValue.increment((d.offerA.coins||0) - (d.offerB.coins||0));
+      }
+      (d.offerA.items||[]).forEach(row=>{
+        aUpdate['inventory.'+row.itemId] = firebase.firestore.FieldValue.increment(-row.qty);
+        bUpdate['inventory.'+row.itemId] = firebase.firestore.FieldValue.increment(row.qty);
+      });
+      (d.offerB.items||[]).forEach(row=>{
+        bUpdate['inventory.'+row.itemId] = firebase.firestore.FieldValue.increment(-row.qty);
+        aUpdate['inventory.'+row.itemId] = firebase.firestore.FieldValue.increment(row.qty);
       });
       const writes = [];
-      if (Object.keys(fromUpdate).length) writes.push(db.collection('players').doc(offer.fromUid).update(fromUpdate));
-      if (Object.keys(toUpdate).length) writes.push(db.collection('players').doc(offer.toUid).update(toUpdate));
-      (offer.recruitIds||[]).forEach(rid=> writes.push(db.collection('recruits').doc(rid).update({ ownerUid: offer.toUid })));
-      writes.push(tradeOffersCol.doc(offerId).update({ status:'accepted', respondedAt: Date.now() }));
-      Promise.all(writes).then(()=> showToast('Échange effectué !')).catch((err)=> showToast('Échec : ' + err.message));
+      if (Object.keys(aUpdate).length) writes.push(aRef.update(aUpdate));
+      if (Object.keys(bUpdate).length) writes.push(bRef.update(bUpdate));
+      (d.offerA.recruitIds||[]).forEach(rid=> writes.push(db.collection('recruits').doc(rid).update({ ownerUid: d.playerBUid, craftingRecipeId:null, craftingStartedAt:null, craftingDuration:null })));
+      (d.offerB.recruitIds||[]).forEach(rid=> writes.push(db.collection('recruits').doc(rid).update({ ownerUid: d.playerAUid, craftingRecipeId:null, craftingStartedAt:null, craftingDuration:null })));
+      writes.push(negoRef.update({ status:'completed' }));
+      Promise.all(writes).then(()=> showToast('Échange effectué !')).catch((err)=> negoRef.update({ status:'open', validatedA:false, validatedB:false, lastError: err.message }));
     });
   });
 }
