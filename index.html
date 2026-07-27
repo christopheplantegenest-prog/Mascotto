@@ -358,6 +358,7 @@
     <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
     <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
     <button class="btn-capture" id="hubQuestsBtn" style="width:100%; margin-bottom:10px;">Quêtes</button>
+    <button class="btn-secondary" id="scenarioKiosqueBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "Le trésor du kiosque" (10 PNJ)</button>
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%;">Fermer</button>
   </div>
 </div>
@@ -2157,6 +2158,115 @@ document.getElementById('items50TestBtn').addEventListener('click', ()=>{
     equippable: false, effectType: null, effectValue: 0, effectDuration: 'permanent', effectSeconds: 0, effectMetiers: [],
     sellable: it.sellable, basePrice: it.basePrice, updatedAt: Date.now()
   }))).then(()=> showToast(batch.length + ' objets de test créés — modifiables comme les autres'));
+});
+
+/* ---------- Scénario de test : "Le trésor du kiosque" (10 PNJ à Marcillac-Lanville) ---------- */
+document.getElementById('scenarioKiosqueBtn').addEventListener('click', async ()=>{
+  if (!itemsCol || !questsCol || !metiersCol || !creatureCol){ showToast('Firebase indisponible ici'); return; }
+  try {
+    async function ensureMetier(name){
+      const existing = metiers.find(x=>x.name===name);
+      if (existing) return existing.id;
+      const ref = await metiersCol.add({ name, createdAt: Date.now() });
+      return ref.id;
+    }
+    async function ensureItem(name, data){
+      const existing = items.find(x=>x.name===name);
+      if (existing) return existing.id;
+      const ref = await itemsCol.add({ name, imageUrl:'', description:'', equippable:false, effectType:null, effectValue:0, effectDuration:'permanent', effectSeconds:0, effectMetiers:[], updatedAt: Date.now(), ...data });
+      return ref.id;
+    }
+
+    const forgeronId = await ensureMetier('Forgeron');
+    const guerisseurId = await ensureMetier('Guérisseur');
+    const fragmentId = await ensureItem('Fragment de carte', { emoji:'🗺️', type:'quete', description:'Un morceau déchiré d\'une vieille carte.', sellable:false, basePrice:0 });
+    const treasureId = await ensureItem('Trésor oublié', { emoji:'💰', type:'ressource', description:'Un vieux trésor enfin retrouvé.', sellable:true, basePrice:200 });
+
+    let quest = quests.find(q=>q.name==='Le trésor du kiosque');
+    let questId;
+    if (quest){ questId = quest.id; }
+    else {
+      const ref = await questsCol.add({
+        name:'Le trésor du kiosque',
+        description:'Réunis 3 fragments de carte pour percer le secret du vieux trésor.',
+        objectives:[{ itemId: fragmentId, qty:3 }],
+        objectiveMode:'all',
+        rewards:[{ itemId: treasureId, qty:1 }],
+        nextQuestId: null,
+        createdAt: Date.now()
+      });
+      questId = ref.id;
+    }
+
+    const step = (text, choices)=> ({ text, choices });
+    const noOp = { label:'Fermer', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null };
+    const npcs = [
+      { name:'Le Maire', lat:45.8463, lng:0.0191, dialogueSteps:[ step(
+        "Ah, un nouveau visage ! On raconte qu'un trésor serait caché près du village... Va donc voir la marchande du Marcivil, sur la place — elle en sait plus sur cette vieille histoire.",
+        [ { label:'Merci, j\'y vais', next:null, itemGrant:null, recruit:null, questGive:{questId}, questValidate:null } ]
+      )]},
+      { name:'La marchande', lat:45.8464, lng:0.0194, dialogueSteps:[ step(
+        "Le trésor ? Une vieille histoire de grand-mère... Odette, juste sur la place, doit s'en souvenir mieux que moi.",
+        [ noOp ]
+      )]},
+      { name:'Odette', lat:45.8462, lng:0.0192, dialogueSteps:[ step(
+        "Ce trésor... Oui, je me souviens vaguement. Va voir du côté du kiosque, dans le petit parc — les enfants jouent souvent là-bas.",
+        [ noOp ]
+      )]},
+      { name:'Léo', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
+        "J'ai trouvé un vieux bout de carte en jouant ici ! Tiens, prends-le. J'ai vu quelqu'un faire pareil du côté de l'école.",
+        [ { label:'Merci Léo !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+      )]},
+      { name:'L\'institutrice', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
+        "Un trésor ? J'ai vu quelqu'un rôder du côté de la Poste, tard un soir.",
+        [ noOp ]
+      )]},
+      { name:'La postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
+        "Tiens, ce fragment traînait au fond d'un tiroir depuis des années. Le forgeron, à la salle des fêtes, en sait plus que moi.",
+        [ { label:'Merci', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+      )]},
+      { name:'Le forgeron', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
+        "Ce trésor, encore ? Une voyageuse loge chez Caramelo's, elle posait les mêmes questions que toi. Si tu veux, je peux me joindre à toi.",
+        [
+          { label:'Rejoins-moi !', next:null, itemGrant:null, recruit:{metierId: forgeronId}, questGive:null, questValidate:null },
+          { label:'Merci, une autre fois', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+        ]
+      )]},
+      { name:'L\'aventurière', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
+        "Toi aussi tu cherches ce trésor ? Tiens, prends ce fragment, je n'en ai plus besoin. La guérisseuse, sur la route du cimetière, doit avoir la dernière pièce du puzzle.",
+        [ { label:'Merci !', next:null, itemGrant:{itemName:'Fragment de carte', quantity:1}, recruit:null, questGive:null, questValidate:null } ]
+      )]},
+      { name:'La guérisseuse', lat:45.8484, lng:0.0168, metier: guerisseurId, dialogueSteps:[ step(
+        "Le trésor du kiosque... Je connais l'histoire, mais c'est le vieux gardien du cimetière qui garde le secret final. Je peux te suivre si tu le souhaites.",
+        [
+          { label:'Rejoins-moi !', next:null, itemGrant:null, recruit:{metierId: guerisseurId}, questGive:null, questValidate:null },
+          { label:'Merci, une autre fois', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+        ]
+      )]},
+      { name:'Le gardien', lat:45.8504, lng:0.0148, dialogueSteps:[ step(
+        "Alors, as-tu réuni les fragments ?",
+        [
+          { label:'Voici mes fragments', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId} },
+          { label:'Pas encore', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null }
+        ]
+      )]},
+    ];
+
+    for (const n of npcs){
+      await creatureCol.add({
+        name: n.name, metier: n.metier || '', emoji: '🧑', imageUrl: '',
+        visibilityCondition: null, hideOnExitRadius: false, dupeGroup: null,
+        dialogueSteps: n.dialogueSteps, interactionType: 'dialogue', shopItems: [], shopPhrase: '',
+        lat: n.lat, lng: n.lng, startDate: '', endDate: '', startTime: '', endTime: '', daysOfWeek: [],
+        updatedAt: Date.now()
+      });
+    }
+
+    showToast('Scénario "Le trésor du kiosque" créé : 10 PNJ, 1 quête, 2 objets — modifiable comme le reste');
+    document.getElementById('editHubOverlay').classList.remove('show');
+  } catch(err){
+    showToast('Échec : ' + err.message);
+  }
 });
 
 document.getElementById('itemImageFile').addEventListener('change', (e)=>{
