@@ -344,6 +344,18 @@
   </div>
 </div>
 
+<!-- Fiche détaillée du journal d'une quête -->
+<div class="overlay" id="questJournalOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;" id="questJournalTitle">Journal</h3>
+      <button class="sheet-x" id="questJournalCloseBtn">✕</button>
+    </div>
+    <p class="meta" id="questJournalDescription"></p>
+    <div id="questJournalSteps"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <!-- Éditeur de PNJ -->
@@ -1577,13 +1589,18 @@ function logToActiveQuestJournals(text, npcId){
   if (!currentUser || !db || !text) return;
   const activeQuestIds = Object.keys(playerQuestsState).filter(qid => playerQuestsState[qid] === 'active');
   if (!activeQuestIds.length) return;
-  const updates = {};
-  activeQuestIds.forEach(qid=>{
-    const quest = quests.find(q=>q.id===qid);
-    if (quest && quest.showInJournal === false) return; // cette quête exclut le journal
-    updates['questJournals.' + qid] = firebase.firestore.FieldValue.arrayUnion({ text, npcId: npcId || null, ts: Date.now() });
+  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+    const journals = (doc.exists && doc.data().questJournals) || {};
+    const updates = {};
+    activeQuestIds.forEach(qid=>{
+      const quest = quests.find(q=>q.id===qid);
+      if (quest && quest.showInJournal === false) return; // cette quête exclut le journal
+      const existing = journals[qid] || [];
+      if (existing.some(e=> e.text === text)) return; // déjà noté, on évite le doublon
+      updates['questJournals.' + qid] = firebase.firestore.FieldValue.arrayUnion({ text, npcId: npcId || null, ts: Date.now() });
+    });
+    if (Object.keys(updates).length) db.collection('players').doc(currentUser.uid).update(updates).catch(()=>{});
   });
-  if (Object.keys(updates).length) db.collection('players').doc(currentUser.uid).update(updates).catch(()=>{});
 }
 function resolveStepText(step){
   const variants = step.textVariants || [];
@@ -1800,45 +1817,66 @@ function renderQuestTracker(){
       const have = inv[o.itemId] || 0;
       return `${it ? it.name : '?'} : ${Math.min(have,o.qty)}/${o.qty}`;
     }).join(' · ');
-    const journalHtml = (q)=>{
-      if (q.showInJournal === false) return '';
-      const entries = journals[q.id] || [];
-      if (!entries.length) return '';
-      const rows = entries.slice().sort((a,b)=>(a.ts||0)-(b.ts||0)).map(entry=>{
-        let distLabel = '';
-        let itineraryBtn = '';
-        if (entry.npcId){
-          const npc = creatures.find(c=>c.id===entry.npcId);
-          if (npc && typeof npc.lat === 'number' && playerPos){
-            const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
-            distLabel = ` · ${npc.name || 'PNJ'} à ${dist} m`;
-            itineraryBtn = `<button class="btn-secondary" data-itinerary-lat="${npc.lat}" data-itinerary-lng="${npc.lng}" style="margin-top:4px; font-size:11px;">🧭 Itinéraire</button>`;
-          }
-        }
-        return `<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid var(--line);"><span class="meta">${entry.text}${distLabel}</span>${itineraryBtn}</div>`;
-      }).join('');
-      return `<div style="margin-top:8px;"><div class="meta" style="font-weight:700;">📓 Journal</div>${rows}</div>`;
-    };
-    const renderGroup = (list, emptyMsg, showJournal)=> list.length ? list.map(q=>`
+    const renderGroup = (list, emptyMsg, showJournalBtn)=> list.length ? list.map(q=>{
+      const hasJournal = showJournalBtn && q.showInJournal !== false && (journals[q.id]||[]).length;
+      return `
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
-        ${showJournal ? journalHtml(q) : ''}
+        ${hasJournal ? `<button class="btn-secondary" data-open-journal="${q.id}" style="width:100%; margin-top:6px;">📖 Voir le journal</button>` : ''}
       </div>
-    `).join('') : `<p class="meta">${emptyMsg}</p>`;
+    `;
+    }).join('') : `<p class="meta">${emptyMsg}</p>`;
     wrap.innerHTML = `
       <div class="field-label">En cours</div>
       ${renderGroup(active, 'Aucune quête en cours.', true)}
       <div class="field-label" style="margin-top:14px;">Terminées</div>
       ${renderGroup(completed, 'Aucune quête terminée pour l\'instant.', false)}
     `;
-    wrap.querySelectorAll('[data-itinerary-lat]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const url = `https://www.google.com/maps/dir/?api=1&destination=${btn.dataset.itineraryLat},${btn.dataset.itineraryLng}`;
-        window.open(url, '_blank');
-      });
+    wrap.querySelectorAll('[data-open-journal]').forEach(btn=>{
+      btn.addEventListener('click', ()=> openQuestJournal(btn.dataset.openJournal, journals[btn.dataset.openJournal]||[]));
     });
   });
 }
+function openQuestJournal(questId, entries){
+  const quest = quests.find(q=>q.id===questId);
+  if (!quest) return;
+  document.getElementById('questJournalTitle').textContent = '📖 ' + quest.name;
+  document.getElementById('questJournalDescription').textContent = quest.description || '';
+  const stepsEl = document.getElementById('questJournalSteps');
+  const sorted = entries.slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+  stepsEl.innerHTML = sorted.length ? sorted.map((entry, idx)=>{
+    let distLabel = '';
+    let itineraryBtn = '';
+    if (entry.npcId){
+      const npc = creatures.find(c=>c.id===entry.npcId);
+      if (npc && typeof npc.lat === 'number' && playerPos){
+        const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
+        distLabel = `<span class="meta" style="display:block;">${npc.name || 'PNJ'} à ${dist} m</span>`;
+        itineraryBtn = `<button class="btn-secondary" data-jitin-lat="${npc.lat}" data-jitin-lng="${npc.lng}" style="margin-top:6px;">🧭 Itinéraire</button>`;
+      }
+    }
+    return `
+      <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
+        <div class="name" style="font-size:11px; color:var(--muted);">Étape ${idx+1}</div>
+        <div class="name">${entry.text}</div>
+        ${distLabel}
+        ${itineraryBtn}
+      </div>
+    `;
+  }).join('') : '<p class="meta">Rien noté pour l\'instant.</p>';
+  stepsEl.querySelectorAll('[data-jitin-lat]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${btn.dataset.jitinLat},${btn.dataset.jitinLng}`;
+      window.open(url, '_blank');
+    });
+  });
+  document.getElementById('questTrackerOverlay').classList.remove('show');
+  document.getElementById('questJournalOverlay').classList.add('show');
+}
+document.getElementById('questJournalCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('questJournalOverlay').classList.remove('show');
+  document.getElementById('questTrackerOverlay').classList.add('show');
+});
 
 document.getElementById('closeBtn').addEventListener('click', ()=>{
   document.getElementById('overlay').classList.remove('show');
@@ -2483,62 +2521,107 @@ document.getElementById('scenarioFeteBtn').addEventListener('click', async ()=>{
       }, { merge:true });
     }
 
-    const step = (text, choices)=> ({ text, choices });
+    const step = (text, choices, textVariants)=> ({ text, choices, textVariants: textVariants||[] });
     const noOp = { label:'Fermer', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null };
     const npcs = [
       { name:'Le Maire', lat:45.8463, lng:0.0191, dialogueSteps:[ step(
         "La fête du village approche à grands pas, mais on a un souci avec le repas communal — il manque des ingrédients ! Tu veux bien nous donner un coup de main ?",
-        [ { label:'Bien sûr, je m\'en occupe', next:null, itemGrant:null, recruit:null, questGive:{questId:q1Id}, questValidate:null, showIf:null } ]
+        [ { label:'Bien sûr, je m\'en occupe', next:null, itemGrant:null, recruit:null, questGive:{questId:q1Id}, questValidate:null, showIf:null } ],
+        [ { questId:q1Id, state:'completed', text:'Merci encore pour le repas, la fête va être réussie grâce à toi !' } ]
       )]},
       { name:'La marchande du Marcivil', lat:45.8464, lng:0.0194, dialogueSteps:[ step(
-        "Ah, la fête ! Tiens, prends ce pain frais, ça aidera pour le repas.",
-        [ { label:'Merci !', next:null, itemGrant:{itemName:'Pain frais', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ]
+        "La fête approche, on prépare un grand repas pour tout le village !",
+        [ { label:'Merci !', next:null, itemGrant:{itemName:'Pain frais', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ],
+        [
+          { questId:q1Id, state:'completed', text:'Merci pour ton aide avec le repas, régale-toi à la fête !' },
+          { questId:q1Id, state:'active', text:'Tiens, prends ce pain frais, ça aidera pour le repas.' }
+        ]
       )]},
       { name:'Mémée Suzanne', lat:45.8462, lng:0.0192, dialogueSteps:[ step(
-        "La fête ? Ah, il faut bien un peu de bon fromage pour un repas digne de ce nom ! Tiens, prends ça.",
-        [ { label:'Merci Mémée !', next:null, itemGrant:{itemName:'Fromage de la ferme', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ]
+        "La fête ? Ah, ça me rappelle de bons souvenirs...",
+        [ { label:'Merci Mémée !', next:null, itemGrant:{itemName:'Fromage de la ferme', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ],
+        [
+          { questId:q1Id, state:'completed', text:'Merci d\'avoir aidé pour le repas, tu es un cœur !' },
+          { questId:q1Id, state:'active', text:'Il faut bien un peu de bon fromage pour un repas digne de ce nom ! Tiens, prends ça.' }
+        ]
       )]},
       { name:'La cuisinière', lat:45.8464, lng:0.0189, dialogueSteps:[ step(
-        "Alors, ces ingrédients pour le repas de fête ?",
+        "Je prépare le grand repas de la fête, ça va être délicieux !",
         [
           { label:'Voici le pain et le fromage', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q1Id}, showIf:null },
           { label:'Quelle est la suite ?', next:null, itemGrant:null, recruit:null, questGive:{questId:q2Id}, questValidate:null, showIf:{questId:q1Id, state:'completed'} },
           { label:'Le ruban est prêt !', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q4Id}, showIf:null }
+        ],
+        [
+          { questId:q4Id, state:'completed', text:'La fête est parfaite grâce à toi, merci pour tout !' },
+          { questId:q4Id, state:'active', text:'Le ruban est arrivé ? Il nous faut ça pour finir de décorer le kiosque !' },
+          { questId:q3Id, state:'active', text:'As-tu réussi à porter la bouteille jusqu\'à Lanville ?' },
+          { questId:q2Id, state:'completed', text:'Le Barde a récupéré son violon grâce à toi, merci !' },
+          { questId:q2Id, state:'active', text:'As-tu retrouvé le violon du Barde ?' },
+          { questId:q1Id, state:'completed', text:'Merci pour les ingrédients ! Au fait, le Barde a perdu son violon — tu veux bien voir si tu le retrouves ? Il traînait peut-être du côté du kiosque.' },
+          { questId:q1Id, state:'active', text:'Alors, ces ingrédients pour le repas de fête ?' }
         ]
       )]},
       { name:'Nino', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
-        "J'ai retrouvé un vieux violon caché sous le kiosque ! Il doit bien appartenir à quelqu'un...",
-        [ { label:'Je vais le rendre', next:null, itemGrant:{itemName:'Vieux violon', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'active'} } ]
+        "Je joue souvent près du kiosque.",
+        [ { label:'Je vais le rendre', next:null, itemGrant:{itemName:'Vieux violon', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'active'} } ],
+        [
+          { questId:q2Id, state:'completed', text:'Content d\'avoir aidé à retrouver le violon !' },
+          { questId:q2Id, state:'active', text:'J\'ai retrouvé un vieux violon caché sous le kiosque ! Il doit bien appartenir à quelqu\'un... Tiens, prends-le.' }
+        ]
       )]},
       { name:'Le Barde', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
-        "Mon violon ! Je le cherchais partout, merci mille fois !",
+        "J'adore jouer de la musique pour la fête du village.",
         [
           { label:'Le voici', next:null, itemGrant:null, recruit:null, questGive:{questId:q3Id}, questValidate:{questId:q2Id}, showIf:null },
           { label:'Je peux jouer avec vous ?', next:null, itemGrant:null, recruit:{metierId:bardeId}, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'completed'} }
+        ],
+        [
+          { questId:q3Id, state:'completed', text:'J\'ai entendu dire que le sacristain a été ravi de recevoir sa bouteille, merci !' },
+          { questId:q3Id, state:'active', text:'As-tu réussi à porter le Pineau à Lanville ?' },
+          { questId:q2Id, state:'completed', text:'Merci d\'avoir retrouvé mon violon ! Je vais pouvoir jouer à la fête. J\'ai une faveur à te demander : Maître Ferrand, le forgeron, a une bouteille de Pineau à faire porter à un ami à Lanville, tu veux bien t\'en occuper ?' },
+          { questId:q2Id, state:'active', text:'As-tu retrouvé mon violon ? Il doit être quelque part près du kiosque.' }
         ]
       )]},
       { name:'La maîtresse d\'école', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
-        "La fête ? J'ai grandi à Lanville, à un peu plus d'un kilomètre d'ici — il paraît que le sacristain sait toujours tout ce qui se passe au village.",
-        [ noOp ]
+        "La fête du village, quelle bonne nouvelle !",
+        [ noOp ],
+        [
+          { questId:q3Id, state:'active', text:'Si tu vas à Lanville, l\'église est facile à trouver, tout le monde en parle par ici.' }
+        ]
       )]},
       { name:'Léa, la postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
-        "Bon courage pour les préparatifs ! Si tu passes par Lanville, dis bonjour au sacristain de ma part.",
-        [ noOp ]
+        "Bon courage pour les préparatifs !",
+        [ noOp ],
+        [
+          { questId:q3Id, state:'active', text:'Si tu passes par Lanville, dis bonjour au sacristain de ma part.' }
+        ]
       )]},
       { name:'Maître Ferrand', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
-        "La fête approche ! Tiens, j'ai justement une bouteille de Pineau à faire porter à mon vieil ami le sacristain, à Lanville.",
+        "Je m'occupe de la forge du village.",
         [
           { label:'Je la lui apporterai', next:null, itemGrant:{itemName:'Bouteille de Pineau', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q3Id, state:'active'} },
           { label:'Je peux te rejoindre ?', next:null, itemGrant:null, recruit:{metierId:forgeronId}, questGive:null, questValidate:null, showIf:{questId:q3Id, state:'completed'} }
+        ],
+        [
+          { questId:q3Id, state:'completed', text:'Merci d\'avoir porté cette bouteille à mon ami, ça lui a fait très plaisir !' },
+          { questId:q3Id, state:'active', text:'Tiens, j\'ai justement une bouteille de Pineau à faire porter à mon vieil ami le sacristain, à Lanville.' }
         ]
       )]},
       { name:'Iris, la voyageuse', lat:45.8505, lng:0.0160, dialogueSteps:[ step(
-        "Tu vas voir le sacristain ? Continue tout droit, l'église de Lanville n'est plus très loin.",
-        [ noOp ]
+        "Je voyage beaucoup, j'aime découvrir de nouveaux villages.",
+        [ noOp ],
+        [
+          { questId:q3Id, state:'active', text:'Tu vas voir le sacristain ? Continue tout droit, l\'église de Lanville n\'est plus très loin.' }
+        ]
       )]},
       { name:'Le sacristain', lat:45.8555, lng:0.0127, dialogueSteps:[ step(
-        "Une bouteille de Pineau de la part de Ferrand ? Quelle bonne surprise ! Tiens, en échange, voici un beau ruban doré pour décorer le kiosque.",
-        [ { label:'Merci beaucoup', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q3Id}, showIf:null } ]
+        "Je m'occupe de l'église de Lanville.",
+        [ { label:'Merci beaucoup', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q3Id}, showIf:null } ],
+        [
+          { questId:q3Id, state:'completed', text:'Merci encore pour cette bouteille de Pineau, un vrai plaisir de la part d\'un vieil ami !' },
+          { questId:q3Id, state:'active', text:'As-tu quelque chose pour moi de la part de Ferrand ?' }
+        ]
       )]},
     ];
 
