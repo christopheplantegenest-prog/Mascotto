@@ -197,6 +197,43 @@
     background:rgba(255,255,255,.95); border:1px solid var(--line);
     padding:8px 16px; border-radius:999px; font-size:12px; z-index:2500; color:var(--text);
   }
+
+  /* Scène d'exploration (éditeur + vue joueur) */
+  .scene-full{
+    position:fixed; inset:0; z-index:4000; background:#000;
+    display:none; flex-direction:column;
+  }
+  .scene-full.show{ display:flex; }
+  .scene-imgwrap{
+    position:relative; width:100%; flex:1; overflow:hidden;
+    display:flex; align-items:center; justify-content:center; background:#111;
+  }
+  .scene-imgwrap img{ width:100%; display:block; user-select:none; -webkit-user-drag:none; }
+  .scene-imgwrap .scene-empty{ color:rgba(255,255,255,.6); font-size:13px; text-align:center; padding:0 30px; }
+  .scene-point{
+    position:absolute; transform:translate(-50%,-50%);
+    width:34px; height:34px; border-radius:50%;
+    background:rgba(255,255,255,.92); border:2px solid var(--accent);
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+    box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .scene-point.selected{ border-color:var(--danger); box-shadow:0 0 0 3px rgba(192,57,43,.35); }
+  .scene-topbar{
+    position:absolute; top:max(10px, env(safe-area-inset-top)); left:10px; right:10px; z-index:4010;
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+  }
+  .scene-topbar .sheet-x{ background:rgba(255,255,255,.92); }
+  .scene-bottombar{
+    background:rgba(0,0,0,.55); padding:10px; display:flex; flex-direction:column; gap:8px;
+  }
+  .scene-typerow{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
+  .scene-type-btn{
+    flex:none; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.35);
+    background:rgba(255,255,255,.12); color:#fff; font-size:12px; font-weight:600;
+  }
+  .scene-type-btn.selected{ background:var(--accent); border-color:var(--accent); }
+  .scene-actionrow{ display:flex; gap:8px; }
+  .scene-actionrow button{ flex:1; padding:11px; border-radius:10px; font-size:13px; font-weight:700; border:none; }
 </style>
 </head>
 <body>
@@ -407,9 +444,21 @@
 
     <button class="btn-secondary" id="baseAddResBtn" style="width:100%; margin-bottom:14px;">+5 de chaque ressource (test)</button>
 
-    <div id="baseRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <button class="btn-capture" data-basetab="artisans" style="flex:1;">🛠️ Artisans</button>
+      <button class="btn-secondary" data-basetab="combattants" style="flex:1;">⚔️ Combattants</button>
+    </div>
 
-    <button class="btn-capture" id="recruitTestBtn" style="width:100%;">➕ Recruter (test)</button>
+    <div id="baseTab-artisans">
+      <div id="baseRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
+      <button class="btn-capture" id="recruitTestBtn" style="width:100%;">➕ Recruter un artisan (test)</button>
+    </div>
+
+    <div id="baseTab-combattants" style="display:none;">
+      <p class="meta" style="margin-bottom:8px;">Équipe active : <span id="baseTeamCount">0</span> / 3</p>
+      <div id="baseCombattantsRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
+      <button class="btn-capture" id="recruitCombattantTestBtn" style="width:100%;">➕ Recruter un combattant (test)</button>
+    </div>
   </div>
 </div>
 
@@ -423,7 +472,12 @@
     </div>
     <div class="meta" id="recruitSheetMetier">—</div>
 
+    <div id="recruitCombatStatsSection"></div>
+
     <div id="recruitCraftSection"></div>
+
+    <div class="field-label">Attaques</div>
+    <div id="recruitAttacksSection"></div>
 
     <div class="field-label">Équipement</div>
     <div id="recruitEquipSection"></div>
@@ -440,6 +494,17 @@
       <button class="sheet-x" id="baseEquipChooserCloseBtn">✕</button>
     </div>
     <div id="baseEquipChooserList"></div>
+  </div>
+</div>
+
+<!-- Choix d'un manuel à apprendre -->
+<div class="overlay" id="baseLearnChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Apprendre une attaque</h3>
+      <button class="sheet-x" id="baseLearnChooserCloseBtn">✕</button>
+    </div>
+    <div id="baseLearnChooserList"></div>
   </div>
 </div>
 
@@ -715,6 +780,7 @@
         <option value="ressource">Ressource de craft</option>
         <option value="quete">Objet de quête</option>
         <option value="consommable">Consommable</option>
+        <option value="apprentissage">Apprentissage d'attaque</option>
       </select>
 
       <div class="field-label">Description</div>
@@ -727,10 +793,18 @@
       <div id="itemEffectWrap" style="display:none;">
         <div class="field-label">Effet</div>
         <select id="itemEffectType" class="field-input">
-          <option value="speed_boost">Réduit le temps de fabrication</option>
+          <option value="speed_boost">Réduit le temps de fabrication (artisan)</option>
+          <option value="hp_boost">Bonus de PV (combat)</option>
+          <option value="atk_boost">Bonus d'Attaque (combat)</option>
+          <option value="def_boost">Bonus de Défense (combat)</option>
+          <option value="matk_boost">Bonus d'Att. magique (combat)</option>
+          <option value="mdef_boost">Bonus de Déf. magique (combat)</option>
+          <option value="speed_combat_boost">Bonus de Vitesse (combat)</option>
+          <option value="precision_boost">Bonus de Précision (combat)</option>
+          <option value="evasion_boost">Bonus d'Esquive (combat)</option>
         </select>
 
-        <div class="field-label">Valeur (%)</div>
+        <div class="field-label" id="itemEffectValueLabel">Valeur (%)</div>
         <input type="number" id="itemEffectValue" class="field-input" value="20" min="1" max="90">
 
         <div class="field-label">Durée de l'effet</div>
@@ -847,7 +921,18 @@
         <option value="dialogue">Dialogue</option>
         <option value="shop">Boutique</option>
         <option value="combat">Monstre / Combattant</option>
+        <option value="zone">Zone d'exploration</option>
       </select>
+
+      <div id="zoneBlock" style="display:none;">
+        <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="editZoneShowName" style="width:auto;">
+          <label for="editZoneShowName" style="margin:0;">Afficher le nom de la zone au joueur sur la carte</label>
+        </div>
+        <p class="meta" style="margin-top:8px;">Représente l'entrée géolocalisée d'une zone d'exploration.</p>
+        <button type="button" class="btn-secondary" id="editZoneSceneBtn" style="width:100%; margin-top:6px; display:none;">🗺️ Éditer la scène de cette zone</button>
+        <p class="meta" id="editZoneSceneHint" style="margin-top:6px;">Enregistre d'abord ce PNJ pour pouvoir éditer sa scène.</p>
+      </div>
 
       <div id="dialogueBlock">
         <div class="field-label">Dialogue</div>
@@ -908,6 +993,14 @@
         </div>
         <div class="field-label">Attaques connues (4 maximum)</div>
         <div id="combatAttacksList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+        <div id="combatMonsterOnlyFields2">
+          <div class="field-label">Immunités (états sans aucun effet)</div>
+          <div id="combatImmunitiesList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+          <div class="field-label">Résistances (durée/puissance des états réduites de moitié)</div>
+          <div id="combatResistancesList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+          <div class="field-label">Objets remportés en cas de victoire (aucune pièce par défaut)</div>
+          <div id="combatRewardsList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+        </div>
       </div>
 
       <div class="field-label">Position sur la carte</div>
@@ -999,6 +1092,38 @@
 <div class="placement-bar" id="moveBar" style="display:none;">
   <button id="moveCancelBtn" style="background:var(--panel); color:var(--text); border:1px solid var(--line);">Annuler</button>
   <button class="btn-capture" id="moveConfirmBtn" style="flex:1;">Valider le déplacement</button>
+</div>
+
+<!-- Éditeur de scène d'exploration (plein écran) -->
+<div class="scene-full" id="sceneEditorFull">
+  <div class="scene-topbar">
+    <button class="sheet-x" id="sceneEditorCloseBtn">✕</button>
+    <button class="btn-secondary" id="sceneEditorImageBtn" style="flex:none; background:rgba(255,255,255,.92);">🖼️ Image de fond</button>
+    <input type="file" id="sceneEditorImageFile" accept="image/*" style="display:none;">
+  </div>
+  <div class="scene-imgwrap" id="sceneEditorImgWrap">
+    <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie dessus pour placer des points.</div>
+  </div>
+  <div class="scene-bottombar">
+    <div class="scene-typerow" id="sceneTypeRow"></div>
+    <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
+    <div class="scene-actionrow">
+      <button id="sceneEditorDeleteBtn" style="background:var(--danger); color:#fff; display:none;">🗑️ Supprimer le point</button>
+      <button class="btn-capture" id="sceneEditorSaveBtn">💾 Enregistrer la scène</button>
+    </div>
+  </div>
+</div>
+
+<!-- Vue joueur d'une scène d'exploration (plein écran, lecture seule pour l'instant) -->
+<div class="scene-full" id="sceneViewFull">
+  <div class="scene-topbar">
+    <button class="sheet-x" id="sceneViewCloseBtn">✕</button>
+    <span class="meta" id="sceneViewTitle" style="background:rgba(255,255,255,.92); padding:4px 10px; border-radius:999px; margin:0;">Exploration</span>
+    <span style="width:30px;"></span>
+  </div>
+  <div class="scene-imgwrap" id="sceneViewImgWrap">
+    <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
+  </div>
 </div>
 
 <script>
@@ -1183,14 +1308,24 @@ document.getElementById('addShopItemBtn').addEventListener('click', ()=>{
 });
 document.getElementById('editInteractionType').addEventListener('change', (e)=>{
   const type = e.target.value;
-  document.getElementById('dialogueBlock').style.display = (type === 'shop') ? 'none' : 'block';
+  document.getElementById('dialogueBlock').style.display = (type === 'shop' || type === 'zone') ? 'none' : 'block';
   document.getElementById('shopBlock').style.display = (type === 'shop') ? 'block' : 'none';
   document.getElementById('combatBlock').style.display = (type === 'combat') ? 'block' : 'none';
+  document.getElementById('zoneBlock').style.display = (type === 'zone') ? 'block' : 'none';
 });
 document.getElementById('editCombatRecruitable').addEventListener('change', (e)=>{
   document.getElementById('combatMonsterOnlyFields').style.display = e.target.checked ? 'none' : 'block';
+  document.getElementById('combatMonsterOnlyFields2').style.display = e.target.checked ? 'none' : 'block';
 });
 let selectedCombatAttacks = new Set();
+const COMBAT_STATUSES = [
+  { id:'stun', label:'💫 Étourdi' }, { id:'poison', label:'🤢 Empoisonné' }, { id:'burn', label:'🔥 Brûlé' },
+  { id:'confuse', label:'😵 Confus' }, { id:'sleep', label:'😴 Endormi' }, { id:'paralysis', label:'⚡ Paralysé' },
+  { id:'silence', label:'🔇 Réduit au silence' }, { id:'blind', label:'🌑 Aveuglé' }
+];
+let selectedCombatImmunities = new Set();
+let selectedCombatResistances = new Set();
+let selectedCombatRewards = new Set();
 function renderCombatAttacksPicker(){
   const wrap = document.getElementById('combatAttacksList');
   if (!wrap) return;
@@ -1207,6 +1342,34 @@ function renderCombatAttacksPicker(){
         selectedCombatAttacks.add(id);
       }
       renderCombatAttacksPicker();
+    });
+  });
+}
+function renderCombatStatusPicker(listId, selectedSet){
+  const wrap = document.getElementById(listId);
+  if (!wrap) return;
+  wrap.innerHTML = COMBAT_STATUSES.map(s=>`
+    <button type="button" class="btn-secondary combat-status-btn" data-status="${s.id}" style="${selectedSet.has(s.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${s.label}</button>
+  `).join('');
+  wrap.querySelectorAll('.combat-status-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.status;
+      if (selectedSet.has(id)) selectedSet.delete(id); else selectedSet.add(id);
+      renderCombatStatusPicker(listId, selectedSet);
+    });
+  });
+}
+function renderCombatRewardsPicker(){
+  const wrap = document.getElementById('combatRewardsList');
+  if (!wrap) return;
+  wrap.innerHTML = items.map(it=>`
+    <button type="button" class="btn-secondary combat-reward-btn" data-item="${it.id}" style="${selectedCombatRewards.has(it.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${it.emoji||'📦'} ${it.name}</button>
+  `).join('') || '<p class="meta">Aucun objet créé pour l\'instant (éditeur "Objets").</p>';
+  wrap.querySelectorAll('.combat-reward-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.item;
+      if (selectedCombatRewards.has(id)) selectedCombatRewards.delete(id); else selectedCombatRewards.add(id);
+      renderCombatRewardsPicker();
     });
   });
 }
@@ -1569,9 +1732,10 @@ function renderAllCreatures(snap){
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
+    const fallbackEmoji = c.interactionType === 'zone' ? '🗺️' : (c.emoji || '🐾');
     const inner = c.imageUrl
       ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;">`
-      : `<div class="creature-icon" id="icon-${c.id}">${c.emoji || '🐾'}</div>`;
+      : `<div class="creature-icon" id="icon-${c.id}">${fallbackEmoji}</div>`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
     const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
     marker.on('click', ()=> handleCreatureClick(c));
@@ -1611,6 +1775,10 @@ function handleCreatureClick(c){
     return;
   }
   if (c.interactionType === 'shop'){ openShopWindow(c); return; }
+  if (c.interactionType === 'zone'){
+    openSceneView(c);
+    return;
+  }
   openSheet(c);
 }
 
@@ -1861,6 +2029,8 @@ function grantItemToPlayer(itemName, quantity){
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
   const recruitsColRef = db.collection('recruits');
+  const isCombattant = creature.interactionType === 'combat';
+  const cs = creature.combatStats || {};
   recruitsColRef.add({
     name: creature.name || 'PNJ',
     metierId: metierId,
@@ -1872,6 +2042,13 @@ function recruitCreature(creature, metierId){
     taskTarget: null,
     craftingRecipeId: null,
     craftingStartedAt: null,
+    recruitType: isCombattant ? 'combattant' : 'artisan',
+    sourceCreatureId: creature.id,
+    learnedAttackIds: isCombattant ? (cs.attackIds || []) : [],
+    trainingAttackId: null,
+    trainingStartedAt: null,
+    trainingDuration: null,
+    trainingForgetAttackId: null,
     createdAt: Date.now(),
   }).then(()=>{
     return db.collection('creature_types').doc(creature.id).update({ recruited: true });
@@ -2185,9 +2362,13 @@ function loadForEdit(id){
   renderDialogueBuilder();
   const interactionType = d.interactionType || 'dialogue';
   document.getElementById('editInteractionType').value = interactionType;
-  document.getElementById('dialogueBlock').style.display = (interactionType === 'shop') ? 'none' : 'block';
+  document.getElementById('dialogueBlock').style.display = (interactionType === 'shop' || interactionType === 'zone') ? 'none' : 'block';
   document.getElementById('shopBlock').style.display = (interactionType === 'shop') ? 'block' : 'none';
   document.getElementById('combatBlock').style.display = (interactionType === 'combat') ? 'block' : 'none';
+  document.getElementById('zoneBlock').style.display = (interactionType === 'zone') ? 'block' : 'none';
+  document.getElementById('editZoneShowName').checked = !!d.zoneShowName;
+  document.getElementById('editZoneSceneBtn').style.display = 'block';
+  document.getElementById('editZoneSceneHint').style.display = 'none';
   currentShopItems = Array.isArray(d.shopItems) ? JSON.parse(JSON.stringify(d.shopItems)) : [];
   renderShopItemsBuilder();
   document.getElementById('editShopPhrase').value = d.shopPhrase || '';
@@ -2205,8 +2386,15 @@ function loadForEdit(id){
   document.getElementById('editCombatRarity').value = cs.rarity || 'commun';
   document.getElementById('editCombatFleeChance').value = cs.fleeChance != null ? cs.fleeChance : 30;
   document.getElementById('combatMonsterOnlyFields').style.display = cs.recruitable ? 'none' : 'block';
+  document.getElementById('combatMonsterOnlyFields2').style.display = cs.recruitable ? 'none' : 'block';
   selectedCombatAttacks = new Set(cs.attackIds || []);
   renderCombatAttacksPicker();
+  selectedCombatImmunities = new Set(cs.immunities || []);
+  renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
+  selectedCombatResistances = new Set(cs.resistances || []);
+  renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
+  selectedCombatRewards = new Set(cs.rewardItemIds || []);
+  renderCombatRewardsPicker();
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
   document.getElementById('editStartTime').value = d.startTime || '';
@@ -2253,6 +2441,10 @@ function resetForm(){
   document.getElementById('dialogueBlock').style.display = 'block';
   document.getElementById('shopBlock').style.display = 'none';
   document.getElementById('combatBlock').style.display = 'none';
+  document.getElementById('zoneBlock').style.display = 'none';
+  document.getElementById('editZoneShowName').checked = false;
+  document.getElementById('editZoneSceneBtn').style.display = 'none';
+  document.getElementById('editZoneSceneHint').style.display = 'block';
   currentShopItems = [];
   renderShopItemsBuilder();
   document.getElementById('editShopPhrase').value = '';
@@ -2269,8 +2461,15 @@ function resetForm(){
   document.getElementById('editCombatRarity').value = 'commun';
   document.getElementById('editCombatFleeChance').value = 30;
   document.getElementById('combatMonsterOnlyFields').style.display = 'block';
+  document.getElementById('combatMonsterOnlyFields2').style.display = 'block';
   selectedCombatAttacks = new Set();
   renderCombatAttacksPicker();
+  selectedCombatImmunities = new Set();
+  renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
+  selectedCombatResistances = new Set();
+  renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
+  selectedCombatRewards = new Set();
+  renderCombatRewardsPicker();
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
   document.getElementById('editStartTime').value = '';
@@ -2334,6 +2533,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
   const shopPhrase = document.getElementById('editShopPhrase').value.trim();
+  const zoneShowName = document.getElementById('editZoneShowName').checked;
   const combatStats = {
     tribe: document.getElementById('editCombatTribe').value,
     hp: parseInt(document.getElementById('editCombatHp').value,10) || 1,
@@ -2347,7 +2547,10 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
     recruitable: document.getElementById('editCombatRecruitable').checked,
     rarity: document.getElementById('editCombatRarity').value,
     fleeChance: parseInt(document.getElementById('editCombatFleeChance').value,10) || 30,
-    attackIds: Array.from(selectedCombatAttacks)
+    attackIds: Array.from(selectedCombatAttacks),
+    immunities: Array.from(selectedCombatImmunities),
+    resistances: Array.from(selectedCombatResistances),
+    rewardItemIds: Array.from(selectedCombatRewards)
   };
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
@@ -2359,7 +2562,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
   if (pendingLat === null){ showToast('Choisis un emplacement sur la carte'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, lat: pendingLat, lng: pendingLng, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -2558,6 +2761,9 @@ document.getElementById('itemSellable').addEventListener('change', (e)=>{
 });
 document.getElementById('itemEffectDuration').addEventListener('change', (e)=>{
   document.getElementById('itemEffectSecondsWrap').style.display = (e.target.value === 'temporary') ? 'block' : 'none';
+});
+document.getElementById('itemEffectType').addEventListener('change', (e)=>{
+  document.getElementById('itemEffectValueLabel').textContent = (e.target.value === 'speed_boost') ? 'Valeur (%)' : 'Valeur (bonus fixe)';
 });
 
 /* ---------- Objets (items) ---------- */
@@ -2902,6 +3108,7 @@ function loadItemForEdit(id){
   document.getElementById('itemEquippable').checked = equippable;
   document.getElementById('itemEffectWrap').style.display = equippable ? 'block' : 'none';
   document.getElementById('itemEffectType').value = it.effectType || 'speed_boost';
+  document.getElementById('itemEffectValueLabel').textContent = (document.getElementById('itemEffectType').value === 'speed_boost') ? 'Valeur (%)' : 'Valeur (bonus fixe)';
   document.getElementById('itemEffectValue').value = it.effectValue || 20;
   document.getElementById('itemEffectDuration').value = it.effectDuration || 'permanent';
   document.getElementById('itemEffectSecondsWrap').style.display = (it.effectDuration === 'temporary') ? 'block' : 'none';
@@ -3816,13 +4023,39 @@ document.getElementById('attackSaveBtn').addEventListener('click', ()=>{
   const allowedMetiers = Array.from(selectedAttackMetiers);
 
   if (!name){ showToast('Donne un nom à l\'attaque'); return; }
-  if (!attacksCol){ showToast('Firebase indisponible ici'); return; }
+  if (!attacksCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
 
   const data = { name, emoji, description, kind, school, tribe, power, learnDuration, allowedMetiers, updatedAt: Date.now() };
   const op = editingAttackId ? attacksCol.doc(editingAttackId).set(data) : attacksCol.add({ ...data, createdAt: Date.now() });
-  op.then(()=>{ showToast(editingAttackId ? 'Attaque mise à jour' : 'Attaque ajoutée'); resetAttackForm(); showAttacksSection('list'); })
-    .catch((err)=> showToast('Échec : ' + err.message));
+  op.then((ref)=>{
+    const attackId = editingAttackId || (ref && ref.id);
+    return syncAttackLearnItem(attackId, name);
+  }).then(()=>{
+    showToast(editingAttackId ? 'Attaque mise à jour' : 'Attaque ajoutée');
+    resetAttackForm();
+    showAttacksSection('list');
+  }).catch((err)=> showToast('Échec : ' + err.message));
 });
+
+function syncAttackLearnItem(attackId, attackName){
+  // Chaque attaque a son propre objet d'apprentissage (un manuel unique par attaque), créé/mis à jour automatiquement.
+  const existing = items.find(it => it.teachesAttackId === attackId);
+  const itemData = {
+    name: 'Manuel : ' + attackName,
+    emoji: '📖',
+    imageUrl: '',
+    type: 'apprentissage',
+    description: `Permet à un combattant compatible d'apprendre l'attaque "${attackName}".`,
+    teachesAttackId: attackId,
+    equippable: false, effectType: null, effectValue: 0, effectDuration: 'permanent', effectSeconds: 0, effectMetiers: [],
+    sellable: false, basePrice: 0,
+    updatedAt: Date.now()
+  };
+  if (existing){
+    return itemsCol.doc(existing.id).set({ ...itemData, createdAt: existing.createdAt || Date.now() });
+  }
+  return itemsCol.add({ ...itemData, createdAt: Date.now() });
+}
 
 function showAttacksSection(name){
   document.querySelectorAll('.attacks-section').forEach(el=> el.style.display = 'none');
@@ -3853,7 +4086,9 @@ function watchPlayerInventoryForBase(){
   playerDocRef = db.collection('players').doc(currentUser.uid);
   playerDocRef.onSnapshot((doc)=>{
     baseResources = (doc.exists && doc.data().inventory) || {};
+    activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     renderBaseResources();
+    renderCombattantsRoster();
   });
 }
 function renderBaseResources(){
@@ -3905,14 +4140,16 @@ document.getElementById('recruitTestBtn').addEventListener('click', ()=>{
   if (!metiers.length){ showToast('Crée d\'abord un métier depuis l\'éditeur de recettes'); return; }
   const name = TEST_FIRST_NAMES[Math.floor(Math.random()*TEST_FIRST_NAMES.length)];
   const metier = metiers[Math.floor(Math.random()*metiers.length)];
-  recruitsCol.add({ name, metierId: metier.id, ownerUid: (currentUser ? currentUser.uid : null), equippedItemId: null, craftingRecipeId: null, craftingStartedAt: null, createdAt: Date.now() })
+  recruitsCol.add({ name, metierId: metier.id, ownerUid: (currentUser ? currentUser.uid : null), equippedItemId: null, craftingRecipeId: null, craftingStartedAt: null, learnedAttackIds: [], trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null, createdAt: Date.now() })
     .then(()=> showToast(name + ' recruté(e) comme ' + metier.name));
 });
 
+let activeTeamIds = [];
 function renderBaseRoster(){
   const grid = document.getElementById('baseRoster');
   if (!grid) return;
-  grid.innerHTML = recruits.map(r=>{
+  const artisans = recruits.filter(r => r.recruitType !== 'combattant');
+  grid.innerHTML = artisans.map(r=>{
     const metier = metiers.find(m=>m.id===r.metierId);
     const pct = r.craftingRecipeId ? Math.round(recruitCraftProgress(r)*100) : 0;
     return `
@@ -3932,7 +4169,44 @@ function renderBaseRoster(){
   grid.querySelectorAll('[data-recruit-open]').forEach(el=>{
     el.addEventListener('click', ()=> openRecruitSheet(el.dataset.recruitOpen));
   });
+  renderCombattantsRoster();
 }
+function renderCombattantsRoster(){
+  const grid = document.getElementById('baseCombattantsRoster');
+  if (!grid) return;
+  const combattants = recruits.filter(r => r.recruitType === 'combattant');
+  document.getElementById('baseTeamCount').textContent = activeTeamIds.filter(id=> combattants.some(c=>c.id===id)).length;
+  grid.innerHTML = combattants.map(r=>{
+    const inTeam = activeTeamIds.includes(r.id);
+    return `
+      <div class="editor-list-item" data-recruit-open="${r.id}" style="flex-direction:column; text-align:center; border:1px solid ${inTeam ? 'var(--accent)' : 'var(--line)'}; border-radius:12px; padding:10px 6px; cursor:pointer; position:relative;">
+        ${inTeam ? `<div style="position:absolute; top:4px; right:4px; font-size:12px;" title="Dans l'équipe">⭐</div>` : ''}
+        ${r.equippedItemId ? `<div style="position:absolute; top:4px; left:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
+        <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '⚔️'}</div>
+        <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
+        <div class="meta" style="font-size:10px;">${(r.learnedAttackIds||[]).length} attaque(s)</div>
+      </div>
+    `;
+  }).join('') || '<p class="meta">Aucun combattant recruté pour l\'instant.</p>';
+  grid.querySelectorAll('[data-recruit-open]').forEach(el=>{
+    el.addEventListener('click', ()=> openRecruitSheet(el.dataset.recruitOpen));
+  });
+}
+document.querySelectorAll('#baseOverlay button[data-basetab]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#baseOverlay button[data-basetab]').forEach(b=> b.className = 'btn-secondary');
+    btn.className = 'btn-capture';
+    document.getElementById('baseTab-artisans').style.display = (btn.dataset.basetab === 'artisans') ? 'block' : 'none';
+    document.getElementById('baseTab-combattants').style.display = (btn.dataset.basetab === 'combattants') ? 'block' : 'none';
+  });
+});
+document.getElementById('recruitCombattantTestBtn').addEventListener('click', ()=>{
+  if (!recruitsCol){ showToast('Firebase indisponible ici'); return; }
+  const combatCreatures = creatures.filter(c=>c.interactionType==='combat' && c.combatStats && c.combatStats.recruitable);
+  if (!combatCreatures.length){ showToast('Crée d\'abord un personnage "Recrutable" dans l\'éditeur PNJ (type Monstre/Combattant)'); return; }
+  const pick = combatCreatures[Math.floor(Math.random()*combatCreatures.length)];
+  recruitCreature(pick, pick.metier || '');
+});
 
 /* ---------- Fiche d'un PNJ recruté : craft + équipement ---------- */
 let activeRecruitId = null;
@@ -3996,7 +4270,13 @@ function renderRecruitSheet(){
   }
   document.getElementById('recruitSheetMetier').textContent = metier ? metier.name : 'Sans métier';
 
+  renderRecruitCombatStatsSection(recruit);
+  renderRecruitAttacksSection(recruit);
+
   const craftEl = document.getElementById('recruitCraftSection');
+  if (recruit.recruitType === 'combattant'){
+    craftEl.innerHTML = '';
+  } else {
   const eligibleRecipes = recipes.filter(r => !r.allowedMetiers || !r.allowedMetiers.length || r.allowedMetiers.includes(recruit.metierId));
 
   if (recruit.craftingRecipeId){
@@ -4036,6 +4316,7 @@ function renderRecruitSheet(){
     craftEl.querySelectorAll('button[data-launch-recipe]').forEach(btn=>{
       btn.addEventListener('click', ()=> launchRecruitCraft(recruit, btn.dataset.launchRecipe));
     });
+  }
   }
 
   const equipEl = document.getElementById('recruitEquipSection');
@@ -4116,6 +4397,127 @@ document.getElementById('baseEquipChooserCloseBtn').addEventListener('click', ()
   document.getElementById('baseEquipChooserOverlay').classList.remove('show');
 });
 
+/* ---------- Apprentissage d'attaques ---------- */
+function recruitTrainingProgress(recruit){
+  if (!recruit.trainingAttackId || !recruit.trainingStartedAt) return 0;
+  const duration = recruit.trainingDuration || 1;
+  return Math.max(0, Math.min(1, (Date.now() - recruit.trainingStartedAt) / duration));
+}
+function recruitTrainingRemainingMs(recruit){
+  if (!recruit.trainingAttackId || !recruit.trainingStartedAt) return 0;
+  const duration = recruit.trainingDuration || 0;
+  return Math.max(0, duration - (Date.now() - recruit.trainingStartedAt));
+}
+function renderRecruitCombatStatsSection(recruit){
+  const el = document.getElementById('recruitCombatStatsSection');
+  if (!el) return;
+  if (recruit.recruitType !== 'combattant'){ el.innerHTML = ''; return; }
+  const source = creatures.find(c=>c.id===recruit.sourceCreatureId);
+  const cs = (source && source.combatStats) || {};
+  const inTeam = activeTeamIds.includes(recruit.id);
+  const tribeLabel = { feu:'🔥 Feu', eau:'💧 Eau', terre:'🌿 Terre', air:'🌪️ Air', lumiere:'✨ Lumière', ombre:'🌑 Ombre' }[cs.tribe] || 'Aucune tribu';
+  el.innerHTML = `
+    <div class="meta">${tribeLabel}</div>
+    <div class="meta">❤️ ${cs.hp||'?'} · ⚔️ ${cs.atk||'?'} · 🛡️ ${cs.def||'?'} · 🔮 ${cs.matk||'?'} · ✨ ${cs.mdef||'?'} · ⚡ ${cs.speed||'?'} · 🎯 ${cs.precision||'?'}% · 💨 ${cs.evasion||'?'}%</div>
+    <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
+  `;
+  document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
+    if (!playerDocRef) return;
+    let team = activeTeamIds.slice();
+    if (inTeam){
+      team = team.filter(id=>id!==recruit.id);
+    } else {
+      if (team.length >= 3){ showToast('L\'équipe est déjà complète (3 combattants max)'); return; }
+      team.push(recruit.id);
+    }
+    playerDocRef.set({ activeTeamIds: team }, { merge:true }).then(()=>{
+      activeTeamIds = team;
+      renderRecruitCombatStatsSection(recruit);
+      renderCombattantsRoster();
+    });
+  });
+}
+function renderRecruitAttacksSection(recruit){
+  const el = document.getElementById('recruitAttacksSection');
+  if (!el) return;
+  const learned = recruit.learnedAttackIds || [];
+  if (recruit.trainingAttackId){
+    const atk = attacks.find(a=>a.id===recruit.trainingAttackId);
+    const pct = Math.round(recruitTrainingProgress(recruit)*100);
+    const remainingLabel = formatRemainingDuration(recruitTrainingRemainingMs(recruit));
+    el.innerHTML = `
+      <div class="pos-status">${atk ? (atk.emoji||'✨')+' '+atk.name : '…'} — ${remainingLabel}</div>
+      <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
+        <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+      </div>
+      <button class="btn-secondary" id="cancelTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'entraînement</button>
+    `;
+    document.getElementById('cancelTrainingBtn').addEventListener('click', ()=>{
+      recruitsCol.doc(recruit.id).update({ trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
+        .then(()=> showToast('Entraînement annulé (le manuel déjà utilisé n\'est pas remboursé)'));
+    });
+  } else {
+    const knownLabel = learned.length ? learned.map(id=>{
+      const a = attacks.find(x=>x.id===id);
+      return a ? `<span class="btn-secondary" style="display:inline-flex; align-items:center; gap:4px; margin:2px;">${a.emoji||'✨'} ${a.name}</span>` : '';
+    }).join('') : '<p class="meta">Aucune attaque apprise pour l\'instant.</p>';
+    el.innerHTML = `
+      <div style="margin-bottom:6px;">${knownLabel}</div>
+      <button class="btn-capture" id="openLearnChooserBtn" style="width:100%;">📖 Apprendre une attaque</button>
+    `;
+    document.getElementById('openLearnChooserBtn').addEventListener('click', ()=> openBaseLearnChooser(recruit));
+  }
+}
+function openBaseLearnChooser(recruit){
+  const listEl = document.getElementById('baseLearnChooserList');
+  const eligible = attacks.filter(a =>
+    (baseResources[(items.find(it=>it.teachesAttackId===a.id)||{}).id]||0) > 0
+    && (!a.allowedMetiers || !a.allowedMetiers.length || a.allowedMetiers.includes(recruit.metierId))
+  );
+  listEl.innerHTML = eligible.length ? eligible.map(a=>{
+    const manuel = items.find(it=>it.teachesAttackId===a.id);
+    return `
+    <div class="choice-row">
+      <b>${a.emoji||'✨'} ${a.name}</b>
+      <div class="meta">${a.description || ''} — manuel : ${manuel ? manuel.name : '?'}</div>
+      <button class="btn-capture" data-learn-attack="${a.id}" style="width:100%; margin-top:6px;">Apprendre</button>
+    </div>
+  `;
+  }).join('') : '<p class="meta">Aucun manuel compatible avec ce métier dans le sac.</p>';
+  listEl.querySelectorAll('button[data-learn-attack]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const attackId = btn.dataset.learnAttack;
+      const attack = attacks.find(a=>a.id===attackId);
+      const learned = recruit.learnedAttackIds || [];
+      let forgetAttackId = null;
+      if (learned.length >= 4){
+        const names = learned.map(id=> (attacks.find(a=>a.id===id)||{}).name || '?');
+        const choice = prompt(`${recruit.name} connaît déjà 4 attaques. Tape le numéro de celle à oublier pour apprendre "${attack.name}" :\n` + names.map((n,i)=>`${i+1}. ${n}`).join('\n'));
+        const idx = parseInt(choice, 10) - 1;
+        if (isNaN(idx) || idx < 0 || idx >= learned.length){ showToast('Apprentissage annulé'); return; }
+        forgetAttackId = learned[idx];
+        if (!confirm(`Confirmer : oublier "${names[idx]}" pour apprendre "${attack.name}" ?`)) return;
+      }
+      const manuel = items.find(it=>it.teachesAttackId===attackId);
+      if (!manuel){ showToast('Manuel introuvable'); return; }
+      playerDocRef.set({ inventory: { [manuel.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
+        recruitsCol.doc(recruit.id).update({
+          trainingAttackId: attackId,
+          trainingStartedAt: Date.now(),
+          trainingDuration: (attack.learnDuration||60) * 1000,
+          trainingForgetAttackId: forgetAttackId
+        });
+        document.getElementById('baseLearnChooserOverlay').classList.remove('show');
+        showToast(`${recruit.name} commence l'entraînement !`);
+      });
+    });
+  });
+  document.getElementById('baseLearnChooserOverlay').classList.add('show');
+}
+document.getElementById('baseLearnChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('baseLearnChooserOverlay').classList.remove('show');
+});
+
 document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
   const recruit = currentRecruit();
   if (!recruit) return;
@@ -4139,6 +4541,13 @@ setInterval(()=>{
         playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
       }
       recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
+    }
+    if (recruit.trainingAttackId && recruitTrainingProgress(recruit) >= 1){
+      const learned = (recruit.learnedAttackIds || []).filter(id => id !== recruit.trainingForgetAttackId);
+      learned.push(recruit.trainingAttackId);
+      const attack = attacks.find(a=>a.id===recruit.trainingAttackId);
+      recruitsCol.doc(recruit.id).update({ learnedAttackIds: learned, trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
+        .then(()=> showToast(`${recruit.name} a appris ${attack ? attack.name : 'une nouvelle attaque'} !`));
     }
   });
   if (activeRecruitId && document.getElementById('recruitSheetOverlay').classList.contains('show')) renderRecruitSheet();
@@ -4683,6 +5092,207 @@ document.getElementById('hubQuestsBtn').addEventListener('click', ()=>{
   document.getElementById('questsEditorOverlay').classList.add('show');
   resetQuestForm();
   showQuestsSection('new');
+});
+
+/* ---------- Scène d'exploration : structure minimale (image + points, pas encore de comportement) ---------- */
+const zonesCol = (typeof db !== 'undefined') ? db.collection('exploration_zones') : null;
+const SCENE_POINT_TYPES = [
+  { id:'sortie', label:'🚪 Sortie' },
+  { id:'objet', label:'🎒 Objet' },
+  { id:'action', label:'⚙️ Action' },
+  { id:'dialogue', label:'💬 Dialogue' },
+  { id:'pnj', label:'👤 PNJ' },
+  { id:'sortie_zone', label:'🏳️ Sortie de zone' },
+];
+
+let sceneEditorZoneId = null;
+let sceneEditorImageDataUrl = null;
+let sceneEditorPoints = [];
+let sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
+let sceneEditorSelectedPointId = null;
+
+function renderSceneTypeRow(){
+  const wrap = document.getElementById('sceneTypeRow');
+  wrap.innerHTML = SCENE_POINT_TYPES.map(t=>`
+    <button type="button" class="scene-type-btn" data-scenetype="${t.id}" style="${t.id===sceneEditorSelectedType ? 'background:var(--accent); border-color:var(--accent);' : ''}">${t.label}</button>
+  `).join('');
+  wrap.querySelectorAll('[data-scenetype]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      sceneEditorSelectedType = btn.dataset.scenetype;
+      renderSceneTypeRow();
+    });
+  });
+}
+
+function sceneTypeEmoji(typeId){
+  const t = SCENE_POINT_TYPES.find(x=>x.id===typeId);
+  return t ? t.label.split(' ')[0] : '📍';
+}
+
+function renderSceneEditorImage(){
+  const wrap = document.getElementById('sceneEditorImgWrap');
+  const empty = document.getElementById('sceneEditorEmpty');
+  let img = document.getElementById('sceneEditorImg');
+  if (sceneEditorImageDataUrl){
+    if (!img){
+      img = document.createElement('img');
+      img.id = 'sceneEditorImg';
+      wrap.insertBefore(img, wrap.firstChild);
+      img.addEventListener('click', onSceneEditorImageClick);
+    }
+    img.src = sceneEditorImageDataUrl;
+    empty.style.display = 'none';
+  } else {
+    if (img) img.remove();
+    empty.style.display = 'block';
+  }
+}
+
+function renderSceneEditorPoints(){
+  const wrap = document.getElementById('sceneEditorImgWrap');
+  wrap.querySelectorAll('.scene-point').forEach(el=> el.remove());
+  sceneEditorPoints.forEach(pt=>{
+    const el = document.createElement('div');
+    el.className = 'scene-point' + (pt.id === sceneEditorSelectedPointId ? ' selected' : '');
+    el.style.left = pt.x + '%';
+    el.style.top = pt.y + '%';
+    el.textContent = sceneTypeEmoji(pt.type);
+    el.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      sceneEditorSelectedPointId = (sceneEditorSelectedPointId === pt.id) ? null : pt.id;
+      renderSceneEditorPoints();
+      document.getElementById('sceneEditorDeleteBtn').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
+      document.getElementById('sceneEditorSelectedInfo').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
+    });
+    wrap.appendChild(el);
+  });
+}
+
+function onSceneEditorImageClick(ev){
+  if (!sceneEditorImageDataUrl) return;
+  const img = document.getElementById('sceneEditorImg');
+  const rect = img.getBoundingClientRect();
+  const x = ((ev.clientX - rect.left) / rect.width) * 100;
+  const y = ((ev.clientY - rect.top) / rect.height) * 100;
+  sceneEditorPoints.push({
+    id: 'pt_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+    type: sceneEditorSelectedType,
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10,
+  });
+  sceneEditorSelectedPointId = null;
+  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
+  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  renderSceneEditorPoints();
+}
+
+document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
+  if (!sceneEditorSelectedPointId) return;
+  sceneEditorPoints = sceneEditorPoints.filter(p=>p.id !== sceneEditorSelectedPointId);
+  sceneEditorSelectedPointId = null;
+  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
+  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  renderSceneEditorPoints();
+});
+
+document.getElementById('sceneEditorImageBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneEditorImageFile').click();
+});
+document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 1000;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      sceneEditorImageDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      renderSceneEditorImage();
+      renderSceneEditorPoints();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function openSceneEditor(creatureId){
+  if (!creatureId){ showToast('Enregistre d\'abord ce PNJ'); return; }
+  if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
+  sceneEditorZoneId = creatureId;
+  sceneEditorImageDataUrl = null;
+  sceneEditorPoints = [];
+  sceneEditorSelectedPointId = null;
+  sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
+  renderSceneTypeRow();
+  renderSceneEditorImage();
+  renderSceneEditorPoints();
+  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
+  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  document.getElementById('sceneEditorFull').classList.add('show');
+  zonesCol.doc(creatureId).get().then((doc)=>{
+    if (doc.exists){
+      const d = doc.data();
+      sceneEditorImageDataUrl = d.sceneImageUrl || null;
+      sceneEditorPoints = Array.isArray(d.points) ? JSON.parse(JSON.stringify(d.points)) : [];
+      renderSceneEditorImage();
+      renderSceneEditorPoints();
+    }
+  }).catch((err)=> showToast('Échec du chargement : ' + err.message));
+}
+document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
+document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneEditorFull').classList.remove('show');
+});
+document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
+  if (!sceneEditorZoneId || !zonesCol) return;
+  zonesCol.doc(sceneEditorZoneId).set({
+    sceneImageUrl: sceneEditorImageDataUrl || '',
+    points: sceneEditorPoints,
+    updatedAt: Date.now(),
+  }).then(()=>{
+    showToast('Scène enregistrée');
+    document.getElementById('sceneEditorFull').classList.remove('show');
+  }).catch((err)=> showToast('Échec : ' + err.message));
+});
+
+/* Vue joueur (lecture seule pour l'instant, pas encore de comportement sur les points) */
+function openSceneView(creature){
+  document.getElementById('sceneViewTitle').textContent = creature.zoneShowName ? (creature.name || 'Exploration') : 'Exploration';
+  const wrap = document.getElementById('sceneViewImgWrap');
+  const empty = document.getElementById('sceneViewEmpty');
+  wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
+  empty.style.display = 'none';
+  document.getElementById('sceneViewFull').classList.add('show');
+  if (!zonesCol){ empty.style.display = 'block'; return; }
+  zonesCol.doc(creature.id).get().then((doc)=>{
+    const d = doc.exists ? doc.data() : null;
+    if (!d || !d.sceneImageUrl){
+      empty.style.display = 'block';
+      return;
+    }
+    const img = document.createElement('img');
+    img.src = d.sceneImageUrl;
+    wrap.insertBefore(img, wrap.firstChild);
+    (d.points || []).forEach(pt=>{
+      const el = document.createElement('div');
+      el.className = 'scene-point';
+      el.style.left = pt.x + '%';
+      el.style.top = pt.y + '%';
+      el.textContent = sceneTypeEmoji(pt.type);
+      wrap.appendChild(el);
+    });
+  }).catch(()=>{ empty.style.display = 'block'; });
+}
+document.getElementById('sceneViewCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneViewFull').classList.remove('show');
 });
 </script>
 </body>
