@@ -1098,7 +1098,10 @@
 <div class="scene-full" id="sceneEditorFull">
   <div class="scene-topbar">
     <button class="sheet-x" id="sceneEditorCloseBtn">✕</button>
-    <button class="btn-secondary" id="sceneEditorImageBtn" style="flex:none; background:rgba(255,255,255,.92);">🖼️ Image de fond</button>
+    <span class="meta" id="sceneEditorCurrentLabel" style="background:rgba(255,255,255,.92); padding:4px 10px; border-radius:999px; margin:0; font-weight:700;">Scène 1</span>
+    <button class="btn-secondary" id="sceneEditorScenesBtn" style="flex:none; background:rgba(255,255,255,.92);">🎬 Scènes</button>
+    <button class="btn-secondary" id="sceneEditorVariantsBtn" style="flex:none; background:rgba(255,255,255,.92);">🕒 Variantes</button>
+    <button class="btn-secondary" id="sceneEditorImageBtn" style="flex:none; background:rgba(255,255,255,.92);">🖼️ Image</button>
     <input type="file" id="sceneEditorImageFile" accept="image/*" style="display:none;">
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
@@ -1107,10 +1110,36 @@
   <div class="scene-bottombar">
     <div class="scene-typerow" id="sceneTypeRow"></div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
+    <div id="sceneEditorDetails" style="display:none;"></div>
     <div class="scene-actionrow">
       <button id="sceneEditorDeleteBtn" style="background:var(--danger); color:#fff; display:none;">🗑️ Supprimer le point</button>
       <button class="btn-capture" id="sceneEditorSaveBtn">💾 Enregistrer la scène</button>
     </div>
+  </div>
+</div>
+
+<!-- Gestion des scènes d'une zone (liste, ajout, suppression, scène de départ) -->
+<div class="overlay" id="sceneListOverlay" style="z-index:4300;">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Scènes de la zone</h3>
+      <button class="sheet-x" id="sceneListCloseBtn">✕</button>
+    </div>
+    <div id="sceneListItems"></div>
+    <button class="btn-capture" id="sceneListAddBtn" style="width:100%; margin-top:10px;">➕ Nouvelle scène</button>
+  </div>
+</div>
+
+<!-- Variantes de la scène courante (image + points différents selon date/jour/heure) -->
+<div class="overlay" id="sceneVariantOverlay" style="z-index:4300;">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Variantes de cette scène</h3>
+      <button class="sheet-x" id="sceneVariantCloseBtn">✕</button>
+    </div>
+    <p class="meta">"Par défaut" est utilisée si aucune variante n'est active. Une variante sans condition est toujours active (pense à définir ses conditions).</p>
+    <div id="sceneVariantItems"></div>
+    <button class="btn-capture" id="sceneVariantAddBtn" style="width:100%; margin-top:10px;">➕ Nouvelle variante</button>
   </div>
 </div>
 
@@ -1123,6 +1152,18 @@
   </div>
   <div class="scene-imgwrap" id="sceneViewImgWrap">
     <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
+  </div>
+</div>
+
+<!-- Petit dialogue simple, déclenché par un point de type "Dialogue" en scène -->
+<div class="overlay" id="sceneDialogueOverlay" style="z-index:4500;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <div class="emoji">💬</div>
+      <button class="sheet-x" id="sceneDialogueCloseBtn">✕</button>
+    </div>
+    <p class="meta" id="sceneDialogueText" style="font-size:14px; color:var(--text);"></p>
+    <button class="choice-btn end" id="sceneDialogueCloseBtn2">Fermer</button>
   </div>
 </div>
 
@@ -1991,7 +2032,7 @@ function renderSheet(){
     const btn = document.createElement('button');
     btn.className = 'choice-btn end';
     btn.textContent = 'Fermer';
-    btn.addEventListener('click', ()=> document.getElementById('overlay').classList.remove('show'));
+    btn.addEventListener('click', ()=>{ document.getElementById('overlay').classList.remove('show'); document.getElementById('overlay').style.zIndex = ''; });
     choicesEl.appendChild(btn);
     return;
   }
@@ -2007,6 +2048,7 @@ function renderSheet(){
       if (ch.questValidate) validateQuestForPlayer(ch.questValidate.questId);
       if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
         document.getElementById('overlay').classList.remove('show');
+        document.getElementById('overlay').style.zIndex = '';
       } else {
         currentStepIdx = ch.next;
         renderSheet();
@@ -2221,6 +2263,7 @@ document.getElementById('questJournalCloseBtn').addEventListener('click', ()=>{
 
 document.getElementById('closeBtn').addEventListener('click', ()=>{
   document.getElementById('overlay').classList.remove('show');
+  document.getElementById('overlay').style.zIndex = '';
 });
 
 function showToast(msg){
@@ -5106,10 +5149,250 @@ const SCENE_POINT_TYPES = [
 ];
 
 let sceneEditorZoneId = null;
-let sceneEditorImageDataUrl = null;
-let sceneEditorPoints = [];
+let sceneEditorScenes = [];        // [{id, name, imageUrl, points, variants}]
+let sceneEditorCurrentSceneId = null;
+let sceneEditorCurrentVariantId = null; // null = contenu par défaut de la scène, sinon id de la variante éditée
+let sceneEditorStartSceneId = null;
+let sceneEditorImageDataUrl = null; // miroir de la scène (ou variante) courante
+let sceneEditorPoints = [];         // miroir de la scène (ou variante) courante
 let sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
 let sceneEditorSelectedPointId = null;
+
+function genSceneId(){ return 'scene_' + Date.now() + '_' + Math.floor(Math.random()*1000); }
+
+/* Convertit l'ancien format à scène unique (mascotto-v60/v61/v62) vers le format multi-scènes, sans rien perdre */
+function normalizeZoneScenes(d){
+  if (d && Array.isArray(d.scenes) && d.scenes.length){
+    return { scenes: JSON.parse(JSON.stringify(d.scenes)), startSceneId: d.startSceneId || d.scenes[0].id };
+  }
+  if (d && (d.sceneImageUrl || (Array.isArray(d.points) && d.points.length))){
+    const id = genSceneId();
+    const sc = { id, name: 'Scène 1', imageUrl: d.sceneImageUrl || '', points: Array.isArray(d.points) ? JSON.parse(JSON.stringify(d.points)) : [] };
+    return { scenes: [sc], startSceneId: id };
+  }
+  const id = genSceneId();
+  return { scenes: [{ id, name: 'Scène 1', imageUrl: '', points: [] }], startSceneId: id };
+}
+
+function syncCurrentVariantFromEditorState(){
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  if (sceneEditorCurrentVariantId === null){
+    sc.imageUrl = sceneEditorImageDataUrl || '';
+    sc.points = sceneEditorPoints;
+  } else {
+    const v = (sc.variants||[]).find(x=>x.id===sceneEditorCurrentVariantId);
+    if (v){ v.imageUrl = sceneEditorImageDataUrl || ''; v.points = sceneEditorPoints; }
+  }
+}
+
+function renderSceneEditorTopLabel(){
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  const label = document.getElementById('sceneEditorCurrentLabel');
+  let text = (sc ? sc.name : 'Scène') + (sceneEditorCurrentSceneId === sceneEditorStartSceneId ? ' ★' : '');
+  if (sceneEditorCurrentVariantId !== null && sc){
+    const v = (sc.variants||[]).find(x=>x.id===sceneEditorCurrentVariantId);
+    if (v) text += ' — 🕒 ' + (v.label || 'Variante');
+  }
+  label.textContent = text;
+}
+
+function loadVariantIntoEditorState(variantId){
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  sceneEditorCurrentVariantId = variantId;
+  if (variantId === null){
+    sceneEditorImageDataUrl = sc.imageUrl || null;
+    sceneEditorPoints = sc.points || [];
+  } else {
+    const v = (sc.variants||[]).find(x=>x.id===variantId);
+    if (!v) return;
+    sceneEditorImageDataUrl = v.imageUrl || null;
+    sceneEditorPoints = v.points || [];
+  }
+  sceneEditorSelectedPointId = null;
+  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
+  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  document.getElementById('sceneEditorDetails').style.display = 'none';
+  renderSceneEditorImage();
+  renderSceneEditorPoints();
+  renderSceneEditorTopLabel();
+}
+
+function switchVariant(variantId){
+  syncCurrentVariantFromEditorState();
+  loadVariantIntoEditorState(variantId);
+}
+
+function loadSceneIntoEditorState(sceneId){
+  const sc = sceneEditorScenes.find(s=>s.id===sceneId);
+  if (!sc) return;
+  if (!sc.variants) sc.variants = [];
+  sceneEditorCurrentSceneId = sc.id;
+  loadVariantIntoEditorState(null);
+}
+
+function switchScene(sceneId){
+  syncCurrentVariantFromEditorState();
+  loadSceneIntoEditorState(sceneId);
+}
+
+function summarizeVariantConditions(v){
+  const parts = [];
+  if (Array.isArray(v.daysOfWeek) && v.daysOfWeek.length){
+    const names = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+    parts.push(v.daysOfWeek.map(d=>names[d]).filter(Boolean).join('/'));
+  }
+  if (v.startDate || v.endDate) parts.push(`${v.startDate||'…'} → ${v.endDate||'…'}`);
+  if (v.startTime || v.endTime) parts.push(`${v.startTime||'00:00'}-${v.endTime||'23:59'}`);
+  return parts.length ? parts.join(' · ') : 'Aucune condition (toujours active)';
+}
+
+function renderSceneVariantOverlay(){
+  const wrap = document.getElementById('sceneVariantItems');
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  if (!sc.variants) sc.variants = [];
+  let html = `
+    <div class="editor-list-item">
+      <div class="thumb">${sc.imageUrl ? `<img src="${sc.imageUrl}">` : '🎬'}</div>
+      <div class="name">Par défaut${sceneEditorCurrentVariantId===null?' <span class="meta" style="font-size:10px;">(en cours d\'édition)</span>':''}</div>
+      <button class="btn-secondary" data-variant-switch="__base__">Éditer</button>
+    </div>
+  `;
+  html += sc.variants.map(v=>`
+    <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="thumb">${v.imageUrl ? `<img src="${v.imageUrl}">` : '🕒'}</div>
+        <div class="name">${v.label || 'Variante'}${sceneEditorCurrentVariantId===v.id?' <span class="meta" style="font-size:10px;">(en cours)</span>':''}<span class="meta" style="display:block; font-size:10px;">${summarizeVariantConditions(v)}</span></div>
+        <button class="btn-secondary" data-variant-switch="${v.id}">Éditer</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="btn-secondary" data-variant-cond="${v.id}" style="flex:1;">📅 Conditions</button>
+        <button class="btn-secondary" data-variant-del="${v.id}" style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">🗑️ Supprimer</button>
+      </div>
+    </div>
+  `).join('');
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll('[data-variant-switch]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      switchVariant(btn.dataset.variantSwitch === '__base__' ? null : btn.dataset.variantSwitch);
+      document.getElementById('sceneVariantOverlay').classList.remove('show');
+    });
+  });
+  wrap.querySelectorAll('[data-variant-cond]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const v = sc.variants.find(x=>x.id===btn.dataset.variantCond);
+      if (!v) return;
+      const daysInput = prompt('Jours actifs (0=Dim, 1=Lun, 2=Mar, 3=Mer, 4=Jeu, 5=Ven, 6=Sam), séparés par des virgules. Vide = tous les jours.', (v.daysOfWeek||[]).join(','));
+      if (daysInput === null) return;
+      v.daysOfWeek = daysInput.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+      const startDate = prompt('Date de début (AAAA-MM-JJ), vide = pas de limite', v.startDate||'');
+      if (startDate === null) return;
+      v.startDate = startDate.trim();
+      const endDate = prompt('Date de fin (AAAA-MM-JJ), vide = pas de limite', v.endDate||'');
+      if (endDate === null) return;
+      v.endDate = endDate.trim();
+      const startTime = prompt('Heure de début (HH:MM), vide = pas de limite', v.startTime||'');
+      if (startTime === null) return;
+      v.startTime = startTime.trim();
+      const endTime = prompt('Heure de fin (HH:MM), vide = pas de limite', v.endTime||'');
+      if (endTime === null) return;
+      v.endTime = endTime.trim();
+      renderSceneVariantOverlay();
+    });
+  });
+  wrap.querySelectorAll('[data-variant-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if (!confirm('Supprimer cette variante ?')) return;
+      const idToDelete = btn.dataset.variantDel;
+      sc.variants = sc.variants.filter(v=>v.id !== idToDelete);
+      if (sceneEditorCurrentVariantId === idToDelete) loadVariantIntoEditorState(null);
+      renderSceneVariantOverlay();
+    });
+  });
+}
+document.getElementById('sceneEditorVariantsBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  renderSceneVariantOverlay();
+  document.getElementById('sceneVariantOverlay').classList.add('show');
+});
+document.getElementById('sceneVariantCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneVariantOverlay').classList.remove('show');
+});
+document.getElementById('sceneVariantAddBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  if (!sc.variants) sc.variants = [];
+  const label = prompt('Nom de cette variante (ex. "Hiver", "Nuit")', 'Variante ' + (sc.variants.length + 1));
+  if (!label || !label.trim()) return;
+  const newVariant = { id: genSceneId(), label: label.trim(), imageUrl: '', points: [], daysOfWeek: [], startDate: '', endDate: '', startTime: '', endTime: '' };
+  sc.variants.push(newVariant);
+  renderSceneVariantOverlay();
+});
+
+function renderSceneListOverlay(){
+  const wrap = document.getElementById('sceneListItems');
+  wrap.innerHTML = sceneEditorScenes.map(sc=>`
+    <div class="editor-list-item">
+      <div class="thumb">${sc.imageUrl ? `<img src="${sc.imageUrl}">` : '🎬'}</div>
+      <div class="name">${sc.name}${sc.id===sceneEditorStartSceneId ? ' <span class="meta" style="font-size:10px;">★ départ</span>' : ''}</div>
+      <button class="btn-secondary" data-scene-switch="${sc.id}">Éditer</button>
+      <button class="btn-secondary" data-scene-rename="${sc.id}">✏️</button>
+      ${sc.id!==sceneEditorStartSceneId ? `<button class="btn-secondary" data-scene-start="${sc.id}">★</button>` : ''}
+      ${sceneEditorScenes.length > 1 ? `<button class="btn-secondary" data-scene-del="${sc.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>` : ''}
+    </div>
+  `).join('');
+  wrap.querySelectorAll('[data-scene-switch]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      switchScene(btn.dataset.sceneSwitch);
+      document.getElementById('sceneListOverlay').classList.remove('show');
+    });
+  });
+  wrap.querySelectorAll('[data-scene-rename]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const sc = sceneEditorScenes.find(s=>s.id===btn.dataset.sceneRename);
+      const name = prompt('Nom de la scène', sc.name);
+      if (name && name.trim()){ sc.name = name.trim(); renderSceneListOverlay(); renderSceneEditorTopLabel(); }
+    });
+  });
+  wrap.querySelectorAll('[data-scene-start]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      sceneEditorStartSceneId = btn.dataset.sceneStart;
+      renderSceneListOverlay();
+      renderSceneEditorTopLabel();
+    });
+  });
+  wrap.querySelectorAll('[data-scene-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idToDelete = btn.dataset.sceneDel;
+      if (!confirm('Supprimer cette scène ? Les sorties qui y menaient reviendront à "Ferme la zone".')) return;
+      sceneEditorScenes = sceneEditorScenes.filter(s=>s.id !== idToDelete);
+      sceneEditorScenes.forEach(s=>{
+        (s.points||[]).forEach(p=>{ if (p.targetSceneId === idToDelete) p.targetSceneId = null; });
+      });
+      if (sceneEditorStartSceneId === idToDelete) sceneEditorStartSceneId = sceneEditorScenes[0].id;
+      if (sceneEditorCurrentSceneId === idToDelete) loadSceneIntoEditorState(sceneEditorScenes[0].id);
+      renderSceneListOverlay();
+    });
+  });
+}
+document.getElementById('sceneEditorScenesBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  renderSceneListOverlay();
+  document.getElementById('sceneListOverlay').classList.add('show');
+});
+document.getElementById('sceneListCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneListOverlay').classList.remove('show');
+});
+document.getElementById('sceneListAddBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  const newScene = { id: genSceneId(), name: 'Scène ' + (sceneEditorScenes.length + 1), imageUrl: '', points: [] };
+  sceneEditorScenes.push(newScene);
+  renderSceneListOverlay();
+});
 
 function renderSceneTypeRow(){
   const wrap = document.getElementById('sceneTypeRow');
@@ -5163,6 +5446,7 @@ function renderSceneEditorPoints(){
       renderSceneEditorPoints();
       document.getElementById('sceneEditorDeleteBtn').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
       document.getElementById('sceneEditorSelectedInfo').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
+      renderSceneEditorDetails();
     });
     wrap.appendChild(el);
   });
@@ -5180,10 +5464,12 @@ function onSceneEditorImageClick(ev){
     x: Math.round(x * 10) / 10,
     y: Math.round(y * 10) / 10,
   });
-  sceneEditorSelectedPointId = null;
-  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
-  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
+  sceneEditorSelectedPointId = newPt.id;
+  document.getElementById('sceneEditorDeleteBtn').style.display = 'block';
+  document.getElementById('sceneEditorSelectedInfo').style.display = 'block';
   renderSceneEditorPoints();
+  renderSceneEditorDetails();
 }
 
 document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
@@ -5193,7 +5479,241 @@ document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   renderSceneEditorPoints();
+  renderSceneEditorDetails();
 });
+
+function renderScenePointDialogue(wrap, pt){
+  let html = '';
+  pt.dialogueSteps.forEach((step, sIdx)=>{
+    html += `<div style="border:1px solid rgba(255,255,255,.25); border-radius:10px; padding:8px; margin-bottom:8px;">`;
+    html += `<div style="display:flex; justify-content:space-between; align-items:center;"><b style="color:#fff; font-size:12px;">Étape ${sIdx}</b>`;
+    if (pt.dialogueSteps.length > 1) html += `<button type="button" data-pnjstep-del="${sIdx}" style="background:none;border:none;color:var(--danger);font-size:15px;">🗑️</button>`;
+    html += `</div>`;
+    html += `<textarea data-pnjstep-text="${sIdx}" class="field-input" style="min-height:44px; background:rgba(255,255,255,.12); color:#fff; margin-top:6px;" placeholder="Ce que dit le PNJ…">${step.text||''}</textarea>`;
+    (step.choices||[]).forEach((ch, cIdx)=>{
+      html += `<div style="background:rgba(255,255,255,.08); border-radius:8px; padding:6px; margin-top:6px;">`;
+      html += `<div style="display:flex; justify-content:space-between;"><span style="color:rgba(255,255,255,.6); font-size:10px;">Choix ${cIdx+1}</span><button type="button" data-pnjchoice-del="${sIdx}_${cIdx}" style="background:none;border:none;color:var(--danger);font-size:13px;">🗑️</button></div>`;
+      html += `<input type="text" data-pnjchoice-label="${sIdx}_${cIdx}" class="field-input" style="background:rgba(255,255,255,.12); color:#fff; margin-top:4px;" placeholder="Texte du bouton" value="${(ch.label||'').replace(/"/g,'&quot;')}">`;
+      html += `<select data-pnjchoice-next="${sIdx}_${cIdx}" class="field-input" style="margin-top:4px;">`;
+      html += `<option value="fin" ${ch.next===null||ch.next===undefined?'selected':''}>Fin</option>`;
+      pt.dialogueSteps.forEach((s2, i2)=>{ if (i2===sIdx) return; html += `<option value="${i2}" ${ch.next===i2?'selected':''}>Étape ${i2}</option>`; });
+      html += `</select>`;
+      html += `</div>`;
+    });
+    html += `<button type="button" data-pnjaddchoice="${sIdx}" class="btn-secondary" style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">➕ Ajouter un choix</button>`;
+    html += `</div>`;
+  });
+  html += `<button type="button" data-pnjaddstep class="btn-secondary" style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">➕ Nouvelle étape</button>`;
+  html += `<p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Version simplifiée pour l'instant (pas encore de don d'objet/quête ici — bientôt).</p>`;
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll('[data-pnjstep-text]').forEach(el=>{
+    el.addEventListener('input', ()=>{ pt.dialogueSteps[parseInt(el.dataset.pnjstepText,10)].text = el.value; });
+  });
+  wrap.querySelectorAll('[data-pnjstep-del]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const idx = parseInt(el.dataset.pnjstepDel,10);
+      pt.dialogueSteps.splice(idx,1);
+      pt.dialogueSteps.forEach(s=> s.choices.forEach(c=>{ if (c.next===idx) c.next=null; else if (c.next!==null && c.next!==undefined && c.next>idx) c.next-=1; }));
+      renderScenePointDialogue(wrap, pt);
+    });
+  });
+  wrap.querySelectorAll('[data-pnjchoice-label]').forEach(el=>{
+    el.addEventListener('input', ()=>{
+      const [s,c] = el.dataset.pnjchoiceLabel.split('_').map(Number);
+      pt.dialogueSteps[s].choices[c].label = el.value;
+    });
+  });
+  wrap.querySelectorAll('[data-pnjchoice-next]').forEach(el=>{
+    el.addEventListener('change', ()=>{
+      const [s,c] = el.dataset.pnjchoiceNext.split('_').map(Number);
+      pt.dialogueSteps[s].choices[c].next = (el.value==='fin') ? null : parseInt(el.value,10);
+    });
+  });
+  wrap.querySelectorAll('[data-pnjchoice-del]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const [s,c] = el.dataset.pnjchoiceDel.split('_').map(Number);
+      pt.dialogueSteps[s].choices.splice(c,1);
+      renderScenePointDialogue(wrap, pt);
+    });
+  });
+  wrap.querySelectorAll('[data-pnjaddchoice]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const idx = parseInt(el.dataset.pnjaddchoice,10);
+      pt.dialogueSteps[idx].choices.push({ label:'', next:null });
+      renderScenePointDialogue(wrap, pt);
+    });
+  });
+  const addStepBtn = wrap.querySelector('[data-pnjaddstep]');
+  if (addStepBtn) addStepBtn.addEventListener('click', ()=>{
+    pt.dialogueSteps.push({ text:'', choices:[] });
+    renderScenePointDialogue(wrap, pt);
+  });
+}
+
+function renderSceneEditorDetails(){
+  const wrap = document.getElementById('sceneEditorDetails');
+  const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
+  if (!pt){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+  wrap.style.display = 'block';
+
+  if (pt.type === 'sortie_zone'){
+    wrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ferme la zone et retourne à la carte — pas de réglage supplémentaire.</p>`;
+    return;
+  }
+
+  if (pt.type === 'sortie'){
+    if (!pt.lockType) pt.lockType = 'none';
+    const otherScenes = sceneEditorScenes.filter(s=>s.id !== sceneEditorCurrentSceneId);
+    const lockIt = items.find(i=>i.id===pt.lockItemId);
+    wrap.innerHTML = `
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Mène vers</div>
+      <select data-sortie-target class="field-input">
+        <option value="">Ferme la zone (pas d'autre scène)</option>
+        ${otherScenes.map(s=>`<option value="${s.id}" ${pt.targetSceneId===s.id?'selected':''}>${s.name}</option>`).join('')}
+      </select>
+      ${!otherScenes.length ? `<p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Crée une autre scène (bouton 🎬 Scènes) pour pouvoir y mener.</p>` : ''}
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Verrouillage</div>
+      <select data-sortie-lock class="field-input">
+        <option value="none" ${pt.lockType==='none'?'selected':''}>Aucun</option>
+        <option value="item" ${pt.lockType==='item'?'selected':''}>Objet requis (à posséder, pas consommé)</option>
+        <option value="code" ${pt.lockType==='code'?'selected':''}>Code numérique</option>
+      </select>
+      <div data-sortie-lock-item-wrap style="display:${pt.lockType==='item'?'block':'none'}; margin-top:6px;">
+        <button type="button" class="btn-secondary" data-sortie-lock-item-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${lockIt ? (itemThumbHtml(lockIt)+' '+lockIt.name) : '— choisir l\'objet —'}</button>
+      </div>
+      <div data-sortie-lock-code-wrap style="display:${pt.lockType==='code'?'block':'none'}; margin-top:6px;">
+        <input type="text" inputmode="numeric" data-sortie-lock-code class="field-input" placeholder="Ex. 1234" value="${pt.lockCode||''}">
+      </div>
+    `;
+    wrap.querySelector('[data-sortie-target]').addEventListener('change', (e)=>{
+      pt.targetSceneId = e.target.value || null;
+    });
+    wrap.querySelector('[data-sortie-lock]').addEventListener('change', (e)=>{
+      pt.lockType = e.target.value;
+      renderSceneEditorDetails();
+    });
+    const lockItemBtn = wrap.querySelector('[data-sortie-lock-item-pick]');
+    if (lockItemBtn) lockItemBtn.addEventListener('click', ()=>{
+      openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneEditorDetails(); });
+    });
+    const lockCodeInput = wrap.querySelector('[data-sortie-lock-code]');
+    if (lockCodeInput) lockCodeInput.addEventListener('input', (e)=>{
+      pt.lockCode = e.target.value.replace(/[^0-9]/g, '');
+    });
+    return;
+  }
+
+  if (pt.type === 'objet'){
+    if (!pt.resetMode) pt.resetMode = 'perPlayer';
+    if (!pt.resetMinutes) pt.resetMinutes = 60;
+    const it = items.find(i=>i.id===pt.itemId);
+    wrap.innerHTML = `
+      <div class="field-row" style="align-items:center;">
+        <button type="button" class="btn-secondary" id="sceneDetailItemPickBtn" style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${it ? (itemThumbHtml(it) + ' ' + it.name) : '— choisir l\'objet —'}</button>
+        <input type="number" id="sceneDetailItemQty" class="field-input" value="${pt.qty || 1}" min="1" style="flex:1;">
+      </div>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition</div>
+      <select id="sceneDetailItemReset" class="field-input">
+        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Chaque joueur peut le prendre une fois</option>
+        <option value="once" ${pt.resetMode==='once'?'selected':''}>Disparaît pour toujours (une fois, pour tout le monde)</option>
+        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>Réapparaît après un délai (pour tout le monde)</option>
+      </select>
+      <div id="sceneDetailItemResetMinutesWrap" style="display:${pt.resetMode==='timed'?'block':'none'}; margin-top:6px;">
+        <input type="number" id="sceneDetailItemResetMinutes" class="field-input" value="${pt.resetMinutes}" min="1" placeholder="Minutes avant réapparition">
+      </div>
+    `;
+    document.getElementById('sceneDetailItemPickBtn').addEventListener('click', ()=>{
+      openRecipeItemChooser((itemId)=>{ pt.itemId = itemId; renderSceneEditorDetails(); });
+    });
+    document.getElementById('sceneDetailItemQty').addEventListener('input', (e)=>{
+      pt.qty = parseInt(e.target.value, 10) || 1;
+    });
+    document.getElementById('sceneDetailItemReset').addEventListener('change', (e)=>{
+      pt.resetMode = e.target.value;
+      renderSceneEditorDetails();
+    });
+    const minutesInput = document.getElementById('sceneDetailItemResetMinutes');
+    if (minutesInput) minutesInput.addEventListener('input', (e)=>{
+      pt.resetMinutes = parseInt(e.target.value, 10) || 60;
+    });
+    return;
+  }
+
+  if (pt.type === 'dialogue'){
+    wrap.innerHTML = `<textarea id="sceneDetailDialogueText" class="field-input" style="min-height:60px; background:rgba(255,255,255,.12); color:#fff;" placeholder="Texte affiché au joueur…">${pt.text || ''}</textarea>`;
+    document.getElementById('sceneDetailDialogueText').addEventListener('input', (e)=>{
+      pt.text = e.target.value;
+    });
+    return;
+  }
+
+  if (pt.type === 'action'){
+    if (!pt.reqQty) pt.reqQty = 1;
+    if (!pt.resultType) pt.resultType = 'give';
+    if (!pt.resultQty) pt.resultQty = 1;
+    if (!pt.resetMode) pt.resetMode = 'perPlayer';
+    if (!pt.resetMinutes) pt.resetMinutes = 60;
+    const reqIt = items.find(i=>i.id===pt.reqItemId);
+    const resIt = items.find(i=>i.id===pt.resultItemId);
+    wrap.innerHTML = `
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Objet demandé (consommé)</div>
+      <div class="field-row" style="align-items:center;">
+        <button type="button" class="btn-secondary" data-action-req-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${reqIt ? (itemThumbHtml(reqIt)+' '+reqIt.name) : '— choisir —'}</button>
+        <input type="number" data-action-req-qty class="field-input" value="${pt.reqQty}" min="1" style="flex:1;">
+      </div>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Résultat</div>
+      <select data-action-result-type class="field-input">
+        <option value="give" ${pt.resultType==='give'?'selected':''}>Donne un objet</option>
+        <option value="message" ${pt.resultType==='message'?'selected':''}>Message seulement (ex. déverrouille / piège)</option>
+      </select>
+      <div data-action-give-wrap style="display:${pt.resultType==='give'?'block':'none'}; margin-top:6px;">
+        <div class="field-row" style="align-items:center;">
+          <button type="button" class="btn-secondary" data-action-res-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${resIt ? (itemThumbHtml(resIt)+' '+resIt.name) : '— choisir —'}</button>
+          <input type="number" data-action-res-qty class="field-input" value="${pt.resultQty}" min="1" style="flex:1;">
+        </div>
+      </div>
+      <div data-action-message-wrap style="display:${pt.resultType==='message'?'block':'none'}; margin-top:6px;">
+        <textarea data-action-message class="field-input" style="min-height:50px; background:rgba(255,255,255,.12); color:#fff;" placeholder="Message affiché au joueur…">${pt.resultMessage||''}</textarea>
+      </div>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition</div>
+      <select data-action-reset class="field-input">
+        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Chaque joueur peut l'utiliser une fois</option>
+        <option value="once" ${pt.resetMode==='once'?'selected':''}>Une seule fois, pour tout le monde</option>
+        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>Réapparaît après un délai (pour tout le monde)</option>
+        <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>Réutilisable à volonté</option>
+      </select>
+      <div data-action-reset-minutes-wrap style="display:${pt.resetMode==='timed'?'block':'none'}; margin-top:6px;">
+        <input type="number" data-action-reset-minutes class="field-input" value="${pt.resetMinutes}" min="1" placeholder="Minutes avant réapparition">
+      </div>
+    `;
+    wrap.querySelector('[data-action-req-pick]').addEventListener('click', ()=>{
+      openRecipeItemChooser((itemId)=>{ pt.reqItemId = itemId; renderSceneEditorDetails(); });
+    });
+    wrap.querySelector('[data-action-req-qty]').addEventListener('input', (e)=>{ pt.reqQty = parseInt(e.target.value,10)||1; });
+    wrap.querySelector('[data-action-result-type]').addEventListener('change', (e)=>{ pt.resultType = e.target.value; renderSceneEditorDetails(); });
+    const giveBtn = wrap.querySelector('[data-action-res-pick]');
+    if (giveBtn) giveBtn.addEventListener('click', ()=>{
+      openRecipeItemChooser((itemId)=>{ pt.resultItemId = itemId; renderSceneEditorDetails(); });
+    });
+    const resQtyInput = wrap.querySelector('[data-action-res-qty]');
+    if (resQtyInput) resQtyInput.addEventListener('input', (e)=>{ pt.resultQty = parseInt(e.target.value,10)||1; });
+    const msgInput = wrap.querySelector('[data-action-message]');
+    if (msgInput) msgInput.addEventListener('input', (e)=>{ pt.resultMessage = e.target.value; });
+    wrap.querySelector('[data-action-reset]').addEventListener('change', (e)=>{ pt.resetMode = e.target.value; renderSceneEditorDetails(); });
+    const actionMinutesInput = wrap.querySelector('[data-action-reset-minutes]');
+    if (actionMinutesInput) actionMinutesInput.addEventListener('input', (e)=>{ pt.resetMinutes = parseInt(e.target.value,10) || 60; });
+    return;
+  }
+
+  if (pt.type === 'pnj'){
+    if (!Array.isArray(pt.dialogueSteps) || !pt.dialogueSteps.length) pt.dialogueSteps = [{ text:'', choices:[] }];
+    renderScenePointDialogue(wrap, pt);
+    return;
+  }
+
+  wrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce type de point sera configurable à une prochaine étape.</p>`;
+}
 
 document.getElementById('sceneEditorImageBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorImageFile').click();
@@ -5227,24 +5747,17 @@ function openSceneEditor(creatureId){
   if (!creatureId){ showToast('Enregistre d\'abord ce PNJ'); return; }
   if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
   sceneEditorZoneId = creatureId;
-  sceneEditorImageDataUrl = null;
-  sceneEditorPoints = [];
-  sceneEditorSelectedPointId = null;
+  sceneEditorScenes = [{ id: genSceneId(), name: 'Scène 1', imageUrl: '', points: [] }];
+  sceneEditorStartSceneId = sceneEditorScenes[0].id;
   sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
   renderSceneTypeRow();
-  renderSceneEditorImage();
-  renderSceneEditorPoints();
-  document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
-  document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
+  loadSceneIntoEditorState(sceneEditorScenes[0].id);
   document.getElementById('sceneEditorFull').classList.add('show');
   zonesCol.doc(creatureId).get().then((doc)=>{
-    if (doc.exists){
-      const d = doc.data();
-      sceneEditorImageDataUrl = d.sceneImageUrl || null;
-      sceneEditorPoints = Array.isArray(d.points) ? JSON.parse(JSON.stringify(d.points)) : [];
-      renderSceneEditorImage();
-      renderSceneEditorPoints();
-    }
+    const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
+    sceneEditorScenes = norm.scenes;
+    sceneEditorStartSceneId = norm.startSceneId;
+    loadSceneIntoEditorState(sceneEditorStartSceneId);
   }).catch((err)=> showToast('Échec du chargement : ' + err.message));
 }
 document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
@@ -5253,9 +5766,10 @@ document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
 });
 document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
   if (!sceneEditorZoneId || !zonesCol) return;
+  syncCurrentVariantFromEditorState();
   zonesCol.doc(sceneEditorZoneId).set({
-    sceneImageUrl: sceneEditorImageDataUrl || '',
-    points: sceneEditorPoints,
+    scenes: sceneEditorScenes,
+    startSceneId: sceneEditorStartSceneId,
     updatedAt: Date.now(),
   }).then(()=>{
     showToast('Scène enregistrée');
@@ -5263,37 +5777,228 @@ document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
   }).catch((err)=> showToast('Échec : ' + err.message));
 });
 
-/* Vue joueur (lecture seule pour l'instant, pas encore de comportement sur les points) */
+
+/* Vue joueur (comportements : sortie ferme la scène, objet est donné une fois, dialogue affiche un texte) */
+function grantItemByIdToPlayer(itemId, quantity){
+  if (!currentUser || !db) return;
+  const it = items.find(i=>i.id===itemId);
+  if (!it){ showToast('Objet introuvable'); return; }
+  db.collection('players').doc(currentUser.uid).set({
+    inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
+  }, { merge: true })
+    .then(()=> showToast(`+${quantity} ${it.emoji || ''} ${it.name}`))
+    .catch((err)=> showToast('Échec : ' + err.message));
+}
+
+let sceneViewCreature = null;
+let sceneViewScenes = [];
+let sceneViewCurrentSceneId = null;
+let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
+let sceneViewPointState = {}; // état partagé de la zone (modes once/timed) : { [pointId]: { takenAt } }
+
+function isScenePointAvailable(pt){
+  const mode = pt.resetMode || 'perPlayer';
+  if (mode === 'unlimited') return true;
+  if (mode === 'perPlayer') return !sceneViewTakenMap[pt.id];
+  const state = sceneViewPointState[pt.id];
+  if (!state || !state.takenAt) return true;
+  if (mode === 'once') return false;
+  if (mode === 'timed'){
+    const delayMs = (pt.resetMinutes || 60) * 60000;
+    return (Date.now() - state.takenAt) >= delayMs;
+  }
+  return true;
+}
+
+function markScenePointTaken(pt){
+  const mode = pt.resetMode || 'perPlayer';
+  if (mode === 'unlimited') return Promise.resolve();
+  if (mode === 'perPlayer'){
+    sceneViewTakenMap[pt.id] = true;
+    if (!currentUser || !db) return Promise.resolve();
+    return db.collection('players').doc(currentUser.uid).set({
+      sceneItemsTaken: { [sceneViewCreature.id]: { [pt.id]: true } }
+    }, { merge: true });
+  }
+  sceneViewPointState[pt.id] = { takenAt: Date.now() };
+  if (!zonesCol) return Promise.resolve();
+  return zonesCol.doc(sceneViewCreature.id).set({
+    pointState: { [pt.id]: { takenAt: Date.now() } }
+  }, { merge: true });
+}
+
 function openSceneView(creature){
-  document.getElementById('sceneViewTitle').textContent = creature.zoneShowName ? (creature.name || 'Exploration') : 'Exploration';
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
   empty.style.display = 'none';
   document.getElementById('sceneViewFull').classList.add('show');
   if (!zonesCol){ empty.style.display = 'block'; return; }
-  zonesCol.doc(creature.id).get().then((doc)=>{
-    const d = doc.exists ? doc.data() : null;
-    if (!d || !d.sceneImageUrl){
+
+  const zoneGet = zonesCol.doc(creature.id).get();
+  const playerGet = (currentUser && db) ? db.collection('players').doc(currentUser.uid).get() : Promise.resolve(null);
+
+  Promise.all([zoneGet, playerGet]).then(([zoneDoc, playerDoc])=>{
+    const d = zoneDoc.exists ? zoneDoc.data() : null;
+    const norm = normalizeZoneScenes(d);
+    const hasContent = d && (Array.isArray(d.scenes) ? d.scenes.some(s=>s.imageUrl) : !!d.sceneImageUrl);
+    if (!hasContent){
       empty.style.display = 'block';
       return;
     }
-    const img = document.createElement('img');
-    img.src = d.sceneImageUrl;
-    wrap.insertBefore(img, wrap.firstChild);
-    (d.points || []).forEach(pt=>{
-      const el = document.createElement('div');
-      el.className = 'scene-point';
-      el.style.left = pt.x + '%';
-      el.style.top = pt.y + '%';
-      el.textContent = sceneTypeEmoji(pt.type);
-      wrap.appendChild(el);
-    });
+    sceneViewCreature = creature;
+    sceneViewScenes = norm.scenes;
+    sceneViewCurrentSceneId = norm.startSceneId;
+    sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
+    sceneViewPointState = (d && d.pointState) || {};
+    renderSceneViewCurrentScene();
   }).catch(()=>{ empty.style.display = 'block'; });
+}
+
+function resolveSceneContent(sc){
+  const variants = Array.isArray(sc.variants) ? sc.variants : [];
+  for (const v of variants){
+    if (isActiveNow(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points };
+  }
+  return { imageUrl: sc.imageUrl, points: sc.points };
+}
+
+function renderSceneViewCurrentScene(){
+  const wrap = document.getElementById('sceneViewImgWrap');
+  const empty = document.getElementById('sceneViewEmpty');
+  wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
+  const scRaw = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
+  const creature = sceneViewCreature;
+  document.getElementById('sceneViewTitle').textContent = creature.zoneShowName ? (creature.name || 'Exploration') : (scRaw ? scRaw.name : 'Exploration');
+  if (!scRaw || !scRaw.imageUrl){
+    empty.style.display = 'block';
+    return;
+  }
+  const sc = resolveSceneContent(scRaw);
+  empty.style.display = 'none';
+
+  const img = document.createElement('img');
+  img.src = sc.imageUrl;
+  wrap.insertBefore(img, wrap.firstChild);
+
+  (sc.points || []).forEach(pt=>{
+    if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
+
+    const el = document.createElement('div');
+    el.className = 'scene-point';
+    el.style.left = pt.x + '%';
+    el.style.top = pt.y + '%';
+    el.textContent = sceneTypeEmoji(pt.type);
+
+    if (pt.type === 'sortie_zone'){
+      el.addEventListener('click', ()=>{
+        document.getElementById('sceneViewFull').classList.remove('show');
+      });
+    } else if (pt.type === 'sortie'){
+      el.addEventListener('click', ()=>{
+        const proceed = ()=>{
+          if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
+            sceneViewCurrentSceneId = pt.targetSceneId;
+            renderSceneViewCurrentScene();
+          } else {
+            document.getElementById('sceneViewFull').classList.remove('show');
+          }
+        };
+        if (pt.lockType === 'item'){
+          if (!pt.lockItemId){ proceed(); return; }
+          if (!currentUser || !db){ proceed(); return; }
+          db.collection('players').doc(currentUser.uid).get().then((freshDoc)=>{
+            const inv = (freshDoc.exists && freshDoc.data().inventory) || {};
+            if ((inv[pt.lockItemId] || 0) > 0){
+              proceed();
+            } else {
+              const it = items.find(i=>i.id===pt.lockItemId);
+              showToast(`🔒 Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
+            }
+          });
+        } else if (pt.lockType === 'code'){
+          const entered = prompt('🔒 Cette sortie est verrouillée. Entre le code :');
+          if (entered === null) return;
+          if (entered.trim() === (pt.lockCode || '')){
+            proceed();
+          } else {
+            showToast('Code incorrect');
+          }
+        } else {
+          proceed();
+        }
+      });
+    } else if (pt.type === 'objet'){
+      el.addEventListener('click', ()=>{
+        if (!pt.itemId){ showToast('Ce point n\'a pas encore d\'objet configuré'); return; }
+        if (!currentUser || !db) return;
+        grantItemByIdToPlayer(pt.itemId, pt.qty || 1);
+        markScenePointTaken(pt).catch(()=>{});
+        el.remove();
+      });
+    } else if (pt.type === 'dialogue'){
+      el.addEventListener('click', ()=>{
+        document.getElementById('sceneDialogueText').textContent = pt.text || '(pas de texte configuré)';
+        document.getElementById('sceneDialogueOverlay').classList.add('show');
+      });
+    } else if (pt.type === 'action'){
+      el.addEventListener('click', ()=>{
+        if (!pt.reqItemId){ showToast('Ce point n\'a pas encore d\'objet demandé configuré'); return; }
+        if (!currentUser || !db) return;
+        db.collection('players').doc(currentUser.uid).get().then((freshDoc)=>{
+          const inv = (freshDoc.exists && freshDoc.data().inventory) || {};
+          const have = inv[pt.reqItemId] || 0;
+          const need = pt.reqQty || 1;
+          if (have < need){
+            const reqIt = items.find(i=>i.id===pt.reqItemId);
+            showToast(`Il te faut ${need} × ${reqIt ? reqIt.name : 'objet requis'}`);
+            return;
+          }
+          const inc = { [pt.reqItemId]: firebase.firestore.FieldValue.increment(-need) };
+          if (pt.resultType === 'give' && pt.resultItemId){
+            inc[pt.resultItemId] = firebase.firestore.FieldValue.increment(pt.resultQty || 1);
+          }
+          db.collection('players').doc(currentUser.uid).set({ inventory: inc }, { merge: true }).then(()=>{
+            if (pt.resultType === 'give' && pt.resultItemId){
+              const resIt = items.find(i=>i.id===pt.resultItemId);
+              showToast(resIt ? `+${pt.resultQty||1} ${resIt.emoji||''} ${resIt.name}` : 'Fait');
+            } else {
+              showToast(pt.resultMessage || 'Ça a fonctionné.');
+            }
+            const mode = pt.resetMode || 'perPlayer';
+            if (mode !== 'unlimited'){
+              markScenePointTaken(pt).catch(()=>{});
+              el.remove();
+            }
+          }).catch((err)=> showToast('Échec : ' + err.message));
+        });
+      });
+    } else if (pt.type === 'pnj'){
+      el.addEventListener('click', ()=>{
+        const steps = (Array.isArray(pt.dialogueSteps) && pt.dialogueSteps.length) ? pt.dialogueSteps : [{ text:'(pas de dialogue configuré)', choices:[] }];
+        activeCreature = { id: 'scenepoint_' + pt.id, name: sceneViewCreature.zoneShowName ? sceneViewCreature.name : 'PNJ', emoji: '👤', imageUrl: '', _dist: 0, active: true };
+        activeSteps = steps;
+        currentStepIdx = 0;
+        lastLoggedStepKey = null;
+        renderSheet();
+        document.getElementById('overlay').style.zIndex = '4200';
+        document.getElementById('overlay').classList.add('show');
+      });
+    }
+
+    wrap.appendChild(el);
+  });
 }
 document.getElementById('sceneViewCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneViewFull').classList.remove('show');
 });
+document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneDialogueOverlay').classList.remove('show');
+});
+document.getElementById('sceneDialogueCloseBtn2').addEventListener('click', ()=>{
+  document.getElementById('sceneDialogueOverlay').classList.remove('show');
+});
+
 </script>
 </body>
 </html>
