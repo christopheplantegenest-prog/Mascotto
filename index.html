@@ -105,7 +105,8 @@
     display:none; align-items:flex-end; justify-content:center; z-index:2000;
   }
   .overlay.show{ display:flex; }
-  #recipeItemChooserOverlay{ z-index:2100; }
+  #recipeItemChooserOverlay{ z-index:4500; }
+  #pnjChooserOverlay{ z-index:4500; }
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
     border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
@@ -130,7 +131,7 @@
   .toast{
     position:fixed; top:14px; left:50%; transform:translateX(-50%);
     background:var(--accent); color:#ffffff; font-weight:700; font-size:13px;
-    padding:10px 18px; border-radius:999px; z-index:3000; opacity:0; pointer-events:none;
+    padding:10px 18px; border-radius:999px; z-index:5000; opacity:0; pointer-events:none;
     transition:opacity .25s, transform .25s;
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
@@ -520,6 +521,17 @@
     </div>
     <input type="text" id="recipeItemChooserSearch" class="field-input" placeholder="Rechercher un objet…" style="margin-bottom:10px;">
     <div id="recipeItemChooserList" style="max-height:60vh; overflow-y:auto;"></div>
+  </div>
+</div>
+
+<div class="overlay" id="pnjChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Choisir un PNJ</h3>
+      <button class="sheet-x" id="pnjChooserCloseBtn">✕</button>
+    </div>
+    <input type="text" id="pnjChooserSearch" class="field-input" placeholder="Rechercher un PNJ…" style="margin-bottom:10px;">
+    <div id="pnjChooserList" style="max-height:60vh; overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -1109,6 +1121,7 @@
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
     <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie dessus pour placer des points.</div>
+    <div id="sceneEditorDpad" style="position:absolute; inset:0; pointer-events:none;"></div>
   </div>
   <div class="scene-bottombar">
     <div class="scene-typerow" id="sceneTypeRow"></div>
@@ -3724,6 +3737,45 @@ document.getElementById('recipeItemChooserCloseBtn').addEventListener('click', (
   document.getElementById('recipeItemChooserOverlay').classList.remove('show');
 });
 
+let pnjChooserCallback = null;
+let pnjChooserAll = [];
+function renderPnjChooserList(){
+  const listEl = document.getElementById('pnjChooserList');
+  const search = (document.getElementById('pnjChooserSearch').value || '').trim().toLowerCase();
+  const pool = search ? pnjChooserAll.filter(c=> (c.name||'').toLowerCase().includes(search)) : pnjChooserAll;
+  listEl.innerHTML = pool.length ? pool.map(c=>`
+    <div class="editor-list-item" data-choosepnj="${c.id}" style="cursor:pointer;">
+      <div class="thumb">${c.imageUrl ? `<img src="${c.imageUrl}" style="width:100%; height:100%; object-fit:contain;">` : (c.emoji || '👤')}</div>
+      <div class="name">${c.name || '(sans nom)'}</div>
+    </div>
+  `).join('') : '<p class="meta">Aucun PNJ ne correspond.</p>';
+  listEl.querySelectorAll('[data-choosepnj]').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      const c = pnjChooserAll.find(x=>x.id === row.dataset.choosepnj);
+      if (pnjChooserCallback && c) pnjChooserCallback(c.id, c);
+      document.getElementById('pnjChooserOverlay').classList.remove('show');
+    });
+  });
+}
+function openPnjChooser(onPick){
+  pnjChooserCallback = onPick;
+  document.getElementById('pnjChooserSearch').value = '';
+  document.getElementById('pnjChooserList').innerHTML = '<p class="meta">Chargement…</p>';
+  document.getElementById('pnjChooserOverlay').classList.add('show');
+  if (!creatureCol) return;
+  creatureCol.get().then((snap)=>{
+    pnjChooserAll = [];
+    snap.forEach((doc)=> pnjChooserAll.push({ id: doc.id, ...doc.data() }));
+    renderPnjChooserList();
+  }).catch((err)=>{
+    document.getElementById('pnjChooserList').innerHTML = `<p class="meta">Erreur : ${err.message}</p>`;
+  });
+}
+document.getElementById('pnjChooserSearch').addEventListener('input', renderPnjChooserList);
+document.getElementById('pnjChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('pnjChooserOverlay').classList.remove('show');
+});
+
 function itemThumbHtml(it){
   if (!it) return '📦';
   return it.imageUrl ? `<img src="${it.imageUrl}" style="width:22px; height:22px; object-fit:contain; vertical-align:middle;">` : (it.emoji || '📦');
@@ -5219,6 +5271,7 @@ function loadVariantIntoEditorState(variantId){
   document.getElementById('sceneEditorDetails').style.display = 'none';
   renderSceneEditorImage();
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   renderSceneEditorTopLabel();
 }
 
@@ -5438,21 +5491,55 @@ function renderSceneEditorPoints(){
   const wrap = document.getElementById('sceneEditorImgWrap');
   wrap.querySelectorAll('.scene-point').forEach(el=> el.remove());
   sceneEditorPoints.forEach(pt=>{
+    const selected = pt.id === sceneEditorSelectedPointId;
     const el = document.createElement('div');
-    el.className = 'scene-point' + (pt.id === sceneEditorSelectedPointId ? ' selected' : '');
-    el.style.left = pt.x + '%';
-    el.style.top = pt.y + '%';
-    el.textContent = sceneTypeEmoji(pt.type);
+    el.className = 'scene-point';
+    if (pt.imageUrl){
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
+      el.innerHTML = `<img src="${pt.imageUrl}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+    } else {
+      el.className = 'scene-point' + (selected ? ' selected' : '');
+      el.style.left = pt.x + '%';
+      el.style.top = pt.y + '%';
+      el.textContent = sceneTypeEmoji(pt.type);
+    }
     el.addEventListener('click', (ev)=>{
       ev.stopPropagation();
       sceneEditorSelectedPointId = (sceneEditorSelectedPointId === pt.id) ? null : pt.id;
       renderSceneEditorPoints();
+      renderSceneEditorDpad();
       document.getElementById('sceneEditorDeleteBtn').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
       document.getElementById('sceneEditorSelectedInfo').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
       renderSceneEditorDetails();
     });
     wrap.appendChild(el);
   });
+}
+
+function renderSceneEditorDpad(){
+  const dpad = document.getElementById('sceneEditorDpad');
+  const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
+  if (!pt){ dpad.innerHTML = ''; return; }
+  const btn = 'pointer-events:auto; width:42px; height:42px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,.4);';
+  dpad.innerHTML = `
+    <button type="button" id="scDpadUp" style="${btn} position:absolute; left:50%; top:10px; transform:translateX(-50%);">▲</button>
+    <button type="button" id="scDpadDown" style="${btn} position:absolute; left:50%; bottom:10px; transform:translateX(-50%);">▼</button>
+    <button type="button" id="scDpadLeft" style="${btn} position:absolute; left:10px; top:50%; transform:translateY(-50%);">◀</button>
+    <button type="button" id="scDpadRight" style="${btn} position:absolute; right:10px; top:50%; transform:translateY(-50%);">▶</button>
+    <div style="position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:8px;">
+      <button type="button" id="scDpadSizeUp" style="${btn}">＋</button>
+      <button type="button" id="scDpadSizeDown" style="${btn}">－</button>
+    </div>
+  `;
+  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+  const step = 2;
+  const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); };
+  document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
+  document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
+  document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
+  document.getElementById('scDpadRight').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)+step,0,100); after(); });
+  document.getElementById('scDpadSizeUp').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); pt.h = clamp((pt.h||8)+step,4,95); after(); });
+  document.getElementById('scDpadSizeDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); pt.h = clamp((pt.h||8)-step,4,95); after(); });
 }
 
 function onSceneEditorImageClick(ev){
@@ -5466,12 +5553,14 @@ function onSceneEditorImageClick(ev){
     type: sceneEditorSelectedType,
     x: Math.round(x * 10) / 10,
     y: Math.round(y * 10) / 10,
+    w: 8, h: 8, rotation: 0, flipped: false,
   });
   const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
   sceneEditorSelectedPointId = newPt.id;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'block';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'block';
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   renderSceneEditorDetails();
 }
 
@@ -5482,86 +5571,90 @@ document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   renderSceneEditorDetails();
 });
-
-function renderScenePointDialogue(wrap, pt){
-  let html = '';
-  pt.dialogueSteps.forEach((step, sIdx)=>{
-    html += `<div style="border:1px solid rgba(255,255,255,.25); border-radius:10px; padding:8px; margin-bottom:8px;">`;
-    html += `<div style="display:flex; justify-content:space-between; align-items:center;"><b style="color:#fff; font-size:12px;">Étape ${sIdx}</b>`;
-    if (pt.dialogueSteps.length > 1) html += `<button type="button" data-pnjstep-del="${sIdx}" style="background:none;border:none;color:var(--danger);font-size:15px;">🗑️</button>`;
-    html += `</div>`;
-    html += `<textarea data-pnjstep-text="${sIdx}" class="field-input" style="min-height:44px; background:rgba(255,255,255,.12); color:#fff; margin-top:6px;" placeholder="Ce que dit le PNJ…">${step.text||''}</textarea>`;
-    (step.choices||[]).forEach((ch, cIdx)=>{
-      html += `<div style="background:rgba(255,255,255,.08); border-radius:8px; padding:6px; margin-top:6px;">`;
-      html += `<div style="display:flex; justify-content:space-between;"><span style="color:rgba(255,255,255,.6); font-size:10px;">Choix ${cIdx+1}</span><button type="button" data-pnjchoice-del="${sIdx}_${cIdx}" style="background:none;border:none;color:var(--danger);font-size:13px;">🗑️</button></div>`;
-      html += `<input type="text" data-pnjchoice-label="${sIdx}_${cIdx}" class="field-input" style="background:rgba(255,255,255,.12); color:#fff; margin-top:4px;" placeholder="Texte du bouton" value="${(ch.label||'').replace(/"/g,'&quot;')}">`;
-      html += `<select data-pnjchoice-next="${sIdx}_${cIdx}" class="field-input" style="margin-top:4px;">`;
-      html += `<option value="fin" ${ch.next===null||ch.next===undefined?'selected':''}>Fin</option>`;
-      pt.dialogueSteps.forEach((s2, i2)=>{ if (i2===sIdx) return; html += `<option value="${i2}" ${ch.next===i2?'selected':''}>Étape ${i2}</option>`; });
-      html += `</select>`;
-      html += `</div>`;
-    });
-    html += `<button type="button" data-pnjaddchoice="${sIdx}" class="btn-secondary" style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">➕ Ajouter un choix</button>`;
-    html += `</div>`;
-  });
-  html += `<button type="button" data-pnjaddstep class="btn-secondary" style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">➕ Nouvelle étape</button>`;
-  html += `<p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Version simplifiée pour l'instant (pas encore de don d'objet/quête ici — bientôt).</p>`;
-  wrap.innerHTML = html;
-
-  wrap.querySelectorAll('[data-pnjstep-text]').forEach(el=>{
-    el.addEventListener('input', ()=>{ pt.dialogueSteps[parseInt(el.dataset.pnjstepText,10)].text = el.value; });
-  });
-  wrap.querySelectorAll('[data-pnjstep-del]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const idx = parseInt(el.dataset.pnjstepDel,10);
-      pt.dialogueSteps.splice(idx,1);
-      pt.dialogueSteps.forEach(s=> s.choices.forEach(c=>{ if (c.next===idx) c.next=null; else if (c.next!==null && c.next!==undefined && c.next>idx) c.next-=1; }));
-      renderScenePointDialogue(wrap, pt);
-    });
-  });
-  wrap.querySelectorAll('[data-pnjchoice-label]').forEach(el=>{
-    el.addEventListener('input', ()=>{
-      const [s,c] = el.dataset.pnjchoiceLabel.split('_').map(Number);
-      pt.dialogueSteps[s].choices[c].label = el.value;
-    });
-  });
-  wrap.querySelectorAll('[data-pnjchoice-next]').forEach(el=>{
-    el.addEventListener('change', ()=>{
-      const [s,c] = el.dataset.pnjchoiceNext.split('_').map(Number);
-      pt.dialogueSteps[s].choices[c].next = (el.value==='fin') ? null : parseInt(el.value,10);
-    });
-  });
-  wrap.querySelectorAll('[data-pnjchoice-del]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const [s,c] = el.dataset.pnjchoiceDel.split('_').map(Number);
-      pt.dialogueSteps[s].choices.splice(c,1);
-      renderScenePointDialogue(wrap, pt);
-    });
-  });
-  wrap.querySelectorAll('[data-pnjaddchoice]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const idx = parseInt(el.dataset.pnjaddchoice,10);
-      pt.dialogueSteps[idx].choices.push({ label:'', next:null });
-      renderScenePointDialogue(wrap, pt);
-    });
-  });
-  const addStepBtn = wrap.querySelector('[data-pnjaddstep]');
-  if (addStepBtn) addStepBtn.addEventListener('click', ()=>{
-    pt.dialogueSteps.push({ text:'', choices:[] });
-    renderScenePointDialogue(wrap, pt);
-  });
-}
 
 function renderSceneEditorDetails(){
   const wrap = document.getElementById('sceneEditorDetails');
   const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
   if (!pt){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
   wrap.style.display = 'block';
+  wrap.innerHTML = `
+    <div id="sceneDetailAppearance"></div>
+    <div id="sceneDetailTypeSpecific" style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15);"></div>
+  `;
+  renderSceneDetailAppearance(pt);
+  renderSceneDetailTypeSpecific(pt);
+}
 
+function renderSceneDetailAppearance(pt){
+  const appWrap = document.getElementById('sceneDetailAppearance');
+  if (pt.rotation === undefined) pt.rotation = 0;
+  if (pt.flipped === undefined) pt.flipped = false;
+  appWrap.innerHTML = `
+    <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Apparence du point</div>
+    <div class="field-row" style="align-items:center; gap:8px;">
+      <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
+      ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
+    </div>
+    <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
+    ${pt.imageUrl ? `
+      <div class="meta" style="margin-top:6px;">Rotation (degrés)</div>
+      <input type="range" data-point-rotate min="0" max="359" value="${pt.rotation}" style="width:100%;">
+      <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:4px;"><input type="checkbox" data-point-flip ${pt.flipped?'checked':''}> 🔃 Miroir</label>
+    ` : ''}
+  `;
+  appWrap.querySelector('[data-point-img-pick]').addEventListener('click', ()=>{
+    document.getElementById('scenePointImgFile').click();
+  });
+  const fileInput = document.getElementById('scenePointImgFile');
+  fileInput.addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const maxSize = 400;
+        let w = img.width, h = img.height;
+        if (w > maxSize || h > maxSize){
+          if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+          else { w = Math.round(w * maxSize/h); h = maxSize; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        pt.imageUrl = canvas.toDataURL('image/png');
+        renderSceneEditorPoints();
+        renderSceneDetailAppearance(pt);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  const clearBtn = appWrap.querySelector('[data-point-img-clear]');
+  if (clearBtn) clearBtn.addEventListener('click', ()=>{
+    pt.imageUrl = null;
+    renderSceneEditorPoints();
+    renderSceneDetailAppearance(pt);
+  });
+  const rotateInput = appWrap.querySelector('[data-point-rotate]');
+  if (rotateInput) rotateInput.addEventListener('input', (e)=>{
+    pt.rotation = parseInt(e.target.value, 10) || 0;
+    renderSceneEditorPoints();
+  });
+  const flipInput = appWrap.querySelector('[data-point-flip]');
+  if (flipInput) flipInput.addEventListener('change', (e)=>{
+    pt.flipped = e.target.checked;
+    renderSceneEditorPoints();
+  });
+}
+
+function renderSceneDetailTypeSpecific(pt){
+  const typeWrap = document.getElementById('sceneDetailTypeSpecific');
   if (pt.type === 'sortie_zone'){
-    wrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ferme la zone et retourne à la carte — pas de réglage supplémentaire.</p>`;
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ferme la zone et retourne à la carte — pas de réglage supplémentaire.</p>`;
     return;
   }
 
@@ -5569,7 +5662,7 @@ function renderSceneEditorDetails(){
     if (!pt.lockType) pt.lockType = 'none';
     const otherScenes = sceneEditorScenes.filter(s=>s.id !== sceneEditorCurrentSceneId);
     const lockIt = items.find(i=>i.id===pt.lockItemId);
-    wrap.innerHTML = `
+    typeWrap.innerHTML = `
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Mène vers</div>
       <select data-sortie-target class="field-input">
         <option value="">Ferme la zone (pas d'autre scène)</option>
@@ -5589,18 +5682,18 @@ function renderSceneEditorDetails(){
         <input type="text" inputmode="numeric" data-sortie-lock-code class="field-input" placeholder="Ex. 1234" value="${pt.lockCode||''}">
       </div>
     `;
-    wrap.querySelector('[data-sortie-target]').addEventListener('change', (e)=>{
+    typeWrap.querySelector('[data-sortie-target]').addEventListener('change', (e)=>{
       pt.targetSceneId = e.target.value || null;
     });
-    wrap.querySelector('[data-sortie-lock]').addEventListener('change', (e)=>{
+    typeWrap.querySelector('[data-sortie-lock]').addEventListener('change', (e)=>{
       pt.lockType = e.target.value;
       renderSceneEditorDetails();
     });
-    const lockItemBtn = wrap.querySelector('[data-sortie-lock-item-pick]');
+    const lockItemBtn = typeWrap.querySelector('[data-sortie-lock-item-pick]');
     if (lockItemBtn) lockItemBtn.addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneEditorDetails(); });
     });
-    const lockCodeInput = wrap.querySelector('[data-sortie-lock-code]');
+    const lockCodeInput = typeWrap.querySelector('[data-sortie-lock-code]');
     if (lockCodeInput) lockCodeInput.addEventListener('input', (e)=>{
       pt.lockCode = e.target.value.replace(/[^0-9]/g, '');
     });
@@ -5611,7 +5704,7 @@ function renderSceneEditorDetails(){
     if (!pt.resetMode) pt.resetMode = 'perPlayer';
     if (!pt.resetMinutes) pt.resetMinutes = 60;
     const it = items.find(i=>i.id===pt.itemId);
-    wrap.innerHTML = `
+    typeWrap.innerHTML = `
       <div class="field-row" style="align-items:center;">
         <button type="button" class="btn-secondary" id="sceneDetailItemPickBtn" style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${it ? (itemThumbHtml(it) + ' ' + it.name) : '— choisir l\'objet —'}</button>
         <input type="number" id="sceneDetailItemQty" class="field-input" value="${pt.qty || 1}" min="1" style="flex:1;">
@@ -5644,7 +5737,7 @@ function renderSceneEditorDetails(){
   }
 
   if (pt.type === 'dialogue'){
-    wrap.innerHTML = `<textarea id="sceneDetailDialogueText" class="field-input" style="min-height:60px; background:rgba(255,255,255,.12); color:#fff;" placeholder="Texte affiché au joueur…">${pt.text || ''}</textarea>`;
+    typeWrap.innerHTML = `<textarea id="sceneDetailDialogueText" class="field-input" style="min-height:60px; background:rgba(255,255,255,.12); color:#fff;" placeholder="Texte affiché au joueur…">${pt.text || ''}</textarea>`;
     document.getElementById('sceneDetailDialogueText').addEventListener('input', (e)=>{
       pt.text = e.target.value;
     });
@@ -5659,7 +5752,7 @@ function renderSceneEditorDetails(){
     if (!pt.resetMinutes) pt.resetMinutes = 60;
     const reqIt = items.find(i=>i.id===pt.reqItemId);
     const resIt = items.find(i=>i.id===pt.resultItemId);
-    wrap.innerHTML = `
+    typeWrap.innerHTML = `
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Objet demandé (consommé)</div>
       <div class="field-row" style="align-items:center;">
         <button type="button" class="btn-secondary" data-action-req-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${reqIt ? (itemThumbHtml(reqIt)+' '+reqIt.name) : '— choisir —'}</button>
@@ -5690,32 +5783,43 @@ function renderSceneEditorDetails(){
         <input type="number" data-action-reset-minutes class="field-input" value="${pt.resetMinutes}" min="1" placeholder="Minutes avant réapparition">
       </div>
     `;
-    wrap.querySelector('[data-action-req-pick]').addEventListener('click', ()=>{
+    typeWrap.querySelector('[data-action-req-pick]').addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.reqItemId = itemId; renderSceneEditorDetails(); });
     });
-    wrap.querySelector('[data-action-req-qty]').addEventListener('input', (e)=>{ pt.reqQty = parseInt(e.target.value,10)||1; });
-    wrap.querySelector('[data-action-result-type]').addEventListener('change', (e)=>{ pt.resultType = e.target.value; renderSceneEditorDetails(); });
-    const giveBtn = wrap.querySelector('[data-action-res-pick]');
+    typeWrap.querySelector('[data-action-req-qty]').addEventListener('input', (e)=>{ pt.reqQty = parseInt(e.target.value,10)||1; });
+    typeWrap.querySelector('[data-action-result-type]').addEventListener('change', (e)=>{ pt.resultType = e.target.value; renderSceneEditorDetails(); });
+    const giveBtn = typeWrap.querySelector('[data-action-res-pick]');
     if (giveBtn) giveBtn.addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.resultItemId = itemId; renderSceneEditorDetails(); });
     });
-    const resQtyInput = wrap.querySelector('[data-action-res-qty]');
+    const resQtyInput = typeWrap.querySelector('[data-action-res-qty]');
     if (resQtyInput) resQtyInput.addEventListener('input', (e)=>{ pt.resultQty = parseInt(e.target.value,10)||1; });
-    const msgInput = wrap.querySelector('[data-action-message]');
+    const msgInput = typeWrap.querySelector('[data-action-message]');
     if (msgInput) msgInput.addEventListener('input', (e)=>{ pt.resultMessage = e.target.value; });
-    wrap.querySelector('[data-action-reset]').addEventListener('change', (e)=>{ pt.resetMode = e.target.value; renderSceneEditorDetails(); });
-    const actionMinutesInput = wrap.querySelector('[data-action-reset-minutes]');
+    typeWrap.querySelector('[data-action-reset]').addEventListener('change', (e)=>{ pt.resetMode = e.target.value; renderSceneEditorDetails(); });
+    const actionMinutesInput = typeWrap.querySelector('[data-action-reset-minutes]');
     if (actionMinutesInput) actionMinutesInput.addEventListener('input', (e)=>{ pt.resetMinutes = parseInt(e.target.value,10) || 60; });
     return;
   }
 
   if (pt.type === 'pnj'){
-    if (!Array.isArray(pt.dialogueSteps) || !pt.dialogueSteps.length) pt.dialogueSteps = [{ text:'', choices:[] }];
-    renderScenePointDialogue(wrap, pt);
+    typeWrap.innerHTML = `
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">PNJ affiché à ce point</div>
+      <button type="button" class="btn-secondary" data-pnj-link-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${pt.linkedPnjId ? ((pt.linkedPnjEmoji||'👤')+' '+(pt.linkedPnjName||'PNJ')) : '— choisir un PNJ existant —'}</button>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Utilise le dialogue, les objets donnés, quêtes et le recrutement déjà configurés pour ce PNJ dans l'éditeur de PNJ — pas de configuration séparée ici.</p>
+    `;
+    typeWrap.querySelector('[data-pnj-link-pick]').addEventListener('click', ()=>{
+      openPnjChooser((id, c)=>{
+        pt.linkedPnjId = id;
+        pt.linkedPnjName = c.name || 'PNJ';
+        pt.linkedPnjEmoji = c.emoji || '👤';
+        renderSceneDetailTypeSpecific(pt);
+      });
+    });
     return;
   }
 
-  wrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce type de point sera configurable à une prochaine étape.</p>`;
+  typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce type de point sera configurable à une prochaine étape.</p>`;
 }
 
 document.getElementById('sceneEditorImageBtn').addEventListener('click', ()=>{
@@ -5889,9 +5993,14 @@ function renderSceneViewCurrentScene(){
 
     const el = document.createElement('div');
     el.className = 'scene-point';
-    el.style.left = pt.x + '%';
-    el.style.top = pt.y + '%';
-    el.textContent = sceneTypeEmoji(pt.type);
+    if (pt.imageUrl){
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0;`;
+      el.innerHTML = `<img src="${pt.imageUrl}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+    } else {
+      el.style.left = pt.x + '%';
+      el.style.top = pt.y + '%';
+      el.textContent = sceneTypeEmoji(pt.type);
+    }
 
     if (pt.type === 'sortie_zone'){
       el.addEventListener('click', ()=>{
@@ -5978,14 +6087,13 @@ function renderSceneViewCurrentScene(){
       });
     } else if (pt.type === 'pnj'){
       el.addEventListener('click', ()=>{
-        const steps = (Array.isArray(pt.dialogueSteps) && pt.dialogueSteps.length) ? pt.dialogueSteps : [{ text:'(pas de dialogue configuré)', choices:[] }];
-        activeCreature = { id: 'scenepoint_' + pt.id, name: sceneViewCreature.zoneShowName ? sceneViewCreature.name : 'PNJ', emoji: '👤', imageUrl: '', _dist: 0, active: true };
-        activeSteps = steps;
-        currentStepIdx = 0;
-        lastLoggedStepKey = null;
-        renderSheet();
-        document.getElementById('overlay').style.zIndex = '4200';
-        document.getElementById('overlay').classList.add('show');
+        if (!pt.linkedPnjId){ showToast('Ce point n\'a pas encore de PNJ configuré'); return; }
+        if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+        creatureCol.doc(pt.linkedPnjId).get().then((doc)=>{
+          if (!doc.exists){ showToast('Ce PNJ n\'existe plus'); return; }
+          document.getElementById('overlay').style.zIndex = '4200';
+          openSheet({ id: doc.id, ...doc.data() });
+        }).catch((err)=> showToast('Échec : ' + err.message));
       });
     }
 
