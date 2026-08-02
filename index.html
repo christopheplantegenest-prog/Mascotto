@@ -7179,6 +7179,7 @@ async function renderSceneViewCurrentScene(){
   (sc.points || []).forEach(pt=>{
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
     if (pt.type === 'pnj' && pt.linkedPnjId && recruitedPnjIds.has(pt.linkedPnjId)) return;
+    if (pt.type === 'pnj' && !isScenePointAvailable(pt)) return;
 
     const el = document.createElement('div');
     el.className = 'scene-point';
@@ -7286,8 +7287,13 @@ async function renderSceneViewCurrentScene(){
         if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
         creatureCol.doc(pt.linkedPnjId).get().then((doc)=>{
           if (!doc.exists){ showToast('Ce PNJ n\'existe plus'); return; }
+          const data = doc.data();
+          if (data.interactionType === 'combat' && data.combatStats && !data.combatStats.recruitable){
+            startZoneBossCombat({ id: doc.id, ...data }, pt);
+            return;
+          }
           document.getElementById('overlay').style.zIndex = '4200';
-          openSheet({ id: doc.id, ...doc.data() });
+          openSheet({ id: doc.id, ...data });
         }).catch((err)=> showToast('Échec : ' + err.message));
       };
     }
@@ -7429,6 +7435,21 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
   const enemyFighters = buildEnemyFighters(shuffled.slice(0, Math.min(3, shuffled.length)));
   startCombat(playerFighters, enemyFighters);
 });
+
+/* Combat déclenché par un PNJ de type Monstre/Combattant (boss) rencontré dans une zone d'exploration. */
+let combatZoneContext = null;
+async function startZoneBossCombat(bossCreature, pt){
+  const playerFighters = buildPlayerFighters();
+  if (!playerFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
+  const enemyFighters = buildEnemyFighters([bossCreature]);
+  let arenaBg = DEFAULT_ARENA_BG;
+  if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
+    try { arenaBg = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef); } catch(e){}
+  }
+  combatZoneContext = { pt };
+  document.getElementById('sceneViewFull').classList.remove('show');
+  startCombat(playerFighters, enemyFighters, arenaBg);
+}
 
 /* ---------- Jeu de données de test pour le combat : attaques + monstres (couvre les 17 états) ---------- */
 const COMBAT_TEST_PREFIX = 'Test combat : ';
@@ -8090,6 +8111,7 @@ function checkCombatEnd(){
 
 function endCombat(result){
   combatState.finished = true;
+  combatState.result = result;
   clearInterval(combatTickTimer);
   renderCombatWaitingPanel();
   const title = document.getElementById('combatEndTitle');
@@ -8116,7 +8138,21 @@ function endCombat(result){
 }
 document.getElementById('combatEndCloseBtn').addEventListener('click', ()=>{
   document.getElementById('combatFull').classList.remove('show');
+  const result = combatState ? combatState.result : null;
+  const ctx = combatZoneContext;
+  combatZoneContext = null;
   combatState = null;
+  if (ctx){
+    if (result === 'victory'){
+      markScenePointTaken(ctx.pt).catch(()=>{});
+      document.getElementById('sceneViewFull').classList.add('show');
+      renderSceneViewCurrentScene();
+    } else if (result === 'flee'){
+      document.getElementById('sceneViewFull').classList.add('show');
+      renderSceneViewCurrentScene();
+    }
+    // Défaite : la zone reste fermée, le joueur se retrouve sur la carte (retour à l'entrée).
+  }
 });
 
 function statusBadgesHtml(f){
