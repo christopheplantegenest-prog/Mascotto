@@ -254,6 +254,43 @@
   }
   .scene-actionrow{ display:flex; gap:8px; }
   .scene-actionrow button{ flex:1; padding:11px; border-radius:10px; font-size:13px; font-weight:700; border:none; }
+/* ===== Animations de combat ===== */
+@keyframes combatLunge{
+  0%{ transform:translate(0,0) scale(1); }
+  40%{ transform:translate(0, var(--lunge-y,-14px)) scale(1.14); }
+  100%{ transform:translate(0,0) scale(1); }
+}
+@keyframes combatCharge{
+  0%,100%{ box-shadow:0 0 0 rgba(155,89,182,0); }
+  50%{ box-shadow:0 0 16px 6px rgba(155,89,182,.85); }
+}
+@keyframes combatHitShake{
+  0%,100%{ transform:translate(0,0); }
+  20%{ transform:translate(-4px,0); } 40%{ transform:translate(4px,0); }
+  60%{ transform:translate(-3px,0); } 80%{ transform:translate(3px,0); }
+}
+@keyframes combatParticleFloat{
+  0%{ opacity:1; transform:translate(-50%,0); }
+  100%{ opacity:0; transform:translate(-50%,-32px); }
+}
+@keyframes combatHaloNeg{
+  0%,100%{ box-shadow:0 0 0 rgba(231,76,60,0); }
+  50%{ box-shadow:0 0 10px 3px rgba(231,76,60,.6); }
+}
+@keyframes combatHaloPos{
+  0%,100%{ box-shadow:0 0 0 rgba(241,196,15,0); }
+  50%{ box-shadow:0 0 10px 3px rgba(241,196,15,.6); }
+}
+.combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
+.combat-anim-charge .combat-avatar{ animation:combatCharge .9s ease-in-out; }
+.combat-anim-hit .combat-avatar{ animation:combatHitShake .4s ease-in-out; }
+.combat-anim-halo-neg .combat-avatar{ animation:combatHaloNeg 1.1s ease-in-out infinite; }
+.combat-anim-halo-pos .combat-avatar{ animation:combatHaloPos 1.1s ease-in-out infinite; }
+.combat-particle{
+  position:absolute; left:50%; top:-6px; transform:translate(-50%,0);
+  font-size:13px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8);
+  animation:combatParticleFloat 1s ease-out forwards; pointer-events:none; white-space:nowrap;
+}
 </style>
 </head>
 <body>
@@ -822,7 +859,25 @@
       <div class="field-label">Métiers pouvant utiliser cette attaque (aucun coché = tous)</div>
       <div id="attackMetiersList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
 
-      <p class="meta" style="margin-top:8px;">Les altérations d'état (poison, brûlure, étourdissement...) et l'objet d'apprentissage dédié seront ajoutés à une prochaine étape.</p>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+        <input type="checkbox" id="attackHasStatus"> <span>Inflige un état</span>
+      </label>
+      <div id="attackStatusBlock" style="display:none;">
+        <div class="field-label">État</div>
+        <select id="attackStatusId" class="field-input"></select>
+        <div class="field-row">
+          <div>
+            <div class="field-label" style="margin-top:0;">Chance (%)</div>
+            <input type="number" id="attackStatusChance" class="field-input" value="100" min="1" max="100">
+          </div>
+          <div>
+            <div class="field-label" style="margin-top:0;">Durée (tours)</div>
+            <input type="number" id="attackStatusDuration" class="field-input" value="3" min="1">
+          </div>
+        </div>
+        <div class="field-label">Valeur (dégâts/soin/bonus en % ou montant selon l'état — sans effet pour étourdi/endormi/paralysé/confus/silencieux/aveuglé/provocation/contre-attaque/réflexion/réanimation)</div>
+        <input type="number" id="attackStatusValue" class="field-input" value="10" min="0">
+      </div>
 
       <button class="btn-capture" id="attackSaveBtn" style="width:100%; margin-top:16px;">Enregistrer l'attaque</button>
       <button class="btn-secondary" id="attackCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
@@ -1525,8 +1580,29 @@ let selectedStartingAttacks = new Set(); // sous-ensemble de selectedCombatAttac
 const COMBAT_STATUSES = [
   { id:'stun', label:'💫 Étourdi' }, { id:'poison', label:'🤢 Empoisonné' }, { id:'burn', label:'🔥 Brûlé' },
   { id:'confuse', label:'😵 Confus' }, { id:'sleep', label:'😴 Endormi' }, { id:'paralysis', label:'⚡ Paralysé' },
-  { id:'silence', label:'🔇 Réduit au silence' }, { id:'blind', label:'🌑 Aveuglé' }
+  { id:'silence', label:'🔇 Réduit au silence' }, { id:'blind', label:'🌑 Aveuglé' }, { id:'slow', label:'🐌 Ralenti' }
 ];
+// Catalogue complet (négatifs + positifs) utilisé par le sélecteur d'état sur une attaque.
+const STATUS_CATALOG = [
+  { id:'poison', label:'🤢 Empoisonné (dégâts/tour)', negative:true },
+  { id:'burn', label:'🔥 Brûlé (dégâts/tour)', negative:true },
+  { id:'sleep', label:'😴 Endormi (ne peut pas agir, se réveille si touché)', negative:true },
+  { id:'stun', label:'💫 Étourdi (ne peut pas agir)', negative:true },
+  { id:'confuse', label:'😵 Confus (peut attaquer au hasard)', negative:true },
+  { id:'paralysis', label:'⚡ Paralysé (peut échouer à agir)', negative:true },
+  { id:'silence', label:'🔇 Réduit au silence (attaques magiques impossibles)', negative:true },
+  { id:'blind', label:'🌑 Aveuglé (précision réduite)', negative:true },
+  { id:'slow', label:'🐌 Ralenti (jauge de vitesse plus lente)', negative:true },
+  { id:'shield', label:'🛡️ Bouclier (absorbe les dégâts)', negative:false },
+  { id:'regen', label:'💚 Régénération (soin/tour)', negative:false },
+  { id:'haste', label:'💨 Accéléré (jauge de vitesse plus rapide)', negative:false },
+  { id:'taunt', label:'📣 Provocation (force les ennemis à cibler)', negative:false },
+  { id:'counter', label:'🔁 Contre-attaque (riposte automatique)', negative:false },
+  { id:'reflect', label:'🪞 Réflexion (renvoie les dégâts subis)', negative:false },
+  { id:'revive', label:'✨ Réanimation (renaît une fois)', negative:false },
+  { id:'purify', label:'🧼 Purification (retire les états négatifs — instantané)', negative:false, instant:true },
+];
+const STATUS_META = {}; STATUS_CATALOG.forEach(s=> STATUS_META[s.id] = s);
 let selectedCombatImmunities = new Set();
 let selectedCombatResistances = new Set();
 let selectedCombatRewards = new Set();
@@ -4339,6 +4415,11 @@ if (attacksCol){
   }, (err)=>{ document.getElementById('attacksStatus').textContent = 'Erreur : ' + err.message; });
 }
 
+document.getElementById('attackStatusId').innerHTML = STATUS_CATALOG.map(s=>`<option value="${s.id}">${s.label}</option>`).join('');
+document.getElementById('attackHasStatus').addEventListener('change', (e)=>{
+  document.getElementById('attackStatusBlock').style.display = e.target.checked ? 'block' : 'none';
+});
+
 function renderAttackMetiers(){
   const wrap = document.getElementById('attackMetiersList');
   if (!wrap) return;
@@ -4362,6 +4443,7 @@ function renderAttacksListView(){
   listEl.innerHTML = '';
   attacks.forEach((a)=>{
     const metierNames = (a.allowedMetiers||[]).map(id => (metiers.find(m=>m.id===id)||{}).name).filter(Boolean).join(', ') || 'Tous les métiers';
+    const statusNote = (a.statusEffect && a.statusEffect.id) ? ` · ${(STATUS_META[a.statusEffect.id]||{}).label||a.statusEffect.id} (${a.statusEffect.chance}%)` : '';
     const row = document.createElement('div');
     row.className = 'editor-list-item';
     row.style.flexDirection = 'column';
@@ -4369,7 +4451,7 @@ function renderAttacksListView(){
     row.innerHTML = `
       <div style="display:flex; align-items:center; gap:10px; width:100%;">
         <div class="thumb">${a.emoji || '✨'}</div>
-        <div class="name">${a.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${KIND_LABEL[a.kind]||a.kind} · ${a.school==='magic'?'Magique':'Physique'} · ${metierNames}</span></div>
+        <div class="name">${a.name || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${KIND_LABEL[a.kind]||a.kind} · ${a.school==='magic'?'Magique':'Physique'} · ${metierNames}${statusNote}</span></div>
         <button class="btn-secondary" data-attack-edit="${a.id}">Modifier</button>
         <button class="btn-secondary" data-attack-del="${a.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
       </div>
@@ -4404,6 +4486,17 @@ function loadAttackForEdit(id){
   }
   selectedAttackMetiers = new Set(a.allowedMetiers || []);
   renderAttackMetiers();
+  if (a.statusEffect && a.statusEffect.id){
+    document.getElementById('attackHasStatus').checked = true;
+    document.getElementById('attackStatusBlock').style.display = 'block';
+    document.getElementById('attackStatusId').value = a.statusEffect.id;
+    document.getElementById('attackStatusChance').value = a.statusEffect.chance != null ? a.statusEffect.chance : 100;
+    document.getElementById('attackStatusDuration').value = a.statusEffect.duration != null ? a.statusEffect.duration : 3;
+    document.getElementById('attackStatusValue').value = a.statusEffect.value != null ? a.statusEffect.value : 10;
+  } else {
+    document.getElementById('attackHasStatus').checked = false;
+    document.getElementById('attackStatusBlock').style.display = 'none';
+  }
   document.getElementById('attackSaveBtn').textContent = 'Mettre à jour l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'block';
 }
@@ -4422,6 +4515,11 @@ function resetAttackForm(){
   document.getElementById('attackLearnSeconds').value = 0;
   selectedAttackMetiers = new Set();
   renderAttackMetiers();
+  document.getElementById('attackHasStatus').checked = false;
+  document.getElementById('attackStatusBlock').style.display = 'none';
+  document.getElementById('attackStatusChance').value = 100;
+  document.getElementById('attackStatusDuration').value = 3;
+  document.getElementById('attackStatusValue').value = 10;
   document.getElementById('attackSaveBtn').textContent = 'Enregistrer l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'none';
 }
@@ -4441,11 +4539,18 @@ document.getElementById('attackSaveBtn').addEventListener('click', ()=>{
   const learnSeconds = parseInt(document.getElementById('attackLearnSeconds').value, 10) || 0;
   const learnDuration = (learnDays*86400) + (learnHours*3600) + (learnMinutes*60) + learnSeconds;
   const allowedMetiers = Array.from(selectedAttackMetiers);
+  const hasStatus = document.getElementById('attackHasStatus').checked;
+  const statusEffect = hasStatus ? {
+    id: document.getElementById('attackStatusId').value,
+    chance: parseInt(document.getElementById('attackStatusChance').value, 10) || 100,
+    duration: parseInt(document.getElementById('attackStatusDuration').value, 10) || 3,
+    value: parseInt(document.getElementById('attackStatusValue').value, 10) || 0,
+  } : null;
 
   if (!name){ showToast('Donne un nom à l\'attaque'); return; }
   if (!attacksCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, description, kind, school, tribe, power, learnDuration, allowedMetiers, updatedAt: Date.now() };
+  const data = { name, emoji, description, kind, school, tribe, power, learnDuration, allowedMetiers, statusEffect, updatedAt: Date.now() };
   const op = editingAttackId ? attacksCol.doc(editingAttackId).set(data) : attacksCol.add({ ...data, createdAt: Date.now() });
   op.then((ref)=>{
     const attackId = editingAttackId || (ref && ref.id);
@@ -7013,11 +7118,22 @@ document.getElementById('sceneDialogueCloseBtn2').addEventListener('click', ()=>
   document.getElementById('sceneDialogueOverlay').classList.remove('show');
 });
 
-/* ================= COMBAT — structure de base (jauge de vitesse, ciblage, dégâts/soin bruts) =================
-   Pas encore inclus (prochaines étapes) : états/altérations, animations, connexion aux zones d'exploration (déclenchement via rencontre/boss).
-   Combat en mémoire uniquement pour l'instant : fermer l'appli en cours de combat le perd (pas de reprise). */
+/* ================= COMBAT — structure + système d'états complet =================
+   Inclus : jauge de vitesse temps réel, ciblage par tap, dégâts/soin, et les 17 états du prototype
+   (poison, brûlure, sommeil, étourdissement, confusion, paralysie, silence, aveuglement, ralenti,
+   bouclier, régénération, accélération, provocation, contre-attaque, réflexion, réanimation, purification).
+   Pas encore inclus : animations, connexion aux zones d'exploration (déclenchement via rencontre/boss),
+   reprise de combat si l'appli ferme (combat en mémoire uniquement pour l'instant).
+   NÉGATIFS (subissables par immunité/résistance) : poison, burn, sleep, stun, confuse, paralysis, silence, blind, slow.
+   POSITIFS (statuts appliqués via une attaque de type Boost, généralement sur soi/un allié) : shield, regen, haste, taunt, counter, reflect, revive.
+   INSTANTANÉ : purify (retire les états négatifs de la cible au moment de l'attaque, pas un état qui dure). */
 let combatState = null;
 let combatTickTimer = null;
+const NEGATIVE_STATUS_IDS = ['poison','burn','sleep','stun','confuse','paralysis','silence','blind','slow'];
+function sleep(ms){ return new Promise(resolve=> setTimeout(resolve, ms)); }
+function spawnParticle(uid, emoji, text){
+  combatState.particles.push({ uid, emoji, text, key: Math.random().toString(36).slice(2) });
+}
 
 function resolveFighterAttacks(attackIds){
   return (attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean);
@@ -7037,7 +7153,8 @@ function buildPlayerFighters(){
         atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
         precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
         attacksList: resolveFighterAttacks(r.learnedAttackIds),
-        gauge: Math.random()*30, alive:true,
+        immunities: [], resistances: [],
+        gauge: Math.random()*30, alive:true, statuses:{},
       };
     });
 }
@@ -7050,8 +7167,9 @@ function buildEnemyFighters(monsterList){
       atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
       precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
       attacksList: resolveFighterAttacks(cs.attackIds),
+      immunities: cs.immunities||[], resistances: cs.resistances||[],
       rewardItemIds: cs.rewardItemIds||[], fleeChance: cs.fleeChance!=null?cs.fleeChance:30,
-      gauge: Math.random()*30, alive:true,
+      gauge: Math.random()*30, alive:true, statuses:{},
     };
   });
 }
@@ -7068,7 +7186,7 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
 });
 
 function startCombat(playerFighters, enemyFighters){
-  combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false };
+  combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
   document.getElementById('combatFull').classList.add('show');
   document.getElementById('combatEndOverlay').style.display = 'none';
   document.getElementById('combatActionBar').style.display = 'none';
@@ -7077,12 +7195,19 @@ function startCombat(playerFighters, enemyFighters){
   combatTickTimer = setInterval(combatTick, 150);
 }
 
+function speedMultiplier(f){
+  let mult = 1;
+  if (f.statuses.haste) mult *= 1 + ((f.statuses.haste.value!=null?f.statuses.haste.value:50)/100);
+  if (f.statuses.slow) mult *= Math.max(0.1, 1 - ((f.statuses.slow.value!=null?f.statuses.slow.value:50)/100));
+  return mult;
+}
+
 function combatTick(){
   if (!combatState || combatState.finished || combatState.resolving){ renderCombat(); return; }
   let acted = false;
   combatState.fighters.forEach(f=>{
     if (!f.alive || acted) return;
-    f.gauge += (f.speed||1) * 0.5;
+    f.gauge += (f.speed||1) * 0.5 * speedMultiplier(f);
     if (f.gauge >= 100){
       acted = true;
       f.gauge = 0;
@@ -7092,8 +7217,83 @@ function combatTick(){
   renderCombat();
 }
 
-function takeTurn(fighter){
+/* Dégâts/soin périodiques (poison, brûlure, régénération) au début du tour du personnage concerné. */
+function tickStatusesAtTurnStart(fighter){
+  ['poison','burn'].forEach(sid=>{
+    const st = fighter.statuses[sid];
+    if (st && fighter.alive){
+      const dmg = Math.max(1, Math.round(fighter.maxHp * (st.value!=null?st.value:8)/100));
+      fighter.hp = Math.max(0, fighter.hp - dmg);
+      combatState.log.unshift(`${fighter.name} subit ${dmg} dégâts (${STATUS_META[sid].label.split(' (')[0]}).`);
+      if (fighter.hp <= 0) fighter.alive = false;
+    }
+  });
+  const rg = fighter.statuses['regen'];
+  if (rg && fighter.alive){
+    const heal = Math.max(1, Math.round(fighter.maxHp * (rg.value!=null?rg.value:8)/100));
+    fighter.hp = Math.min(fighter.maxHp, fighter.hp + heal);
+    combatState.log.unshift(`${fighter.name} récupère ${heal} PV (régénération).`);
+  }
+}
+
+/* Fait passer le tour (étourdi/endormi/paralysé). Renvoie true si le tour est effectivement sauté. */
+function checkTurnSkip(fighter){
+  if (fighter.statuses.stun){
+    combatState.log.unshift(`${fighter.name} est étourdi(e) et ne peut pas agir.`);
+    spawnParticle(fighter.uid, '💫', '');
+    return true;
+  }
+  if (fighter.statuses.sleep){
+    combatState.log.unshift(`${fighter.name} dort profondément.`);
+    spawnParticle(fighter.uid, '😴', '');
+    return true;
+  }
+  if (fighter.statuses.paralysis && Math.random()*100 < 25){
+    combatState.log.unshift(`${fighter.name} est paralysé(e) et ne peut pas agir !`);
+    spawnParticle(fighter.uid, '⚡', '');
+    return true;
+  }
+  return false;
+}
+
+/* Décrémente les états actifs du personnage à la fin de son propre tour, retire ceux qui expirent. */
+function decrementFighterStatuses(fighter){
+  Object.keys(fighter.statuses).forEach(sid=>{
+    const st = fighter.statuses[sid];
+    if (st.turns != null){
+      st.turns -= 1;
+      if (st.turns <= 0) delete fighter.statuses[sid];
+    }
+  });
+}
+
+async function takeTurn(fighter){
   combatState.resolving = true;
+  const hpBeforeDot = fighter.hp;
+  tickStatusesAtTurnStart(fighter);
+  if (fighter.hp !== hpBeforeDot){
+    const diff = fighter.hp - hpBeforeDot;
+    spawnParticle(fighter.uid, diff < 0 ? '☠️' : '💚', (diff>0?'+':'')+diff);
+    combatState.hitUids = [fighter.uid];
+    renderCombat();
+    await sleep(500);
+    combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
+    combatState.hitUids = [];
+  }
+  checkCombatEnd();
+  if (combatState.finished){ combatState.resolving = false; renderCombat(); return; }
+  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); return; }
+  if (checkTurnSkip(fighter)){
+    combatState.hitUids = [fighter.uid];
+    renderCombat();
+    await sleep(500);
+    combatState.hitUids = [];
+    combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
+    decrementFighterStatuses(fighter);
+    combatState.resolving = false;
+    renderCombat();
+    return;
+  }
   if (fighter.side === 'player'){
     combatState.pendingActor = fighter.uid;
     combatState.pendingAttack = null;
@@ -7101,48 +7301,86 @@ function takeTurn(fighter){
     renderCombatActionButtons(fighter);
     renderCombat();
   } else {
-    setTimeout(()=>{
-      if (!combatState || combatState.finished) return;
-      const alivePlayers = combatState.fighters.filter(f=>f.side==='player' && f.alive);
-      if (alivePlayers.length){
-        const atk = fighter.attacksList.length ? fighter.attacksList[Math.floor(Math.random()*fighter.attacksList.length)] : null;
-        const target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
-        resolveAttack(fighter, atk, target);
-      }
-      combatState.resolving = false;
-      checkCombatEnd();
-      renderCombat();
-    }, 500);
+    await sleep(250);
+    if (!combatState || combatState.finished) return;
+    const alivePlayers = combatState.fighters.filter(f=>f.side==='player' && f.alive);
+    if (alivePlayers.length){
+      const usable = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
+      const atk = usable.length ? usable[Math.floor(Math.random()*usable.length)] : null;
+      const target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
+      await playTurnAnimation(fighter, atk, target);
+    }
+    decrementFighterStatuses(fighter);
+    combatState.resolving = false;
+    checkCombatEnd();
+    renderCombat();
   }
+}
+
+/* Séquence d'animation d'une action : élan (physique) ou concentration (magique) sur l'attaquant,
+   puis résolution réelle de l'attaque, puis particules de résultat (dégâts/soin) sur les cibles touchées. */
+async function playTurnAnimation(actor, attack, target){
+  if (!attack){ resolveAttack(actor, attack, target); return; }
+  const hpBefore = {}; const aliveBefore = {};
+  combatState.fighters.forEach(f=>{ hpBefore[f.uid] = f.hp; aliveBefore[f.uid] = f.alive; });
+
+  combatState.anim = { actorUid: actor.uid, kind: (attack.school === 'magic') ? 'magic' : 'physical' };
+  renderCombat();
+  await sleep(attack.school === 'magic' ? 550 : 350);
+
+  resolveAttack(actor, attack, target);
+
+  combatState.anim = null;
+  combatState.particles = [];
+  const hitUids = [];
+  combatState.fighters.forEach(f=>{
+    const diff = f.hp - hpBefore[f.uid];
+    if (diff < 0){ spawnParticle(f.uid, '💥', String(diff)); hitUids.push(f.uid); }
+    else if (diff > 0){ spawnParticle(f.uid, '💚', '+'+diff); hitUids.push(f.uid); }
+    if (aliveBefore[f.uid] && !f.alive){ spawnParticle(f.uid, '💀', ''); hitUids.push(f.uid); }
+    else if (!aliveBefore[f.uid] && f.alive){ spawnParticle(f.uid, '✨', ''); hitUids.push(f.uid); }
+  });
+  combatState.hitUids = hitUids;
+  renderCombat();
+  await sleep(500);
+  combatState.particles = [];
+  combatState.hitUids = [];
+  renderCombat();
 }
 
 function renderCombatActionButtons(fighter){
   const wrap = document.getElementById('combatActionButtons');
-  const atks = fighter.attacksList;
-  wrap.innerHTML = (atks.length ? atks.map((a,i)=>`<button type="button" class="btn-secondary combat-action-atk" data-idx="${i}" style="flex:1 1 45%;">${a.emoji||'✨'} ${a.name}</button>`).join('') : '<p class="meta" style="width:100%;">Aucune attaque connue.</p>')
+  const atks = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
+  const silencedNote = fighter.statuses.silence ? '<p class="meta" style="width:100%; color:#fff;">🔇 Réduit au silence : attaques magiques indisponibles.</p>' : '';
+  wrap.innerHTML = silencedNote + (atks.length ? atks.map((a)=>{
+    const idx = fighter.attacksList.indexOf(a);
+    return `<button type="button" class="btn-secondary combat-action-atk" data-idx="${idx}" style="flex:1 1 45%;">${a.emoji||'✨'} ${a.name}</button>`;
+  }).join('') : '<p class="meta" style="width:100%;">Aucune attaque disponible.</p>')
     + `<button type="button" class="btn-secondary" id="combatFleeBtn" style="flex:1 1 100%; color:var(--danger); border-color:rgba(192,57,43,.4);">🏃 Fuir</button>`;
   wrap.querySelectorAll('.combat-action-atk').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      combatState.pendingAttack = atks[parseInt(btn.dataset.idx,10)];
-      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) ? 'alliée' : 'ennemie'));
+      combatState.pendingAttack = fighter.attacksList[parseInt(btn.dataset.idx,10)];
+      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' ? 'alliée' : 'ennemie'));
     });
   });
   document.getElementById('combatFleeBtn').addEventListener('click', attemptFlee);
 }
 
-function onFighterCardClick(uid){
+async function onFighterCardClick(uid){
   if (!combatState || !combatState.pendingActor || !combatState.pendingAttack) return;
   const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
+  const attack = combatState.pendingAttack;
   const target = combatState.fighters.find(f=>f.uid===uid);
   if (!actor || !target || !target.alive) return;
-  const heal = isHealAttack(combatState.pendingAttack);
-  if (heal && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
-  if (!heal && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
-  resolveAttack(actor, combatState.pendingAttack, target);
+  const friendly = isHealAttack(attack) || attack.kind === 'boost';
+  if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
+  if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
   combatState.pendingActor = null;
   combatState.pendingAttack = null;
-  combatState.resolving = false;
   document.getElementById('combatActionBar').style.display = 'none';
+  await playTurnAnimation(actor, attack, target);
+  decrementFighterStatuses(actor);
+  combatState.resolving = false;
   checkCombatEnd();
   renderCombat();
 }
@@ -7155,38 +7393,153 @@ function tribeMultiplier(attackerTribe, defenderTribe){
   return 1;
 }
 
+/* Applique un état à une cible (chance, immunité/résistance, non-cumul avec lui-même — réapplique juste sa durée). */
+function applyStatus(target, statusId, chance, duration, value){
+  if (!target.alive) return;
+  if (statusId === 'purify'){
+    if (Math.random()*100 < chance){
+      let removed = false;
+      NEGATIVE_STATUS_IDS.forEach(sid=>{ if (target.statuses[sid]){ delete target.statuses[sid]; removed = true; } });
+      combatState.log.unshift(removed ? `${target.name} est purifié(e) de ses altérations négatives.` : `${target.name} n'avait aucune altération à purifier.`);
+    }
+    return;
+  }
+  if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.immunities||[]).includes(statusId)){
+    combatState.log.unshift(`${target.name} est immunisé(e) contre ${STATUS_META[statusId].label.split(' (')[0]}.`);
+    return;
+  }
+  let effChance = chance;
+  if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.resistances||[]).includes(statusId)) effChance = effChance / 2;
+  if (Math.random()*100 >= effChance) return;
+  target.statuses[statusId] = { turns: duration, value: value };
+  combatState.log.unshift(`${target.name} est affecté(e) par ${STATUS_META[statusId].label.split(' (')[0]} !`);
+}
+function applyAttackStatusEffect(attacker, attack, target){
+  const se = attack.statusEffect;
+  if (!se || !se.id || !target.alive) return;
+  applyStatus(target, se.id, se.chance!=null?se.chance:100, se.duration||3, se.value!=null?se.value:10);
+}
+
 function resolveAttack(attacker, attack, target){
   if (!target || !target.alive) return;
   if (!attack){
     combatState.log.unshift(`${attacker.name} n'a aucune attaque à utiliser.`);
     return;
   }
+
+  // Confusion : chance d'attaquer une cible au hasard (n'importe quel camp) au lieu de la cible choisie.
+  if (attacker.statuses.confuse && Math.random()*100 < 33){
+    const anyAlive = combatState.fighters.filter(f=>f.alive);
+    if (anyAlive.length){
+      target = anyAlive[Math.floor(Math.random()*anyAlive.length)];
+      combatState.log.unshift(`${attacker.name} est confus(e) et attaque au hasard !`);
+    }
+  }
+
+  const isDamageKind = attack.kind === 'damage_single' || attack.kind === 'damage_group';
+  // Provocation : si la cible visée est sur le camp adverse et qu'un provocateur y est actif, la cible est forcée sur lui.
+  if (isDamageKind && target.side !== attacker.side){
+    const taunters = combatState.fighters.filter(f=> f.side===target.side && f.alive && f.statuses.taunt);
+    if (taunters.length && !taunters.includes(target)){
+      target = taunters[Math.floor(Math.random()*taunters.length)];
+    }
+  }
+
   const isMagic = attack.school === 'magic';
   const heal = isHealAttack(attack);
+  const isBoostOrDebuff = attack.kind === 'boost' || attack.kind === 'debuff';
+
+  if (attacker.statuses.silence && isMagic){
+    combatState.log.unshift(`${attacker.name} est réduit(e) au silence et ne peut pas lancer ${attack.name} !`);
+    return;
+  }
+
   if (heal){
     const power = attack.power || 10;
     const healAmount = Math.round(power * (1 + (isMagic ? (attacker.matk||1) : (attacker.atk||1))/50));
     target.hp = Math.min(target.maxHp, target.hp + healAmount);
     combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
     combatState.log = combatState.log.slice(0, 20);
+    applyAttackStatusEffect(attacker, attack, target);
     return;
   }
-  const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50));
+
+  if (isBoostOrDebuff){
+    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}.`);
+    combatState.log = combatState.log.slice(0, 20);
+    applyAttackStatusEffect(attacker, attack, target);
+    return;
+  }
+
+  // Attaque à dégâts (une cible ou groupe — le groupe est traité comme une cible unique pour l'instant, tant que le ciblage multi-cibles n'est pas géré)
+  const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
   if (Math.random()*100 >= hitChance){
     combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
     combatState.log = combatState.log.slice(0, 20);
     return;
   }
+
+  // Réflexion : la cible renvoie l'attaque à l'attaquant au lieu de la subir (consomme l'état).
+  if (target.statuses.reflect){
+    delete target.statuses.reflect;
+    combatState.log.unshift(`${target.name} réfléchit l'attaque !`);
+    const swapped = attacker; attacker = target; target = swapped;
+  }
+
   const atkStat = isMagic ? (attacker.matk||1) : (attacker.atk||1);
   const defStat = isMagic ? (target.mdef||1) : (target.def||1);
   const mult = tribeMultiplier(attack.tribe || attacker.tribe, target.tribe);
   let dmg = Math.max(1, Math.round(((attack.power||10) + atkStat) - defStat*0.6));
   dmg = Math.round(dmg * mult);
+
+  // Bouclier : absorbe les dégâts avant les PV.
+  if (target.statuses.shield && target.statuses.shield.value > 0){
+    const shield = target.statuses.shield;
+    const absorbed = Math.min(shield.value, dmg);
+    shield.value -= absorbed;
+    dmg -= absorbed;
+    combatState.log.unshift(`Le bouclier de ${target.name} absorbe ${absorbed} dégâts.`);
+    if (shield.value <= 0) delete target.statuses.shield;
+  }
+
   target.hp = Math.max(0, target.hp - dmg);
-  if (target.hp <= 0) target.alive = false;
   const bonus = mult > 1 ? ' (efficace !)' : (mult < 1 ? ' (peu efficace...)' : '');
   combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : -${dmg} PV${bonus}`);
   combatState.log = combatState.log.slice(0, 20);
+
+  // Sommeil : se réveille en cas de dégâts.
+  if (target.statuses.sleep && dmg > 0){
+    delete target.statuses.sleep;
+    combatState.log.unshift(`${target.name} se réveille sous le choc !`);
+  }
+
+  if (target.hp <= 0){
+    if (target.statuses.revive){
+      delete target.statuses.revive;
+      target.hp = Math.max(1, Math.round(target.maxHp * 0.5));
+      combatState.log.unshift(`${target.name} renaît de ses cendres !`);
+    } else {
+      target.alive = false;
+    }
+  }
+
+  // Contre-attaque : la cible riposte immédiatement si elle a survécu.
+  if (target.alive && target.statuses.counter){
+    const counterDmg = Math.max(1, Math.round((target.atk||1) - (attacker.def||1)*0.6));
+    attacker.hp = Math.max(0, attacker.hp - counterDmg);
+    combatState.log.unshift(`${target.name} contre-attaque ${attacker.name} : -${counterDmg} PV`);
+    if (attacker.hp <= 0){
+      if (attacker.statuses.revive){
+        delete attacker.statuses.revive;
+        attacker.hp = Math.max(1, Math.round(attacker.maxHp * 0.5));
+        combatState.log.unshift(`${attacker.name} renaît de ses cendres !`);
+      } else {
+        attacker.alive = false;
+      }
+    }
+  }
+
+  applyAttackStatusEffect(attacker, attack, target);
 }
 
 function attemptFlee(){
@@ -7194,8 +7547,10 @@ function attemptFlee(){
   const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
   const success = Math.random()*100 < avgFlee;
   document.getElementById('combatActionBar').style.display = 'none';
+  const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
   combatState.pendingActor = null;
   combatState.pendingAttack = null;
+  if (actor) decrementFighterStatuses(actor);
   combatState.resolving = false;
   if (success){
     combatState.log.unshift('Fuite réussie !');
@@ -7250,15 +7605,40 @@ document.getElementById('combatCloseBtn').addEventListener('click', ()=>{
   combatState = null;
 });
 
+function statusBadgesHtml(f){
+  const ids = Object.keys(f.statuses);
+  if (!ids.length) return '';
+  return `<div style="display:flex; justify-content:center; flex-wrap:wrap; gap:1px; margin-top:2px;">` +
+    ids.map(sid=>{
+      const meta = STATUS_META[sid] || {};
+      const emoji = (meta.label||'').split(' ')[0] || '❔';
+      const turns = f.statuses[sid].turns;
+      return `<span style="font-size:9px; background:rgba(0,0,0,.5); border-radius:3px; padding:0 2px;" title="${meta.label||sid}">${emoji}${turns!=null?turns:''}</span>`;
+    }).join('') + `</div>`;
+}
+
+function particlesHtml(f){
+  const mine = (combatState.particles||[]).filter(p=>p.uid===f.uid);
+  if (!mine.length) return '';
+  return mine.map(p=>`<div class="combat-particle">${p.emoji}${p.text?(' '+p.text):''}</div>`).join('');
+}
+
 function fighterCardHtml(f){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
   const gaugePct = Math.max(0, Math.min(100, Math.round(f.gauge)));
   const isActing = combatState.pendingActor === f.uid;
   const targetable = !!(combatState.pendingActor && combatState.pendingAttack && f.alive);
+  const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
+  const isHit = (combatState.hitUids||[]).includes(f.uid);
+  const hasNeg = Object.keys(f.statuses).some(sid=> NEGATIVE_STATUS_IDS.includes(sid));
+  const hasPos = Object.keys(f.statuses).some(sid=> !NEGATIVE_STATUS_IDS.includes(sid));
+  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', anim==='magic'?'combat-anim-charge':'', isHit?'combat-anim-hit':'', hasNeg?'combat-anim-halo-neg':(hasPos?'combat-anim-halo-pos':'')].filter(Boolean).join(' ');
+  const lungeY = f.side==='player' ? -14 : 14;
   return `
-    <div class="combat-fighter" data-fighter="${f.uid}" style="text-align:center; width:31%; max-width:110px; ${f.alive?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
-      <div style="position:relative; width:52px; height:52px; margin:0 auto; border-radius:50%; overflow:hidden; border:2px solid ${isActing?'var(--accent)':'rgba(255,255,255,.3)'};">
+    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:31%; max-width:110px; position:relative; --lunge-y:${lungeY}px; ${f.alive?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
+      <div class="combat-avatar" style="position:relative; width:52px; height:52px; margin:0 auto; border-radius:50%; overflow:hidden; border:2px solid ${isActing?'var(--accent)':'rgba(255,255,255,.3)'};">
         ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#222;color:#fff;font-size:20px;">${f.side==='player'?'🧑':'👾'}</div>`}
+        ${particlesHtml(f)}
       </div>
       <div style="font-size:10px; color:#fff; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div>
       <div style="height:6px; background:rgba(255,255,255,.15); border-radius:4px; overflow:hidden; margin-top:2px;">
@@ -7267,6 +7647,7 @@ function fighterCardHtml(f){
       <div style="height:3px; background:rgba(255,255,255,.12); border-radius:2px; overflow:hidden; margin-top:2px;">
         <div style="height:100%; width:${gaugePct}%; background:var(--accent);"></div>
       </div>
+      ${statusBadgesHtml(f)}
     </div>
   `;
 }
@@ -7280,6 +7661,9 @@ function renderCombat(){
   document.getElementById('combatLog').innerHTML = combatState.log.slice(0,6).map(l=>`<div>${l}</div>`).join('');
 }
 
+</script>
+</body>
+</html>
 </script>
 </body>
 </html>
