@@ -211,7 +211,7 @@
     position:absolute; inset:0; overflow:hidden;
     display:flex; align-items:center; justify-content:center; background:#111;
   }
-  .scene-imgwrap img{ width:100%; display:block; user-select:none; -webkit-user-drag:none; -webkit-touch-callout:none; }
+  .scene-imgwrap img{ max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; display:block; user-select:none; -webkit-user-drag:none; -webkit-touch-callout:none; }
   .scene-imgwrap .scene-empty{ color:rgba(255,255,255,.6); font-size:13px; text-align:center; padding:0 30px; }
   .scene-point{
     position:absolute; transform:translate(-50%,-50%);
@@ -1141,7 +1141,7 @@
     <div class="scene-actionrow-scroll">
       <button type="button" class="scene-action-btn" id="sceneEditorScenesBtn">🎬 Scènes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
-      <button type="button" class="scene-action-btn" id="sceneEditorImageBtn">🖼️ Image</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
     </div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
@@ -1859,6 +1859,15 @@ function renderAllCreatures(snap){
   updateCreatureVisuals();
 }
 
+let mapLongPressTimer = null;
+let mapLongPressFired = false;
+function openCreatureEditFromMap(id){
+  document.getElementById('editorOverlay').classList.add('show');
+  loadForEdit(id);
+  showPnjSection('new');
+  renderDialogueBuilder();
+}
+
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
@@ -1868,7 +1877,21 @@ function renderCreatureMarkers(){
       : `<div class="creature-icon" id="icon-${c.id}">${fallbackEmoji}</div>`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
     const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
-    marker.on('click', ()=> handleCreatureClick(c));
+    marker.on('click', ()=>{
+      if (mapLongPressFired){ mapLongPressFired = false; return; }
+      handleCreatureClick(c);
+    });
+    marker.on('mousedown', ()=>{
+      if (!freeModeActive) return;
+      mapLongPressFired = false;
+      clearTimeout(mapLongPressTimer);
+      mapLongPressTimer = setTimeout(()=>{
+        mapLongPressFired = true;
+        openCreatureEditFromMap(c.id);
+      }, 600);
+    });
+    marker.on('mouseup', ()=> clearTimeout(mapLongPressTimer));
+    marker.on('mouseout', ()=> clearTimeout(mapLongPressTimer));
     c.marker = marker;
   });
 }
@@ -6415,7 +6438,7 @@ function resolveSceneContent(sc){
   return { imageUrl: sc.imageUrl, points: sc.points };
 }
 
-function renderSceneViewCurrentScene(){
+async function renderSceneViewCurrentScene(){
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
@@ -6434,10 +6457,14 @@ function renderSceneViewCurrentScene(){
   img.src = sc.imageUrl;
   wrap.insertBefore(img, wrap.firstChild);
 
+  const recruitedPnjIds = await getRecruitedPnjIds(sc);
+  if (sceneViewCurrentSceneId !== scRaw.id) return; // scène changée entretemps, ce rendu est obsolète
+
   const wrapPointActions = {};
   sceneViewPointActions = wrapPointActions;
   (sc.points || []).forEach(pt=>{
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
+    if (pt.type === 'pnj' && pt.linkedPnjId && recruitedPnjIds.has(pt.linkedPnjId)) return;
 
     const el = document.createElement('div');
     el.className = 'scene-point';
@@ -6555,7 +6582,6 @@ function renderSceneViewCurrentScene(){
   });
 
   positionSceneViewPoints();
-  hideRecruitedScenePnjPoints(sc);
 }
 
 /* Un seul listener délégué : trouve le point cliqué de haut en bas (ordre du DOM = ordre des plans),
@@ -6595,17 +6621,13 @@ function positionSceneViewPoints(){
   });
 }
 
-function hideRecruitedScenePnjPoints(sc){
+async function getRecruitedPnjIds(sc){
   const pnjIds = Array.from(new Set((sc.points || []).filter(pt=> pt.type==='pnj' && pt.linkedPnjId).map(pt=> pt.linkedPnjId)));
-  if (!pnjIds.length || !creatureCol) return;
-  Promise.all(pnjIds.map(id=> creatureCol.doc(id).get().catch(()=> null))).then((docs)=>{
-    const recruitedIds = new Set();
-    docs.forEach((doc)=>{ if (doc && (!doc.exists || doc.data().recruited)) recruitedIds.add(doc.id); });
-    if (!recruitedIds.size) return;
-    document.querySelectorAll('#sceneViewImgWrap .scene-point[data-pnjid]').forEach((el)=>{
-      if (recruitedIds.has(el.dataset.pnjid)) el.remove();
-    });
-  });
+  const recruitedIds = new Set();
+  if (!pnjIds.length || !creatureCol) return recruitedIds;
+  const docs = await Promise.all(pnjIds.map(id=> creatureCol.doc(id).get().catch(()=> null)));
+  docs.forEach((doc)=>{ if (doc && (!doc.exists || doc.data().recruited)) recruitedIds.add(doc.id); });
+  return recruitedIds;
 }
 document.getElementById('sceneViewCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneViewFull').classList.remove('show');
