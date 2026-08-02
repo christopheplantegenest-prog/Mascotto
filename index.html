@@ -5322,7 +5322,102 @@ const SCENE_POINT_TYPES = [
   { id:'dialogue', label:'💬 Dialogue' },
   { id:'pnj', label:'👤 PNJ' },
   { id:'sortie_zone', label:'🏳️ Sortie de zone' },
+  { id:'decor', label:'🖼️ Décor' },
 ];
+
+/* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
+   Chaque image (fond de scène ou point) est stockée dans son propre document de la collection scene_images,
+   référencée depuis la zone par un simple id (imageRef). Dédupliquée par contenu : la même image ne créera
+   jamais deux documents distincts. Le reste du code continue de manipuler des dataURL classiques via .imageUrl :
+   la conversion se fait uniquement à la sauvegarde (externalisation) et au chargement (résolution). */
+const scImagesCol = (typeof db !== 'undefined') ? db.collection('scene_images') : null;
+let scImageCache = {}; // ref -> dataUrl
+
+function hashImageString(str){
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++){
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1>>>0)).toString(36);
+}
+
+async function externalizeSceneImage(dataUrl){
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+  const ref = 'img_' + hashImageString(dataUrl) + '_' + dataUrl.length;
+  if (!scImageCache[ref]){
+    scImageCache[ref] = dataUrl;
+    if (scImagesCol){
+      try { await scImagesCol.doc(ref).set({ dataUrl, updatedAt: Date.now() }); }
+      catch(e){ /* écriture échouée : l'image reste utilisable localement pour cette session mais ne sera pas persistée */ }
+    }
+  }
+  return ref;
+}
+
+async function internalizeSceneImage(ref){
+  if (!ref) return '';
+  if (scImageCache[ref]) return scImageCache[ref];
+  if (!scImagesCol) return '';
+  try {
+    const doc = await scImagesCol.doc(ref).get();
+    const url = doc.exists ? (doc.data().dataUrl || '') : '';
+    if (url) scImageCache[ref] = url;
+    return url;
+  } catch(e){ return ''; }
+}
+
+function resolvePointImageRefJobs(pt, jobs){
+  if (!pt.imageUrl && pt.imageRef) jobs.push(internalizeSceneImage(pt.imageRef).then(u=>{ pt.imageUrl = u; }));
+  if (!pt.linkedPnjImageUrl && pt.linkedPnjImageRef) jobs.push(internalizeSceneImage(pt.linkedPnjImageRef).then(u=>{ pt.linkedPnjImageUrl = u; }));
+}
+
+/* Remplace en place les imageRef par de vraies dataURL (résolution), pour que le reste du code n'ait rien à changer */
+async function resolveImageRefsInScenes(scenesArr){
+  const jobs = [];
+  (scenesArr||[]).forEach(sc=>{
+    if (!sc.imageUrl && sc.imageRef) jobs.push(internalizeSceneImage(sc.imageRef).then(u=>{ sc.imageUrl = u; }));
+    (sc.points||[]).forEach(pt=> resolvePointImageRefJobs(pt, jobs));
+    (sc.variants||[]).forEach(v=>{
+      if (!v.imageUrl && v.imageRef) jobs.push(internalizeSceneImage(v.imageRef).then(u=>{ v.imageUrl = u; }));
+      (v.points||[]).forEach(pt=> resolvePointImageRefJobs(pt, jobs));
+    });
+  });
+  await Promise.all(jobs);
+}
+
+async function externalizeImageField(obj){
+  if (obj.imageUrl && obj.imageUrl.startsWith('data:')){
+    obj.imageRef = await externalizeSceneImage(obj.imageUrl);
+    obj.imageUrl = '';
+  }
+}
+async function externalizePointImageFields(pt){
+  await externalizeImageField(pt);
+  if (pt.linkedPnjImageUrl && pt.linkedPnjImageUrl.startsWith('data:')){
+    pt.linkedPnjImageRef = await externalizeSceneImage(pt.linkedPnjImageUrl);
+    pt.linkedPnjImageUrl = '';
+  }
+}
+
+/* Produit une copie de sceneEditorScenes prête pour Firestore : images remplacées par leurs références externes */
+async function externalizeScenesForSave(scenesArr){
+  const clone = JSON.parse(JSON.stringify(scenesArr));
+  const jobs = [];
+  clone.forEach(sc=>{
+    jobs.push(externalizeImageField(sc));
+    (sc.points||[]).forEach(pt=> jobs.push(externalizePointImageFields(pt)));
+    (sc.variants||[]).forEach(v=>{
+      jobs.push(externalizeImageField(v));
+      (v.points||[]).forEach(pt=> jobs.push(externalizePointImageFields(pt)));
+    });
+  });
+  await Promise.all(jobs);
+  return clone;
+}
 
 let sceneEditorZoneId = null;
 let sceneEditorScenes = [];        // [{id, name, imageUrl, points, variants}]
@@ -5330,6 +5425,7 @@ let sceneEditorCurrentSceneId = null;
 let sceneEditorCurrentVariantId = null; // null = contenu par défaut de la scène, sinon id de la variante éditée
 let sceneEditorStartSceneId = null;
 let sceneEditorImageDataUrl = null; // miroir de la scène (ou variante) courante
+let sceneEditorPrevImageDataUrl = null; // image juste avant le dernier changement (pour l'appui long "revenir en arrière")
 let sceneEditorPoints = [];         // miroir de la scène (ou variante) courante
 let sceneEditorSelectedPointId = null;
 
@@ -5385,6 +5481,7 @@ function loadVariantIntoEditorState(variantId){
     sceneEditorImageDataUrl = v.imageUrl || null;
     sceneEditorPoints = v.points || [];
   }
+  sceneEditorPrevImageDataUrl = null;
   sceneEditorSelectedPointId = null;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
@@ -5654,6 +5751,10 @@ function getSceneImageDisplayRect(wrap){
 }
 
 function pointEffectiveImageUrl(pt){
+  if (pt.type === 'objet' && !pt.useCustomImage){
+    const it = items.find(i=>i.id===pt.itemId);
+    if (it && it.imageUrl) return it.imageUrl;
+  }
   if (pt.imageUrl) return pt.imageUrl;
   if (pt.type === 'pnj' && pt.linkedPnjImageUrl) return pt.linkedPnjImageUrl;
   return null;
@@ -5859,6 +5960,15 @@ function renderSceneDetailAppearance(pt){
     </div>
     ${isLinkedPnj ? `
       <p class="meta" style="margin:0 0 6px;">Utilise l'image de ce PNJ — pas besoin d'en choisir une autre ici.</p>
+    ` : pt.type === 'objet' ? `
+      <label class="meta" style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><input type="checkbox" data-point-custom-img ${pt.useCustomImage?'checked':''}> Utiliser une image personnalisée (au lieu de celle de l'objet)</label>
+      ${pt.useCustomImage ? `
+        <div class="field-row" style="align-items:center; gap:8px;">
+          <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
+          ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
+        </div>
+        <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
+      ` : `<p class="meta" style="margin:0 0 6px;">Utilise automatiquement l'image de l'objet sélectionné.</p>`}
     ` : `
       <div class="field-row" style="align-items:center; gap:8px;">
         <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
@@ -5891,6 +6001,12 @@ function renderSceneDetailAppearance(pt){
       renderSceneEditorPoints();
       renderSceneDetailAppearance(pt);
     }
+  });
+  const customImgChk = appWrap.querySelector('[data-point-custom-img]');
+  if (customImgChk) customImgChk.addEventListener('change', (e)=>{
+    pt.useCustomImage = e.target.checked;
+    renderSceneEditorPoints();
+    renderSceneDetailAppearance(pt);
   });
   const pickBtn = appWrap.querySelector('[data-point-img-pick]');
   if (pickBtn) pickBtn.addEventListener('click', ()=>{
@@ -6115,10 +6231,40 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'decor'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Point purement décoratif : image affichée sur la scène, sans aucune interaction possible pour le joueur (un tap dessus passe à travers, comme s'il n'était pas là).</p>`;
+    return;
+  }
+
   typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce type de point sera configurable à une prochaine étape.</p>`;
 }
 
+let sceneEditorImageLongPressTimer = null;
+let sceneEditorImageLongPressFired = false;
+document.getElementById('sceneEditorImageBtn').addEventListener('pointerdown', ()=>{
+  sceneEditorImageLongPressFired = false;
+  clearTimeout(sceneEditorImageLongPressTimer);
+  sceneEditorImageLongPressTimer = setTimeout(()=>{
+    sceneEditorImageLongPressFired = true;
+    if (sceneEditorPrevImageDataUrl){
+      if (confirm('Revenir à l\'image précédente de cette scène ?')){
+        const tmp = sceneEditorImageDataUrl;
+        sceneEditorImageDataUrl = sceneEditorPrevImageDataUrl;
+        sceneEditorPrevImageDataUrl = tmp;
+        renderSceneEditorImage();
+        renderSceneEditorPoints();
+        showToast('Image précédente restaurée');
+      }
+    } else {
+      showToast('Pas d\'image précédente à restaurer');
+    }
+  }, 600);
+});
+['pointerup','pointerleave','pointercancel'].forEach(evt=>{
+  document.getElementById('sceneEditorImageBtn').addEventListener(evt, ()=> clearTimeout(sceneEditorImageLongPressTimer));
+});
 document.getElementById('sceneEditorImageBtn').addEventListener('click', ()=>{
+  if (sceneEditorImageLongPressFired){ sceneEditorImageLongPressFired = false; return; }
   document.getElementById('sceneEditorImageFile').click();
 });
 document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>{
@@ -6137,6 +6283,7 @@ document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      sceneEditorPrevImageDataUrl = sceneEditorImageDataUrl;
       sceneEditorImageDataUrl = canvas.toDataURL('image/jpeg', 0.82);
       renderSceneEditorImage();
       renderSceneEditorPoints();
@@ -6154,8 +6301,9 @@ function openSceneEditor(creatureId){
   sceneEditorStartSceneId = sceneEditorScenes[0].id;
   loadSceneIntoEditorState(sceneEditorScenes[0].id);
   document.getElementById('sceneEditorFull').classList.add('show');
-  zonesCol.doc(creatureId).get().then((doc)=>{
+  zonesCol.doc(creatureId).get().then(async (doc)=>{
     const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
+    await resolveImageRefsInScenes(norm.scenes);
     sceneEditorScenes = norm.scenes;
     sceneEditorStartSceneId = norm.startSceneId;
     loadSceneIntoEditorState(sceneEditorStartSceneId);
@@ -6165,17 +6313,19 @@ document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openS
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorFull').classList.remove('show');
 });
-document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
+document.getElementById('sceneEditorSaveBtn').addEventListener('click', async ()=>{
   if (!sceneEditorZoneId || !zonesCol) return;
   syncCurrentVariantFromEditorState();
-  zonesCol.doc(sceneEditorZoneId).set({
-    scenes: sceneEditorScenes,
-    startSceneId: sceneEditorStartSceneId,
-    updatedAt: Date.now(),
-  }).then(()=>{
+  try {
+    const cleanScenes = await externalizeScenesForSave(sceneEditorScenes);
+    await zonesCol.doc(sceneEditorZoneId).set({
+      scenes: cleanScenes,
+      startSceneId: sceneEditorStartSceneId,
+      updatedAt: Date.now(),
+    });
     showToast('Scène enregistrée');
     document.getElementById('sceneEditorFull').classList.remove('show');
-  }).catch((err)=> showToast('Échec : ' + err.message));
+  } catch(err){ showToast('Échec : ' + err.message); }
 });
 
 
@@ -6239,10 +6389,11 @@ function openSceneView(creature){
   const zoneGet = zonesCol.doc(creature.id).get();
   const playerGet = (currentUser && db) ? db.collection('players').doc(currentUser.uid).get() : Promise.resolve(null);
 
-  Promise.all([zoneGet, playerGet]).then(([zoneDoc, playerDoc])=>{
+  Promise.all([zoneGet, playerGet]).then(async ([zoneDoc, playerDoc])=>{
     const d = zoneDoc.exists ? zoneDoc.data() : null;
     const norm = normalizeZoneScenes(d);
-    const hasContent = d && (Array.isArray(d.scenes) ? d.scenes.some(s=>s.imageUrl) : !!d.sceneImageUrl);
+    await resolveImageRefsInScenes(norm.scenes);
+    const hasContent = norm.scenes.some(s=>s.imageUrl);
     if (!hasContent){
       empty.style.display = 'block';
       return;
@@ -6420,7 +6571,8 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
     const scRaw = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
     const sc = scRaw ? resolveSceneContent(scRaw) : null;
     const pt = sc ? (sc.points||[]).find(p=>p.id===ptId) : null;
-    if (pt && isPointHitAt(pt, div, ev.clientX, ev.clientY)){
+    if (!pt || pt.type === 'decor') continue;
+    if (isPointHitAt(pt, div, ev.clientX, ev.clientY)){
       const action = sceneViewPointActions[ptId];
       if (action) action();
       return;
