@@ -316,16 +316,23 @@
 #combatActionPanel > p.meta{ padding:14px 8px; margin:0; text-align:center; }
 .combat-attack-grid{ display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:56px; gap:3px; padding:3px; }
 .combat-attack-grid button{
-  padding:5px 8px; border-radius:8px; height:56px; overflow:hidden;
+  min-width:0; padding:5px 8px; border-radius:8px; height:56px; overflow:hidden;
   display:flex; flex-direction:column; justify-content:center; align-items:flex-start; text-align:left;
 }
-.combat-atk-slot-empty{ border:1px dashed var(--line); border-radius:8px; height:56px; }
+.combat-attack-grid button strong{
+  display:block; width:100%; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px;
+}
+.combat-atk-slot-empty{ border:1px dashed var(--line); border-radius:8px; height:56px; min-width:0; }
 .combat-atk-desc{
   font-size:8px; color:var(--muted); opacity:.75; font-style:italic; white-space:normal; margin-top:2px;
   line-height:1.15; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  width:100%; max-width:100%; word-break:break-word;
 }
 .combat-action-secondary{ display:flex; gap:3px; padding:3px; }
-.combat-action-secondary button{ flex:1; padding:7px 3px; border-radius:8px; font-size:9px; }
+.combat-action-secondary button{
+  flex:1 1 0; min-width:0; padding:6px 2px; border-radius:8px; font-size:8px; line-height:1.2;
+  white-space:normal; word-break:break-word; overflow:hidden;
+}
 #combatLog{
   background:#12241a; color:#dfeee2; border-radius:10px; padding:8px 10px; font-size:11px;
   height:80px; overflow-y:auto; margin:0 10px 8px;
@@ -535,11 +542,7 @@
 
 <!-- Combat (structure de base : jauge de vitesse, ciblage, attaques — sans états ni animations pour l'instant) -->
 <div class="scene-full" id="combatFull">
-  <div class="scene-topbar">
-    <span style="color:#fff; font-weight:700; background:rgba(0,0,0,.55); padding:6px 10px; border-radius:10px;">⚔️ Combat</span>
-    <button class="sheet-x" id="combatCloseBtn">✕</button>
-  </div>
-  <div style="flex:1; display:flex; flex-direction:column; overflow-y:auto; padding:60px 0 10px; background:#0b0b0b;">
+  <div style="flex:1; display:flex; flex-direction:column; overflow-y:auto; padding:10px 0; background:#0b0b0b;">
     <div id="combatTurnOrderBar"></div>
     <div id="combatArena">
       <div id="combatEnemyRow" class="combat-side"></div>
@@ -975,6 +978,42 @@
 
       <div class="field-label">Description</div>
       <textarea id="itemDescription" class="field-input" style="min-height:60px;" placeholder="Un morceau de bois brut."></textarea>
+
+      <div class="field-label" id="itemCombatUsableRow" style="display:none; align-items:center; gap:8px;">
+        <input type="checkbox" id="itemCombatUsable" style="width:auto;">
+        <label for="itemCombatUsable" style="margin:0;">Utilisable en combat</label>
+      </div>
+      <div id="itemCombatBlock" style="display:none;">
+        <div class="field-label">Effet en combat</div>
+        <select id="itemCombatMode" class="field-input">
+          <option value="heal">💚 Soigner des PV</option>
+          <option value="purify">🧼 Retirer les états négatifs</option>
+          <option value="status_enemy">☠️ Infliger un état à un ennemi</option>
+          <option value="status_boost">✨ Booster un allié (état positif)</option>
+        </select>
+
+        <div id="itemCombatHealWrap" style="display:none;">
+          <div class="field-label">PV rendus</div>
+          <input type="number" id="itemCombatHealPower" class="field-input" value="30" min="1">
+        </div>
+
+        <div id="itemCombatStatusWrap" style="display:none;">
+          <div class="field-label" id="itemCombatStatusIdLabel">État</div>
+          <select id="itemCombatStatusId" class="field-input"></select>
+          <div class="field-row">
+            <div>
+              <div class="field-label" style="margin-top:0;">Chance (%)</div>
+              <input type="number" id="itemCombatStatusChance" class="field-input" value="100" min="1" max="100">
+            </div>
+            <div>
+              <div class="field-label" style="margin-top:0;">Durée (tours)</div>
+              <input type="number" id="itemCombatStatusDuration" class="field-input" value="3" min="1">
+            </div>
+          </div>
+          <div class="field-label">Valeur (dégâts/soin/bonus en % ou montant selon l'état)</div>
+          <input type="number" id="itemCombatStatusValue" class="field-input" value="10" min="0">
+        </div>
+      </div>
 
       <div class="field-label" id="itemEquippableRow" style="display:flex; align-items:center; gap:8px;">
         <input type="checkbox" id="itemEquippable" style="width:auto;">
@@ -3235,6 +3274,31 @@ function renderPnjMetierSelect(){
   if (current) sel.value = current;
 }
 
+/* Objet consommable utilisable en combat : soin (flat), ou état (purification / infligé à un ennemi / boost allié). */
+function renderItemCombatStatusOptions(){
+  const mode = document.getElementById('itemCombatMode').value;
+  const sel = document.getElementById('itemCombatStatusId');
+  if (mode === 'status_enemy'){
+    sel.innerHTML = STATUS_CATALOG.filter(s=>s.negative).map(s=>`<option value="${s.id}">${s.label}</option>`).join('');
+  } else if (mode === 'status_boost'){
+    sel.innerHTML = STATUS_CATALOG.filter(s=>!s.negative && s.id!=='purify').map(s=>`<option value="${s.id}">${s.label}</option>`).join('');
+  }
+}
+function renderItemCombatModeFields(){
+  const mode = document.getElementById('itemCombatMode').value;
+  document.getElementById('itemCombatHealWrap').style.display = (mode === 'heal') ? 'block' : 'none';
+  document.getElementById('itemCombatStatusWrap').style.display = (mode === 'heal') ? 'none' : 'block';
+  const isFixedPurify = (mode === 'purify');
+  document.getElementById('itemCombatStatusIdLabel').style.display = isFixedPurify ? 'none' : 'block';
+  document.getElementById('itemCombatStatusId').style.display = isFixedPurify ? 'none' : 'block';
+  if (!isFixedPurify && mode !== 'heal') renderItemCombatStatusOptions();
+}
+document.getElementById('itemCombatMode').addEventListener('change', renderItemCombatModeFields);
+document.getElementById('itemCombatUsable').addEventListener('change', (e)=>{
+  document.getElementById('itemCombatBlock').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) renderItemCombatModeFields();
+});
+
 function renderItemEquipMetiers(){
   const wrap = document.getElementById('itemEquipMetiers');
   if (!wrap) return;
@@ -3254,6 +3318,12 @@ document.getElementById('itemEquippable').addEventListener('change', (e)=>{
 document.getElementById('itemType').addEventListener('change', (e)=>{
   const isEquipType = e.target.value === 'equipement';
   document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
+  const isConsommable = e.target.value === 'consommable';
+  document.getElementById('itemCombatUsableRow').style.display = isConsommable ? 'flex' : 'none';
+  if (!isConsommable){
+    document.getElementById('itemCombatUsable').checked = false;
+    document.getElementById('itemCombatBlock').style.display = 'none';
+  }
   if (isEquipType){
     document.getElementById('itemEquippable').checked = true;
     document.getElementById('itemEffectWrap').style.display = 'block';
@@ -3614,6 +3684,20 @@ function loadItemForEdit(id){
   document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
   document.getElementById('itemEquippable').checked = equippable;
   document.getElementById('itemEffectWrap').style.display = equippable ? 'block' : 'none';
+  const isConsommable = (it.type || 'ressource') === 'consommable';
+  document.getElementById('itemCombatUsableRow').style.display = isConsommable ? 'flex' : 'none';
+  const cu = it.combatUse || null;
+  document.getElementById('itemCombatUsable').checked = !!(cu && cu.enabled);
+  document.getElementById('itemCombatBlock').style.display = (cu && cu.enabled) ? 'block' : 'none';
+  document.getElementById('itemCombatMode').value = (cu && cu.mode) ? cu.mode : 'heal';
+  document.getElementById('itemCombatHealPower').value = (cu && cu.healPower != null) ? cu.healPower : 30;
+  renderItemCombatModeFields();
+  if (cu && cu.statusEffect){
+    document.getElementById('itemCombatStatusId').value = cu.statusEffect.id || '';
+    document.getElementById('itemCombatStatusChance').value = cu.statusEffect.chance != null ? cu.statusEffect.chance : 100;
+    document.getElementById('itemCombatStatusDuration').value = cu.statusEffect.duration != null ? cu.statusEffect.duration : 3;
+    document.getElementById('itemCombatStatusValue').value = cu.statusEffect.value != null ? cu.statusEffect.value : 10;
+  }
   document.getElementById('itemEquipCategory').value = it.equipCategory || 'accessoire';
   document.getElementById('itemEffectType').value = it.effectType || 'speed_boost';
   document.getElementById('itemEffectValueLabel').textContent = (document.getElementById('itemEffectType').value === 'speed_boost') ? 'Valeur (%)' : 'Valeur (bonus fixe)';
@@ -3650,6 +3734,14 @@ function resetItemForm(){
   document.getElementById('itemEquippableRow').style.display = 'flex';
   document.getElementById('itemEquippable').checked = false;
   document.getElementById('itemEffectWrap').style.display = 'none';
+  document.getElementById('itemCombatUsableRow').style.display = 'none';
+  document.getElementById('itemCombatUsable').checked = false;
+  document.getElementById('itemCombatBlock').style.display = 'none';
+  document.getElementById('itemCombatMode').value = 'heal';
+  document.getElementById('itemCombatHealPower').value = 30;
+  document.getElementById('itemCombatStatusChance').value = 100;
+  document.getElementById('itemCombatStatusDuration').value = 3;
+  document.getElementById('itemCombatStatusValue').value = 10;
   document.getElementById('itemEquipCategory').value = 'accessoire';
   document.getElementById('itemEffectType').value = 'speed_boost';
   document.getElementById('itemEffectValue').value = 20;
@@ -3682,7 +3774,22 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   const basePrice = parseInt(document.getElementById('itemBasePrice').value, 10) || 0;
   if (!name){ showToast('Donne un nom à l\'objet'); return; }
   if (!itemsCol){ showToast('Firebase indisponible ici'); return; }
-  const data = { name, emoji, imageUrl, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, updatedAt: Date.now() };
+  let combatUse = null;
+  if (type === 'consommable' && document.getElementById('itemCombatUsable').checked){
+    const mode = document.getElementById('itemCombatMode').value;
+    if (mode === 'heal'){
+      combatUse = { enabled:true, mode, healPower: parseInt(document.getElementById('itemCombatHealPower').value,10) || 1 };
+    } else {
+      const statusId = (mode === 'purify') ? 'purify' : document.getElementById('itemCombatStatusId').value;
+      combatUse = { enabled:true, mode, statusEffect: {
+        id: statusId,
+        chance: parseInt(document.getElementById('itemCombatStatusChance').value,10) || 100,
+        duration: parseInt(document.getElementById('itemCombatStatusDuration').value,10) || 3,
+        value: parseInt(document.getElementById('itemCombatStatusValue').value,10) || 0,
+      }};
+    }
+  }
+  const data = { name, emoji, imageUrl, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -7502,7 +7609,8 @@ async function playTurnAnimation(actor, attack, target){
   renderCombat();
   await sleep(attack.school === 'magic' ? 550 : 350);
 
-  resolveAttack(actor, attack, target);
+  if (attack.isItem) resolveItemUse(actor, attack, target);
+  else resolveAttack(actor, attack, target);
 
   combatState.anim = null;
   combatState.particles = [];
@@ -7540,7 +7648,7 @@ function renderCombatActionButtons(fighter){
   panel.innerHTML = silencedNote + `<div class="combat-attack-grid">${slots}</div>`
     + `<div class="combat-action-secondary">
         <button type="button" class="btn-secondary" id="combatAnalyzeBtn">🔍 Analyse</button>
-        <button type="button" class="btn-secondary" id="combatItemBtn" disabled style="opacity:.4;">🎒 Objet</button>
+        <button type="button" class="btn-secondary" id="combatItemBtn">🎒 Objet</button>
         <button type="button" class="btn-secondary" id="combatPassBtn">⏭️ Passer</button>
         <button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">🏃 Fuir</button>
       </div>`;
@@ -7558,6 +7666,31 @@ function renderCombatActionButtons(fighter){
     showToast('Choisis une cible ennemie à analyser');
   });
   document.getElementById('combatPassBtn').addEventListener('click', ()=> passCombatTurn(fighter));
+  document.getElementById('combatItemBtn').addEventListener('click', ()=> renderCombatItemMenu(fighter));
+}
+/* Liste des objets consommables utilisables en combat présents dans le sac, avec un retour vers les attaques. */
+function renderCombatItemMenu(fighter){
+  const panel = document.getElementById('combatActionPanel');
+  const available = items.filter(it=> it.type==='consommable' && it.combatUse && it.combatUse.enabled && (baseResources[it.id]||0) > 0);
+  const slots = available.length ? available.map(it=>{
+    const qty = baseResources[it.id]||0;
+    return `<button type="button" class="btn-secondary combat-action-item" data-itemid="${it.id}">
+      <strong>${it.emoji||'📦'} ${it.name} <span class="meta">(x${qty})</span></strong>${it.description ? `<div class="combat-atk-desc">${it.description}</div>` : ''}
+    </button>`;
+  }).join('') : '<p class="meta" style="padding:8px; text-align:center;">Aucun objet utilisable en combat dans le sac.</p>';
+  panel.innerHTML = `<div class="combat-attack-grid" style="max-height:118px; overflow-y:auto;">${slots}</div>`
+    + `<button type="button" class="btn-secondary" id="combatItemBackBtn" style="width:calc(100% - 6px); margin:0 3px 3px;">↩️ Retour</button>`;
+  panel.querySelectorAll('.combat-action-item').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const it = available.find(i=>i.id===btn.dataset.itemid);
+      if (!it) return;
+      const cu = it.combatUse;
+      const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost';
+      combatState.pendingAttack = { kind:'item', isItem:true, itemId:it.id, name:it.name, emoji:it.emoji, combatUse:cu, statusEffect: cu.statusEffect||null };
+      showToast('Choisis une cible ' + (friendly ? 'alliée' : 'ennemie'));
+    });
+  });
+  document.getElementById('combatItemBackBtn').addEventListener('click', ()=> renderCombatActionButtons(fighter));
 }
 /* Passer son tour : la jauge repart à 50 (pas 0) — revient plus vite qu'après une vraie action. */
 function passCombatTurn(fighter){
@@ -7671,6 +7804,20 @@ async function onFighterCardClick(uid){
     renderCombat();
     return;
   }
+  if (attack.kind === 'item'){
+    const cu = attack.combatUse;
+    const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost';
+    if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
+    if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
+    combatState.pendingActor = null;
+    combatState.pendingAttack = null;
+    await playTurnAnimation(actor, attack, target);
+    decrementFighterStatuses(actor);
+    combatState.resolving = false;
+    checkCombatEnd();
+    renderCombat();
+    return;
+  }
   const friendly = isHealAttack(attack) || attack.kind === 'boost';
   if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
   if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
@@ -7716,6 +7863,24 @@ function applyAttackStatusEffect(attacker, attack, target){
   const se = attack.statusEffect;
   if (!se || !se.id || !target.alive) return;
   applyStatus(target, se.id, se.chance!=null?se.chance:100, se.duration||3, se.value!=null?se.value:10);
+}
+/* Résout l'usage d'un objet consommable en combat (soin flat / purification / état) et le retire du sac. */
+function resolveItemUse(actor, attack, target){
+  if (!target || !target.alive) return;
+  const cu = attack.combatUse;
+  if (cu.mode === 'heal'){
+    const healAmount = cu.healPower || 1;
+    target.hp = Math.min(target.maxHp, target.hp + healAmount);
+    combatState.log.unshift(`${actor.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
+    combatState.log = combatState.log.slice(0, 20);
+  } else if (cu.mode === 'purify'){
+    applyStatus(target, 'purify', 100, 1, 0);
+  } else {
+    applyAttackStatusEffect(actor, attack, target);
+  }
+  if (playerDocRef){
+    playerDocRef.set({ inventory: { [attack.itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true });
+  }
 }
 
 function resolveAttack(attacker, attack, target){
@@ -7897,11 +8062,6 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', ()=>{
   document.getElementById('combatFull').classList.remove('show');
   combatState = null;
 });
-document.getElementById('combatCloseBtn').addEventListener('click', ()=>{
-  clearInterval(combatTickTimer);
-  document.getElementById('combatFull').classList.remove('show');
-  combatState = null;
-});
 
 function statusBadgesHtml(f){
   const ids = Object.keys(f.statuses);
@@ -7923,7 +8083,6 @@ function particlesHtml(f){
 
 function fighterCardHtml(f){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
-  const gaugePct = Math.max(0, Math.min(100, Math.round(f.gauge)));
   const isActing = combatState.pendingActor === f.uid;
   const targetable = !!(combatState.pendingActor && combatState.pendingAttack && f.alive);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
@@ -7941,9 +8100,6 @@ function fighterCardHtml(f){
       <div style="font-size:10px; color:#fff; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div>
       <div style="height:6px; background:rgba(255,255,255,.15); border-radius:4px; overflow:hidden; margin-top:2px;">
         <div style="height:100%; width:${hpPct}%; background:${hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c'};"></div>
-      </div>
-      <div style="height:3px; background:rgba(255,255,255,.12); border-radius:2px; overflow:hidden; margin-top:2px;">
-        <div style="height:100%; width:${gaugePct}%; background:var(--accent);"></div>
       </div>
       ${statusBadgesHtml(f)}
     </div>
