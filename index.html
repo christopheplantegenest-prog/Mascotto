@@ -486,6 +486,8 @@
     <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
     <button class="btn-secondary" id="cleanupFeteBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer le scénario "La fête de Lanville"</button>
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
+    <button class="btn-secondary" id="createCombatTestDataBtn" style="width:100%; margin-bottom:10px;">🧪 Créer attaques/monstres de test (combat)</button>
+    <button class="btn-secondary" id="cleanupCombatTestDataBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les attaques/monstres de test</button>
 
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%; margin-top:6px;">Fermer</button>
   </div>
@@ -7183,6 +7185,63 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
   const shuffled = monsterPool.slice().sort(()=> Math.random()-0.5);
   const enemyFighters = buildEnemyFighters(shuffled.slice(0, Math.min(3, shuffled.length)));
   startCombat(playerFighters, enemyFighters);
+});
+
+/* ---------- Jeu de données de test pour le combat : attaques + monstres (couvre les 17 états) ---------- */
+const COMBAT_TEST_PREFIX = 'Test combat : ';
+document.getElementById('createCombatTestDataBtn').addEventListener('click', async ()=>{
+  if (!attacksCol || !creatureCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
+  if (attacks.find(a=>a.name && a.name.startsWith(COMBAT_TEST_PREFIX))){ showToast('Les attaques de test existent déjà. Supprime-les d\'abord si tu veux les régénérer.'); return; }
+  try {
+    async function ensureAttack(name, data){
+      const ref = await attacksCol.add({ name, description:'', learnDuration:60, allowedMetiers:[], statusEffect:null, createdAt:Date.now(), updatedAt:Date.now(), ...data });
+      await syncAttackLearnItem(ref.id, name);
+      return ref.id;
+    }
+    const epeeId = await ensureAttack(COMBAT_TEST_PREFIX+'Coup d\'épée', { emoji:'🗡️', kind:'damage_single', school:'physical', tribe:'', power:15 });
+    const feuId = await ensureAttack(COMBAT_TEST_PREFIX+'Boule de feu', { emoji:'🔥', kind:'damage_single', school:'magic', tribe:'feu', power:15, statusEffect:{ id:'burn', chance:40, duration:3, value:10 } });
+    const soinId = await ensureAttack(COMBAT_TEST_PREFIX+'Soin', { emoji:'💚', kind:'heal_single', school:'magic', tribe:'', power:20 });
+    const boucId = await ensureAttack(COMBAT_TEST_PREFIX+'Bouclier', { emoji:'🛡️', kind:'boost', school:'physical', tribe:'', power:0, statusEffect:{ id:'shield', chance:100, duration:4, value:30 } });
+    const poisonId = await ensureAttack(COMBAT_TEST_PREFIX+'Morsure venimeuse', { emoji:'🤢', kind:'debuff', school:'physical', tribe:'', power:0, statusEffect:{ id:'poison', chance:80, duration:4, value:10 } });
+    const provocId = await ensureAttack(COMBAT_TEST_PREFIX+'Provocation', { emoji:'📣', kind:'boost', school:'physical', tribe:'', power:0, statusEffect:{ id:'taunt', chance:100, duration:3, value:0 } });
+    const purifId = await ensureAttack(COMBAT_TEST_PREFIX+'Purification', { emoji:'🧼', kind:'boost', school:'magic', tribe:'', power:0, statusEffect:{ id:'purify', chance:100, duration:1, value:0 } });
+    const etourId = await ensureAttack(COMBAT_TEST_PREFIX+'Coup étourdissant', { emoji:'💫', kind:'damage_single', school:'physical', tribe:'', power:8, statusEffect:{ id:'stun', chance:50, duration:1, value:0 } });
+
+    function buildCombatStats(overrides){
+      return { tribe:'', hp:80, speed:10, atk:12, def:8, matk:8, mdef:8, precision:90, evasion:10, recruitable:false, rarity:'commun', fleeChance:35, attackIds:[], startingAttackIds:[], immunities:[], resistances:[], rewardItemIds:[], ...overrides };
+    }
+    async function ensureMonster(name, lat, lng, emoji, combatStats){
+      const attackIds = combatStats.attackIds;
+      await creatureCol.add({
+        name, metier:null, emoji, imageUrl:'', visibilityCondition:null, hideOnExitRadius:false, dupeGroup:null,
+        dialogueSteps:[], interactionType:'combat', shopItems:[], shopPhrase:'',
+        combatStats: { ...combatStats, attackIds, startingAttackIds: attackIds },
+        zoneShowName:false, lat, lng, assignedZoneId:null,
+        startDate:null, endDate:null, startTime:null, endTime:null, daysOfWeek:[],
+        createdAt: Date.now(), updatedAt: Date.now(),
+      });
+    }
+    await ensureMonster(COMBAT_TEST_PREFIX+'Gobelin d\'essai', 45.8463, 0.0199, '👺', buildCombatStats({ tribe:'terre', hp:70, speed:12, atk:14, def:7, attackIds:[epeeId, poisonId, etourId] }));
+    await ensureMonster(COMBAT_TEST_PREFIX+'Sorcière d\'essai', 45.8461, 0.0201, '🧙', buildCombatStats({ tribe:'feu', hp:60, speed:8, matk:16, mdef:10, attackIds:[feuId, soinId, boucId, provocId] }));
+    await ensureMonster(COMBAT_TEST_PREFIX+'Esprit gardien d\'essai', 45.8465, 0.0203, '👻', buildCombatStats({ tribe:'lumiere', hp:90, speed:9, atk:10, matk:10, attackIds:[epeeId, purifId, boucId] }));
+
+    showToast('7 attaques et 3 monstres de test créés (près du Marcivil sur la carte).');
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
+
+document.getElementById('cleanupCombatTestDataBtn').addEventListener('click', async ()=>{
+  if (!attacksCol || !creatureCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
+  if (!confirm('Supprimer définitivement les attaques et monstres de test créés pour le combat ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
+  try {
+    const testAttacks = attacks.filter(a=> a.name && a.name.startsWith(COMBAT_TEST_PREFIX));
+    const testAttackIds = new Set(testAttacks.map(a=>a.id));
+    const testManuals = items.filter(it=> it.teachesAttackId && testAttackIds.has(it.teachesAttackId));
+    const testCreatures = creatures.filter(c=> c.name && c.name.startsWith(COMBAT_TEST_PREFIX));
+    await Promise.all(testCreatures.map(c=> creatureCol.doc(c.id).delete()));
+    await Promise.all(testAttacks.map(a=> attacksCol.doc(a.id).delete()));
+    await Promise.all(testManuals.map(it=> itemsCol.doc(it.id).delete()));
+    showToast(`Supprimé : ${testCreatures.length} monstre(s), ${testAttacks.length} attaque(s), ${testManuals.length} manuel(s).`);
+  } catch(err){ showToast('Échec : ' + err.message); }
 });
 
 function startCombat(playerFighters, enemyFighters){
