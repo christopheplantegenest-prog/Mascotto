@@ -448,8 +448,30 @@
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
     <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
     <button class="btn-secondary" id="cleanupFeteBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer le scénario "La fête de Lanville"</button>
+    <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
 
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%; margin-top:6px;">Fermer</button>
+  </div>
+</div>
+
+<!-- Combat (structure de base : jauge de vitesse, ciblage, attaques — sans états ni animations pour l'instant) -->
+<div class="scene-full" id="combatFull">
+  <div class="scene-topbar">
+    <span style="color:#fff; font-weight:700; background:rgba(0,0,0,.55); padding:6px 10px; border-radius:10px;">⚔️ Combat</span>
+    <button class="sheet-x" id="combatCloseBtn">✕</button>
+  </div>
+  <div style="flex:1; display:flex; flex-direction:column; justify-content:space-between; padding:60px 10px 10px; background:#111;">
+    <div id="combatEnemyRow" style="display:flex; justify-content:space-around; gap:6px;"></div>
+    <div id="combatLog" style="color:rgba(255,255,255,.8); font-size:12px; text-align:center; max-height:70px; overflow-y:auto; margin:10px 0; padding:0 6px;"></div>
+    <div id="combatPlayerRow" style="display:flex; justify-content:space-around; gap:6px;"></div>
+  </div>
+  <div class="scene-bottombar" id="combatActionBar" style="display:none;">
+    <div id="combatActionButtons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+  </div>
+  <div id="combatEndOverlay" style="display:none; position:absolute; inset:0; background:rgba(0,0,0,.88); align-items:center; justify-content:center; flex-direction:column; z-index:20; text-align:center;">
+    <h2 id="combatEndTitle" style="color:#fff; margin:0 0 10px;"></h2>
+    <p id="combatEndDesc" class="meta" style="color:rgba(255,255,255,.8); padding:0 24px; margin:0;"></p>
+    <button class="btn-capture" id="combatEndCloseBtn" style="margin-top:18px;">Fermer</button>
   </div>
 </div>
 
@@ -3471,6 +3493,12 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   if (!name){ showToast('Donne un nom à l\'objet'); return; }
   if (!itemsCol){ showToast('Firebase indisponible ici'); return; }
   const data = { name, emoji, imageUrl, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, updatedAt: Date.now() };
+  if (editingItemId){
+    // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
+    const existingItem = items.find(i=>i.id===editingItemId);
+    if (existingItem && existingItem.teachesAttackId) data.teachesAttackId = existingItem.teachesAttackId;
+    if (existingItem && existingItem.teachesRecipeId) data.teachesRecipeId = existingItem.teachesRecipeId;
+  }
   const op = editingItemId ? itemsCol.doc(editingItemId).set(data) : itemsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingItemId ? 'Objet mis à jour' : 'Objet ajouté'); resetItemForm(); showItemsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
@@ -6983,6 +7011,273 @@ document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
 document.getElementById('sceneDialogueCloseBtn2').addEventListener('click', ()=>{
   document.getElementById('sceneDialogueOverlay').classList.remove('show');
 });
+
+/* ================= COMBAT — structure de base (jauge de vitesse, ciblage, dégâts/soin bruts) =================
+   Pas encore inclus (prochaines étapes) : états/altérations, animations, connexion aux zones d'exploration (déclenchement via rencontre/boss).
+   Combat en mémoire uniquement pour l'instant : fermer l'appli en cours de combat le perd (pas de reprise). */
+let combatState = null;
+let combatTickTimer = null;
+
+function resolveFighterAttacks(attackIds){
+  return (attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean);
+}
+function isHealAttack(a){ return a && (a.kind==='heal_single' || a.kind==='heal_group'); }
+
+function buildPlayerFighters(){
+  return activeTeamIds
+    .map(id=> recruits.find(r=>r.id===id))
+    .filter(r=> r && r.recruitType==='combattant')
+    .slice(0,3)
+    .map((r,i)=>{
+      const cs = r.combatStats || {};
+      return {
+        uid:'p'+i, side:'player', sourceId:r.id, name:r.name, imageUrl:r.imageUrl||'', tribe:cs.tribe||'',
+        maxHp:cs.hp||1, hp:cs.hp||1,
+        atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
+        precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
+        attacksList: resolveFighterAttacks(r.learnedAttackIds),
+        gauge: Math.random()*30, alive:true,
+      };
+    });
+}
+function buildEnemyFighters(monsterList){
+  return monsterList.slice(0,3).map((c,i)=>{
+    const cs = c.combatStats || {};
+    return {
+      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name, imageUrl:c.imageUrl||'', tribe:cs.tribe||'',
+      maxHp:cs.hp||1, hp:cs.hp||1,
+      atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
+      precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
+      attacksList: resolveFighterAttacks(cs.attackIds),
+      rewardItemIds: cs.rewardItemIds||[], fleeChance: cs.fleeChance!=null?cs.fleeChance:30,
+      gauge: Math.random()*30, alive:true,
+    };
+  });
+}
+
+document.getElementById('testCombatBtn').addEventListener('click', ()=>{
+  document.getElementById('editHubOverlay').classList.remove('show');
+  const playerFighters = buildPlayerFighters();
+  if (!playerFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
+  const monsterPool = creatures.filter(c=> c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+  if (!monsterPool.length){ showToast('Crée d\'abord un monstre (non recrutable) dans l\'éditeur PNJ'); return; }
+  const shuffled = monsterPool.slice().sort(()=> Math.random()-0.5);
+  const enemyFighters = buildEnemyFighters(shuffled.slice(0, Math.min(3, shuffled.length)));
+  startCombat(playerFighters, enemyFighters);
+});
+
+function startCombat(playerFighters, enemyFighters){
+  combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false };
+  document.getElementById('combatFull').classList.add('show');
+  document.getElementById('combatEndOverlay').style.display = 'none';
+  document.getElementById('combatActionBar').style.display = 'none';
+  renderCombat();
+  clearInterval(combatTickTimer);
+  combatTickTimer = setInterval(combatTick, 150);
+}
+
+function combatTick(){
+  if (!combatState || combatState.finished || combatState.resolving){ renderCombat(); return; }
+  let acted = false;
+  combatState.fighters.forEach(f=>{
+    if (!f.alive || acted) return;
+    f.gauge += (f.speed||1) * 0.5;
+    if (f.gauge >= 100){
+      acted = true;
+      f.gauge = 0;
+      takeTurn(f);
+    }
+  });
+  renderCombat();
+}
+
+function takeTurn(fighter){
+  combatState.resolving = true;
+  if (fighter.side === 'player'){
+    combatState.pendingActor = fighter.uid;
+    combatState.pendingAttack = null;
+    document.getElementById('combatActionBar').style.display = 'flex';
+    renderCombatActionButtons(fighter);
+    renderCombat();
+  } else {
+    setTimeout(()=>{
+      if (!combatState || combatState.finished) return;
+      const alivePlayers = combatState.fighters.filter(f=>f.side==='player' && f.alive);
+      if (alivePlayers.length){
+        const atk = fighter.attacksList.length ? fighter.attacksList[Math.floor(Math.random()*fighter.attacksList.length)] : null;
+        const target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
+        resolveAttack(fighter, atk, target);
+      }
+      combatState.resolving = false;
+      checkCombatEnd();
+      renderCombat();
+    }, 500);
+  }
+}
+
+function renderCombatActionButtons(fighter){
+  const wrap = document.getElementById('combatActionButtons');
+  const atks = fighter.attacksList;
+  wrap.innerHTML = (atks.length ? atks.map((a,i)=>`<button type="button" class="btn-secondary combat-action-atk" data-idx="${i}" style="flex:1 1 45%;">${a.emoji||'✨'} ${a.name}</button>`).join('') : '<p class="meta" style="width:100%;">Aucune attaque connue.</p>')
+    + `<button type="button" class="btn-secondary" id="combatFleeBtn" style="flex:1 1 100%; color:var(--danger); border-color:rgba(192,57,43,.4);">🏃 Fuir</button>`;
+  wrap.querySelectorAll('.combat-action-atk').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      combatState.pendingAttack = atks[parseInt(btn.dataset.idx,10)];
+      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) ? 'alliée' : 'ennemie'));
+    });
+  });
+  document.getElementById('combatFleeBtn').addEventListener('click', attemptFlee);
+}
+
+function onFighterCardClick(uid){
+  if (!combatState || !combatState.pendingActor || !combatState.pendingAttack) return;
+  const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
+  const target = combatState.fighters.find(f=>f.uid===uid);
+  if (!actor || !target || !target.alive) return;
+  const heal = isHealAttack(combatState.pendingAttack);
+  if (heal && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
+  if (!heal && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
+  resolveAttack(actor, combatState.pendingAttack, target);
+  combatState.pendingActor = null;
+  combatState.pendingAttack = null;
+  combatState.resolving = false;
+  document.getElementById('combatActionBar').style.display = 'none';
+  checkCombatEnd();
+  renderCombat();
+}
+
+function tribeMultiplier(attackerTribe, defenderTribe){
+  if (!attackerTribe || !defenderTribe || attackerTribe===defenderTribe) return 1;
+  const STRONG_AGAINST = { feu:'terre', terre:'air', air:'eau', eau:'feu', lumiere:'ombre', ombre:'lumiere' };
+  if (STRONG_AGAINST[attackerTribe] === defenderTribe) return 1.5;
+  if (STRONG_AGAINST[defenderTribe] === attackerTribe) return 0.5;
+  return 1;
+}
+
+function resolveAttack(attacker, attack, target){
+  if (!target || !target.alive) return;
+  if (!attack){
+    combatState.log.unshift(`${attacker.name} n'a aucune attaque à utiliser.`);
+    return;
+  }
+  const isMagic = attack.school === 'magic';
+  const heal = isHealAttack(attack);
+  if (heal){
+    const power = attack.power || 10;
+    const healAmount = Math.round(power * (1 + (isMagic ? (attacker.matk||1) : (attacker.atk||1))/50));
+    target.hp = Math.min(target.maxHp, target.hp + healAmount);
+    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
+    combatState.log = combatState.log.slice(0, 20);
+    return;
+  }
+  const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50));
+  if (Math.random()*100 >= hitChance){
+    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
+    combatState.log = combatState.log.slice(0, 20);
+    return;
+  }
+  const atkStat = isMagic ? (attacker.matk||1) : (attacker.atk||1);
+  const defStat = isMagic ? (target.mdef||1) : (target.def||1);
+  const mult = tribeMultiplier(attack.tribe || attacker.tribe, target.tribe);
+  let dmg = Math.max(1, Math.round(((attack.power||10) + atkStat) - defStat*0.6));
+  dmg = Math.round(dmg * mult);
+  target.hp = Math.max(0, target.hp - dmg);
+  if (target.hp <= 0) target.alive = false;
+  const bonus = mult > 1 ? ' (efficace !)' : (mult < 1 ? ' (peu efficace...)' : '');
+  combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : -${dmg} PV${bonus}`);
+  combatState.log = combatState.log.slice(0, 20);
+}
+
+function attemptFlee(){
+  const enemyFighters = combatState.fighters.filter(f=>f.side==='enemy' && f.alive);
+  const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
+  const success = Math.random()*100 < avgFlee;
+  document.getElementById('combatActionBar').style.display = 'none';
+  combatState.pendingActor = null;
+  combatState.pendingAttack = null;
+  combatState.resolving = false;
+  if (success){
+    combatState.log.unshift('Fuite réussie !');
+    endCombat('flee');
+  } else {
+    combatState.log.unshift('Fuite ratée !');
+    renderCombat();
+  }
+}
+
+function checkCombatEnd(){
+  if (!combatState || combatState.finished) return;
+  const playersAlive = combatState.fighters.some(f=>f.side==='player' && f.alive);
+  const enemiesAlive = combatState.fighters.some(f=>f.side==='enemy' && f.alive);
+  if (!playersAlive) endCombat('defeat');
+  else if (!enemiesAlive) endCombat('victory');
+}
+
+function endCombat(result){
+  combatState.finished = true;
+  clearInterval(combatTickTimer);
+  document.getElementById('combatActionBar').style.display = 'none';
+  const title = document.getElementById('combatEndTitle');
+  const desc = document.getElementById('combatEndDesc');
+  if (result === 'victory'){
+    title.textContent = '🎉 Victoire !';
+    const rewardIds = new Set();
+    combatState.fighters.filter(f=>f.side==='enemy').forEach(f=> (f.rewardItemIds||[]).forEach(id=>rewardIds.add(id)));
+    if (rewardIds.size && playerDocRef){
+      const inc = {};
+      rewardIds.forEach(id=> inc[id] = firebase.firestore.FieldValue.increment(1));
+      playerDocRef.set({ inventory: inc }, { merge:true });
+    }
+    const rewardNames = Array.from(rewardIds).map(id=>{ const it=items.find(i=>i.id===id); return it ? (it.emoji||'📦')+' '+it.name : null; }).filter(Boolean);
+    desc.textContent = rewardNames.length ? ('Butin : ' + rewardNames.join(', ')) : 'Combat remporté (pas de butin configuré).';
+  } else if (result === 'defeat'){
+    title.textContent = '💀 Défaite';
+    desc.textContent = 'Ton équipe a été vaincue. Pas de pénalité pour ce test.';
+  } else {
+    title.textContent = '🏃 Fuite';
+    desc.textContent = 'Tu as échappé au combat.';
+  }
+  document.getElementById('combatEndOverlay').style.display = 'flex';
+}
+document.getElementById('combatEndCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('combatFull').classList.remove('show');
+  combatState = null;
+});
+document.getElementById('combatCloseBtn').addEventListener('click', ()=>{
+  clearInterval(combatTickTimer);
+  document.getElementById('combatFull').classList.remove('show');
+  combatState = null;
+});
+
+function fighterCardHtml(f){
+  const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
+  const gaugePct = Math.max(0, Math.min(100, Math.round(f.gauge)));
+  const isActing = combatState.pendingActor === f.uid;
+  const targetable = !!(combatState.pendingActor && combatState.pendingAttack && f.alive);
+  return `
+    <div class="combat-fighter" data-fighter="${f.uid}" style="text-align:center; width:31%; max-width:110px; ${f.alive?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
+      <div style="position:relative; width:52px; height:52px; margin:0 auto; border-radius:50%; overflow:hidden; border:2px solid ${isActing?'var(--accent)':'rgba(255,255,255,.3)'};">
+        ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#222;color:#fff;font-size:20px;">${f.side==='player'?'🧑':'👾'}</div>`}
+      </div>
+      <div style="font-size:10px; color:#fff; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div>
+      <div style="height:6px; background:rgba(255,255,255,.15); border-radius:4px; overflow:hidden; margin-top:2px;">
+        <div style="height:100%; width:${hpPct}%; background:${hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c'};"></div>
+      </div>
+      <div style="height:3px; background:rgba(255,255,255,.12); border-radius:2px; overflow:hidden; margin-top:2px;">
+        <div style="height:100%; width:${gaugePct}%; background:var(--accent);"></div>
+      </div>
+    </div>
+  `;
+}
+function renderCombat(){
+  if (!combatState) return;
+  document.getElementById('combatEnemyRow').innerHTML = combatState.fighters.filter(f=>f.side==='enemy').map(fighterCardHtml).join('');
+  document.getElementById('combatPlayerRow').innerHTML = combatState.fighters.filter(f=>f.side==='player').map(fighterCardHtml).join('');
+  document.querySelectorAll('.combat-fighter').forEach(el=>{
+    el.addEventListener('click', ()=> onFighterCardClick(el.dataset.fighter));
+  });
+  document.getElementById('combatLog').innerHTML = combatState.log.slice(0,6).map(l=>`<div>${l}</div>`).join('');
+}
 
 </script>
 </body>
