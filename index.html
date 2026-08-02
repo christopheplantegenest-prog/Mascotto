@@ -518,19 +518,6 @@
   </div>
 </div>
 
-<!-- Choix des attaques de départ à la recrue d'un combattant -->
-<div class="overlay" id="recruitAttackPickOverlay">
-  <div class="sheet">
-    <div class="sheet-top">
-      <h3 style="margin-top:0;">Attaques de départ</h3>
-      <button class="sheet-x" id="recruitAttackPickCloseBtn">✕</button>
-    </div>
-    <p class="meta">Choisis au moins une attaque parmi celles connues par ce combattant.</p>
-    <div id="recruitAttackPickList" style="display:flex; flex-direction:column; gap:6px; margin:10px 0;"></div>
-    <button class="btn-capture" id="recruitAttackPickConfirmBtn" style="width:100%;">Confirmer le recrutement</button>
-  </div>
-</div>
-
 <!-- Choix d'un manuel à apprendre -->
 <div class="overlay" id="baseLearnChooserOverlay">
   <div class="sheet">
@@ -1082,6 +1069,7 @@
           <input type="number" id="editCombatFleeChance" class="field-input" value="30" min="0" max="100">
         </div>
         <div class="field-label">Attaques connues (4 maximum)</div>
+        <p class="meta" style="margin:0 0 6px;">Touche ⭐ sur une attaque sélectionnée pour qu'une recrue la connaisse dès son recrutement (au moins une obligatoire si recrutable).</p>
         <div id="combatAttacksList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
         <div id="combatMonsterOnlyFields2">
           <div class="field-label">Immunités (états sans aucun effet)</div>
@@ -1511,6 +1499,7 @@ document.getElementById('editCombatRecruitable').addEventListener('change', (e)=
   document.getElementById('combatMonsterOnlyFields2').style.display = e.target.checked ? 'none' : 'block';
 });
 let selectedCombatAttacks = new Set();
+let selectedStartingAttacks = new Set(); // sous-ensemble de selectedCombatAttacks : celles connues dès le recrutement
 const COMBAT_STATUSES = [
   { id:'stun', label:'💫 Étourdi' }, { id:'poison', label:'🤢 Empoisonné' }, { id:'burn', label:'🔥 Brûlé' },
   { id:'confuse', label:'😵 Confus' }, { id:'sleep', label:'😴 Endormi' }, { id:'paralysis', label:'⚡ Paralysé' },
@@ -1522,18 +1511,34 @@ let selectedCombatRewards = new Set();
 function renderCombatAttacksPicker(){
   const wrap = document.getElementById('combatAttacksList');
   if (!wrap) return;
-  wrap.innerHTML = attacks.map(a=>`
-    <button type="button" class="btn-secondary combat-attack-btn" data-attack="${a.id}" style="${selectedCombatAttacks.has(a.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${a.emoji||'✨'} ${a.name}</button>
-  `).join('') || '<p class="meta">Aucune attaque créée pour l\'instant (éditeur "Attaques").</p>';
+  wrap.innerHTML = attacks.map(a=>{
+    const selected = selectedCombatAttacks.has(a.id);
+    const starting = selectedStartingAttacks.has(a.id);
+    return `
+    <span style="display:inline-flex; align-items:center; gap:2px; margin:2px;">
+      <button type="button" class="btn-secondary combat-attack-btn" data-attack="${a.id}" style="${selected ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${a.emoji||'✨'} ${a.name}</button>
+      ${selected ? `<button type="button" class="btn-secondary combat-attack-start-btn" data-attack-start="${a.id}" title="Attaque de départ à la recrue" style="padding:4px 8px; ${starting ? 'background:#f1c40f; color:#000; border-color:#f1c40f;' : ''}">⭐</button>` : ''}
+    </span>
+  `;
+  }).join('') || '<p class="meta">Aucune attaque créée pour l\'instant (éditeur "Attaques").</p>';
   wrap.querySelectorAll('.combat-attack-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const id = btn.dataset.attack;
       if (selectedCombatAttacks.has(id)){
         selectedCombatAttacks.delete(id);
+        selectedStartingAttacks.delete(id);
       } else {
         if (selectedCombatAttacks.size >= 4){ showToast('4 attaques maximum'); return; }
         selectedCombatAttacks.add(id);
       }
+      renderCombatAttacksPicker();
+    });
+  });
+  wrap.querySelectorAll('.combat-attack-start-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.attackStart;
+      if (selectedStartingAttacks.has(id)) selectedStartingAttacks.delete(id);
+      else selectedStartingAttacks.add(id);
       renderCombatAttacksPicker();
     });
   });
@@ -2251,44 +2256,10 @@ function grantItemToPlayer(itemName, quantity){
 }
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
-  const isCombattant = creature.interactionType === 'combat';
-  const cs = creature.combatStats || {};
-  const availableAttackIds = isCombattant ? (cs.attackIds || []) : [];
-  if (availableAttackIds.length){
-    openRecruitAttackPicker(creature, metierId, availableAttackIds);
-  } else {
-    finalizeRecruitCreature(creature, metierId, []);
-  }
-}
-function openRecruitAttackPicker(creature, metierId, attackIds){
-  const listEl = document.getElementById('recruitAttackPickList');
-  listEl.innerHTML = attackIds.map(id=>{
-    const a = attacks.find(x=>x.id===id);
-    if (!a) return '';
-    return `<label style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--line); border-radius:10px;">
-      <input type="checkbox" class="recruit-attack-pick-cb" value="${id}" checked>
-      <span>${a.emoji||'✨'} ${a.name}</span>
-    </label>`;
-  }).join('');
-  document.getElementById('recruitAttackPickOverlay').classList.add('show');
-  const oldBtn = document.getElementById('recruitAttackPickConfirmBtn');
-  const confirmBtn = oldBtn.cloneNode(true); // repart d'un bouton neuf pour ne pas empiler les listeners d'un recrutement à l'autre
-  oldBtn.parentNode.replaceChild(confirmBtn, oldBtn);
-  confirmBtn.addEventListener('click', ()=>{
-    const chosen = Array.from(listEl.querySelectorAll('.recruit-attack-pick-cb:checked')).map(cb=>cb.value);
-    if (!chosen.length){ showToast('Choisis au moins une attaque'); return; }
-    document.getElementById('recruitAttackPickOverlay').classList.remove('show');
-    finalizeRecruitCreature(creature, metierId, chosen);
-  });
-}
-document.getElementById('recruitAttackPickCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('recruitAttackPickOverlay').classList.remove('show');
-});
-function finalizeRecruitCreature(creature, metierId, learnedAttackIds){
-  if (!creature || !creature.id || !db) return;
   const recruitsColRef = db.collection('recruits');
   const isCombattant = creature.interactionType === 'combat';
   const cs = creature.combatStats || {};
+  const startingAttackIds = (cs.startingAttackIds && cs.startingAttackIds.length) ? cs.startingAttackIds : (cs.attackIds || []);
   recruitsColRef.add({
     name: creature.name || 'PNJ',
     metierId: metierId,
@@ -2302,7 +2273,7 @@ function finalizeRecruitCreature(creature, metierId, learnedAttackIds){
     recruitType: isCombattant ? 'combattant' : 'artisan',
     sourceCreatureId: creature.id,
     combatStats: isCombattant ? cs : null,
-    learnedAttackIds: isCombattant ? learnedAttackIds : [],
+    learnedAttackIds: isCombattant ? startingAttackIds : [],
     learnedRecipeIds: [],
     trainingAttackId: null,
     trainingStartedAt: null,
@@ -2653,6 +2624,7 @@ function loadForEdit(id){
   document.getElementById('combatMonsterOnlyFields').style.display = cs.recruitable ? 'none' : 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = cs.recruitable ? 'none' : 'block';
   selectedCombatAttacks = new Set(cs.attackIds || []);
+  selectedStartingAttacks = new Set((cs.startingAttackIds && cs.startingAttackIds.length) ? cs.startingAttackIds : (cs.attackIds || []));
   renderCombatAttacksPicker();
   selectedCombatImmunities = new Set(cs.immunities || []);
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
@@ -2733,6 +2705,7 @@ function resetForm(){
   document.getElementById('combatMonsterOnlyFields').style.display = 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = 'block';
   selectedCombatAttacks = new Set();
+  selectedStartingAttacks = new Set();
   renderCombatAttacksPicker();
   selectedCombatImmunities = new Set();
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
@@ -2818,6 +2791,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
     rarity: document.getElementById('editCombatRarity').value,
     fleeChance: parseInt(document.getElementById('editCombatFleeChance').value,10) || 30,
     attackIds: Array.from(selectedCombatAttacks),
+    startingAttackIds: Array.from(selectedStartingAttacks),
     immunities: Array.from(selectedCombatImmunities),
     resistances: Array.from(selectedCombatResistances),
     rewardItemIds: Array.from(selectedCombatRewards)
@@ -2830,6 +2804,7 @@ document.getElementById('editSaveBtn').addEventListener('click', ()=>{
 
   if (!name){ showToast('Donne un nom au PNJ'); return; }
   if (pendingLat === null && !pendingAssignedZoneId){ showToast('Choisis un emplacement sur la carte ou une zone d\'exploration'); return; }
+  if (interactionType === 'combat' && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
   const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
@@ -6383,16 +6358,7 @@ function renderSceneDetailAppearance(pt){
     reader.onload = (ev)=>{
       const img = new Image();
       img.onload = ()=>{
-        const maxSize = 900;
-        let w = img.width, h = img.height;
-        if (w > maxSize || h > maxSize){
-          if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
-          else { w = Math.round(w * maxSize/h); h = maxSize; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        pt.imageUrl = canvas.toDataURL('image/png');
+        pt.imageUrl = compressPointImageDataUrl(img);
         renderSceneEditorPoints();
         renderSceneDetailAppearance(pt);
       };
@@ -6604,6 +6570,45 @@ function renderSceneDetailTypeSpecific(pt){
 
 let sceneEditorImageLongPressTimer = null;
 let sceneEditorImageLongPressFired = false;
+/* Compresse une image de point en PNG (transparence conservée pour la sélection tactile), en réduisant
+   progressivement la taille si le résultat dépasse la limite d'un document Firestore. En tout dernier
+   recours (photo très riche même en petit), bascule en JPEG — la transparence est alors perdue. */
+function compressPointImageDataUrl(img){
+  const FIRESTORE_SAFE_LIMIT = 1000000; // marge sous les ~1 048 487 octets réels
+  function renderPng(maxSize){
+    let w = img.width, h = img.height;
+    if (w > maxSize || h > maxSize){
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/png');
+  }
+  let dataUrl = renderPng(900);
+  const fallbackSizes = [700, 500, 350, 220];
+  for (let i = 0; i < fallbackSizes.length && dataUrl.length > FIRESTORE_SAFE_LIMIT; i++){
+    dataUrl = renderPng(fallbackSizes[i]);
+  }
+  if (dataUrl.length > FIRESTORE_SAFE_LIMIT){
+    const maxSize = 900;
+    let w = img.width, h = img.height;
+    if (w > maxSize || h > maxSize){
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+      else { w = Math.round(w * maxSize/h); h = maxSize; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    showToast('Image trop lourde même compressée : convertie en JPEG (transparence perdue)');
+  }
+  return dataUrl;
+}
 document.getElementById('sceneEditorImageBtn').addEventListener('pointerdown', ()=>{
   sceneEditorImageLongPressFired = false;
   clearTimeout(sceneEditorImageLongPressTimer);
