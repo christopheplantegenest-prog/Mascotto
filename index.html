@@ -113,6 +113,7 @@
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
     border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
+    max-height:88vh; overflow-y:auto;
   }
   .sheet-top{ display:flex; justify-content:space-between; align-items:flex-start; }
   .sheet .emoji{ font-size:44px; }
@@ -494,8 +495,9 @@
     <div id="recruitCombatStatsSection"></div>
 
     <div id="recruitCraftSection"></div>
+    <div id="recruitRecipesSection"></div>
 
-    <div class="field-label">Attaques</div>
+    <div class="field-label" id="recruitAttacksLabel">Attaques</div>
     <div id="recruitAttacksSection"></div>
 
     <div class="field-label">Équipement</div>
@@ -509,10 +511,23 @@
 <div class="overlay" id="baseEquipChooserOverlay">
   <div class="sheet">
     <div class="sheet-top">
-      <h3 style="margin-top:0;">Équiper un objet</h3>
+      <h3 style="margin-top:0;" id="baseEquipChooserTitle">Équiper un objet</h3>
       <button class="sheet-x" id="baseEquipChooserCloseBtn">✕</button>
     </div>
     <div id="baseEquipChooserList"></div>
+  </div>
+</div>
+
+<!-- Choix des attaques de départ à la recrue d'un combattant -->
+<div class="overlay" id="recruitAttackPickOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Attaques de départ</h3>
+      <button class="sheet-x" id="recruitAttackPickCloseBtn">✕</button>
+    </div>
+    <p class="meta">Choisis au moins une attaque parmi celles connues par ce combattant.</p>
+    <div id="recruitAttackPickList" style="display:flex; flex-direction:column; gap:6px; margin:10px 0;"></div>
+    <button class="btn-capture" id="recruitAttackPickConfirmBtn" style="width:100%;">Confirmer le recrutement</button>
   </div>
 </div>
 
@@ -524,6 +539,17 @@
       <button class="sheet-x" id="baseLearnChooserCloseBtn">✕</button>
     </div>
     <div id="baseLearnChooserList"></div>
+  </div>
+</div>
+
+<!-- Choix d'un manuel de recette à apprendre -->
+<div class="overlay" id="baseLearnRecipeChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Apprendre une recette</h3>
+      <button class="sheet-x" id="baseLearnRecipeChooserCloseBtn">✕</button>
+    </div>
+    <div id="baseLearnRecipeChooserList"></div>
   </div>
 </div>
 
@@ -671,6 +697,32 @@
         <button class="btn-secondary" id="addMetierBtn" style="flex:none;">+ Créer</button>
       </div>
 
+      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="recipeRequiresLearning" style="width:auto;">
+        <label for="recipeRequiresLearning" style="margin:0;">Cette recette doit être apprise (génère un manuel dédié, sinon elle reste disponible à tout artisan du bon métier)</label>
+      </div>
+      <div id="recipeLearnDurationWrap" style="display:none;">
+        <div class="field-label">Temps d'apprentissage</div>
+        <div class="field-row">
+          <div>
+            <div class="field-label" style="margin-top:0;">Jours</div>
+            <input type="number" id="recipeLearnDays" class="field-input" value="0" min="0">
+          </div>
+          <div>
+            <div class="field-label" style="margin-top:0;">Heures</div>
+            <input type="number" id="recipeLearnHours" class="field-input" value="0" min="0">
+          </div>
+          <div>
+            <div class="field-label" style="margin-top:0;">Minutes</div>
+            <input type="number" id="recipeLearnMinutes" class="field-input" value="0" min="0">
+          </div>
+          <div>
+            <div class="field-label" style="margin-top:0;">Secondes</div>
+            <input type="number" id="recipeLearnSeconds" class="field-input" value="30" min="0">
+          </div>
+        </div>
+      </div>
+
       <button class="btn-capture" id="recipeSaveBtn" style="width:100%; margin-top:16px;">Enregistrer la recette</button>
       <button class="btn-secondary" id="recipeCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
     </div>
@@ -811,16 +863,24 @@
         <option value="quete">Objet de quête</option>
         <option value="consommable">Consommable</option>
         <option value="apprentissage">Apprentissage d'attaque</option>
+        <option value="equipement">Équipement</option>
       </select>
 
       <div class="field-label">Description</div>
       <textarea id="itemDescription" class="field-input" style="min-height:60px;" placeholder="Un morceau de bois brut."></textarea>
 
-      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+      <div class="field-label" id="itemEquippableRow" style="display:flex; align-items:center; gap:8px;">
         <input type="checkbox" id="itemEquippable" style="width:auto;">
         <label for="itemEquippable" style="margin:0;">Cet objet est équipable (donne un effet à un PNJ)</label>
       </div>
       <div id="itemEffectWrap" style="display:none;">
+        <div class="field-label">Catégorie d'équipement</div>
+        <select id="itemEquipCategory" class="field-input">
+          <option value="arme">⚔️ Arme</option>
+          <option value="armure">🛡️ Armure</option>
+          <option value="accessoire">💍 Accessoire</option>
+        </select>
+
         <div class="field-label">Effet</div>
         <select id="itemEffectType" class="field-input">
           <option value="speed_boost">Réduit le temps de fabrication (artisan)</option>
@@ -2191,6 +2251,41 @@ function grantItemToPlayer(itemName, quantity){
 }
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
+  const isCombattant = creature.interactionType === 'combat';
+  const cs = creature.combatStats || {};
+  const availableAttackIds = isCombattant ? (cs.attackIds || []) : [];
+  if (availableAttackIds.length){
+    openRecruitAttackPicker(creature, metierId, availableAttackIds);
+  } else {
+    finalizeRecruitCreature(creature, metierId, []);
+  }
+}
+function openRecruitAttackPicker(creature, metierId, attackIds){
+  const listEl = document.getElementById('recruitAttackPickList');
+  listEl.innerHTML = attackIds.map(id=>{
+    const a = attacks.find(x=>x.id===id);
+    if (!a) return '';
+    return `<label style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--line); border-radius:10px;">
+      <input type="checkbox" class="recruit-attack-pick-cb" value="${id}" checked>
+      <span>${a.emoji||'✨'} ${a.name}</span>
+    </label>`;
+  }).join('');
+  document.getElementById('recruitAttackPickOverlay').classList.add('show');
+  const oldBtn = document.getElementById('recruitAttackPickConfirmBtn');
+  const confirmBtn = oldBtn.cloneNode(true); // repart d'un bouton neuf pour ne pas empiler les listeners d'un recrutement à l'autre
+  oldBtn.parentNode.replaceChild(confirmBtn, oldBtn);
+  confirmBtn.addEventListener('click', ()=>{
+    const chosen = Array.from(listEl.querySelectorAll('.recruit-attack-pick-cb:checked')).map(cb=>cb.value);
+    if (!chosen.length){ showToast('Choisis au moins une attaque'); return; }
+    document.getElementById('recruitAttackPickOverlay').classList.remove('show');
+    finalizeRecruitCreature(creature, metierId, chosen);
+  });
+}
+document.getElementById('recruitAttackPickCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('recruitAttackPickOverlay').classList.remove('show');
+});
+function finalizeRecruitCreature(creature, metierId, learnedAttackIds){
+  if (!creature || !creature.id || !db) return;
   const recruitsColRef = db.collection('recruits');
   const isCombattant = creature.interactionType === 'combat';
   const cs = creature.combatStats || {};
@@ -2199,19 +2294,23 @@ function recruitCreature(creature, metierId){
     metierId: metierId,
     ownerUid: (currentUser ? currentUser.uid : null),
     imageUrl: creature.imageUrl || '',
-    equippedItemId: null,
-    assignedBed: null,
+    equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
     taskTarget: null,
     craftingRecipeId: null,
     craftingStartedAt: null,
     recruitType: isCombattant ? 'combattant' : 'artisan',
     sourceCreatureId: creature.id,
-    learnedAttackIds: isCombattant ? (cs.attackIds || []) : [],
+    combatStats: isCombattant ? cs : null,
+    learnedAttackIds: isCombattant ? learnedAttackIds : [],
+    learnedRecipeIds: [],
     trainingAttackId: null,
     trainingStartedAt: null,
     trainingDuration: null,
     trainingForgetAttackId: null,
+    recipeTrainingId: null,
+    recipeTrainingStartedAt: null,
+    recipeTrainingDuration: null,
     createdAt: Date.now(),
   }).then(()=>{
     return db.collection('creature_types').doc(creature.id).update({ recruited: true });
@@ -2965,6 +3064,16 @@ function renderItemEquipMetiers(){
 document.getElementById('itemEquippable').addEventListener('change', (e)=>{
   document.getElementById('itemEffectWrap').style.display = e.target.checked ? 'block' : 'none';
 });
+document.getElementById('itemType').addEventListener('change', (e)=>{
+  const isEquipType = e.target.value === 'equipement';
+  document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
+  if (isEquipType){
+    document.getElementById('itemEquippable').checked = true;
+    document.getElementById('itemEffectWrap').style.display = 'block';
+  } else {
+    document.getElementById('itemEffectWrap').style.display = document.getElementById('itemEquippable').checked ? 'block' : 'none';
+  }
+});
 document.getElementById('itemSellable').addEventListener('change', (e)=>{
   document.getElementById('itemBasePriceWrap').style.display = e.target.checked ? 'block' : 'none';
 });
@@ -3314,8 +3423,11 @@ function loadItemForEdit(id){
   document.getElementById('itemType').value = it.type || 'ressource';
   document.getElementById('itemDescription').value = it.description || '';
   const equippable = !!it.equippable;
+  const isEquipType = (it.type || 'ressource') === 'equipement';
+  document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
   document.getElementById('itemEquippable').checked = equippable;
   document.getElementById('itemEffectWrap').style.display = equippable ? 'block' : 'none';
+  document.getElementById('itemEquipCategory').value = it.equipCategory || 'accessoire';
   document.getElementById('itemEffectType').value = it.effectType || 'speed_boost';
   document.getElementById('itemEffectValueLabel').textContent = (document.getElementById('itemEffectType').value === 'speed_boost') ? 'Valeur (%)' : 'Valeur (bonus fixe)';
   document.getElementById('itemEffectValue').value = it.effectValue || 20;
@@ -3348,8 +3460,10 @@ function resetItemForm(){
   document.getElementById('itemName').value = '';
   document.getElementById('itemType').value = 'ressource';
   document.getElementById('itemDescription').value = '';
+  document.getElementById('itemEquippableRow').style.display = 'flex';
   document.getElementById('itemEquippable').checked = false;
   document.getElementById('itemEffectWrap').style.display = 'none';
+  document.getElementById('itemEquipCategory').value = 'accessoire';
   document.getElementById('itemEffectType').value = 'speed_boost';
   document.getElementById('itemEffectValue').value = 20;
   document.getElementById('itemEffectDuration').value = 'permanent';
@@ -3370,7 +3484,8 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   const imageUrl = uploadedItemImageDataUrl || '';
   const type = document.getElementById('itemType').value;
   const description = document.getElementById('itemDescription').value.trim();
-  const equippable = document.getElementById('itemEquippable').checked;
+  const equippable = type === 'equipement' ? true : document.getElementById('itemEquippable').checked;
+  const equipCategory = document.getElementById('itemEquipCategory').value;
   const effectType = document.getElementById('itemEffectType').value;
   const effectValue = parseInt(document.getElementById('itemEffectValue').value, 10) || 0;
   const effectDuration = document.getElementById('itemEffectDuration').value;
@@ -3380,7 +3495,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   const basePrice = parseInt(document.getElementById('itemBasePrice').value, 10) || 0;
   if (!name){ showToast('Donne un nom à l\'objet'); return; }
   if (!itemsCol){ showToast('Firebase indisponible ici'); return; }
-  const data = { name, emoji, imageUrl, type, description, equippable, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, updatedAt: Date.now() };
   const op = editingItemId ? itemsCol.doc(editingItemId).set(data) : itemsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingItemId ? 'Objet mis à jour' : 'Objet ajouté'); resetItemForm(); showItemsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
@@ -4052,6 +4167,15 @@ function loadRecipeForEdit(id){
   }
   selectedRecipeMetiers = new Set(r.allowedMetiers || []);
   renderRecipeMetiers();
+  document.getElementById('recipeRequiresLearning').checked = !!r.requiresLearning;
+  document.getElementById('recipeLearnDurationWrap').style.display = r.requiresLearning ? 'block' : 'none';
+  {
+    const lt = r.learnDuration || 30;
+    document.getElementById('recipeLearnDays').value = Math.floor(lt / 86400);
+    document.getElementById('recipeLearnHours').value = Math.floor((lt % 86400) / 3600);
+    document.getElementById('recipeLearnMinutes').value = Math.floor((lt % 3600) / 60);
+    document.getElementById('recipeLearnSeconds').value = lt % 60;
+  }
   document.getElementById('recipeSaveBtn').textContent = 'Mettre à jour la recette';
   document.getElementById('recipeCancelBtn').style.display = 'block';
 }
@@ -4073,9 +4197,18 @@ function resetRecipeForm(){
   document.getElementById('recipeDurationSeconds').value = 10;
   selectedRecipeMetiers = new Set();
   renderRecipeMetiers();
+  document.getElementById('recipeRequiresLearning').checked = false;
+  document.getElementById('recipeLearnDurationWrap').style.display = 'none';
+  document.getElementById('recipeLearnDays').value = 0;
+  document.getElementById('recipeLearnHours').value = 0;
+  document.getElementById('recipeLearnMinutes').value = 0;
+  document.getElementById('recipeLearnSeconds').value = 30;
   document.getElementById('recipeSaveBtn').textContent = 'Enregistrer la recette';
   document.getElementById('recipeCancelBtn').style.display = 'none';
 }
+document.getElementById('recipeRequiresLearning').addEventListener('change', (e)=>{
+  document.getElementById('recipeLearnDurationWrap').style.display = e.target.checked ? 'block' : 'none';
+});
 document.getElementById('recipeCancelBtn').addEventListener('click', resetRecipeForm);
 
 let uploadedRecipeImageDataUrl = null;
@@ -4120,17 +4253,49 @@ document.getElementById('recipeSaveBtn').addEventListener('click', ()=>{
   const durSeconds = parseInt(document.getElementById('recipeDurationSeconds').value, 10) || 0;
   const duration = (durDays*86400) + (durHours*3600) + (durMinutes*60) + durSeconds;
   const allowedMetiers = Array.from(selectedRecipeMetiers);
+  const requiresLearning = document.getElementById('recipeRequiresLearning').checked;
+  const learnDays = parseInt(document.getElementById('recipeLearnDays').value, 10) || 0;
+  const learnHours = parseInt(document.getElementById('recipeLearnHours').value, 10) || 0;
+  const learnMinutes = parseInt(document.getElementById('recipeLearnMinutes').value, 10) || 0;
+  const learnSeconds = parseInt(document.getElementById('recipeLearnSeconds').value, 10) || 0;
+  const learnDuration = (learnDays*86400) + (learnHours*3600) + (learnMinutes*60) + learnSeconds;
 
   if (!name){ showToast('Donne un nom à la recette'); return; }
   if (!outputItemId){ showToast('Choisis l\'objet produit'); return; }
   if (duration <= 0){ showToast('La durée doit être supérieure à 0'); return; }
   if (!recipesCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, imageUrl, inputs, outputItemId, outputQty, duration, allowedMetiers, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, inputs, outputItemId, outputQty, duration, allowedMetiers, requiresLearning, learnDuration, updatedAt: Date.now() };
   const op = editingRecipeId ? recipesCol.doc(editingRecipeId).set(data) : recipesCol.add({ ...data, createdAt: Date.now() });
-  op.then(()=>{ showToast(editingRecipeId ? 'Recette mise à jour' : 'Recette ajoutée'); resetRecipeForm(); showRecipesSection('list'); })
+  op.then((ref)=>{
+    const recipeId = editingRecipeId || (ref && ref.id);
+    return syncRecipeLearnItem(recipeId, name, requiresLearning);
+  }).then(()=>{ showToast(editingRecipeId ? 'Recette mise à jour' : 'Recette ajoutée'); resetRecipeForm(); showRecipesSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
 });
+
+function syncRecipeLearnItem(recipeId, recipeName, requiresLearning){
+  // Chaque recette "à apprendre" a son propre manuel, créé/mis à jour automatiquement (retiré si la case est décochée).
+  const existing = items.find(it => it.teachesRecipeId === recipeId);
+  if (!requiresLearning){
+    return existing ? itemsCol.doc(existing.id).delete() : Promise.resolve();
+  }
+  const itemData = {
+    name: 'Manuel de recette : ' + recipeName,
+    emoji: '📗',
+    imageUrl: '',
+    type: 'apprentissage',
+    description: `Permet à un artisan compatible d'apprendre la recette "${recipeName}".`,
+    teachesRecipeId: recipeId,
+    equippable: false, effectType: null, effectValue: 0, effectDuration: 'permanent', effectSeconds: 0, effectMetiers: [],
+    sellable: false, basePrice: 0,
+    updatedAt: Date.now()
+  };
+  if (existing){
+    return itemsCol.doc(existing.id).set({ ...itemData, createdAt: existing.createdAt || Date.now() });
+  }
+  return itemsCol.add({ ...itemData, createdAt: Date.now() });
+}
 
 function showRecipesSection(name){
   document.querySelectorAll('.recipes-section').forEach(el=> el.style.display = 'none');
@@ -4391,7 +4556,7 @@ document.getElementById('recruitTestBtn').addEventListener('click', ()=>{
   if (!metiers.length){ showToast('Crée d\'abord un métier depuis l\'éditeur de recettes'); return; }
   const name = TEST_FIRST_NAMES[Math.floor(Math.random()*TEST_FIRST_NAMES.length)];
   const metier = metiers[Math.floor(Math.random()*metiers.length)];
-  recruitsCol.add({ name, metierId: metier.id, ownerUid: (currentUser ? currentUser.uid : null), equippedItemId: null, craftingRecipeId: null, craftingStartedAt: null, learnedAttackIds: [], trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null, createdAt: Date.now() })
+  recruitsCol.add({ name, metierId: metier.id, ownerUid: (currentUser ? currentUser.uid : null), equippedItemIds: { arme:null, armure:null, accessoire:null }, craftingRecipeId: null, craftingStartedAt: null, learnedAttackIds: [], learnedRecipeIds: [], trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null, recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null, createdAt: Date.now() })
     .then(()=> showToast(name + ' recruté(e) comme ' + metier.name));
 });
 
@@ -4405,7 +4570,7 @@ function renderBaseRoster(){
     const pct = r.craftingRecipeId ? Math.round(recruitCraftProgress(r)*100) : 0;
     return `
       <div class="editor-list-item" data-recruit-open="${r.id}" style="flex-direction:column; text-align:center; border:1px solid var(--line); border-radius:12px; padding:10px 6px; cursor:pointer; position:relative;">
-        ${r.equippedItemId ? `<div style="position:absolute; top:4px; right:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
+        ${recruitHasAnyEquip(r) ? `<div style="position:absolute; top:4px; right:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
         <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '🧑'}</div>
         <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
         <div class="meta" style="font-size:10px;">${metier ? metier.name : 'Sans métier'}</div>
@@ -4432,7 +4597,7 @@ function renderCombattantsRoster(){
     return `
       <div class="editor-list-item" data-recruit-open="${r.id}" style="flex-direction:column; text-align:center; border:1px solid ${inTeam ? 'var(--accent)' : 'var(--line)'}; border-radius:12px; padding:10px 6px; cursor:pointer; position:relative;">
         ${inTeam ? `<div style="position:absolute; top:4px; right:4px; font-size:12px;" title="Dans l'équipe">⭐</div>` : ''}
-        ${r.equippedItemId ? `<div style="position:absolute; top:4px; left:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
+        ${recruitHasAnyEquip(r) ? `<div style="position:absolute; top:4px; left:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
         <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '⚔️'}</div>
         <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
         <div class="meta" style="font-size:10px;">${(r.learnedAttackIds||[]).length} attaque(s)</div>
@@ -4468,14 +4633,41 @@ function openRecruitSheet(id){
 }
 function currentRecruit(){ return recruits.find(r=>r.id===activeRecruitId); }
 
-function recruitEffectiveDuration(recruit, baseDuration){
-  let mult = 1;
+const EQUIP_SLOTS = [
+  { id:'arme', label:'Arme', emoji:'⚔️' },
+  { id:'armure', label:'Armure', emoji:'🛡️' },
+  { id:'accessoire', label:'Accessoire', emoji:'💍' },
+];
+/* Renvoie { arme, armure, accessoire } en migrant si besoin l'ancien format à un seul objet (equippedItemId) */
+function recruitEquipSlots(recruit){
+  if (recruit.equippedItemIds) return recruit.equippedItemIds;
   if (recruit.equippedItemId){
     const it = items.find(i=>i.id===recruit.equippedItemId);
+    const cat = (it && it.equipCategory) || 'accessoire';
+    const slots = { arme:null, armure:null, accessoire:null };
+    slots[cat] = recruit.equippedItemId;
+    if (recruitsCol) recruitsCol.doc(recruit.id).update({ equippedItemIds: slots, equippedItemId: firebase.firestore.FieldValue.delete() }).catch(()=>{});
+    recruit.equippedItemIds = slots;
+    return slots;
+  }
+  return { arme:null, armure:null, accessoire:null };
+}
+function recruitEquippedItems(recruit){
+  const slots = recruitEquipSlots(recruit);
+  return EQUIP_SLOTS.map(s=> items.find(i=>i.id===slots[s.id])).filter(Boolean);
+}
+function recruitHasAnyEquip(recruit){
+  const slots = recruitEquipSlots(recruit);
+  return !!(slots.arme || slots.armure || slots.accessoire);
+}
+
+function recruitEffectiveDuration(recruit, baseDuration){
+  let mult = 1;
+  recruitEquippedItems(recruit).forEach(it=>{
     if (it && it.equippable && it.effectType === 'speed_boost'){
       mult *= (1 - (it.effectValue||0)/100);
     }
-  }
+  });
   return Math.round(baseDuration * mult);
 }
 function recruitCraftProgress(recruit){
@@ -4523,12 +4715,14 @@ function renderRecruitSheet(){
 
   renderRecruitCombatStatsSection(recruit);
   renderRecruitAttacksSection(recruit);
+  renderRecruitRecipesSection(recruit);
 
   const craftEl = document.getElementById('recruitCraftSection');
   if (recruit.recruitType === 'combattant'){
     craftEl.innerHTML = '';
   } else {
-  const eligibleRecipes = recipes.filter(r => !r.allowedMetiers || !r.allowedMetiers.length || r.allowedMetiers.includes(recruit.metierId));
+  const eligibleRecipes = recipes.filter(r => (!r.allowedMetiers || !r.allowedMetiers.length || r.allowedMetiers.includes(recruit.metierId))
+    && (!r.requiresLearning || (recruit.learnedRecipeIds||[]).includes(r.id)));
 
   if (recruit.craftingRecipeId){
     const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
@@ -4571,25 +4765,47 @@ function renderRecruitSheet(){
   }
 
   const equipEl = document.getElementById('recruitEquipSection');
-  if (recruit.equippedItemId){
-    const it = items.find(i=>i.id===recruit.equippedItemId);
-    equipEl.innerHTML = `
-      <div class="choice-row">
-        <b>${it ? itemThumbHtml(it)+' '+it.name : 'Objet inconnu'}</b>
-        <div class="meta">${it && it.effectDuration==='permanent' ? '-'+it.effectValue+'% de temps (équipé en continu)' : 'Effet temporaire'}</div>
-        <button class="btn-secondary" id="baseUnequipBtn" style="width:100%; margin-top:6px;">Retirer</button>
-      </div>
-    `;
-    document.getElementById('baseUnequipBtn').addEventListener('click', ()=>{
-      returnItemToStock(recruit.equippedItemId);
-      recruitsCol.doc(recruit.id).update({ equippedItemId: null });
+  const slots = recruitEquipSlots(recruit);
+  equipEl.innerHTML = `
+    <div style="display:flex; gap:8px;">
+      ${EQUIP_SLOTS.map(slot=>{
+        const it = slots[slot.id] ? items.find(i=>i.id===slots[slot.id]) : null;
+        return `
+          <div style="flex:1; text-align:center;">
+            <div data-equip-slot="${slot.id}" style="position:relative; width:100%; aspect-ratio:1; max-width:64px; margin:0 auto; border:1px solid var(--line); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; cursor:pointer; background:var(--bg);">
+              ${it ? itemThumbHtml(it) : `<span style="opacity:.5;">${slot.emoji}</span>`}
+              ${it ? `<button data-unequip-slot="${slot.id}" title="Retirer" style="position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; background:var(--danger); color:#fff; border:none; font-size:11px; line-height:1; padding:0;">✕</button>` : ''}
+            </div>
+            <div class="meta" style="font-size:10px; margin-top:2px;">${slot.label}</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  equipEl.querySelectorAll('[data-equip-slot]').forEach(el=>{
+    el.addEventListener('click', ()=> openBaseEquipChooser(recruit, el.dataset.equipSlot));
+  });
+  equipEl.querySelectorAll('[data-unequip-slot]').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const slotId = btn.dataset.unequipSlot;
+      const itemId = slots[slotId];
+      if (!itemId) return;
+      returnItemToStock(itemId);
+      recruitsCol.doc(recruit.id).update({ equippedItemIds: Object.assign({}, slots, { [slotId]: null }) });
     });
-  } else {
-    equipEl.innerHTML = `<button class="btn-secondary" id="baseEquipBtn" style="width:100%;">🎒 Équiper depuis le sac</button>`;
-    document.getElementById('baseEquipBtn').addEventListener('click', ()=> openBaseEquipChooser(recruit));
-  }
+  });
 }
 
+function itemEffectSummary(it){
+  if (!it || !it.effectType) return '';
+  const value = it.effectValue || 0;
+  const durationSuffix = it.effectDuration === 'permanent' ? ' (équipé en continu)' : ` pendant ${it.effectSeconds||0}s (consommé)`;
+  if (it.effectType === 'speed_boost') return `-${value}%${durationSuffix}`;
+  const combatLabels = { hp_boost:'PV', atk_boost:'Attaque', def_boost:'Défense', matk_boost:'Att. magique', mdef_boost:'Déf. magique', speed_combat_boost:'Vitesse', precision_boost:'Précision', evasion_boost:'Esquive' };
+  const label = combatLabels[it.effectType] || it.effectType;
+  return `+${value} ${label}${durationSuffix}`;
+}
 function formatDuration(totalSeconds){
   const d = Math.floor(totalSeconds / 86400);
   const h = Math.floor((totalSeconds % 86400) / 3600);
@@ -4621,23 +4837,30 @@ function returnItemToStock(itemId){
   playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
 }
 
-function openBaseEquipChooser(recruit){
+function openBaseEquipChooser(recruit, slotId){
+  const slotDef = EQUIP_SLOTS.find(s=>s.id===slotId) || EQUIP_SLOTS[0];
+  const titleEl = document.getElementById('baseEquipChooserTitle');
+  if (titleEl) titleEl.textContent = 'Équiper — ' + slotDef.label;
   const listEl = document.getElementById('baseEquipChooserList');
   const eligible = items.filter(it => it.equippable
+    && (it.equipCategory || 'accessoire') === slotDef.id
     && (baseResources[it.id]||0) > 0
     && (!it.effectMetiers || !it.effectMetiers.length || it.effectMetiers.includes(recruit.metierId)));
   listEl.innerHTML = eligible.length ? eligible.map(it=>`
     <div class="choice-row">
       <b>${itemThumbHtml(it)} ${it.name}</b>
-      <div class="meta">Stock : ${baseResources[it.id]||0} — ${it.effectDuration==='permanent' ? '-'+it.effectValue+'% en continu' : '-'+it.effectValue+'% pendant '+it.effectSeconds+'s (consommé)'}</div>
+      <div class="meta">Stock : ${baseResources[it.id]||0} — ${itemEffectSummary(it)}</div>
       <button class="btn-capture" data-equip-item="${it.id}" style="width:100%; margin-top:6px;">Équiper</button>
     </div>
-  `).join('') : '<p class="meta">Aucun objet équipable disponible pour ce métier dans le sac.</p>';
+  `).join('') : `<p class="meta">Aucun objet "${slotDef.label}" disponible pour ce métier dans le sac.</p>`;
   listEl.querySelectorAll('button[data-equip-item]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const itemId = btn.dataset.equipItem;
+      const slots = recruitEquipSlots(recruit);
+      const prevItemId = slots[slotDef.id];
       playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
-        recruitsCol.doc(recruit.id).update({ equippedItemId: itemId });
+        if (prevItemId) returnItemToStock(prevItemId); // l'objet déjà présent dans cet emplacement retourne au sac
+        recruitsCol.doc(recruit.id).update({ equippedItemIds: Object.assign({}, slots, { [slotDef.id]: itemId }) });
         document.getElementById('baseEquipChooserOverlay').classList.remove('show');
       });
     });
@@ -4663,8 +4886,23 @@ function renderRecruitCombatStatsSection(recruit){
   const el = document.getElementById('recruitCombatStatsSection');
   if (!el) return;
   if (recruit.recruitType !== 'combattant'){ el.innerHTML = ''; return; }
-  const source = creatures.find(c=>c.id===recruit.sourceCreatureId);
-  const cs = (source && source.combatStats) || {};
+  if (recruit.combatStats){
+    renderRecruitCombatStatsInner(recruit, recruit.combatStats);
+    return;
+  }
+  // Recrue créée avant l'enregistrement des stats sur sa propre fiche : on les récupère une fois chez le PNJ d'origine et on migre.
+  el.innerHTML = `<div class="meta">Chargement des stats…</div>`;
+  if (!creatureCol || !recruit.sourceCreatureId) { renderRecruitCombatStatsInner(recruit, {}); return; }
+  creatureCol.doc(recruit.sourceCreatureId).get().then((doc)=>{
+    const cs = (doc.exists && doc.data().combatStats) || {};
+    if (recruitsCol) recruitsCol.doc(recruit.id).update({ combatStats: cs }).catch(()=>{});
+    recruit.combatStats = cs;
+    renderRecruitCombatStatsInner(recruit, cs);
+  }).catch(()=> renderRecruitCombatStatsInner(recruit, {}));
+}
+function renderRecruitCombatStatsInner(recruit, cs){
+  const el = document.getElementById('recruitCombatStatsSection');
+  if (!el) return;
   const inTeam = activeTeamIds.includes(recruit.id);
   const tribeLabel = { feu:'🔥 Feu', eau:'💧 Eau', terre:'🌿 Terre', air:'🌪️ Air', lumiere:'✨ Lumière', ombre:'🌑 Ombre' }[cs.tribe] || 'Aucune tribu';
   el.innerHTML = `
@@ -4683,7 +4921,7 @@ function renderRecruitCombatStatsSection(recruit){
     }
     playerDocRef.set({ activeTeamIds: team }, { merge:true }).then(()=>{
       activeTeamIds = team;
-      renderRecruitCombatStatsSection(recruit);
+      renderRecruitCombatStatsInner(recruit, cs);
       renderCombattantsRoster();
     });
   });
@@ -4691,6 +4929,9 @@ function renderRecruitCombatStatsSection(recruit){
 function renderRecruitAttacksSection(recruit){
   const el = document.getElementById('recruitAttacksSection');
   if (!el) return;
+  const labelEl = document.getElementById('recruitAttacksLabel');
+  if (recruit.recruitType !== 'combattant'){ el.innerHTML = ''; if (labelEl) labelEl.style.display = 'none'; return; }
+  if (labelEl) labelEl.style.display = 'block';
   const learned = recruit.learnedAttackIds || [];
   if (recruit.trainingAttackId){
     const atk = attacks.find(a=>a.id===recruit.trainingAttackId);
@@ -4719,6 +4960,90 @@ function renderRecruitAttacksSection(recruit){
     document.getElementById('openLearnChooserBtn').addEventListener('click', ()=> openBaseLearnChooser(recruit));
   }
 }
+function recruitRecipeTrainingProgress(recruit){
+  if (!recruit.recipeTrainingId || !recruit.recipeTrainingStartedAt) return 0;
+  const duration = recruit.recipeTrainingDuration || 1;
+  return Math.max(0, Math.min(1, (Date.now() - recruit.recipeTrainingStartedAt) / duration));
+}
+function recruitRecipeTrainingRemainingMs(recruit){
+  if (!recruit.recipeTrainingId || !recruit.recipeTrainingStartedAt) return 0;
+  const duration = recruit.recipeTrainingDuration || 0;
+  return Math.max(0, duration - (Date.now() - recruit.recipeTrainingStartedAt));
+}
+function renderRecruitRecipesSection(recruit){
+  const el = document.getElementById('recruitRecipesSection');
+  if (!el) return;
+  if (recruit.recruitType === 'combattant' || !recipes.some(r=>r.requiresLearning)){ el.innerHTML = ''; return; }
+  if (recruit.recipeTrainingId){
+    const r = recipes.find(x=>x.id===recruit.recipeTrainingId);
+    const pct = Math.round(recruitRecipeTrainingProgress(recruit)*100);
+    const remainingLabel = formatRemainingDuration(recruitRecipeTrainingRemainingMs(recruit));
+    el.innerHTML = `
+      <div class="field-label">Recettes apprises</div>
+      <div class="pos-status">${r ? (r.emoji||'📦')+' '+r.name : '…'} — ${remainingLabel}</div>
+      <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
+        <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+      </div>
+      <button class="btn-secondary" id="cancelRecipeTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'apprentissage</button>
+    `;
+    document.getElementById('cancelRecipeTrainingBtn').addEventListener('click', ()=>{
+      recruitsCol.doc(recruit.id).update({ recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null })
+        .then(()=> showToast('Apprentissage annulé (le manuel déjà utilisé n\'est pas remboursé)'));
+    });
+    return;
+  }
+  const learned = recruit.learnedRecipeIds || [];
+  const knownLabel = learned.length ? learned.map(id=>{
+    const r = recipes.find(x=>x.id===id);
+    return r ? `<span class="btn-secondary" style="display:inline-flex; align-items:center; gap:4px; margin:2px;">${r.emoji||'📦'} ${r.name}</span>` : '';
+  }).join('') : '<p class="meta">Aucune recette spéciale apprise pour l\'instant.</p>';
+  el.innerHTML = `
+    <div class="field-label">Recettes apprises</div>
+    <div style="margin-bottom:6px;">${knownLabel}</div>
+    <button class="btn-capture" id="openLearnRecipeChooserBtn" style="width:100%;">📖 Apprendre une recette</button>
+  `;
+  document.getElementById('openLearnRecipeChooserBtn').addEventListener('click', ()=> openBaseLearnRecipeChooser(recruit));
+}
+function openBaseLearnRecipeChooser(recruit){
+  const listEl = document.getElementById('baseLearnRecipeChooserList');
+  const learned = recruit.learnedRecipeIds || [];
+  const eligible = recipes.filter(r => r.requiresLearning
+    && !learned.includes(r.id)
+    && (baseResources[(items.find(it=>it.teachesRecipeId===r.id)||{}).id]||0) > 0
+    && (!r.allowedMetiers || !r.allowedMetiers.length || r.allowedMetiers.includes(recruit.metierId))
+  );
+  listEl.innerHTML = eligible.length ? eligible.map(r=>{
+    const manuel = items.find(it=>it.teachesRecipeId===r.id);
+    return `
+    <div class="choice-row">
+      <b>${r.emoji||'📦'} ${r.name}</b>
+      <div class="meta">manuel : ${manuel ? manuel.name : '?'}</div>
+      <button class="btn-capture" data-learn-recipe="${r.id}" style="width:100%; margin-top:6px;">Apprendre</button>
+    </div>
+  `;
+  }).join('') : '<p class="meta">Aucun manuel de recette compatible avec ce métier dans le sac.</p>';
+  listEl.querySelectorAll('button[data-learn-recipe]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const recipeId = btn.dataset.learnRecipe;
+      const recipe = recipes.find(r=>r.id===recipeId);
+      const manuel = items.find(it=>it.teachesRecipeId===recipeId);
+      if (!manuel){ showToast('Manuel introuvable'); return; }
+      playerDocRef.set({ inventory: { [manuel.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
+        recruitsCol.doc(recruit.id).update({
+          recipeTrainingId: recipeId,
+          recipeTrainingStartedAt: Date.now(),
+          recipeTrainingDuration: (recipe.learnDuration||30) * 1000,
+        });
+        document.getElementById('baseLearnRecipeChooserOverlay').classList.remove('show');
+        showToast(`${recruit.name} commence l'apprentissage !`);
+      });
+    });
+  });
+  document.getElementById('baseLearnRecipeChooserOverlay').classList.add('show');
+}
+document.getElementById('baseLearnRecipeChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('baseLearnRecipeChooserOverlay').classList.remove('show');
+});
 function openBaseLearnChooser(recruit){
   const listEl = document.getElementById('baseLearnChooserList');
   const eligible = attacks.filter(a =>
@@ -4772,7 +5097,7 @@ document.getElementById('baseLearnChooserCloseBtn').addEventListener('click', ()
 document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
   const recruit = currentRecruit();
   if (!recruit) return;
-  if (recruit.equippedItemId) returnItemToStock(recruit.equippedItemId);
+  recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
   recruitsCol.doc(recruit.id).delete().then(()=>{
     document.getElementById('recruitSheetOverlay').classList.remove('show');
     activeRecruitId = null;
@@ -4799,6 +5124,12 @@ setInterval(()=>{
       const attack = attacks.find(a=>a.id===recruit.trainingAttackId);
       recruitsCol.doc(recruit.id).update({ learnedAttackIds: learned, trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
         .then(()=> showToast(`${recruit.name} a appris ${attack ? attack.name : 'une nouvelle attaque'} !`));
+    }
+    if (recruit.recipeTrainingId && recruitRecipeTrainingProgress(recruit) >= 1){
+      const learnedRecipes = (recruit.learnedRecipeIds || []).concat(recruit.recipeTrainingId);
+      const recipe = recipes.find(r=>r.id===recruit.recipeTrainingId);
+      recruitsCol.doc(recruit.id).update({ learnedRecipeIds: learnedRecipes, recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null })
+        .then(()=> showToast(`${recruit.name} a appris la recette ${recipe ? recipe.name : ''} !`));
     }
   });
   if (activeRecruitId && document.getElementById('recruitSheetOverlay').classList.contains('show')) renderRecruitSheet();
@@ -5381,11 +5712,10 @@ async function externalizeSceneImage(dataUrl){
   if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
   const ref = 'img_' + hashImageString(dataUrl) + '_' + dataUrl.length;
   if (!scImageCache[ref]){
-    scImageCache[ref] = dataUrl;
     if (scImagesCol){
-      try { await scImagesCol.doc(ref).set({ dataUrl, updatedAt: Date.now() }); }
-      catch(e){ /* écriture échouée : l'image reste utilisable localement pour cette session mais ne sera pas persistée */ }
+      await scImagesCol.doc(ref).set({ dataUrl, updatedAt: Date.now() });
     }
+    scImageCache[ref] = dataUrl;
   }
   return ref;
 }
