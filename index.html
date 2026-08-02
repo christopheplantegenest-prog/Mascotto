@@ -216,7 +216,7 @@
     width:34px; height:34px; border-radius:50%;
     background:rgba(255,255,255,.92); border:2px solid var(--accent);
     display:flex; align-items:center; justify-content:center; font-size:16px;
-    box-shadow:0 2px 6px rgba(0,0,0,.4);
+    box-shadow:0 2px 6px rgba(0,0,0,.4); touch-action:none;
   }
   .scene-point.selected{ border-color:var(--danger); box-shadow:0 0 0 3px rgba(192,57,43,.35); }
   .scene-topbar{
@@ -229,6 +229,32 @@
     background:rgba(0,0,0,.72); padding:10px; padding-bottom:max(10px, env(safe-area-inset-bottom));
     display:flex; flex-direction:column; gap:8px;
     max-height:46vh; overflow-y:auto;
+  }
+  /* Éditeur (pas la vue joueur) : image toujours en taille fixe, tout le reste défile en dessous plutôt que de flotter par-dessus */
+  #sceneEditorFull{ overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  #sceneEditorFull .scene-topbar{
+    position:sticky; top:0; left:auto; right:auto; z-index:10;
+    background:rgba(0,0,0,.88); padding:8px 10px; margin:0;
+  }
+  #sceneEditorFull .scene-imgwrap{ position:relative; inset:auto; width:100%; height:58vh; flex:none; }
+  #sceneEditorFull .scene-bottombar{
+    position:relative; inset:auto; z-index:auto;
+    max-height:none; overflow-y:visible;
+  }
+  .scene-actionrow-scroll{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
+  .scene-action-btn{
+    flex:none; padding:6px 9px; border-radius:8px; border:1px solid rgba(255,255,255,.35);
+    background:rgba(255,255,255,.12); color:#fff; font-size:11px; font-weight:600; white-space:nowrap;
+  }
+  .scene-resize-handle{
+    position:absolute; right:-12px; bottom:-12px; width:26px; height:26px; border-radius:50%;
+    background:#fff; border:2px solid var(--accent); pointer-events:auto; cursor:se-resize;
+    display:flex; align-items:center; justify-content:center; font-size:12px; touch-action:none;
+  }
+  .scene-resize-ok{
+    position:absolute; left:-12px; top:-12px; width:26px; height:26px; border-radius:50%;
+    background:#2ecc71; color:#fff; pointer-events:auto; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:13px;
   }
   .scene-typerow{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
   .scene-type-btn{
@@ -1114,16 +1140,18 @@
   <div class="scene-topbar">
     <button class="sheet-x" id="sceneEditorCloseBtn">✕</button>
     <span class="meta" id="sceneEditorCurrentLabel" style="background:rgba(255,255,255,.92); padding:4px 10px; border-radius:999px; margin:0; font-weight:700;">Scène 1</span>
-    <button class="btn-secondary" id="sceneEditorScenesBtn" style="flex:none; background:rgba(255,255,255,.92);">🎬 Scènes</button>
-    <button class="btn-secondary" id="sceneEditorVariantsBtn" style="flex:none; background:rgba(255,255,255,.92);">🕒 Variantes</button>
-    <button class="btn-secondary" id="sceneEditorImageBtn" style="flex:none; background:rgba(255,255,255,.92);">🖼️ Image</button>
+    <span style="width:30px;"></span>
     <input type="file" id="sceneEditorImageFile" accept="image/*" style="display:none;">
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
     <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie dessus pour placer des points.</div>
-    <div id="sceneEditorDpad" style="position:absolute; inset:0; pointer-events:none;"></div>
   </div>
   <div class="scene-bottombar">
+    <div class="scene-actionrow-scroll">
+      <button type="button" class="scene-action-btn" id="sceneEditorScenesBtn">🎬 Scènes</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorImageBtn">🖼️ Image</button>
+    </div>
     <div class="scene-typerow" id="sceneTypeRow"></div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
     <div id="sceneEditorDetails" style="display:none;"></div>
@@ -5266,12 +5294,12 @@ function loadVariantIntoEditorState(variantId){
     sceneEditorPoints = v.points || [];
   }
   sceneEditorSelectedPointId = null;
+  sceneEditorResizingPointId = null;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   document.getElementById('sceneEditorDetails').style.display = 'none';
   renderSceneEditorImage();
   renderSceneEditorPoints();
-  renderSceneEditorDpad();
   renderSceneEditorTopLabel();
 }
 
@@ -5468,6 +5496,50 @@ function sceneTypeEmoji(typeId){
   return t ? t.label.split(' ')[0] : '📍';
 }
 
+let pointPixelCache = {}; // imageUrl -> {canvas, ctx, w, h, ready}
+function ensurePointPixelCache(url){
+  if (!url || pointPixelCache[url]) return;
+  const entry = { canvas:null, ctx:null, w:0, h:0, ready:false };
+  pointPixelCache[url] = entry;
+  const img = new Image();
+  img.onload = ()=>{
+    entry.w = img.naturalWidth; entry.h = img.naturalHeight;
+    entry.canvas = document.createElement('canvas');
+    entry.canvas.width = entry.w; entry.canvas.height = entry.h;
+    entry.ctx = entry.canvas.getContext('2d');
+    entry.ctx.drawImage(img, 0, 0);
+    entry.ready = true;
+  };
+  img.src = url;
+}
+
+function pointEffectiveImageUrl(pt){
+  if (pt.imageUrl) return pt.imageUrl;
+  if (pt.type === 'pnj' && pt.linkedPnjImageUrl) return pt.linkedPnjImageUrl;
+  return null;
+}
+
+/* Teste si un clic touche la zone opaque de l'image d'un point (sinon rectangle simple si pas d'image ou image tournée) */
+function isPointHitAt(pt, div, clientX, clientY){
+  const rect = div.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
+  const url = pointEffectiveImageUrl(pt);
+  if (!url || pt.rotation) return true;
+  const cache = pointPixelCache[url];
+  if (!cache || !cache.ready) return true;
+  const scale = Math.min(rect.width/cache.w, rect.height/cache.h);
+  const dispW = cache.w*scale, dispH = cache.h*scale;
+  const offX = (rect.width-dispW)/2, offY = (rect.height-dispH)/2;
+  let localX = clientX - rect.left - offX;
+  let localY = clientY - rect.top - offY;
+  if (localX<0 || localY<0 || localX>dispW || localY>dispH) return false;
+  if (pt.flipped) localX = dispW - localX;
+  const px = Math.min(cache.w-1, Math.max(0, Math.floor(localX/scale)));
+  const py = Math.min(cache.h-1, Math.max(0, Math.floor(localY/scale)));
+  try { return cache.ctx.getImageData(px, py, 1, 1).data[3] > 15; }
+  catch(e){ return true; }
+}
+
 function renderSceneEditorImage(){
   const wrap = document.getElementById('sceneEditorImgWrap');
   const empty = document.getElementById('sceneEditorEmpty');
@@ -5477,7 +5549,6 @@ function renderSceneEditorImage(){
       img = document.createElement('img');
       img.id = 'sceneEditorImg';
       wrap.insertBefore(img, wrap.firstChild);
-      img.addEventListener('click', onSceneEditorImageClick);
     }
     img.src = sceneEditorImageDataUrl;
     empty.style.display = 'none';
@@ -5487,91 +5558,176 @@ function renderSceneEditorImage(){
   }
 }
 
+let sceneEditorResizingPointId = null;
+
 function renderSceneEditorPoints(){
   const wrap = document.getElementById('sceneEditorImgWrap');
   wrap.querySelectorAll('.scene-point').forEach(el=> el.remove());
   sceneEditorPoints.forEach(pt=>{
+    if (pt.w === undefined) pt.w = 8;
+    if (pt.h === undefined) pt.h = 8;
     const selected = pt.id === sceneEditorSelectedPointId;
+    const resizing = sceneEditorResizingPointId === pt.id;
     const el = document.createElement('div');
-    el.className = 'scene-point';
-    if (pt.imageUrl){
-      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
-      el.innerHTML = `<img src="${pt.imageUrl}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+    el.dataset.ptid = pt.id;
+    const url = pointEffectiveImageUrl(pt);
+    if (url){
+      ensurePointPixelCache(url);
+      el.className = 'scene-point';
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
+      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+    } else if (pt.hideIcon){
+      el.className = 'scene-point';
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(255,255,255,.08); border:1px dashed rgba(255,255,255,.5); box-shadow:none; border-radius:6px; pointer-events:none;`;
     } else {
-      el.className = 'scene-point' + (selected ? ' selected' : '');
-      el.style.left = pt.x + '%';
-      el.style.top = pt.y + '%';
-      el.textContent = sceneTypeEmoji(pt.type);
+      el.className = 'scene-point';
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; min-width:26px; min-height:26px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
+      el.innerHTML = `<div style="width:100%; height:100%; border-radius:50%; background:rgba(255,255,255,.92); border:2px solid ${selected?'var(--danger)':'var(--accent)'}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 2px 6px rgba(0,0,0,.4);">${sceneTypeEmoji(pt.type)}</div>`;
     }
-    el.addEventListener('click', (ev)=>{
-      ev.stopPropagation();
-      sceneEditorSelectedPointId = (sceneEditorSelectedPointId === pt.id) ? null : pt.id;
-      renderSceneEditorPoints();
-      renderSceneEditorDpad();
-      document.getElementById('sceneEditorDeleteBtn').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
-      document.getElementById('sceneEditorSelectedInfo').style.display = sceneEditorSelectedPointId ? 'block' : 'none';
-      renderSceneEditorDetails();
-    });
+    if (resizing){
+      const handle = document.createElement('div');
+      handle.className = 'scene-resize-handle';
+      handle.textContent = '⤡';
+      el.appendChild(handle);
+      attachResizeHandleDrag(handle, pt);
+      const ok = document.createElement('div');
+      ok.className = 'scene-resize-ok';
+      ok.textContent = '✓';
+      ok.addEventListener('click', ()=>{ sceneEditorResizingPointId = null; renderSceneEditorPoints(); });
+      el.appendChild(ok);
+    }
     wrap.appendChild(el);
   });
 }
 
-function renderSceneEditorDpad(){
-  const dpad = document.getElementById('sceneEditorDpad');
-  const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
-  if (!pt){ dpad.innerHTML = ''; return; }
-  const btn = 'pointer-events:auto; width:42px; height:42px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,.4);';
-  dpad.innerHTML = `
-    <button type="button" id="scDpadUp" style="${btn} position:absolute; left:50%; top:10px; transform:translateX(-50%);">▲</button>
-    <button type="button" id="scDpadDown" style="${btn} position:absolute; left:50%; bottom:10px; transform:translateX(-50%);">▼</button>
-    <button type="button" id="scDpadLeft" style="${btn} position:absolute; left:10px; top:50%; transform:translateY(-50%);">◀</button>
-    <button type="button" id="scDpadRight" style="${btn} position:absolute; right:10px; top:50%; transform:translateY(-50%);">▶</button>
-    <div style="position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:8px;">
-      <button type="button" id="scDpadSizeUp" style="${btn}">＋</button>
-      <button type="button" id="scDpadSizeDown" style="${btn}">－</button>
-    </div>
-  `;
-  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
-  const step = 2;
-  const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); };
-  document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
-  document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
-  document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
-  document.getElementById('scDpadRight').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)+step,0,100); after(); });
-  document.getElementById('scDpadSizeUp').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); pt.h = clamp((pt.h||8)+step,4,95); after(); });
-  document.getElementById('scDpadSizeDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); pt.h = clamp((pt.h||8)-step,4,95); after(); });
+function attachResizeHandleDrag(handle, pt){
+  handle.addEventListener('pointerdown', (ev)=>{
+    ev.stopPropagation();
+    ev.preventDefault();
+    const containerRect = document.getElementById('sceneEditorImgWrap').getBoundingClientRect();
+    const onMove = (mv)=>{
+      const px = ((mv.clientX - containerRect.left) / containerRect.width) * 100;
+      const py = ((mv.clientY - containerRect.top) / containerRect.height) * 100;
+      pt.w = Math.max(3, Math.min(95, Math.round((px - pt.x) * 2)));
+      pt.h = Math.max(3, Math.min(95, Math.round((py - pt.y) * 2)));
+      renderSceneEditorPoints();
+    };
+    const onUp = ()=>{
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
 }
 
-function onSceneEditorImageClick(ev){
-  if (!sceneEditorImageDataUrl) return;
+function selectScenePoint(id){
+  sceneEditorSelectedPointId = id;
+  renderSceneEditorPoints();
+  document.getElementById('sceneEditorDeleteBtn').style.display = id ? 'block' : 'none';
+  document.getElementById('sceneEditorSelectedInfo').style.display = id ? 'block' : 'none';
+  renderSceneEditorDetails();
+}
+
+function placeNewScenePoint(clientX, clientY){
   const img = document.getElementById('sceneEditorImg');
   const rect = img.getBoundingClientRect();
-  const x = ((ev.clientX - rect.left) / rect.width) * 100;
-  const y = ((ev.clientY - rect.top) / rect.height) * 100;
+  const x = ((clientX - rect.left) / rect.width) * 100;
+  const y = ((clientY - rect.top) / rect.height) * 100;
   sceneEditorPoints.push({
     id: 'pt_' + Date.now() + '_' + Math.floor(Math.random()*1000),
     type: sceneEditorSelectedType,
-    x: Math.round(x * 10) / 10,
-    y: Math.round(y * 10) / 10,
+    x: Math.max(0, Math.min(100, Math.round(x * 10) / 10)),
+    y: Math.max(0, Math.min(100, Math.round(y * 10) / 10)),
     w: 8, h: 8, rotation: 0, flipped: false,
   });
   const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
-  sceneEditorSelectedPointId = newPt.id;
-  document.getElementById('sceneEditorDeleteBtn').style.display = 'block';
-  document.getElementById('sceneEditorSelectedInfo').style.display = 'block';
   renderSceneEditorPoints();
-  renderSceneEditorDpad();
-  renderSceneEditorDetails();
+  selectScenePoint(newPt.id);
 }
+
+function handleExistingPointInteraction(pt, downEv){
+  const img = document.getElementById('sceneEditorImg');
+  const imgRect = img.getBoundingClientRect();
+  const downX = downEv.clientX, downY = downEv.clientY;
+  const threshold = 6;
+  let moved = false, dragging = false;
+  const longPressTimer = setTimeout(()=>{
+    if (moved) return;
+    sceneEditorResizingPointId = pt.id;
+    selectScenePoint(pt.id);
+  }, 550);
+  const onMove = (mv)=>{
+    if (!moved && (Math.abs(mv.clientX-downX) > threshold || Math.abs(mv.clientY-downY) > threshold)){
+      moved = true;
+      clearTimeout(longPressTimer);
+    }
+    if (moved && sceneEditorResizingPointId !== pt.id){
+      dragging = true;
+      const x = ((mv.clientX - imgRect.left) / imgRect.width) * 100;
+      const y = ((mv.clientY - imgRect.top) / imgRect.height) * 100;
+      pt.x = Math.max(0, Math.min(100, Math.round(x*10)/10));
+      pt.y = Math.max(0, Math.min(100, Math.round(y*10)/10));
+      renderSceneEditorPoints();
+    }
+  };
+  const onUp = ()=>{
+    clearTimeout(longPressTimer);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (sceneEditorResizingPointId === pt.id) return;
+    if (!moved){
+      selectScenePoint(sceneEditorSelectedPointId === pt.id ? null : pt.id);
+    } else if (dragging){
+      selectScenePoint(pt.id);
+    }
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+document.getElementById('sceneEditorImgWrap').addEventListener('pointerdown', (ev)=>{
+  if (!sceneEditorImageDataUrl) return;
+  if (ev.target.closest('.scene-resize-handle, .scene-resize-ok')) return;
+  if (sceneEditorResizingPointId) return;
+
+  const wrap = document.getElementById('sceneEditorImgWrap');
+  let hitPt = null;
+  for (let i = sceneEditorPoints.length - 1; i >= 0; i--){
+    const p = sceneEditorPoints[i];
+    const div = wrap.querySelector(`[data-ptid="${p.id}"]`);
+    if (div && isPointHitAt(p, div, ev.clientX, ev.clientY)){ hitPt = p; break; }
+  }
+
+  if (hitPt){
+    handleExistingPointInteraction(hitPt, ev);
+    return;
+  }
+
+  const img = document.getElementById('sceneEditorImg');
+  const rect = img.getBoundingClientRect();
+  if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY < rect.top || ev.clientY > rect.bottom) return;
+  const downX = ev.clientX, downY = ev.clientY;
+  let scrolled = false;
+  const onMove = (mv)=>{ if (Math.abs(mv.clientX-downX) > 6 || Math.abs(mv.clientY-downY) > 6) scrolled = true; };
+  const onUp = (up)=>{
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (scrolled) return;
+    placeNewScenePoint(up.clientX, up.clientY);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+});
 
 document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
   if (!sceneEditorSelectedPointId) return;
   sceneEditorPoints = sceneEditorPoints.filter(p=>p.id !== sceneEditorSelectedPointId);
+  sceneEditorResizingPointId = null;
   sceneEditorSelectedPointId = null;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   renderSceneEditorPoints();
-  renderSceneEditorDpad();
   renderSceneEditorDetails();
 });
 
@@ -5592,24 +5748,34 @@ function renderSceneDetailAppearance(pt){
   const appWrap = document.getElementById('sceneDetailAppearance');
   if (pt.rotation === undefined) pt.rotation = 0;
   if (pt.flipped === undefined) pt.flipped = false;
+  const isLinkedPnj = (pt.type === 'pnj' && pt.linkedPnjId);
+  const effectiveUrl = pointEffectiveImageUrl(pt);
   appWrap.innerHTML = `
     <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Apparence du point</div>
-    <div class="field-row" style="align-items:center; gap:8px;">
-      <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
-      ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
-    </div>
-    <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
-    ${pt.imageUrl ? `
+    <p class="meta" style="margin:0 0 6px;">Position et taille se règlent directement sur l'image (glisser pour déplacer, appui long pour redimensionner).</p>
+    ${isLinkedPnj ? `
+      <p class="meta" style="margin:0 0 6px;">Utilise l'image de ce PNJ — pas besoin d'en choisir une autre ici.</p>
+    ` : `
+      <div class="field-row" style="align-items:center; gap:8px;">
+        <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
+        ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
+      </div>
+      <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
+    `}
+    ${effectiveUrl ? `
       <div class="meta" style="margin-top:6px;">Rotation (degrés)</div>
       <input type="range" data-point-rotate min="0" max="359" value="${pt.rotation}" style="width:100%;">
       <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:4px;"><input type="checkbox" data-point-flip ${pt.flipped?'checked':''}> 🔃 Miroir</label>
-    ` : ''}
+    ` : `
+      <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Icône invisible pour le joueur (le point reste actif, juste sans rien à afficher dessus)</label>
+    `}
   `;
-  appWrap.querySelector('[data-point-img-pick]').addEventListener('click', ()=>{
+  const pickBtn = appWrap.querySelector('[data-point-img-pick]');
+  if (pickBtn) pickBtn.addEventListener('click', ()=>{
     document.getElementById('scenePointImgFile').click();
   });
   const fileInput = document.getElementById('scenePointImgFile');
-  fileInput.addEventListener('change', (e)=>{
+  if (fileInput) fileInput.addEventListener('change', (e)=>{
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -5647,6 +5813,11 @@ function renderSceneDetailAppearance(pt){
   const flipInput = appWrap.querySelector('[data-point-flip]');
   if (flipInput) flipInput.addEventListener('change', (e)=>{
     pt.flipped = e.target.checked;
+    renderSceneEditorPoints();
+  });
+  const hideInput = appWrap.querySelector('[data-point-hide]');
+  if (hideInput) hideInput.addEventListener('change', (e)=>{
+    pt.hideIcon = e.target.checked;
     renderSceneEditorPoints();
   });
 }
@@ -5813,6 +5984,9 @@ function renderSceneDetailTypeSpecific(pt){
         pt.linkedPnjId = id;
         pt.linkedPnjName = c.name || 'PNJ';
         pt.linkedPnjEmoji = c.emoji || '👤';
+        pt.linkedPnjImageUrl = c.imageUrl || '';
+        renderSceneEditorPoints();
+        renderSceneDetailAppearance(pt);
         renderSceneDetailTypeSpecific(pt);
       });
     });
@@ -5993,12 +6167,14 @@ function renderSceneViewCurrentScene(){
 
     const el = document.createElement('div');
     el.className = 'scene-point';
-    if (pt.imageUrl){
+    const url = pointEffectiveImageUrl(pt);
+    if (url){
       el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0;`;
-      el.innerHTML = `<img src="${pt.imageUrl}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+    } else if (pt.hideIcon){
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none;`;
     } else {
-      el.style.left = pt.x + '%';
-      el.style.top = pt.y + '%';
+      el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; min-width:26px; min-height:26px; transform:translate(-50%,-50%);`;
       el.textContent = sceneTypeEmoji(pt.type);
     }
 
