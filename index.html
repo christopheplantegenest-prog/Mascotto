@@ -209,7 +209,7 @@
     position:absolute; inset:0; overflow:hidden;
     display:flex; align-items:center; justify-content:center; background:#111;
   }
-  .scene-imgwrap img{ width:100%; display:block; user-select:none; -webkit-user-drag:none; }
+  .scene-imgwrap img{ width:100%; display:block; user-select:none; -webkit-user-drag:none; -webkit-touch-callout:none; }
   .scene-imgwrap .scene-empty{ color:rgba(255,255,255,.6); font-size:13px; text-align:center; padding:0 30px; }
   .scene-point{
     position:absolute; transform:translate(-50%,-50%);
@@ -246,22 +246,6 @@
     flex:none; padding:6px 9px; border-radius:8px; border:1px solid rgba(255,255,255,.35);
     background:rgba(255,255,255,.12); color:#fff; font-size:11px; font-weight:600; white-space:nowrap;
   }
-  .scene-resize-handle{
-    position:absolute; right:-12px; bottom:-12px; width:26px; height:26px; border-radius:50%;
-    background:#fff; border:2px solid var(--accent); pointer-events:auto; cursor:se-resize;
-    display:flex; align-items:center; justify-content:center; font-size:12px; touch-action:none;
-  }
-  .scene-resize-ok{
-    position:absolute; left:-12px; top:-12px; width:26px; height:26px; border-radius:50%;
-    background:#2ecc71; color:#fff; pointer-events:auto; cursor:pointer;
-    display:flex; align-items:center; justify-content:center; font-size:13px;
-  }
-  .scene-typerow{ display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
-  .scene-type-btn{
-    flex:none; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.35);
-    background:rgba(255,255,255,.12); color:#fff; font-size:12px; font-weight:600;
-  }
-  .scene-type-btn.selected{ background:var(--accent); border-color:var(--accent); }
   .scene-actionrow{ display:flex; gap:8px; }
   .scene-actionrow button{ flex:1; padding:11px; border-radius:10px; font-size:13px; font-weight:700; border:none; }
 </style>
@@ -1144,21 +1128,33 @@
     <input type="file" id="sceneEditorImageFile" accept="image/*" style="display:none;">
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
-    <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie dessus pour placer des points.</div>
+    <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie sur "➕ Point" pour en placer un.</div>
+    <div id="sceneEditorDpad" style="position:absolute; inset:0; pointer-events:none;"></div>
   </div>
   <div class="scene-bottombar">
     <div class="scene-actionrow-scroll">
       <button type="button" class="scene-action-btn" id="sceneEditorScenesBtn">🎬 Scènes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn">🖼️ Image</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
     </div>
-    <div class="scene-typerow" id="sceneTypeRow"></div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
     <div id="sceneEditorDetails" style="display:none;"></div>
     <div class="scene-actionrow">
       <button id="sceneEditorDeleteBtn" style="background:var(--danger); color:#fff; display:none;">🗑️ Supprimer le point</button>
       <button class="btn-capture" id="sceneEditorSaveBtn">💾 Enregistrer la scène</button>
     </div>
+  </div>
+</div>
+
+<!-- Choix du type de point à ajouter -->
+<div class="overlay" id="scenePointTypeOverlay" style="z-index:4500;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Ajouter un point</h3>
+      <button class="sheet-x" id="scenePointTypeCloseBtn">✕</button>
+    </div>
+    <div id="scenePointTypeList" style="display:flex; flex-direction:column; gap:8px;"></div>
   </div>
 </div>
 
@@ -2140,6 +2136,7 @@ function recruitCreature(creature, metierId){
     return db.collection('creature_types').doc(creature.id).update({ recruited: true });
   }).then(()=>{
     showToast(`${creature.name} recruté(e) !`);
+    if (document.getElementById('sceneViewFull').classList.contains('show')) renderSceneViewCurrentScene();
   }).catch((err)=> showToast('Échec du recrutement : ' + err.message));
 }
 
@@ -5238,7 +5235,6 @@ let sceneEditorCurrentVariantId = null; // null = contenu par défaut de la scè
 let sceneEditorStartSceneId = null;
 let sceneEditorImageDataUrl = null; // miroir de la scène (ou variante) courante
 let sceneEditorPoints = [];         // miroir de la scène (ou variante) courante
-let sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
 let sceneEditorSelectedPointId = null;
 
 function genSceneId(){ return 'scene_' + Date.now() + '_' + Math.floor(Math.random()*1000); }
@@ -5294,12 +5290,12 @@ function loadVariantIntoEditorState(variantId){
     sceneEditorPoints = v.points || [];
   }
   sceneEditorSelectedPointId = null;
-  sceneEditorResizingPointId = null;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   document.getElementById('sceneEditorDetails').style.display = 'none';
   renderSceneEditorImage();
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   renderSceneEditorTopLabel();
 }
 
@@ -5478,19 +5474,6 @@ document.getElementById('sceneListAddBtn').addEventListener('click', ()=>{
   renderSceneListOverlay();
 });
 
-function renderSceneTypeRow(){
-  const wrap = document.getElementById('sceneTypeRow');
-  wrap.innerHTML = SCENE_POINT_TYPES.map(t=>`
-    <button type="button" class="scene-type-btn" data-scenetype="${t.id}" style="${t.id===sceneEditorSelectedType ? 'background:var(--accent); border-color:var(--accent);' : ''}">${t.label}</button>
-  `).join('');
-  wrap.querySelectorAll('[data-scenetype]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      sceneEditorSelectedType = btn.dataset.scenetype;
-      renderSceneTypeRow();
-    });
-  });
-}
-
 function sceneTypeEmoji(typeId){
   const t = SCENE_POINT_TYPES.find(x=>x.id===typeId);
   return t ? t.label.split(' ')[0] : '📍';
@@ -5558,8 +5541,6 @@ function renderSceneEditorImage(){
   }
 }
 
-let sceneEditorResizingPointId = null;
-
 function renderSceneEditorPoints(){
   const wrap = document.getElementById('sceneEditorImgWrap');
   wrap.querySelectorAll('.scene-point').forEach(el=> el.remove());
@@ -5567,7 +5548,6 @@ function renderSceneEditorPoints(){
     if (pt.w === undefined) pt.w = 8;
     if (pt.h === undefined) pt.h = 8;
     const selected = pt.id === sceneEditorSelectedPointId;
-    const resizing = sceneEditorResizingPointId === pt.id;
     const el = document.createElement('div');
     el.dataset.ptid = pt.id;
     const url = pointEffectiveImageUrl(pt);
@@ -5575,7 +5555,7 @@ function renderSceneEditorPoints(){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
-      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none; -webkit-touch-callout:none;">`;
     } else if (pt.hideIcon){
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(255,255,255,.08); border:1px dashed rgba(255,255,255,.5); box-shadow:none; border-radius:6px; pointer-events:none;`;
@@ -5584,112 +5564,82 @@ function renderSceneEditorPoints(){
       el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w}%; height:${pt.h}%; min-width:26px; min-height:26px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
       el.innerHTML = `<div style="width:100%; height:100%; border-radius:50%; background:rgba(255,255,255,.92); border:2px solid ${selected?'var(--danger)':'var(--accent)'}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 2px 6px rgba(0,0,0,.4);">${sceneTypeEmoji(pt.type)}</div>`;
     }
-    if (resizing){
-      const handle = document.createElement('div');
-      handle.className = 'scene-resize-handle';
-      handle.textContent = '⤡';
-      el.appendChild(handle);
-      attachResizeHandleDrag(handle, pt);
-      const ok = document.createElement('div');
-      ok.className = 'scene-resize-ok';
-      ok.textContent = '✓';
-      ok.addEventListener('click', ()=>{ sceneEditorResizingPointId = null; renderSceneEditorPoints(); });
-      el.appendChild(ok);
-    }
     wrap.appendChild(el);
-  });
-}
-
-function attachResizeHandleDrag(handle, pt){
-  handle.addEventListener('pointerdown', (ev)=>{
-    ev.stopPropagation();
-    ev.preventDefault();
-    const containerRect = document.getElementById('sceneEditorImgWrap').getBoundingClientRect();
-    const onMove = (mv)=>{
-      const px = ((mv.clientX - containerRect.left) / containerRect.width) * 100;
-      const py = ((mv.clientY - containerRect.top) / containerRect.height) * 100;
-      pt.w = Math.max(3, Math.min(95, Math.round((px - pt.x) * 2)));
-      pt.h = Math.max(3, Math.min(95, Math.round((py - pt.y) * 2)));
-      renderSceneEditorPoints();
-    };
-    const onUp = ()=>{
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
   });
 }
 
 function selectScenePoint(id){
   sceneEditorSelectedPointId = id;
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   document.getElementById('sceneEditorDeleteBtn').style.display = id ? 'block' : 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = id ? 'block' : 'none';
   renderSceneEditorDetails();
 }
 
-function placeNewScenePoint(clientX, clientY){
-  const img = document.getElementById('sceneEditorImg');
-  const rect = img.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width) * 100;
-  const y = ((clientY - rect.top) / rect.height) * 100;
+function renderSceneEditorDpad(){
+  const dpad = document.getElementById('sceneEditorDpad');
+  const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
+  if (!pt){ dpad.innerHTML = ''; return; }
+  const btn = 'pointer-events:auto; width:42px; height:42px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,.4);';
+  dpad.innerHTML = `
+    <button type="button" id="scDpadUp" style="${btn} position:absolute; left:50%; top:10px; transform:translateX(-50%);">▲</button>
+    <button type="button" id="scDpadDown" style="${btn} position:absolute; left:50%; bottom:10px; transform:translateX(-50%);">▼</button>
+    <button type="button" id="scDpadLeft" style="${btn} position:absolute; left:10px; top:50%; transform:translateY(-50%);">◀</button>
+    <button type="button" id="scDpadRight" style="${btn} position:absolute; right:10px; top:50%; transform:translateY(-50%);">▶</button>
+    <div style="position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:8px;">
+      <button type="button" id="scDpadSizeUp" style="${btn}">＋</button>
+      <button type="button" id="scDpadSizeDown" style="${btn}">－</button>
+    </div>
+  `;
+  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+  const step = 2;
+  const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); };
+  document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
+  document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
+  document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
+  document.getElementById('scDpadRight').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)+step,0,100); after(); });
+  document.getElementById('scDpadSizeUp').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); pt.h = clamp((pt.h||8)+step,4,95); after(); });
+  document.getElementById('scDpadSizeDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); pt.h = clamp((pt.h||8)-step,4,95); after(); });
+}
+
+function renderScenePointTypeList(){
+  const wrap = document.getElementById('scenePointTypeList');
+  wrap.innerHTML = SCENE_POINT_TYPES.map(t=>`
+    <button type="button" class="btn-secondary" data-addtype="${t.id}" style="width:100%; justify-content:flex-start; background:rgba(255,255,255,.06);">${t.label}</button>
+  `).join('');
+  wrap.querySelectorAll('[data-addtype]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      addNewScenePoint(btn.dataset.addtype);
+      document.getElementById('scenePointTypeOverlay').classList.remove('show');
+    });
+  });
+}
+document.getElementById('sceneEditorAddPointBtn').addEventListener('click', ()=>{
+  if (!sceneEditorImageDataUrl){ showToast('Ajoute d\'abord une image de fond'); return; }
+  renderScenePointTypeList();
+  document.getElementById('scenePointTypeOverlay').classList.add('show');
+});
+document.getElementById('scenePointTypeCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('scenePointTypeOverlay').classList.remove('show');
+});
+
+function addNewScenePoint(typeId){
   sceneEditorPoints.push({
     id: 'pt_' + Date.now() + '_' + Math.floor(Math.random()*1000),
-    type: sceneEditorSelectedType,
-    x: Math.max(0, Math.min(100, Math.round(x * 10) / 10)),
-    y: Math.max(0, Math.min(100, Math.round(y * 10) / 10)),
-    w: 8, h: 8, rotation: 0, flipped: false,
+    type: typeId,
+    x: 50, y: 50, w: 8, h: 8, rotation: 0, flipped: false,
   });
   const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
   renderSceneEditorPoints();
   selectScenePoint(newPt.id);
 }
 
-function handleExistingPointInteraction(pt, downEv){
-  const img = document.getElementById('sceneEditorImg');
-  const imgRect = img.getBoundingClientRect();
-  const downX = downEv.clientX, downY = downEv.clientY;
-  const threshold = 6;
-  let moved = false, dragging = false;
-  const longPressTimer = setTimeout(()=>{
-    if (moved) return;
-    sceneEditorResizingPointId = pt.id;
-    selectScenePoint(pt.id);
-  }, 550);
-  const onMove = (mv)=>{
-    if (!moved && (Math.abs(mv.clientX-downX) > threshold || Math.abs(mv.clientY-downY) > threshold)){
-      moved = true;
-      clearTimeout(longPressTimer);
-    }
-    if (moved && sceneEditorResizingPointId !== pt.id){
-      dragging = true;
-      const x = ((mv.clientX - imgRect.left) / imgRect.width) * 100;
-      const y = ((mv.clientY - imgRect.top) / imgRect.height) * 100;
-      pt.x = Math.max(0, Math.min(100, Math.round(x*10)/10));
-      pt.y = Math.max(0, Math.min(100, Math.round(y*10)/10));
-      renderSceneEditorPoints();
-    }
-  };
-  const onUp = ()=>{
-    clearTimeout(longPressTimer);
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    if (sceneEditorResizingPointId === pt.id) return;
-    if (!moved){
-      selectScenePoint(sceneEditorSelectedPointId === pt.id ? null : pt.id);
-    } else if (dragging){
-      selectScenePoint(pt.id);
-    }
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-}
-
+document.getElementById('sceneEditorImgWrap').addEventListener('contextmenu', (ev)=> ev.preventDefault());
+document.getElementById('sceneViewImgWrap').addEventListener('contextmenu', (ev)=> ev.preventDefault());
 document.getElementById('sceneEditorImgWrap').addEventListener('pointerdown', (ev)=>{
   if (!sceneEditorImageDataUrl) return;
-  if (ev.target.closest('.scene-resize-handle, .scene-resize-ok')) return;
-  if (sceneEditorResizingPointId) return;
+  if (ev.target.closest('#sceneEditorDpad')) return;
 
   const wrap = document.getElementById('sceneEditorImgWrap');
   let hitPt = null;
@@ -5698,36 +5648,17 @@ document.getElementById('sceneEditorImgWrap').addEventListener('pointerdown', (e
     const div = wrap.querySelector(`[data-ptid="${p.id}"]`);
     if (div && isPointHitAt(p, div, ev.clientX, ev.clientY)){ hitPt = p; break; }
   }
-
-  if (hitPt){
-    handleExistingPointInteraction(hitPt, ev);
-    return;
-  }
-
-  const img = document.getElementById('sceneEditorImg');
-  const rect = img.getBoundingClientRect();
-  if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY < rect.top || ev.clientY > rect.bottom) return;
-  const downX = ev.clientX, downY = ev.clientY;
-  let scrolled = false;
-  const onMove = (mv)=>{ if (Math.abs(mv.clientX-downX) > 6 || Math.abs(mv.clientY-downY) > 6) scrolled = true; };
-  const onUp = (up)=>{
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    if (scrolled) return;
-    placeNewScenePoint(up.clientX, up.clientY);
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
+  selectScenePoint(hitPt ? (sceneEditorSelectedPointId === hitPt.id ? null : hitPt.id) : null);
 });
 
 document.getElementById('sceneEditorDeleteBtn').addEventListener('click', ()=>{
   if (!sceneEditorSelectedPointId) return;
   sceneEditorPoints = sceneEditorPoints.filter(p=>p.id !== sceneEditorSelectedPointId);
-  sceneEditorResizingPointId = null;
   sceneEditorSelectedPointId = null;
   document.getElementById('sceneEditorDeleteBtn').style.display = 'none';
   document.getElementById('sceneEditorSelectedInfo').style.display = 'none';
   renderSceneEditorPoints();
+  renderSceneEditorDpad();
   renderSceneEditorDetails();
 });
 
@@ -5752,7 +5683,7 @@ function renderSceneDetailAppearance(pt){
   const effectiveUrl = pointEffectiveImageUrl(pt);
   appWrap.innerHTML = `
     <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Apparence du point</div>
-    <p class="meta" style="margin:0 0 6px;">Position et taille se règlent directement sur l'image (glisser pour déplacer, appui long pour redimensionner).</p>
+    <p class="meta" style="margin:0 0 6px;">Position et taille se règlent avec les flèches et les boutons ＋/－ qui apparaissent sur l'image une fois le point sélectionné.</p>
     ${isLinkedPnj ? `
       <p class="meta" style="margin:0 0 6px;">Utilise l'image de ce PNJ — pas besoin d'en choisir une autre ici.</p>
     ` : `
@@ -6030,8 +5961,6 @@ function openSceneEditor(creatureId){
   sceneEditorZoneId = creatureId;
   sceneEditorScenes = [{ id: genSceneId(), name: 'Scène 1', imageUrl: '', points: [] }];
   sceneEditorStartSceneId = sceneEditorScenes[0].id;
-  sceneEditorSelectedType = SCENE_POINT_TYPES[0].id;
-  renderSceneTypeRow();
   loadSceneIntoEditorState(sceneEditorScenes[0].id);
   document.getElementById('sceneEditorFull').classList.add('show');
   zonesCol.doc(creatureId).get().then((doc)=>{
@@ -6167,6 +6096,7 @@ function renderSceneViewCurrentScene(){
 
     const el = document.createElement('div');
     el.className = 'scene-point';
+    if (pt.type === 'pnj' && pt.linkedPnjId) el.dataset.pnjid = pt.linkedPnjId;
     const url = pointEffectiveImageUrl(pt);
     if (url){
       el.style.cssText = `position:absolute; left:${pt.x}%; top:${pt.y}%; width:${pt.w||8}%; height:${pt.h||8}%; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0;`;
@@ -6274,6 +6204,21 @@ function renderSceneViewCurrentScene(){
     }
 
     wrap.appendChild(el);
+  });
+
+  hideRecruitedScenePnjPoints(sc);
+}
+
+function hideRecruitedScenePnjPoints(sc){
+  const pnjIds = Array.from(new Set((sc.points || []).filter(pt=> pt.type==='pnj' && pt.linkedPnjId).map(pt=> pt.linkedPnjId)));
+  if (!pnjIds.length || !creatureCol) return;
+  Promise.all(pnjIds.map(id=> creatureCol.doc(id).get().catch(()=> null))).then((docs)=>{
+    const recruitedIds = new Set();
+    docs.forEach((doc)=>{ if (doc && (!doc.exists || doc.data().recruited)) recruitedIds.add(doc.id); });
+    if (!recruitedIds.size) return;
+    document.querySelectorAll('#sceneViewImgWrap .scene-point[data-pnjid]').forEach((el)=>{
+      if (recruitedIds.has(el.dataset.pnjid)) el.remove();
+    });
   });
 }
 document.getElementById('sceneViewCloseBtn').addEventListener('click', ()=>{
