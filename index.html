@@ -444,6 +444,31 @@
       <button class="sheet-x" id="nearbyPlayersCloseBtn">✕</button>
     </div>
     <div id="nearbyPlayersList"></div>
+    <div id="nearbyDuelsSection" style="margin-top:14px;"></div>
+  </div>
+</div>
+
+<!-- Défi PvP reçu -->
+<div class="overlay" id="pvpIncomingOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">⚔️ Défi reçu</h3>
+    </div>
+    <p class="meta" id="pvpIncomingText">—</p>
+    <button class="btn-capture" id="pvpAcceptBtn" style="width:100%; margin-top:8px;">Accepter</button>
+    <button class="btn-secondary" id="pvpDeclineBtn" style="width:100%; margin-top:8px;">Refuser</button>
+    <button class="btn-secondary" id="pvpBlockFromChallengeBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">🚫 Bloquer ce joueur</button>
+  </div>
+</div>
+
+<!-- Défi PvP envoyé, en attente -->
+<div class="overlay" id="pvpOutgoingOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">⚔️ Défi envoyé</h3>
+    </div>
+    <p class="meta" id="pvpOutgoingText">En attente de réponse…</p>
+    <button class="btn-secondary" id="pvpCancelChallengeBtn" style="width:100%; margin-top:8px;">Annuler le défi</button>
   </div>
 </div>
 
@@ -541,8 +566,6 @@
 
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
-    <button class="btn-secondary" id="scenarioFeteBtn" style="width:100%; margin-bottom:10px;">🧪 Scénario "La fête de Lanville" (12 PNJ + craft)</button>
-    <button class="btn-secondary" id="cleanupFeteBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer le scénario "La fête de Lanville"</button>
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
     <button class="btn-secondary" id="createCombatTestDataBtn" style="width:100%; margin-bottom:10px;">🧪 Créer attaques/monstres/objets de test (combat)</button>
     <button class="btn-secondary" id="cleanupCombatTestDataBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les attaques/monstres/objets de test</button>
@@ -1587,6 +1610,7 @@ function onSignedIn(user){
   watchPlayerInventoryForBase();
   tryResumeSession();
   loadExplorerConfig();
+  attachPvpListeners();
   if (typeof attachNegotiationListeners === 'function') attachNegotiationListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
@@ -2594,6 +2618,7 @@ let coinsBackfillDone = false;
 function watchPlayerQuests(uid){
   if (!db) return;
   db.collection('players').doc(uid).onSnapshot((doc)=>{
+    playerSelfData = doc.exists ? doc.data() : null;
     playerQuestsState = (doc.exists && doc.data().quests) || {};
     playerDiscoveredZoneIds = new Set((doc.exists && doc.data().discoveredZoneIds) || []);
     playerExplorerMissionStartedAt = (doc.exists && doc.data().explorerMissionStartedAt) || null;
@@ -3552,232 +3577,6 @@ document.getElementById('items50TestBtn').addEventListener('click', ()=>{
   }))).then(()=> showToast(batch.length + ' objets de test créés — modifiables comme les autres'));
 });
 
-/* ---------- Nettoyage du scénario "La fête de Lanville" ---------- */
-document.getElementById('cleanupFeteBtn').addEventListener('click', async ()=>{
-  if (!creatureCol || !questsCol || !itemsCol || !recipesCol){ showToast('Firebase indisponible ici'); return; }
-  if (!confirm('Supprimer définitivement les PNJ, les quêtes, les objets et les recettes du scénario "La fête de Lanville" ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
-  try {
-    const oldNames = ['Le Maire','La marchande du Marcivil','Mémée Suzanne','La cuisinière','Nino','Le Barde',"La maîtresse d'école",'Léa, la postière','Maître Ferrand','Iris, la voyageuse','Le sacristain'];
-    const creatureSnap = await creatureCol.get();
-    const toDeleteCreatures = creatureSnap.docs.filter(d => oldNames.includes(d.data().name));
-    await Promise.all(toDeleteCreatures.map(d => creatureCol.doc(d.id).delete()));
-    const oldQuestNames = ['Un repas à sauver','Le violon perdu','La route de Lanville','Le jour de la fête'];
-    const questSnap = await questsCol.get();
-    const oldQuests = questSnap.docs.filter(d => oldQuestNames.includes(d.data().name));
-    await Promise.all(oldQuests.map(d => questsCol.doc(d.id).delete()));
-    const oldItemNames = ['Pain frais','Fromage de la ferme','Vieux violon','Bouteille de Pineau','Ruban de fête','Costume de fête','Fer','Bois','Farine','Pomme','Clochette de fête','Tarte aux pommes'];
-    const itemSnap = await itemsCol.get();
-    const oldItemDocs = itemSnap.docs.filter(d => oldItemNames.includes(d.data().name));
-    if (currentUser && oldItemDocs.length){
-      const playerRef = db.collection('players').doc(currentUser.uid);
-      const playerDoc = await playerRef.get();
-      const inv = (playerDoc.exists && playerDoc.data().inventory) || {};
-      const clearInv = {};
-      oldItemDocs.forEach(d=>{ if (inv[d.id]) clearInv[d.id] = firebase.firestore.FieldValue.delete(); });
-      if (Object.keys(clearInv).length) await playerRef.update(clearInv);
-    }
-    await Promise.all(oldItemDocs.map(d => itemsCol.doc(d.id).delete()));
-    const oldRecipeNames = ['Clochette de fête','Tarte aux pommes'];
-    const recipeSnap = await recipesCol.get();
-    const oldRecipeDocs = recipeSnap.docs.filter(d => oldRecipeNames.includes(d.data().name));
-    await Promise.all(oldRecipeDocs.map(d => recipesCol.doc(d.id).delete()));
-    showToast(`Scénario supprimé : ${toDeleteCreatures.length} PNJ, ${oldQuests.length} quêtes, ${oldItemDocs.length} objets, ${oldRecipeDocs.length} recettes.`);
-  } catch(err){ showToast('Échec : ' + err.message); }
-});
-
-/* ---------- Scénario de test : "La fête de Lanville" (12 PNJ + 4 quêtes chaînées + craft) ---------- */
-document.getElementById('scenarioFeteBtn').addEventListener('click', async ()=>{
-  if (!itemsCol || !questsCol || !metiersCol || !creatureCol || !recipesCol){ showToast('Firebase indisponible ici'); return; }
-  if (quests.find(q=>q.name==='Un repas à sauver')){ showToast('Ce scénario a déjà été créé.'); return; }
-  try {
-    async function ensureMetier(name){
-      const existing = metiers.find(x=>x.name===name);
-      if (existing) return existing.id;
-      const ref = await metiersCol.add({ name, createdAt: Date.now() });
-      return ref.id;
-    }
-    async function ensureItem(name, data){
-      const existing = items.find(x=>x.name===name);
-      if (existing) return existing.id;
-      const ref = await itemsCol.add({ name, imageUrl:'', description:'', equippable:false, effectType:null, effectValue:0, effectDuration:'permanent', effectSeconds:0, effectMetiers:[], updatedAt: Date.now(), ...data });
-      return ref.id;
-    }
-
-    const forgeronId = await ensureMetier('Forgeron');
-    const bardeId = await ensureMetier('Barde');
-
-    const painId = await ensureItem('Pain frais', { emoji:'🥖', type:'consommable', description:'Du pain tout juste sorti du four.', sellable:true, basePrice:6 });
-    const fromageId = await ensureItem('Fromage de la ferme', { emoji:'🧀', type:'consommable', description:'Un fromage fermier bien affiné.', sellable:true, basePrice:9 });
-    const violonId = await ensureItem('Vieux violon', { emoji:'🎻', type:'quete', description:'Un violon un peu abîmé mais encore jouable.', sellable:false, basePrice:0 });
-    const pineauId = await ensureItem('Bouteille de Pineau', { emoji:'🍾', type:'quete', description:'Une bouteille de Pineau des Charentes.', sellable:false, basePrice:0 });
-    const rubanId = await ensureItem('Ruban de fête', { emoji:'🎀', type:'quete', description:'Un ruban doré pour décorer le kiosque.', sellable:false, basePrice:0 });
-    const costumeId = await ensureItem('Costume de fête', { emoji:'🥻', type:'ressource', description:'Un bel habit porté lors des grandes occasions.', sellable:true, basePrice:150 });
-    const ferId = await ensureItem('Fer', { emoji:'⛓️', type:'ressource', description:'Un lingot de fer brut.', sellable:true, basePrice:8 });
-    const boisId = await ensureItem('Bois', { emoji:'🪵', type:'ressource', description:'Une bûche de bois solide.', sellable:true, basePrice:5 });
-    const farineId = await ensureItem('Farine', { emoji:'🌾', type:'ressource', description:'De la farine fraîchement moulue.', sellable:true, basePrice:4 });
-    const pommeId = await ensureItem('Pomme', { emoji:'🍎', type:'ressource', description:'Une pomme bien juteuse.', sellable:true, basePrice:3 });
-    const clochetteId = await ensureItem('Clochette de fête', { emoji:'🔔', type:'ressource', description:'Une clochette forgée pour l\'occasion.', sellable:true, basePrice:40 });
-    const tarteId = await ensureItem('Tarte aux pommes', { emoji:'🥧', type:'consommable', description:'Une tarte aux pommes maison.', sellable:true, basePrice:20 });
-
-    // Quêtes créées à l'envers pour pouvoir chaîner les nextQuestId
-    const q4 = await questsCol.add({
-      name:'Le jour de la fête', description:'Apporte le ruban de fête pour terminer les préparatifs.',
-      objectives:[{ itemId: rubanId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: costumeId, qty:1 }],
-      nextQuestId:null, createdAt: Date.now()
-    });
-    const q3 = await questsCol.add({
-      name:'La route de Lanville', description:'Porte une bouteille de Pineau au sacristain de Lanville.',
-      objectives:[{ itemId: pineauId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: rubanId, qty:1 }],
-      nextQuestId:q4.id, createdAt: Date.now()
-    });
-    const q2 = await questsCol.add({
-      name:'Le violon perdu', description:'Retrouve le violon du Barde et rends-le lui.',
-      objectives:[{ itemId: violonId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: ferId, qty:2 }],
-      nextQuestId:q3.id, createdAt: Date.now()
-    });
-    const q1 = await questsCol.add({
-      name:'Un repas à sauver', description:'Réunis du pain et du fromage pour le repas de la fête.',
-      objectives:[{ itemId: painId, qty:1 }, { itemId: fromageId, qty:1 }], objectiveMode:'all', rewards:[{ itemId: boisId, qty:2 }],
-      nextQuestId:q2.id, createdAt: Date.now()
-    });
-    const q1Id = q1.id, q2Id = q2.id, q3Id = q3.id, q4Id = q4.id;
-
-    // Recettes de test (pour essayer le craft)
-    await recipesCol.add({ name:'Clochette de fête', emoji:'🔔', imageUrl:'', inputs:[{itemId:ferId,qty:2},{itemId:boisId,qty:1}], outputItemId:clochetteId, outputQty:1, duration:600, allowedMetiers:[forgeronId], updatedAt: Date.now(), createdAt: Date.now() });
-    await recipesCol.add({ name:'Tarte aux pommes', emoji:'🥧', imageUrl:'', inputs:[{itemId:farineId,qty:2},{itemId:pommeId,qty:3}], outputItemId:tarteId, outputQty:1, duration:900, allowedMetiers:[], updatedAt: Date.now(), createdAt: Date.now() });
-
-    // Un peu de matière première offerte pour tester le craft tout de suite
-    if (currentUser){
-      await db.collection('players').doc(currentUser.uid).set({
-        inventory: {
-          [ferId]: firebase.firestore.FieldValue.increment(5),
-          [boisId]: firebase.firestore.FieldValue.increment(5),
-          [farineId]: firebase.firestore.FieldValue.increment(5),
-          [pommeId]: firebase.firestore.FieldValue.increment(5),
-        }
-      }, { merge:true });
-    }
-
-    const step = (text, choices, textVariants)=> ({ text, choices, textVariants: textVariants||[] });
-    const noOp = { label:'Fermer', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null };
-    const npcs = [
-      { name:'Le Maire', lat:45.8463, lng:0.0191, dialogueSteps:[ step(
-        "La fête du village approche à grands pas, mais on a un souci avec le repas communal — il manque des ingrédients ! Tu veux bien nous donner un coup de main ?",
-        [ { label:'Bien sûr, je m\'en occupe', next:null, itemGrant:null, recruit:null, questGive:{questId:q1Id}, questValidate:null, showIf:null } ],
-        [ { questId:q1Id, state:'completed', text:'Merci encore pour le repas, la fête va être réussie grâce à toi !' } ]
-      )]},
-      { name:'La marchande du Marcivil', lat:45.8464, lng:0.0194, dialogueSteps:[ step(
-        "La fête approche, on prépare un grand repas pour tout le village !",
-        [ { label:'Merci !', next:null, itemGrant:{itemName:'Pain frais', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ],
-        [
-          { questId:q1Id, state:'completed', text:'Merci pour ton aide avec le repas, régale-toi à la fête !' },
-          { questId:q1Id, state:'active', text:'Tiens, prends ce pain frais, ça aidera pour le repas.' }
-        ]
-      )]},
-      { name:'Mémée Suzanne', lat:45.8462, lng:0.0192, dialogueSteps:[ step(
-        "La fête ? Ah, ça me rappelle de bons souvenirs...",
-        [ { label:'Merci Mémée !', next:null, itemGrant:{itemName:'Fromage de la ferme', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q1Id, state:'active'} } ],
-        [
-          { questId:q1Id, state:'completed', text:'Merci d\'avoir aidé pour le repas, tu es un cœur !' },
-          { questId:q1Id, state:'active', text:'Il faut bien un peu de bon fromage pour un repas digne de ce nom ! Tiens, prends ça.' }
-        ]
-      )]},
-      { name:'La cuisinière', lat:45.8464, lng:0.0189, dialogueSteps:[ step(
-        "Je prépare le grand repas de la fête, ça va être délicieux !",
-        [
-          { label:'Voici le pain et le fromage', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q1Id}, showIf:null },
-          { label:'Quelle est la suite ?', next:null, itemGrant:null, recruit:null, questGive:{questId:q2Id}, questValidate:null, showIf:{questId:q1Id, state:'completed'} },
-          { label:'Le ruban est prêt !', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q4Id}, showIf:null }
-        ],
-        [
-          { questId:q4Id, state:'completed', text:'La fête est parfaite grâce à toi, merci pour tout !' },
-          { questId:q4Id, state:'active', text:'Le ruban est arrivé ? Il nous faut ça pour finir de décorer le kiosque !' },
-          { questId:q3Id, state:'active', text:'As-tu réussi à porter la bouteille jusqu\'à Lanville ?' },
-          { questId:q2Id, state:'completed', text:'Le Barde a récupéré son violon grâce à toi, merci !' },
-          { questId:q2Id, state:'active', text:'As-tu retrouvé le violon du Barde ?' },
-          { questId:q1Id, state:'completed', text:'Merci pour les ingrédients ! Au fait, le Barde a perdu son violon — tu veux bien voir si tu le retrouves ? Il traînait peut-être du côté du kiosque.' },
-          { questId:q1Id, state:'active', text:'Alors, ces ingrédients pour le repas de fête ?' }
-        ]
-      )]},
-      { name:'Nino', lat:45.8467, lng:0.0204, dialogueSteps:[ step(
-        "Je joue souvent près du kiosque.",
-        [ { label:'Je vais le rendre', next:null, itemGrant:{itemName:'Vieux violon', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'active'} } ],
-        [
-          { questId:q2Id, state:'completed', text:'Content d\'avoir aidé à retrouver le violon !' },
-          { questId:q2Id, state:'active', text:'J\'ai retrouvé un vieux violon caché sous le kiosque ! Il doit bien appartenir à quelqu\'un... Tiens, prends-le.' }
-        ]
-      )]},
-      { name:'Le Barde', lat:45.8459, lng:0.0196, dialogueSteps:[ step(
-        "J'adore jouer de la musique pour la fête du village.",
-        [
-          { label:'Le voici', next:null, itemGrant:null, recruit:null, questGive:{questId:q3Id}, questValidate:{questId:q2Id}, showIf:null },
-          { label:'Je peux jouer avec vous ?', next:null, itemGrant:null, recruit:{metierId:bardeId}, questGive:null, questValidate:null, showIf:{questId:q2Id, state:'completed'} }
-        ],
-        [
-          { questId:q3Id, state:'completed', text:'J\'ai entendu dire que le sacristain a été ravi de recevoir sa bouteille, merci !' },
-          { questId:q3Id, state:'active', text:'As-tu réussi à porter le Pineau à Lanville ?' },
-          { questId:q2Id, state:'completed', text:'Merci d\'avoir retrouvé mon violon ! Je vais pouvoir jouer à la fête. J\'ai une faveur à te demander : Maître Ferrand, le forgeron, a une bouteille de Pineau à faire porter à un ami à Lanville, tu veux bien t\'en occuper ?' },
-          { questId:q2Id, state:'active', text:'As-tu retrouvé mon violon ? Il doit être quelque part près du kiosque.' }
-        ]
-      )]},
-      { name:'La maîtresse d\'école', lat:45.8460, lng:0.0191, dialogueSteps:[ step(
-        "La fête du village, quelle bonne nouvelle !",
-        [ noOp ],
-        [
-          { questId:q3Id, state:'active', text:'Si tu vas à Lanville, l\'église est facile à trouver, tout le monde en parle par ici.' }
-        ]
-      )]},
-      { name:'Léa, la postière', lat:45.8465, lng:0.0194, dialogueSteps:[ step(
-        "Bon courage pour les préparatifs !",
-        [ noOp ],
-        [
-          { questId:q3Id, state:'active', text:'Si tu passes par Lanville, dis bonjour au sacristain de ma part.' }
-        ]
-      )]},
-      { name:'Maître Ferrand', lat:45.8464, lng:0.0189, metier: forgeronId, dialogueSteps:[ step(
-        "Je m'occupe de la forge du village.",
-        [
-          { label:'Je la lui apporterai', next:null, itemGrant:{itemName:'Bouteille de Pineau', quantity:1}, recruit:null, questGive:null, questValidate:null, showIf:{questId:q3Id, state:'active'} },
-          { label:'Je peux te rejoindre ?', next:null, itemGrant:null, recruit:{metierId:forgeronId}, questGive:null, questValidate:null, showIf:{questId:q3Id, state:'completed'} }
-        ],
-        [
-          { questId:q3Id, state:'completed', text:'Merci d\'avoir porté cette bouteille à mon ami, ça lui a fait très plaisir !' },
-          { questId:q3Id, state:'active', text:'Tiens, j\'ai justement une bouteille de Pineau à faire porter à mon vieil ami le sacristain, à Lanville.' }
-        ]
-      )]},
-      { name:'Iris, la voyageuse', lat:45.8505, lng:0.0160, dialogueSteps:[ step(
-        "Je voyage beaucoup, j'aime découvrir de nouveaux villages.",
-        [ noOp ],
-        [
-          { questId:q3Id, state:'active', text:'Tu vas voir le sacristain ? Continue tout droit, l\'église de Lanville n\'est plus très loin.' }
-        ]
-      )]},
-      { name:'Le sacristain', lat:45.8555, lng:0.0127, dialogueSteps:[ step(
-        "Je m'occupe de l'église de Lanville.",
-        [ { label:'Merci beaucoup', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:{questId:q3Id}, showIf:null } ],
-        [
-          { questId:q3Id, state:'completed', text:'Merci encore pour cette bouteille de Pineau, un vrai plaisir de la part d\'un vieil ami !' },
-          { questId:q3Id, state:'active', text:'As-tu quelque chose pour moi de la part de Ferrand ?' }
-        ]
-      )]},
-    ];
-
-    for (const n of npcs){
-      await creatureCol.add({
-        name: n.name, metier: n.metier || '', emoji: '🧑', imageUrl: '',
-        visibilityCondition: null, hideOnExitRadius: false, dupeGroup: null,
-        dialogueSteps: n.dialogueSteps, interactionType: 'dialogue', shopItems: [], shopPhrase: '',
-        lat: n.lat, lng: n.lng, startDate: '', endDate: '', startTime: '', endTime: '', daysOfWeek: [],
-        updatedAt: Date.now()
-      });
-    }
-
-    showToast('Scénario "La fête de Lanville" créé : 11 PNJ, 4 quêtes, 2 recettes — modifiable comme le reste');
-    document.getElementById('editHubOverlay').classList.remove('show');
-  } catch(err){
-    showToast('Échec : ' + err.message);
-  }
-});
 
 
 document.getElementById('itemImageFile').addEventListener('change', (e)=>{
@@ -3787,10 +3586,12 @@ document.getElementById('itemImageFile').addEventListener('change', (e)=>{
   reader.onload = (ev)=>{
     const img = new Image();
     img.onload = ()=>{
-      const maxSize = 160;
+      const maxSize = 400;
       let w = img.width, h = img.height;
-      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
-      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -5632,16 +5433,18 @@ document.getElementById('nearbyPlayersCloseBtn').addEventListener('click', ()=>{
 function renderNearbyPlayersList(){
   const wrap = document.getElementById('nearbyPlayersList');
   if (!playerPos){ wrap.innerHTML = '<p class="meta">Position inconnue pour l\'instant.</p>'; return; }
+  const myBlocked = new Set((playerSelfData && playerSelfData.blockedUids) || []);
   const nearby = Object.entries(otherPlayersCache).map(([uid, d])=>{
     const dist = haversineDist(playerPos.lat, playerPos.lng, d.lat, d.lng);
-    return { uid, pseudo: d.pseudo || 'Joueur', dist, inZone: !!d.currentZoneId };
-  }).filter(p=> p.dist <= VISIBLE_RADIUS_M).sort((a,b)=> a.dist - b.dist);
+    return { uid, pseudo: d.pseudo || 'Joueur', dist, inZone: !!d.currentZoneId, blockedByThem: (d.blockedUids||[]).includes(currentUser.uid) };
+  }).filter(p=> p.dist <= VISIBLE_RADIUS_M && !myBlocked.has(p.uid) && !p.blockedByThem).sort((a,b)=> a.dist - b.dist);
   wrap.innerHTML = nearby.length ? nearby.map(p=>`
     <div class="editor-list-item" style="align-items:center;">
       <div class="thumb">🧑</div>
       <div class="name" style="flex:1;">${p.pseudo}${p.inZone ? ' <span title="En exploration">🧭</span>' : ''}<span class="meta" style="display:block;">${Math.round(p.dist)} m</span></div>
       <button class="btn-secondary" data-trade-with="${p.uid}" data-trade-pseudo="${p.pseudo}">🤝 Négocier</button>
-      <button class="btn-secondary" disabled style="opacity:.4;" title="Bientôt disponible">Combattre</button>
+      <button class="btn-secondary" data-challenge-with="${p.uid}" data-challenge-pseudo="${p.pseudo}" ${p.inZone ? 'disabled style="opacity:.4;" title="En exploration"' : ''}>⚔️ Défier</button>
+      <button class="btn-secondary" data-block-with="${p.uid}" data-block-pseudo="${p.pseudo}" style="flex:none; padding:6px 8px;" title="Bloquer">🚫</button>
     </div>
   `).join('') : '<p class="meta">Aucun joueur à proximité pour l\'instant.</p>';
   wrap.querySelectorAll('[data-trade-with]').forEach(btn=>{
@@ -5650,7 +5453,270 @@ function renderNearbyPlayersList(){
       openOrCreateNegotiation(btn.dataset.tradeWith, btn.dataset.tradePseudo);
     });
   });
+  wrap.querySelectorAll('[data-challenge-with]').forEach(btn=>{
+    btn.addEventListener('click', ()=> sendPvpChallenge(btn.dataset.challengeWith, btn.dataset.challengePseudo));
+  });
+  wrap.querySelectorAll('[data-block-with]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if (!confirm(`Bloquer ${btn.dataset.blockPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`)) return;
+      toggleBlockPlayer(btn.dataset.blockWith);
+    });
+  });
+  renderNearbyDuelsSection();
 }
+
+/* ---------- Combat contre un autre joueur (JcJ) ---------- */
+const pvpChallengesCol = (typeof db !== 'undefined') ? db.collection('pvp_challenges') : null;
+const pvpDuelsCol = (typeof db !== 'undefined') ? db.collection('pvp_duels') : null;
+let playerSelfData = null; // copie locale du doc joueur (pour blockedUids)
+let pvpIncomingChallenge = null;
+let pvpOutgoingChallengeId = null;
+let pvpDuelId = null;
+let pvpMyRole = null; // 'A' ou 'B'
+let pvpOpponentUid = null;
+let pvpOpponentPseudo = null;
+let pvpDuelUnsub = null;
+let pvpSpectating = false;
+
+function toggleBlockPlayer(uid){
+  if (!playerDocRef) return;
+  playerDocRef.set({ blockedUids: firebase.firestore.FieldValue.arrayUnion(uid) }, { merge:true }).then(()=>{
+    showToast('Joueur bloqué.');
+  });
+}
+
+function attachPvpListeners(){
+  if (!currentUser || !pvpChallengesCol || !pvpDuelsCol) return;
+  pvpChallengesCol.where('challengedUid','==',currentUser.uid).where('status','==','pending').onSnapshot((snap)=>{
+    if (pvpDuelId) return; // déjà en plein combat, on ignore les nouveaux défis pour l'instant
+    const doc = snap.docs[0];
+    if (doc){
+      pvpIncomingChallenge = { id: doc.id, ...doc.data() };
+      document.getElementById('pvpIncomingText').textContent = `${pvpIncomingChallenge.challengerPseudo} te défie en combat !`;
+      document.getElementById('pvpIncomingOverlay').classList.add('show');
+    } else if (pvpIncomingChallenge){
+      pvpIncomingChallenge = null;
+      document.getElementById('pvpIncomingOverlay').classList.remove('show');
+    }
+  });
+  pvpChallengesCol.where('challengerUid','==',currentUser.uid).onSnapshot((snap)=>{
+    const doc = snap.docs.find(d=> d.id === pvpOutgoingChallengeId);
+    if (!doc) return;
+    const d = doc.data();
+    if (d.status === 'pending'){
+      document.getElementById('pvpOutgoingText').textContent = `En attente de réponse de ${d.challengedPseudo}…`;
+      document.getElementById('pvpOutgoingOverlay').classList.add('show');
+    } else if (d.status === 'declined'){
+      document.getElementById('pvpOutgoingOverlay').classList.remove('show');
+      pvpOutgoingChallengeId = null;
+      showToast(`${d.challengedPseudo} a refusé ton défi.`);
+      pvpChallengesCol.doc(doc.id).delete().catch(()=>{});
+    } else if (d.status === 'accepted' && d.duelId){
+      document.getElementById('pvpOutgoingOverlay').classList.remove('show');
+      pvpOutgoingChallengeId = null;
+      startPvpDuel(d.duelId, 'A', d.challengedUid, d.challengedPseudo);
+      pvpChallengesCol.doc(doc.id).delete().catch(()=>{});
+    }
+  });
+}
+document.getElementById('pvpDeclineBtn').addEventListener('click', ()=>{
+  if (!pvpIncomingChallenge) return;
+  pvpChallengesCol.doc(pvpIncomingChallenge.id).update({ status:'declined' }).catch(()=>{});
+  document.getElementById('pvpIncomingOverlay').classList.remove('show');
+  pvpIncomingChallenge = null;
+});
+document.getElementById('pvpBlockFromChallengeBtn').addEventListener('click', ()=>{
+  if (!pvpIncomingChallenge) return;
+  if (!confirm(`Bloquer ${pvpIncomingChallenge.challengerPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`)) return;
+  pvpChallengesCol.doc(pvpIncomingChallenge.id).update({ status:'declined' }).catch(()=>{});
+  toggleBlockPlayer(pvpIncomingChallenge.challengerUid);
+  document.getElementById('pvpIncomingOverlay').classList.remove('show');
+  pvpIncomingChallenge = null;
+});
+document.getElementById('pvpAcceptBtn').addEventListener('click', async ()=>{
+  if (!pvpIncomingChallenge) return;
+  if (playerSelfData && playerSelfData.currentZoneId){ showToast('Impossible d\'accepter un défi pendant que tu es en exploration.'); return; }
+  const myFighters = buildPvpFighters('B').map(f=> serializePvpFighter(f));
+  const theirFighters = pvpIncomingChallenge.challengerFighters || [];
+  if (!myFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
+  try {
+    const duelRef = await pvpDuelsCol.add({
+      playerAUid: pvpIncomingChallenge.challengerUid, playerAPseudo: pvpIncomingChallenge.challengerPseudo,
+      playerBUid: currentUser.uid, playerBPseudo: currentPseudo || 'Joueur',
+      fighters: theirFighters.concat(myFighters),
+      log: [], status: 'active', winnerUid: null,
+      createdAt: Date.now(), lastActionAt: Date.now(),
+    });
+    await pvpChallengesCol.doc(pvpIncomingChallenge.id).update({ status:'accepted', duelId: duelRef.id });
+    document.getElementById('pvpIncomingOverlay').classList.remove('show');
+    startPvpDuel(duelRef.id, 'B', pvpIncomingChallenge.challengerUid, pvpIncomingChallenge.challengerPseudo);
+    pvpIncomingChallenge = null;
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
+document.getElementById('pvpCancelChallengeBtn').addEventListener('click', ()=>{
+  if (!pvpOutgoingChallengeId) return;
+  pvpChallengesCol.doc(pvpOutgoingChallengeId).delete().catch(()=>{});
+  pvpOutgoingChallengeId = null;
+  document.getElementById('pvpOutgoingOverlay').classList.remove('show');
+});
+
+function sendPvpChallenge(uid, pseudo){
+  if (!pvpChallengesCol || !currentUser){ showToast('Firebase indisponible ici'); return; }
+  if (playerSelfData && playerSelfData.currentZoneId){ showToast('Impossible de défier quelqu\'un pendant que tu es en exploration.'); return; }
+  const myFighters = buildPvpFighters('A').map(f=> serializePvpFighter(f));
+  if (!myFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
+  pvpChallengesCol.add({
+    challengerUid: currentUser.uid, challengerPseudo: currentPseudo || 'Joueur', challengerFighters: myFighters,
+    challengedUid: uid, challengedPseudo: pseudo, status: 'pending', createdAt: Date.now(),
+  }).then(ref=>{
+    pvpOutgoingChallengeId = ref.id;
+    document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+    document.getElementById('pvpOutgoingText').textContent = `En attente de réponse de ${pseudo}…`;
+    document.getElementById('pvpOutgoingOverlay').classList.add('show');
+  }).catch(err=> showToast('Échec : ' + err.message));
+}
+
+function buildPvpFighters(ownerRole){
+  return buildPlayerFighters().map((f,i)=> ({ ...f, uid: ownerRole+i, owner: ownerRole }));
+}
+function serializePvpFighter(f){
+  return { ...serializeFighterForSave(f), owner: f.owner };
+}
+function deserializePvpFighter(sf, myRole){
+  return { ...deserializeFighterFromSave(sf), owner: sf.owner, side: sf.owner === myRole ? 'player' : 'enemy' };
+}
+
+function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
+  pvpDuelId = duelId; pvpMyRole = myRole; pvpOpponentUid = opponentUid; pvpOpponentPseudo = opponentPseudo; pvpSpectating = false;
+  document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+  document.getElementById('pvpIncomingOverlay').classList.remove('show');
+  document.getElementById('pvpOutgoingOverlay').classList.remove('show');
+  if (pvpDuelUnsub) pvpDuelUnsub();
+  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot((doc)=>{
+    if (!doc.exists) return;
+    const d = doc.data();
+    if (!combatState || combatState.pvp !== duelId){
+      // Premier chargement de ce duel : initialise l'écran de combat
+      combatState = {
+        fighters: d.fighters.map(sf=> deserializePvpFighter(sf, myRole)),
+        resolving:false, pendingActor:null, pendingAttack:null, log:(d.log||[]).slice(0,20),
+        finished:false, anim:null, hitUids:[], particles:[],
+        isPvp:true, pvp: duelId,
+      };
+      document.getElementById('combatLog').classList.remove('expanded');
+      document.getElementById('combatLogExpandBtn').textContent = '⤢';
+      document.getElementById('combatFull').classList.add('show');
+      document.getElementById('combatEndOverlay').style.display = 'none';
+      document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${DEFAULT_ARENA_BG})`);
+      renderCombat();
+      clearInterval(combatTickTimer);
+      combatTickTimer = setInterval(combatTick, 150);
+    } else if (d.lastActionByUid !== currentUser.uid){
+      // Mise à jour reçue de l'adversaire : on resynchronise notre état local
+      combatState.fighters = d.fighters.map(sf=> deserializePvpFighter(sf, myRole));
+      combatState.log = (d.log||[]).slice(0,20);
+      combatState.resolving = false;
+      combatState.pendingActor = null;
+      combatState.pendingAttack = null;
+      combatState.waitingForOpponentSince = null;
+      renderCombatWaitingPanel();
+      checkCombatEnd();
+      renderCombat();
+    }
+  });
+}
+function syncPvpDuel(){
+  if (!pvpDuelId || !pvpDuelsCol) return;
+  const update = {
+    fighters: combatState.fighters.map(f=> serializePvpFighter({ ...f, owner: f.owner || (f.side==='player'?pvpMyRole:(pvpMyRole==='A'?'B':'A')) })),
+    log: (combatState.log||[]).slice(0,20),
+    lastActionAt: Date.now(), lastActionByUid: currentUser.uid,
+  };
+  if (combatState.finished){
+    update.status = 'finished';
+    update.winnerUid = combatState.result === 'victory' ? currentUser.uid : (combatState.result === 'defeat' ? pvpOpponentUid : null);
+    if (combatState.result === 'flee') update.endReason = `${currentPseudo || 'Un joueur'} a abandonné.`;
+  }
+  pvpDuelsCol.doc(pvpDuelId).set(update, { merge:true }).catch(()=>{});
+}
+function abandonPvpDuel(){
+  if (!confirm('Abandonner ce duel ? Ce sera une défaite immédiate.')) return;
+  combatState.fighters.filter(f=>f.side==='player').forEach(f=>{ f.alive = false; f.hp = 0; });
+  combatState.log.unshift(`${currentPseudo || 'Tu'} abandonne le duel.`);
+  combatState.resolving = false;
+  checkCombatEnd();
+  renderCombat();
+  syncPvpDuel();
+}
+function cleanupPvpState(){
+  if (pvpDuelUnsub){ pvpDuelUnsub(); pvpDuelUnsub = null; }
+  pvpDuelId = null; pvpMyRole = null; pvpOpponentUid = null; pvpOpponentPseudo = null; pvpSpectating = false;
+}
+function renderNearbyDuelsSection(){
+  const el = document.getElementById('nearbyDuelsSection');
+  if (!el || !pvpDuelsCol || !playerPos) { if (el) el.innerHTML=''; return; }
+  pvpDuelsCol.where('status','==','active').get().then(snap=>{
+    const nearbyDuels = [];
+    snap.forEach(doc=>{
+      const d = doc.data();
+      const posA = otherPlayersCache[d.playerAUid] || (d.playerAUid===currentUser.uid ? playerPos : null);
+      const posB = otherPlayersCache[d.playerBUid] || (d.playerBUid===currentUser.uid ? playerPos : null);
+      const distA = posA ? haversineDist(playerPos.lat, playerPos.lng, posA.lat, posA.lng) : Infinity;
+      const distB = posB ? haversineDist(playerPos.lat, playerPos.lng, posB.lat, posB.lng) : Infinity;
+      if (Math.min(distA, distB) <= VISIBLE_RADIUS_M && d.playerAUid !== currentUser.uid && d.playerBUid !== currentUser.uid){
+        nearbyDuels.push({ id: doc.id, ...d });
+      }
+    });
+    el.innerHTML = nearbyDuels.length ? '<div class="field-label">👁️ Duels en cours à proximité</div>' + nearbyDuels.map(d=>`
+      <div class="editor-list-item" style="align-items:center;">
+        <div class="name" style="flex:1;">${d.playerAPseudo} 🆚 ${d.playerBPseudo}</div>
+        <button class="btn-secondary" data-spectate="${d.id}">👁️ Regarder</button>
+      </div>
+    `).join('') : '';
+    el.querySelectorAll('[data-spectate]').forEach(btn=>{
+      btn.addEventListener('click', ()=> spectatePvpDuel(btn.dataset.spectate));
+    });
+  }).catch(()=>{});
+}
+function spectatePvpDuel(duelId){
+  document.getElementById('nearbyPlayersOverlay').classList.remove('show');
+  clearInterval(combatTickTimer);
+  pvpSpectating = true;
+  pvpDuelId = duelId;
+  if (pvpDuelUnsub) pvpDuelUnsub();
+  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot((doc)=>{
+    if (!doc.exists){ document.getElementById('combatFull').classList.remove('show'); cleanupPvpState(); return; }
+    const d = doc.data();
+    combatState = {
+      fighters: d.fighters.map(sf=> ({ ...deserializeFighterFromSave(sf), side: sf.owner==='A' ? 'player' : 'enemy' })),
+      resolving:true, pendingActor:null, pendingAttack:null, log:(d.log||[]).slice(0,20),
+      finished: d.status==='finished', anim:null, hitUids:[], particles:[],
+      isPvp:true, pvp: duelId, isSpectator:true,
+    };
+    document.getElementById('combatFull').classList.add('show');
+    document.getElementById('combatEndOverlay').style.display = 'none';
+    document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${DEFAULT_ARENA_BG})`);
+    if (d.status === 'finished'){
+      const winnerPseudo = d.winnerUid === d.playerAUid ? d.playerAPseudo : (d.winnerUid === d.playerBUid ? d.playerBPseudo : null);
+      document.getElementById('combatEndTitle').textContent = winnerPseudo ? '🏆 Duel terminé' : '🏳️ Duel terminé';
+      document.getElementById('combatEndDesc').textContent = winnerPseudo ? `${winnerPseudo} remporte le duel !` : 'Le duel s\'est arrêté sans vainqueur.';
+      document.getElementById('combatEndOverlay').style.display = 'flex';
+      renderCombat();
+      return;
+    }
+    const panel = document.getElementById('combatActionPanel');
+    if (panel) panel.innerHTML = `<p class="meta" style="text-align:center;">👁️ ${d.playerAPseudo} 🆚 ${d.playerBPseudo}</p>`
+      + `<button type="button" class="btn-secondary" id="pvpLeaveSpectateBtn" style="width:100%;">Quitter</button>`;
+    const leaveBtn = document.getElementById('pvpLeaveSpectateBtn');
+    if (leaveBtn) leaveBtn.addEventListener('click', ()=>{
+      document.getElementById('combatFull').classList.remove('show');
+      cleanupPvpState();
+      combatState = null;
+    });
+    renderCombat();
+  });
+}
+
 
 /* ---------- Négociation d'échange (les deux joueurs composent et valident en direct) ---------- */
 const negotiationsCol = (typeof db !== 'undefined') ? db.collection('negotiations') : null;
@@ -7746,6 +7812,33 @@ setInterval(()=>{
   playerDocRef.set(update, { merge:true }).catch(()=>{});
 }, 1000);
 
+/* Vérifie régulièrement un duel JcJ en cours : absence prolongée de l'adversaire, éloignement GPS */
+const PVP_AFK_TIMEOUT_MS = 60000;
+const PVP_DISTANCE_TOLERANCE_M = 100;
+setInterval(()=>{
+  if (!combatState || !combatState.isPvp || combatState.isSpectator || combatState.finished) return;
+  if (combatState.waitingForOpponentSince && Date.now() - combatState.waitingForOpponentSince > PVP_AFK_TIMEOUT_MS){
+    combatState.fighters.filter(f=>f.side==='enemy').forEach(f=>{ f.alive = false; f.hp = 0; });
+    combatState.log.unshift(`${pvpOpponentPseudo} n'a pas joué depuis 1 minute — forfait.`);
+    combatState.resolving = false;
+    checkCombatEnd();
+    renderCombat();
+    return;
+  }
+  if (playerPos && pvpOpponentUid){
+    const oppPos = otherPlayersCache[pvpOpponentUid];
+    if (oppPos && typeof oppPos.lat === 'number'){
+      const dist = haversineDist(playerPos.lat, playerPos.lng, oppPos.lat, oppPos.lng);
+      if (dist > PVP_DISTANCE_TOLERANCE_M){
+        combatState.log.unshift(`Trop éloigné de ${pvpOpponentPseudo}, le duel s'arrête là.`);
+        combatState.resolving = false;
+        endCombat('flee');
+        renderCombat();
+      }
+    }
+  }
+}, 2000);
+
 /* ---------- Sauvegarde/reprise de session : position en zone d'exploration + combat en cours ---------- */
 function saveCurrentZoneScene(){
   if (!currentUser || !db || !sceneViewCreature) return;
@@ -7775,6 +7868,7 @@ function deserializeFighterFromSave(sf){
 }
 function saveCombatSnapshot(){
   if (!currentUser || !db || !combatState || combatState.finished) return;
+  if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(); return; }
   const data = {
     fighters: combatState.fighters.map(serializeFighterForSave),
     log: (combatState.log||[]).slice(0,20),
@@ -8065,6 +8159,14 @@ function decrementFighterStatuses(fighter){
 }
 
 async function takeTurn(fighter){
+  if (combatState.isPvp && fighter.side === 'enemy' && !combatState.isSpectator){
+    // En JcJ, seul l'appareil du joueur concerné calcule et envoie le résultat de son propre tour.
+    combatState.resolving = true;
+    if (!combatState.waitingForOpponentSince) combatState.waitingForOpponentSince = Date.now();
+    renderCombatWaitingPanel(`En attente du coup de ${pvpOpponentPseudo}…`);
+    renderCombat();
+    return;
+  }
   combatState.resolving = true;
   const hpBeforeDot = fighter.hp;
   tickStatusesAtTurnStart(fighter);
@@ -8168,7 +8270,7 @@ function renderCombatActionButtons(fighter){
         <button type="button" class="btn-secondary" id="combatAnalyzeBtn">🔍 Analyse</button>
         <button type="button" class="btn-secondary" id="combatItemBtn">🎒 Objet</button>
         <button type="button" class="btn-secondary" id="combatPassBtn">⏭️ Passer</button>
-        <button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">🏃 Fuir</button>
+        <button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">${combatState.isPvp ? '🏳️ Abandonner' : '🏃 Fuir'}</button>
       </div>`;
   panel.querySelectorAll('.combat-action-atk').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -8176,7 +8278,7 @@ function renderCombatActionButtons(fighter){
       showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' ? 'alliée' : 'ennemie'));
     });
   });
-  document.getElementById('combatFleeBtn').addEventListener('click', attemptFlee);
+  document.getElementById('combatFleeBtn').addEventListener('click', combatState.isPvp ? abandonPvpDuel : attemptFlee);
   document.getElementById('combatAnalyzeBtn').addEventListener('click', ()=>{
     const enemyPool = combatState.fighters.filter(f=>f.side!==fighter.side && f.alive);
     if (!enemyPool.length){ showToast('Aucune cible à analyser.'); return; }
@@ -8528,6 +8630,7 @@ function resolveAttack(attacker, attack, target){
 }
 
 function attemptFlee(){
+  if (!confirm('Fuir ce combat ? Tu perds ta chance de butin.')) return;
   const enemyFighters = combatState.fighters.filter(f=>f.side==='enemy' && f.alive);
   const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
   const success = Math.random()*100 < avgFlee;
@@ -8563,6 +8666,14 @@ function endCombat(result){
   renderCombatWaitingPanel();
   const title = document.getElementById('combatEndTitle');
   const desc = document.getElementById('combatEndDesc');
+  if (combatState.isPvp){
+    if (result === 'victory'){ title.textContent = '🎉 Victoire !'; desc.textContent = `Tu as vaincu ${pvpOpponentPseudo} !`; }
+    else if (result === 'defeat'){ title.textContent = '💀 Défaite'; desc.textContent = `Tu as été vaincu par ${pvpOpponentPseudo}.`; }
+    else { title.textContent = '🏳️ Duel terminé'; desc.textContent = 'Le duel a pris fin.'; }
+    document.getElementById('combatEndOverlay').style.display = 'flex';
+    if (!combatState.isSpectator) syncPvpDuel();
+    return;
+  }
   if (result === 'victory'){
     title.textContent = '🎉 Victoire !';
     const rewardIds = new Set();
@@ -8587,6 +8698,11 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', ()=>{
   document.getElementById('combatFull').classList.remove('show');
   const result = combatState ? combatState.result : null;
   const ctx = combatZoneContext;
+  if (combatState && combatState.isPvp){
+    cleanupPvpState();
+    combatState = null;
+    return;
+  }
   combatZoneContext = null;
   combatState = null;
   clearSavedCombat();
