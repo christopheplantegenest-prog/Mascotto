@@ -1542,6 +1542,7 @@ function onSignedIn(user){
   currentUser = user;
   watchPlayerQuests(user.uid);
   watchPlayerInventoryForBase();
+  tryResumeSession();
   if (typeof attachNegotiationListeners === 'function') attachNegotiationListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
@@ -2116,6 +2117,7 @@ if (creatureCol){
     latestSnap = snap;
     if (!movingMarker) renderAllCreatures(snap);
     renderEditorList(snap);
+    tryResumeSession();
   }, (err)=>{
     document.getElementById('editorStatus').textContent = 'Erreur Firebase : ' + err.message;
   });
@@ -4666,6 +4668,7 @@ if (attacksCol){
     document.getElementById('attacksStatus').textContent = attacks.length + ' attaque(s)';
     renderAttacksListView();
     renderCombatAttacksPicker();
+    tryResumeSession();
   }, (err)=>{ document.getElementById('attacksStatus').textContent = 'Erreur : ' + err.message; });
 }
 
@@ -7166,7 +7169,7 @@ function markScenePointTaken(pt){
   }, { merge: true });
 }
 
-function openSceneView(creature){
+function openSceneView(creature, resumeSceneId){
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
@@ -7188,11 +7191,12 @@ function openSceneView(creature){
     }
     sceneViewCreature = creature;
     sceneViewScenes = norm.scenes;
-    sceneViewCurrentSceneId = norm.startSceneId;
+    sceneViewCurrentSceneId = (resumeSceneId && norm.scenes.some(s=>s.id===resumeSceneId)) ? resumeSceneId : norm.startSceneId;
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
-    rollSceneEncounter();
+    saveCurrentZoneScene();
+    if (!resumeSceneId) rollSceneEncounter();
   }).catch(()=>{ empty.style.display = 'block'; });
 }
 
@@ -7253,6 +7257,7 @@ async function renderSceneViewCurrentScene(){
     if (pt.type === 'sortie_zone'){
       wrapPointActions[pt.id] = ()=>{
         document.getElementById('sceneViewFull').classList.remove('show');
+        clearCurrentZoneScene();
       };
     } else if (pt.type === 'sortie'){
       wrapPointActions[pt.id] = ()=>{
@@ -7260,6 +7265,7 @@ async function renderSceneViewCurrentScene(){
           if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
             sceneViewCurrentSceneId = pt.targetSceneId;
             renderSceneViewCurrentScene();
+            saveCurrentZoneScene();
             rollSceneEncounter();
           } else {
             document.getElementById('sceneViewFull').classList.remove('show');
@@ -7498,6 +7504,96 @@ document.getElementById('resetZonePointsBtn').addEventListener('click', async ()
   } catch(err){ showToast('Échec : ' + err.message); }
 });
 
+/* ---------- Sauvegarde/reprise de session : position en zone d'exploration + combat en cours ---------- */
+function saveCurrentZoneScene(){
+  if (!currentUser || !db || !sceneViewCreature) return;
+  db.collection('players').doc(currentUser.uid).set({
+    currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId
+  }, { merge:true }).catch(()=>{});
+}
+function clearCurrentZoneScene(){
+  if (!currentUser || !db) return;
+  db.collection('players').doc(currentUser.uid).set({
+    currentZoneId: firebase.firestore.FieldValue.delete(), currentSceneId: firebase.firestore.FieldValue.delete()
+  }, { merge:true }).catch(()=>{});
+}
+function serializeFighterForSave(f){
+  return {
+    uid:f.uid, side:f.side, sourceId:f.sourceId||null, name:f.name, imageUrl:f.imageUrl||'', tribe:f.tribe||'',
+    maxHp:f.maxHp, hp:f.hp, atk:f.atk, def:f.def, matk:f.matk, mdef:f.mdef, speed:f.speed,
+    precision:f.precision, evasion:f.evasion,
+    attackIds:(f.attacksList||[]).map(a=>a.id),
+    immunities:f.immunities||[], resistances:f.resistances||[],
+    rewardItemIds:f.rewardItemIds||[], fleeChance:f.fleeChance!=null?f.fleeChance:30,
+    gauge:f.gauge, alive:f.alive, statuses:f.statuses||{},
+  };
+}
+function deserializeFighterFromSave(sf){
+  return { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
+}
+function saveCombatSnapshot(){
+  if (!currentUser || !db || !combatState || combatState.finished) return;
+  const data = {
+    fighters: combatState.fighters.map(serializeFighterForSave),
+    log: (combatState.log||[]).slice(0,20),
+    zoneId: (sceneViewCreature && sceneViewCreature.id) || null,
+    pointId: (combatZoneContext && combatZoneContext.pt && combatZoneContext.pt.id) || null,
+    savedAt: Date.now(),
+  };
+  db.collection('players').doc(currentUser.uid).set({ savedCombat: data }, { merge:true }).catch(()=>{});
+}
+function clearSavedCombat(){
+  if (!currentUser || !db) return;
+  db.collection('players').doc(currentUser.uid).set({ savedCombat: firebase.firestore.FieldValue.delete() }, { merge:true }).catch(()=>{});
+}
+async function tryResumeSavedCombat(saved){
+  const playerFighters = (saved.fighters||[]).filter(f=>f.side==='player').map(deserializeFighterFromSave);
+  const enemyFighters = (saved.fighters||[]).filter(f=>f.side==='enemy').map(deserializeFighterFromSave);
+  if (!playerFighters.length || !enemyFighters.length) return false;
+  let arenaBg = DEFAULT_ARENA_BG;
+  if (saved.zoneId && creatureCol){
+    try {
+      const zoneDoc = await creatureCol.doc(saved.zoneId).get();
+      if (zoneDoc.exists){
+        sceneViewCreature = { id: zoneDoc.id, ...zoneDoc.data() };
+        if (sceneViewCreature.combatArenaImageRef){
+          const url = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef);
+          if (url) arenaBg = url;
+        }
+      }
+    } catch(e){}
+  }
+  combatZoneContext = saved.zoneId ? { pt: saved.pointId ? { id: saved.pointId } : null } : null;
+  startCombat(playerFighters, enemyFighters, arenaBg);
+  combatState.log = saved.log || [];
+  renderCombat();
+  showToast('🔄 Reprise de ton combat en cours…');
+  return true;
+}
+let sessionResumeAttempted = false;
+async function tryResumeSession(){
+  if (sessionResumeAttempted) return;
+  if (!currentUser || !db) return;
+  if (!attacks.length && !creatures.length) return; // données pas encore prêtes, on retentera au prochain snapshot
+  sessionResumeAttempted = true;
+  try {
+    const doc = await db.collection('players').doc(currentUser.uid).get();
+    if (!doc.exists) return;
+    const pd = doc.data();
+    if (pd.savedCombat){
+      const ok = await tryResumeSavedCombat(pd.savedCombat);
+      if (ok) return;
+    }
+    if (pd.currentZoneId && creatureCol){
+      const zoneDoc = await creatureCol.doc(pd.currentZoneId).get();
+      if (zoneDoc.exists){
+        openSceneView({ id: zoneDoc.id, ...zoneDoc.data() }, pd.currentSceneId);
+        showToast('🔄 Reprise de ton exploration en cours…');
+      }
+    }
+  } catch(e){}
+}
+
 /* Combat déclenché par un PNJ de type Monstre/Combattant (boss) ou par une rencontre aléatoire dans une zone d'exploration. */
 let combatZoneContext = null;
 async function launchZoneCombat(enemyCreatureList, pt){
@@ -7639,6 +7735,7 @@ function startCombat(playerFighters, enemyFighters, arenaBgUrl){
   renderCombat();
   clearInterval(combatTickTimer);
   combatTickTimer = setInterval(combatTick, 150);
+  saveCombatSnapshot();
 }
 
 function speedMultiplier(f){
@@ -7728,7 +7825,7 @@ async function takeTurn(fighter){
   }
   checkCombatEnd();
   if (combatState.finished){ combatState.resolving = false; renderCombat(); return; }
-  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); return; }
+  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); saveCombatSnapshot(); return; }
   if (checkTurnSkip(fighter)){
     combatState.hitUids = [fighter.uid];
     renderCombat();
@@ -7738,6 +7835,7 @@ async function takeTurn(fighter){
     decrementFighterStatuses(fighter);
     combatState.resolving = false;
     renderCombat();
+    saveCombatSnapshot();
     return;
   }
   if (fighter.side === 'player'){
@@ -7745,6 +7843,7 @@ async function takeTurn(fighter){
     combatState.pendingAttack = null;
     renderCombatActionButtons(fighter);
     renderCombat();
+    saveCombatSnapshot();
   } else {
     await sleep(250);
     if (!combatState || combatState.finished) return;
@@ -7759,6 +7858,7 @@ async function takeTurn(fighter){
     combatState.resolving = false;
     checkCombatEnd();
     renderCombat();
+    if (!combatState.finished) saveCombatSnapshot();
   }
 }
 
@@ -7867,6 +7967,7 @@ function passCombatTurn(fighter){
   renderCombatWaitingPanel();
   checkCombatEnd();
   renderCombat();
+  if (!combatState.finished) saveCombatSnapshot();
 }
 /* Texte d'analyse : tribu (faible/fort contre), point fort/faible statistique, états actifs. */
 function combatAnalysisLines(target){
@@ -7911,6 +8012,7 @@ function renderCombatAnalysisPanel(actor, target){
     checkCombatEnd();
     renderCombatWaitingPanel();
     renderCombat();
+    if (!combatState.finished) saveCombatSnapshot();
   });
 }
 /* Simule l'avancement des jauges pour prévoir l'ordre des n prochains tours (même logique que combatTick). */
@@ -7980,6 +8082,7 @@ async function onFighterCardClick(uid){
     combatState.resolving = false;
     checkCombatEnd();
     renderCombat();
+    if (!combatState.finished) saveCombatSnapshot();
     return;
   }
   const friendly = isHealAttack(attack) || attack.kind === 'boost';
@@ -7993,6 +8096,7 @@ async function onFighterCardClick(uid){
   combatState.resolving = false;
   checkCombatEnd();
   renderCombat();
+  if (!combatState.finished) saveCombatSnapshot();
 }
 
 function tribeMultiplier(attackerTribe, defenderTribe){
@@ -8185,6 +8289,7 @@ function attemptFlee(){
   } else {
     combatState.log.unshift('Fuite ratée !');
     renderCombat();
+    saveCombatSnapshot();
   }
 }
 
@@ -8200,6 +8305,7 @@ function endCombat(result){
   combatState.finished = true;
   combatState.result = result;
   clearInterval(combatTickTimer);
+  clearSavedCombat();
   renderCombatWaitingPanel();
   const title = document.getElementById('combatEndTitle');
   const desc = document.getElementById('combatEndDesc');
@@ -8229,14 +8335,17 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', ()=>{
   const ctx = combatZoneContext;
   combatZoneContext = null;
   combatState = null;
+  clearSavedCombat();
   if (ctx){
     if (result === 'victory'){
-      markScenePointTaken(ctx.pt).catch(()=>{});
+      if (ctx.pt) markScenePointTaken(ctx.pt).catch(()=>{});
       document.getElementById('sceneViewFull').classList.add('show');
       renderSceneViewCurrentScene();
     } else if (result === 'flee'){
       document.getElementById('sceneViewFull').classList.add('show');
       renderSceneViewCurrentScene();
+    } else if (result === 'defeat'){
+      clearCurrentZoneScene();
     }
     // Défaite : la zone reste fermée, le joueur se retrouve sur la carte (retour à l'entrée).
   }
