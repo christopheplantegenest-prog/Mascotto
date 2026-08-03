@@ -110,6 +110,7 @@
   .overlay.show{ display:flex; }
   #recipeItemChooserOverlay{ z-index:4500; }
   #pnjChooserOverlay{ z-index:4500; }
+  #appConfirmOverlay{ z-index:5000; }
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
     border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
@@ -658,6 +659,39 @@
     <div style="display:flex; gap:8px;">
       <button class="btn-secondary" id="appConfirmCancelBtn" style="flex:1;">Annuler</button>
       <button class="btn-capture" id="appConfirmOkBtn" style="flex:1;">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Menu d'action sur l'icône d'un PNJ en mode libre (appui long) -->
+<div class="overlay" id="mapIconMenuOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 id="mapIconMenuTitle" style="margin-top:0;">PNJ</h3>
+      <button class="sheet-x" id="mapIconMenuCloseBtn">✕</button>
+    </div>
+    <div id="mapIconMenuMain">
+      <button class="btn-capture" id="mapIconEditBtn" style="width:100%; margin-bottom:8px;">✏️ Modifier</button>
+      <button class="btn-secondary" id="mapIconResizeBtn" style="width:100%; margin-bottom:8px;">↔️ Redimensionner</button>
+      <button class="btn-secondary" id="mapIconRotateBtn" style="width:100%;">🔄 Rotation</button>
+    </div>
+    <div id="mapIconResizePanel" style="display:none; text-align:center;">
+      <p class="meta">Taille de l'image sur la carte</p>
+      <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin:14px 0;">
+        <button class="btn-secondary" id="mapIconSizeMinusBtn" style="width:48px; height:48px; font-size:22px; flex:none;">−</button>
+        <span id="mapIconSizeLabel" style="font-size:16px; min-width:56px;">100%</span>
+        <button class="btn-secondary" id="mapIconSizePlusBtn" style="width:48px; height:48px; font-size:22px; flex:none;">+</button>
+      </div>
+      <button class="btn-secondary" id="mapIconResizeBackBtn" style="width:100%;">↩️ Retour</button>
+    </div>
+    <div id="mapIconRotatePanel" style="display:none; text-align:center;">
+      <p class="meta">Rotation de l'image</p>
+      <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin:14px 0;">
+        <button class="btn-secondary" id="mapIconRotMinusBtn" style="width:48px; height:48px; font-size:22px; flex:none;">↺</button>
+        <span id="mapIconRotLabel" style="font-size:16px; min-width:56px;">0°</span>
+        <button class="btn-secondary" id="mapIconRotPlusBtn" style="width:48px; height:48px; font-size:22px; flex:none;">↻</button>
+      </div>
+      <button class="btn-secondary" id="mapIconRotateBackBtn" style="width:100%;">↩️ Retour</button>
     </div>
   </div>
 </div>
@@ -2275,13 +2309,92 @@ function openCreatureEditFromMap(id){
   renderDialogueBuilder();
 }
 
+/* ---------- Menu d'action sur l'icône d'un PNJ en mode libre (appui long) ---------- */
+let mapIconMenuCreatureId = null;
+function openMapIconMenu(c){
+  mapIconMenuCreatureId = c.id;
+  document.getElementById('mapIconMenuTitle').textContent = c.name || 'PNJ';
+  document.getElementById('mapIconMenuMain').style.display = 'block';
+  document.getElementById('mapIconResizePanel').style.display = 'none';
+  document.getElementById('mapIconRotatePanel').style.display = 'none';
+  document.getElementById('mapIconMenuOverlay').classList.add('show');
+}
+document.getElementById('mapIconMenuCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('mapIconMenuOverlay').classList.remove('show');
+  mapIconMenuCreatureId = null;
+});
+document.getElementById('mapIconEditBtn').addEventListener('click', ()=>{
+  const id = mapIconMenuCreatureId;
+  document.getElementById('mapIconMenuOverlay').classList.remove('show');
+  mapIconMenuCreatureId = null;
+  if (id) openCreatureEditFromMap(id);
+});
+function applyMapIconTransform(c){
+  if (!c.marker) return;
+  const el = c.marker.getElement();
+  if (!el) return;
+  const img = el.querySelector('img, .creature-icon');
+  if (img) img.style.transform = `scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg)`;
+}
+function updateMapIconSizeLabel(c){
+  document.getElementById('mapIconSizeLabel').textContent = Math.round((c.mapIconScale!=null?c.mapIconScale:1)*100) + '%';
+}
+document.getElementById('mapIconResizeBtn').addEventListener('click', ()=>{
+  const c = creatures.find(x=>x.id===mapIconMenuCreatureId);
+  if (!c) return;
+  document.getElementById('mapIconMenuMain').style.display = 'none';
+  document.getElementById('mapIconResizePanel').style.display = 'block';
+  updateMapIconSizeLabel(c);
+});
+document.getElementById('mapIconResizeBackBtn').addEventListener('click', ()=>{
+  document.getElementById('mapIconResizePanel').style.display = 'none';
+  document.getElementById('mapIconMenuMain').style.display = 'block';
+});
+function adjustMapIconScale(delta){
+  const c = creatures.find(x=>x.id===mapIconMenuCreatureId);
+  if (!c || !creatureCol) return;
+  const scale = Math.max(0.3, Math.min(3, Math.round(((c.mapIconScale!=null?c.mapIconScale:1) + delta) * 10) / 10));
+  c.mapIconScale = scale;
+  updateMapIconSizeLabel(c);
+  applyMapIconTransform(c);
+  creatureCol.doc(c.id).update({ mapIconScale: scale }).catch(()=>{});
+}
+document.getElementById('mapIconSizeMinusBtn').addEventListener('click', ()=> adjustMapIconScale(-0.1));
+document.getElementById('mapIconSizePlusBtn').addEventListener('click', ()=> adjustMapIconScale(0.1));
+function updateMapIconRotLabel(c){
+  document.getElementById('mapIconRotLabel').textContent = (c.mapIconRotation||0) + '°';
+}
+document.getElementById('mapIconRotateBtn').addEventListener('click', ()=>{
+  const c = creatures.find(x=>x.id===mapIconMenuCreatureId);
+  if (!c) return;
+  document.getElementById('mapIconMenuMain').style.display = 'none';
+  document.getElementById('mapIconRotatePanel').style.display = 'block';
+  updateMapIconRotLabel(c);
+});
+document.getElementById('mapIconRotateBackBtn').addEventListener('click', ()=>{
+  document.getElementById('mapIconRotatePanel').style.display = 'none';
+  document.getElementById('mapIconMenuMain').style.display = 'block';
+});
+function adjustMapIconRotation(delta){
+  const c = creatures.find(x=>x.id===mapIconMenuCreatureId);
+  if (!c || !creatureCol) return;
+  const rot = ((c.mapIconRotation||0) + delta + 360) % 360;
+  c.mapIconRotation = rot;
+  updateMapIconRotLabel(c);
+  applyMapIconTransform(c);
+  creatureCol.doc(c.id).update({ mapIconRotation: rot }).catch(()=>{});
+}
+document.getElementById('mapIconRotMinusBtn').addEventListener('click', ()=> adjustMapIconRotation(-15));
+document.getElementById('mapIconRotPlusBtn').addEventListener('click', ()=> adjustMapIconRotation(15));
+
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
     const fallbackEmoji = c.interactionType === 'zone' ? '🗺️' : (c.emoji || '🐾');
+    const iconTransform = `transform:scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg);`;
     const inner = c.imageUrl
-      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;">`
-      : `<div class="creature-icon" id="icon-${c.id}">${fallbackEmoji}</div>`;
+      ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;${iconTransform}">`
+      : `<div class="creature-icon" id="icon-${c.id}" style="${iconTransform}">${fallbackEmoji}</div>`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
     const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
     marker.on('click', ()=>{
@@ -2294,12 +2407,12 @@ function renderCreatureMarkers(){
       if (!el || el._longPressBound) return;
       el._longPressBound = true;
       el.addEventListener('pointerdown', ()=>{
-        if (!freeModeActive) return;
+        if (!freeModeActive || isMovingMarker) return;
         mapLongPressFired = false;
         clearTimeout(mapLongPressTimer);
         mapLongPressTimer = setTimeout(()=>{
           mapLongPressFired = true;
-          openCreatureEditFromMap(c.id);
+          openMapIconMenu(c);
         }, 600);
       });
       ['pointerup','pointerleave','pointercancel'].forEach(evt=>{
@@ -2840,6 +2953,7 @@ function appConfirm(message){
 let editingId = null;
 let currentDupeGroup = null;
 let pendingLat = null, pendingLng = null;
+let pendingMapIconScale = 1, pendingMapIconRotation = 0;
 let pendingAssignedZoneId = null;
 let uploadedImageDataUrl = null;
 
@@ -2994,6 +3108,8 @@ function loadForEdit(id){
   if (!doc) return;
   const d = doc.data();
   editingId = id;
+  pendingMapIconScale = d.mapIconScale != null ? d.mapIconScale : 1;
+  pendingMapIconRotation = d.mapIconRotation || 0;
   currentDupeGroup = d.dupeGroup || null;
   document.getElementById('editVisibilityQuest').value = (d.visibilityCondition && d.visibilityCondition.questId) || '';
   document.getElementById('editVisibilityState').style.display = (d.visibilityCondition && d.visibilityCondition.questId) ? 'block' : 'none';
@@ -3097,6 +3213,7 @@ function resetForm(){
   editingId = null;
   currentDupeGroup = null;
   pendingLat = null; pendingLng = null;
+  pendingMapIconScale = 1; pendingMapIconRotation = 0;
   pendingAssignedZoneId = null;
   uploadedImageDataUrl = null;
   document.getElementById('editImageFile').value = '';
@@ -3255,7 +3372,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -5232,7 +5349,7 @@ function renderRecruitCombatStatsInner(recruit, cs){
   `;
   document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
     if (!playerDocRef) return;
-    let team = activeTeamIds.slice();
+    let team = activeTeamIds.filter(id=> combattants.some(c=>c.id===id));
     if (inTeam){
       team = team.filter(id=>id!==recruit.id);
     } else {
@@ -5449,6 +5566,11 @@ document.getElementById('recruitDismissBtn').addEventListener('click', async ()=
   if (!recruit) return;
   if (!(await appConfirm(`Renvoyer ${recruit.name} ? Cette action est définitive.`))) return;
   recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
+  if (playerDocRef && activeTeamIds.includes(recruit.id)){
+    const team = activeTeamIds.filter(id=>id!==recruit.id);
+    playerDocRef.set({ activeTeamIds: team }, { merge:true });
+    activeTeamIds = team;
+  }
   recruitsCol.doc(recruit.id).delete().then(()=>{
     document.getElementById('recruitSheetOverlay').classList.remove('show');
     activeRecruitId = null;
