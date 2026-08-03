@@ -295,6 +295,7 @@
 #combatArena{
   flex:1; display:flex; flex-direction:column; justify-content:space-evenly; gap:8px; margin:0 10px 8px; padding:10px 6px; border-radius:12px;
   background-image: var(--arena-bg, none); background-size:cover; background-position:center; background-color:#111;
+  position:relative;
 }
 .combat-side{ display:flex; flex-direction:row; justify-content:center; align-items:center; gap:4px; flex-wrap:wrap; }
 .combat-hp-label{
@@ -314,14 +315,13 @@
 }
 .combat-to-item .to-n{ font-size:8px; color:var(--muted); font-weight:700; }
 .combat-to-item.next .to-emoji{ filter:drop-shadow(0 0 3px #a87c00); }
-#combatActionRow{ display:flex; gap:6px; align-items:stretch; margin:0 10px 8px; }
 #combatActionPanel{
-  background:#fff; border:2px solid var(--accent); border-radius:12px; padding:0; margin:0;
-  height:165px; flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; overflow:hidden;
+  background:#fff; border:2px solid var(--accent); border-radius:12px; padding:0; margin:0 10px 8px;
+  height:165px; flex:none; display:flex; flex-direction:column; justify-content:center; overflow:hidden;
 }
 #combatLogToggleBtn{
-  flex:none; width:30px; height:165px; border:1px solid var(--line); border-radius:10px; background:#12241a;
-  color:#dfeee2; font-size:14px; display:flex; align-items:center; justify-content:center; padding:0;
+  position:absolute; right:8px; bottom:8px; z-index:5; width:30px; height:30px; border:1px solid rgba(255,255,255,.3); border-radius:50%;
+  background:rgba(18,36,26,.85); color:#dfeee2; font-size:14px; display:flex; align-items:center; justify-content:center; padding:0;
 }
 #combatActionPanel > p.meta{ padding:14px 8px; margin:0; text-align:center; }
 .combat-attack-grid{ display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:56px; gap:3px; padding:3px; }
@@ -340,12 +340,13 @@
 }
 .combat-action-secondary{ display:flex; gap:3px; padding:3px; }
 .combat-action-secondary button{
-  flex:1 1 0; min-width:0; padding:6px 2px; border-radius:8px; font-size:8px; line-height:1.2;
-  white-space:normal; word-break:break-word; overflow:hidden;
+  flex:1 1 0; min-width:0; height:32px; padding:2px; border-radius:8px; font-size:8px; line-height:1.2;
+  white-space:normal; word-break:break-word; overflow:hidden; display:flex; align-items:center; justify-content:center;
 }
+#combatCloseAnalysisBtn, #combatItemBackBtn{ height:32px; display:flex; align-items:center; justify-content:center; padding:2px; }
 #combatLog{
   background:#12241a; color:#dfeee2; border-radius:12px; padding:8px 10px 6px; font-size:11px;
-  height:165px; flex:1; min-width:0; overflow:hidden; display:none; flex-direction:column;
+  height:165px; flex:none; min-width:0; overflow:hidden; display:none; flex-direction:column; margin:0 10px 8px;
 }
 #combatLog.show{ display:flex; }
 #combatLog div{ margin-bottom:2px; }
@@ -592,12 +593,10 @@
     <div id="combatArena">
       <div id="combatEnemyRow" class="combat-side"></div>
       <div id="combatPlayerRow" class="combat-side"></div>
-    </div>
-    <div id="combatActionRow">
-      <div id="combatActionPanel"><p class="meta" style="text-align:center;">En attente du prochain tour…</p></div>
-      <div id="combatLog"><div id="combatLogEntries"></div></div>
       <button type="button" id="combatLogToggleBtn" title="Journal de combat">📜</button>
     </div>
+    <div id="combatActionPanel"><p class="meta" style="text-align:center;">En attente du prochain tour…</p></div>
+    <div id="combatLog"><div id="combatLogEntries"></div></div>
   </div>
   <div id="combatEndOverlay" style="display:none; position:absolute; inset:0; background:rgba(0,0,0,.88); align-items:center; justify-content:center; flex-direction:column; z-index:20; text-align:center;">
     <h2 id="combatEndTitle" style="color:#fff; margin:0 0 10px;"></h2>
@@ -652,6 +651,17 @@
   </div>
 </div>
 
+<!-- Confirmation générique (remplace les fenêtres natives du navigateur) -->
+<div class="overlay" id="appConfirmOverlay">
+  <div class="sheet" style="text-align:center;">
+    <p id="appConfirmMessage" style="margin:0 0 18px; line-height:1.5;"></p>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="appConfirmCancelBtn" style="flex:1;">Annuler</button>
+      <button class="btn-capture" id="appConfirmOkBtn" style="flex:1;">Confirmer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Fiche d'un PNJ recruté -->
 <div class="overlay" id="recruitSheetOverlay">
   <div class="sheet">
@@ -696,6 +706,18 @@
       <button class="sheet-x" id="baseLearnChooserCloseBtn">✕</button>
     </div>
     <div id="baseLearnChooserList"></div>
+  </div>
+</div>
+
+<!-- Choix de l'attaque à oublier (4 déjà connues) -->
+<div class="overlay" id="forgetAttackChooserOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Sélectionne l'attaque à oublier</h3>
+      <button class="sheet-x" id="forgetAttackChooserCloseBtn">✕</button>
+    </div>
+    <p class="meta" id="forgetAttackChooserIntro" style="margin-top:0;"></p>
+    <div id="forgetAttackChooserList"></div>
   </div>
 </div>
 
@@ -2792,6 +2814,26 @@ function showToast(msg){
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+/* Remplace window.confirm() par une fenêtre au style de l'application (pas de barre d'adresse du navigateur) */
+function appConfirm(message){
+  return new Promise((resolve)=>{
+    document.getElementById('appConfirmMessage').textContent = message;
+    document.getElementById('appConfirmOverlay').classList.add('show');
+    const okBtn = document.getElementById('appConfirmOkBtn');
+    const cancelBtn = document.getElementById('appConfirmCancelBtn');
+    const cleanup = (result)=>{
+      document.getElementById('appConfirmOverlay').classList.remove('show');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onOk = ()=> cleanup(true);
+    const onCancel = ()=> cleanup(false);
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
 }
 
 /* ---------- Panneau éditeur ---------- */
@@ -5013,8 +5055,8 @@ function renderRecruitSheet(){
       </div>
       <button class="btn-secondary" id="cancelCraftBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler ce craft</button>
     `;
-    document.getElementById('cancelCraftBtn').addEventListener('click', ()=>{
-      if (!confirm('Annuler ce craft ? Les ressources déjà utilisées ne seront pas remboursées.')) return;
+    document.getElementById('cancelCraftBtn').addEventListener('click', async ()=>{
+      if (!(await appConfirm('Annuler ce craft ? Les ressources déjà utilisées ne seront pas remboursées.'))) return;
       recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null })
         .then(()=> showToast('Craft annulé (les ressources déjà utilisées ne sont pas remboursées)'));
     });
@@ -5222,8 +5264,8 @@ function renderRecruitAttacksSection(recruit){
       </div>
       <button class="btn-secondary" id="cancelTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'entraînement</button>
     `;
-    document.getElementById('cancelTrainingBtn').addEventListener('click', ()=>{
-      if (!confirm('Annuler cet entraînement ? Le manuel déjà utilisé ne sera pas remboursé.')) return;
+    document.getElementById('cancelTrainingBtn').addEventListener('click', async ()=>{
+      if (!(await appConfirm('Annuler cet entraînement ? Le manuel déjà utilisé ne sera pas remboursé.'))) return;
       recruitsCol.doc(recruit.id).update({ trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
         .then(()=> showToast('Entraînement annulé (le manuel déjà utilisé n\'est pas remboursé)'));
     });
@@ -5265,8 +5307,8 @@ function renderRecruitRecipesSection(recruit){
       </div>
       <button class="btn-secondary" id="cancelRecipeTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'apprentissage</button>
     `;
-    document.getElementById('cancelRecipeTrainingBtn').addEventListener('click', ()=>{
-      if (!confirm('Annuler cet apprentissage ? Le manuel déjà utilisé ne sera pas remboursé.')) return;
+    document.getElementById('cancelRecipeTrainingBtn').addEventListener('click', async ()=>{
+      if (!(await appConfirm('Annuler cet apprentissage ? Le manuel déjà utilisé ne sera pas remboursé.'))) return;
       recruitsCol.doc(recruit.id).update({ recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null })
         .then(()=> showToast('Apprentissage annulé (le manuel déjà utilisé n\'est pas remboursé)'));
     });
@@ -5324,10 +5366,54 @@ function openBaseLearnRecipeChooser(recruit){
 document.getElementById('baseLearnRecipeChooserCloseBtn').addEventListener('click', ()=>{
   document.getElementById('baseLearnRecipeChooserOverlay').classList.remove('show');
 });
+function startAttackTraining(recruit, attack, forgetAttackId){
+  const manuel = items.find(it=>it.teachesAttackId===attack.id);
+  if (!manuel){ showToast('Manuel introuvable'); return; }
+  playerDocRef.set({ inventory: { [manuel.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
+    recruitsCol.doc(recruit.id).update({
+      trainingAttackId: attack.id,
+      trainingStartedAt: Date.now(),
+      trainingDuration: (attack.learnDuration||60) * 1000,
+      trainingForgetAttackId: forgetAttackId
+    });
+    document.getElementById('baseLearnChooserOverlay').classList.remove('show');
+    document.getElementById('forgetAttackChooserOverlay').classList.remove('show');
+    showToast(`${recruit.name} commence l'entraînement !`);
+  });
+}
+function openForgetAttackChooser(recruit, newAttack, learned){
+  document.getElementById('forgetAttackChooserIntro').textContent = `${recruit.name} connaît déjà 4 attaques. Choisis celle à oublier pour apprendre "${newAttack.name}" :`;
+  const listEl = document.getElementById('forgetAttackChooserList');
+  listEl.innerHTML = learned.map(id=>{
+    const a = attacks.find(x=>x.id===id) || {};
+    return `
+    <div class="choice-row">
+      <b>${a.emoji||'✨'} ${a.name||'?'}</b>
+      <div class="meta">${a.description || ''}</div>
+      <button class="btn-secondary" data-forget-attack="${id}" style="width:100%; margin-top:6px; color:var(--danger); border-color:rgba(192,57,43,.4);">Oublier celle-ci</button>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('button[data-forget-attack]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const forgetId = btn.dataset.forgetAttack;
+      const forgetAttack = attacks.find(a=>a.id===forgetId);
+      if (!(await appConfirm(`Confirmer : oublier "${forgetAttack ? forgetAttack.name : '?'}" pour apprendre "${newAttack.name}" ?`))) return;
+      startAttackTraining(recruit, newAttack, forgetId);
+    });
+  });
+  document.getElementById('baseLearnChooserOverlay').classList.remove('show');
+  document.getElementById('forgetAttackChooserOverlay').classList.add('show');
+}
+document.getElementById('forgetAttackChooserCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('forgetAttackChooserOverlay').classList.remove('show');
+  document.getElementById('baseLearnChooserOverlay').classList.add('show');
+});
 function openBaseLearnChooser(recruit){
   const listEl = document.getElementById('baseLearnChooserList');
+  const learnedAlready = recruit.learnedAttackIds || [];
   const eligible = attacks.filter(a =>
-    (baseResources[(items.find(it=>it.teachesAttackId===a.id)||{}).id]||0) > 0
+    !learnedAlready.includes(a.id)
+    && (baseResources[(items.find(it=>it.teachesAttackId===a.id)||{}).id]||0) > 0
     && (!a.allowedMetiers || !a.allowedMetiers.length || a.allowedMetiers.includes(recruit.metierId))
   );
   listEl.innerHTML = eligible.length ? eligible.map(a=>{
@@ -5345,27 +5431,11 @@ function openBaseLearnChooser(recruit){
       const attackId = btn.dataset.learnAttack;
       const attack = attacks.find(a=>a.id===attackId);
       const learned = recruit.learnedAttackIds || [];
-      let forgetAttackId = null;
       if (learned.length >= 4){
-        const names = learned.map(id=> (attacks.find(a=>a.id===id)||{}).name || '?');
-        const choice = prompt(`${recruit.name} connaît déjà 4 attaques. Tape le numéro de celle à oublier pour apprendre "${attack.name}" :\n` + names.map((n,i)=>`${i+1}. ${n}`).join('\n'));
-        const idx = parseInt(choice, 10) - 1;
-        if (isNaN(idx) || idx < 0 || idx >= learned.length){ showToast('Apprentissage annulé'); return; }
-        forgetAttackId = learned[idx];
-        if (!confirm(`Confirmer : oublier "${names[idx]}" pour apprendre "${attack.name}" ?`)) return;
+        openForgetAttackChooser(recruit, attack, learned);
+        return;
       }
-      const manuel = items.find(it=>it.teachesAttackId===attackId);
-      if (!manuel){ showToast('Manuel introuvable'); return; }
-      playerDocRef.set({ inventory: { [manuel.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
-        recruitsCol.doc(recruit.id).update({
-          trainingAttackId: attackId,
-          trainingStartedAt: Date.now(),
-          trainingDuration: (attack.learnDuration||60) * 1000,
-          trainingForgetAttackId: forgetAttackId
-        });
-        document.getElementById('baseLearnChooserOverlay').classList.remove('show');
-        showToast(`${recruit.name} commence l'entraînement !`);
-      });
+      startAttackTraining(recruit, attack, null);
     });
   });
   document.getElementById('baseLearnChooserOverlay').classList.add('show');
@@ -5374,9 +5444,10 @@ document.getElementById('baseLearnChooserCloseBtn').addEventListener('click', ()
   document.getElementById('baseLearnChooserOverlay').classList.remove('show');
 });
 
-document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
+document.getElementById('recruitDismissBtn').addEventListener('click', async ()=>{
   const recruit = currentRecruit();
   if (!recruit) return;
+  if (!(await appConfirm(`Renvoyer ${recruit.name} ? Cette action est définitive.`))) return;
   recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
   recruitsCol.doc(recruit.id).delete().then(()=>{
     document.getElementById('recruitSheetOverlay').classList.remove('show');
@@ -5464,8 +5535,8 @@ function renderNearbyPlayersList(){
     btn.addEventListener('click', ()=> sendPvpChallenge(btn.dataset.challengeWith, btn.dataset.challengePseudo));
   });
   wrap.querySelectorAll('[data-block-with]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      if (!confirm(`Bloquer ${btn.dataset.blockPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`)) return;
+    btn.addEventListener('click', async ()=>{
+      if (!(await appConfirm(`Bloquer ${btn.dataset.blockPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`))) return;
       toggleBlockPlayer(btn.dataset.blockWith);
     });
   });
@@ -5532,9 +5603,9 @@ document.getElementById('pvpDeclineBtn').addEventListener('click', ()=>{
   document.getElementById('pvpIncomingOverlay').classList.remove('show');
   pvpIncomingChallenge = null;
 });
-document.getElementById('pvpBlockFromChallengeBtn').addEventListener('click', ()=>{
+document.getElementById('pvpBlockFromChallengeBtn').addEventListener('click', async ()=>{
   if (!pvpIncomingChallenge) return;
-  if (!confirm(`Bloquer ${pvpIncomingChallenge.challengerPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`)) return;
+  if (!(await appConfirm(`Bloquer ${pvpIncomingChallenge.challengerPseudo} ? Vous ne pourrez plus vous voir ni vous défier.`))) return;
   pvpChallengesCol.doc(pvpIncomingChallenge.id).update({ status:'declined' }).catch(()=>{});
   toggleBlockPlayer(pvpIncomingChallenge.challengerUid);
   document.getElementById('pvpIncomingOverlay').classList.remove('show');
@@ -5646,8 +5717,8 @@ function syncPvpDuel(){
   }
   pvpDuelsCol.doc(pvpDuelId).set(update, { merge:true }).catch(()=>{});
 }
-function abandonPvpDuel(){
-  if (!confirm('Abandonner ce duel ? Ce sera une défaite immédiate.')) return;
+async function abandonPvpDuel(){
+  if (!(await appConfirm('Abandonner ce duel ? Ce sera une défaite immédiate.'))) return;
   combatState.fighters.filter(f=>f.side==='player').forEach(f=>{ f.alive = false; f.hp = 0; });
   combatState.log.unshift(`${currentPseudo || 'Tu'} abandonne le duel.`);
   combatState.resolving = false;
@@ -6467,8 +6538,8 @@ function renderSceneVariantOverlay(){
     });
   });
   wrap.querySelectorAll('[data-variant-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      if (!confirm('Supprimer cette variante ?')) return;
+    btn.addEventListener('click', async ()=>{
+      if (!(await appConfirm('Supprimer cette variante ?'))) return;
       const idToDelete = btn.dataset.variantDel;
       sc.variants = sc.variants.filter(v=>v.id !== idToDelete);
       if (sceneEditorCurrentVariantId === idToDelete) loadVariantIntoEditorState(null);
@@ -6620,9 +6691,9 @@ function renderSceneListOverlay(){
     });
   });
   wrap.querySelectorAll('[data-scene-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', async ()=>{
       const idToDelete = btn.dataset.sceneDel;
-      if (!confirm('Supprimer cette scène ? Les sorties qui y menaient reviendront à "Ferme la zone".')) return;
+      if (!(await appConfirm('Supprimer cette scène ? Les sorties qui y menaient reviendront à "Ferme la zone".'))) return;
       sceneEditorScenes = sceneEditorScenes.filter(s=>s.id !== idToDelete);
       sceneEditorScenes.forEach(s=>{
         (s.points||[]).forEach(p=>{ if (p.targetSceneId === idToDelete) p.targetSceneId = null; });
@@ -7214,10 +7285,10 @@ function compressPointImageDataUrl(img){
 document.getElementById('sceneEditorImageBtn').addEventListener('pointerdown', ()=>{
   sceneEditorImageLongPressFired = false;
   clearTimeout(sceneEditorImageLongPressTimer);
-  sceneEditorImageLongPressTimer = setTimeout(()=>{
+  sceneEditorImageLongPressTimer = setTimeout(async ()=>{
     sceneEditorImageLongPressFired = true;
     if (sceneEditorPrevImageDataUrl){
-      if (confirm('Revenir à l\'image précédente de cette scène ?')){
+      if (await appConfirm('Revenir à l\'image précédente de cette scène ?')){
         const tmp = sceneEditorImageDataUrl;
         sceneEditorImageDataUrl = sceneEditorPrevImageDataUrl;
         sceneEditorPrevImageDataUrl = tmp;
@@ -7783,8 +7854,8 @@ function renderExplorerSection(){
       </div>
       <button class="btn-secondary" id="explorerCancelBtn" style="width:100%; margin-top:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">Rappeler l'explorateur (annuler)</button>
     `;
-    document.getElementById('explorerCancelBtn').addEventListener('click', ()=>{
-      if (!confirm('Rappeler ton explorateur ? La mission en cours sera annulée, sans découverte.')) return;
+    document.getElementById('explorerCancelBtn').addEventListener('click', async ()=>{
+      if (!(await appConfirm('Rappeler ton explorateur ? La mission en cours sera annulée, sans découverte.'))) return;
       playerDocRef.set({ explorerMissionStartedAt: null, explorerMissionDuration: null }, { merge:true }).then(()=>{
         showToast('Explorateur rappelé.');
       });
@@ -8059,7 +8130,7 @@ document.getElementById('createCombatTestDataBtn').addEventListener('click', asy
 
 document.getElementById('cleanupCombatTestDataBtn').addEventListener('click', async ()=>{
   if (!attacksCol || !creatureCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
-  if (!confirm('Supprimer définitivement les attaques et monstres de test créés pour le combat ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)')) return;
+  if (!(await appConfirm('Supprimer définitivement les attaques et monstres de test créés pour le combat ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)'))) return;
   try {
     const testAttacks = attacks.filter(a=> a.name && a.name.startsWith(COMBAT_TEST_PREFIX));
     const testAttackIds = new Set(testAttacks.map(a=>a.id));
@@ -8236,7 +8307,7 @@ async function playTurnAnimation(actor, attack, target){
 
   combatState.anim = { actorUid: actor.uid, kind: (attack.school === 'magic') ? 'magic' : 'physical' };
   renderCombat();
-  await sleep(attack.school === 'magic' ? 550 : 350);
+  await sleep(attack.school === 'magic' ? 900 : 450);
 
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
@@ -8638,8 +8709,8 @@ function resolveAttack(attacker, attack, target){
   applyAttackStatusEffect(attacker, attack, target);
 }
 
-function attemptFlee(){
-  if (!confirm('Fuir ce combat ? Tu perds ta chance de butin.')) return;
+async function attemptFlee(){
+  if (!(await appConfirm('Fuir ce combat ? Tu perds ta chance de butin.'))) return;
   const enemyFighters = combatState.fighters.filter(f=>f.side==='enemy' && f.alive);
   const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
   const success = Math.random()*100 < avgFlee;
