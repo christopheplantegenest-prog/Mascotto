@@ -546,6 +546,7 @@
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
     <button class="btn-secondary" id="createCombatTestDataBtn" style="width:100%; margin-bottom:10px;">🧪 Créer attaques/monstres/objets de test (combat)</button>
     <button class="btn-secondary" id="cleanupCombatTestDataBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les attaques/monstres/objets de test</button>
+    <button class="btn-secondary" id="resetZonePointsBtn" style="width:100%; margin-bottom:10px;">🔄 Réinitialiser mes points de zone pris (objets/boss)</button>
 
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%; margin-top:6px;">Fermer</button>
   </div>
@@ -1373,6 +1374,7 @@
     <div class="scene-actionrow-scroll">
       <button type="button" class="scene-action-btn" id="sceneEditorScenesBtn">🎬 Scènes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorEncounterBtn">🎲 Rencontres</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
     </div>
@@ -1418,6 +1420,20 @@
     <p class="meta">"Par défaut" est utilisée si aucune variante n'est active. Une variante sans condition est toujours active (pense à définir ses conditions).</p>
     <div id="sceneVariantItems"></div>
     <button class="btn-capture" id="sceneVariantAddBtn" style="width:100%; margin-top:10px;">➕ Nouvelle variante</button>
+  </div>
+</div>
+
+<div class="overlay" id="sceneEncounterOverlay" style="z-index:4300;">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">🎲 Rencontres aléatoires</h3>
+      <button class="sheet-x" id="sceneEncounterCloseBtn">✕</button>
+    </div>
+    <p class="meta">Vérifié une fois à chaque entrée dans cette scène (en arrivant depuis la carte ou par une sortie).</p>
+    <div class="field-label">% de risque de rencontre</div>
+    <input type="number" id="sceneEncChance" class="field-input" value="0" min="0" max="100">
+    <div class="field-label">Monstres possibles pour une rencontre (jusqu'à 3 tirés au sort)</div>
+    <div id="sceneEncMonstersPick"></div>
   </div>
 </div>
 
@@ -2681,10 +2697,12 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
   reader.onload = (ev)=>{
     const img = new Image();
     img.onload = ()=>{
-      const maxSize = 160;
+      const maxSize = 400;
       let w = img.width, h = img.height;
-      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
-      else { w = Math.round(w * maxSize/h); h = maxSize; }
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -6342,6 +6360,38 @@ document.getElementById('sceneEditorVariantsBtn').addEventListener('click', ()=>
 document.getElementById('sceneVariantCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneVariantOverlay').classList.remove('show');
 });
+document.getElementById('sceneEditorEncounterBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  renderSceneEncounterOverlay();
+  document.getElementById('sceneEncounterOverlay').classList.add('show');
+});
+document.getElementById('sceneEncounterCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('sceneEncounterOverlay').classList.remove('show');
+});
+document.getElementById('sceneEncChance').addEventListener('change', (e)=>{
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  sc.encounterChance = Math.max(0, Math.min(100, parseInt(e.target.value,10) || 0));
+});
+function renderSceneEncounterOverlay(){
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (!sc) return;
+  document.getElementById('sceneEncChance').value = sc.encounterChance || 0;
+  if (!sc.encounterMonsterIds) sc.encounterMonsterIds = [];
+  const monsterPool = creatures.filter(c=> c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+  const wrap = document.getElementById('sceneEncMonstersPick');
+  wrap.innerHTML = monsterPool.length ? monsterPool.map(m=>`
+    <button type="button" class="btn-secondary scene-enc-monster-btn" data-mid="${m.id}" style="margin:2px; ${sc.encounterMonsterIds.includes(m.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${m.emoji||'👾'} ${m.name}</button>
+  `).join('') : '<p class="meta">Crée d\'abord un monstre (non recrutable) dans l\'éditeur PNJ.</p>';
+  wrap.querySelectorAll('.scene-enc-monster-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.mid;
+      const pos = sc.encounterMonsterIds.indexOf(id);
+      if (pos === -1) sc.encounterMonsterIds.push(id); else sc.encounterMonsterIds.splice(pos,1);
+      renderSceneEncounterOverlay();
+    });
+  });
+}
 document.getElementById('sceneVariantAddBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
@@ -6410,7 +6460,7 @@ document.getElementById('sceneListCloseBtn').addEventListener('click', ()=>{
 });
 document.getElementById('sceneListAddBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
-  const newScene = { id: genSceneId(), name: 'Scène ' + (sceneEditorScenes.length + 1), imageUrl: '', points: [] };
+  const newScene = { id: genSceneId(), name: 'Scène ' + (sceneEditorScenes.length + 1), imageUrl: '', points: [], encounterChance:0, encounterMonsterIds:[] };
   sceneEditorScenes.push(newScene);
   renderSceneListOverlay();
 });
@@ -7141,6 +7191,7 @@ function openSceneView(creature){
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
+    rollSceneEncounter();
   }).catch(()=>{ empty.style.display = 'block'; });
 }
 
@@ -7208,6 +7259,7 @@ async function renderSceneViewCurrentScene(){
           if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
             sceneViewCurrentSceneId = pt.targetSceneId;
             renderSceneViewCurrentScene();
+            rollSceneEncounter();
           } else {
             document.getElementById('sceneViewFull').classList.remove('show');
           }
@@ -7436,19 +7488,50 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
   startCombat(playerFighters, enemyFighters);
 });
 
-/* Combat déclenché par un PNJ de type Monstre/Combattant (boss) rencontré dans une zone d'exploration. */
+document.getElementById('resetZonePointsBtn').addEventListener('click', async ()=>{
+  if (!playerDocRef){ showToast('Firebase indisponible ici'); return; }
+  try {
+    await playerDocRef.set({ sceneItemsTaken: firebase.firestore.FieldValue.delete() }, { merge:true });
+    sceneViewTakenMap = {};
+    showToast('Tous tes points de zone pris (objets ramassés, boss vaincus) ont été réinitialisés.');
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
+
+/* Combat déclenché par un PNJ de type Monstre/Combattant (boss) ou par une rencontre aléatoire dans une zone d'exploration. */
 let combatZoneContext = null;
-async function startZoneBossCombat(bossCreature, pt){
+async function launchZoneCombat(enemyCreatureList, pt){
   const playerFighters = buildPlayerFighters();
-  if (!playerFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
-  const enemyFighters = buildEnemyFighters([bossCreature]);
+  if (!playerFighters.length){
+    if (pt) showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)');
+    return;
+  }
+  const enemyFighters = buildEnemyFighters(enemyCreatureList);
   let arenaBg = DEFAULT_ARENA_BG;
   if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
     try { arenaBg = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef); } catch(e){}
   }
-  combatZoneContext = { pt };
+  combatZoneContext = { pt: pt || null };
   document.getElementById('sceneViewFull').classList.remove('show');
   startCombat(playerFighters, enemyFighters, arenaBg);
+}
+async function startZoneBossCombat(bossCreature, pt){
+  await launchZoneCombat([bossCreature], pt);
+}
+/* Tirage d'une rencontre aléatoire à l'entrée d'une scène (une seule fois par entrée, pas à chaque re-rendu). */
+function rollSceneEncounter(){
+  const sc = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
+  if (!sc || !sc.encounterChance || !(sc.encounterMonsterIds||[]).length) return;
+  if (Math.random()*100 >= sc.encounterChance) return;
+  const pool = sc.encounterMonsterIds
+    .map(id=> creatures.find(c=>c.id===id))
+    .filter(c=> c && c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+  if (!pool.length) return;
+  const chosen = pool.slice().sort(()=> Math.random()-0.5).slice(0, Math.min(3, pool.length));
+  setTimeout(()=>{
+    if (!buildPlayerFighters().length) return; // pas d'équipe : pas d'embuscade
+    showToast('⚠️ Une rencontre surgit !');
+    launchZoneCombat(chosen, null);
+  }, 350);
 }
 
 /* ---------- Jeu de données de test pour le combat : attaques + monstres (couvre les 17 états) ---------- */
