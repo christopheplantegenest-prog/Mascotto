@@ -548,6 +548,15 @@
     <button class="btn-secondary" id="cleanupCombatTestDataBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les attaques/monstres/objets de test</button>
     <button class="btn-secondary" id="resetZonePointsBtn" style="width:100%; margin-bottom:10px;">🔄 Réinitialiser mes points de zone pris (objets/boss)</button>
 
+    <div class="field-label" style="margin-top:14px;">🧭 Durée de la mission d'exploration (fixe, pour tout le monde)</div>
+    <div style="display:flex; gap:6px;">
+      <input type="number" id="explorerDurDays" class="field-input" value="0" min="0" placeholder="j">
+      <input type="number" id="explorerDurHours" class="field-input" value="0" min="0" placeholder="h">
+      <input type="number" id="explorerDurMinutes" class="field-input" value="10" min="0" placeholder="min">
+      <input type="number" id="explorerDurSeconds" class="field-input" value="0" min="0" placeholder="s">
+    </div>
+    <button class="btn-secondary" id="saveExplorerDurationBtn" style="width:100%; margin-top:6px; margin-bottom:10px;">Enregistrer cette durée</button>
+
     <button class="btn-secondary" id="editHubCloseBtn" style="width:100%; margin-top:6px;">Fermer</button>
   </div>
 </div>
@@ -587,6 +596,7 @@
     <div style="display:flex; gap:8px; margin-bottom:14px;">
       <button class="btn-capture" data-basetab="artisans" style="flex:1;">🛠️ Artisans</button>
       <button class="btn-secondary" data-basetab="combattants" style="flex:1;">⚔️ Combattants</button>
+      <button class="btn-secondary" data-basetab="explorateur" style="flex:1; position:relative;">🧭 Explorateur<span id="explorerBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
     </div>
 
     <div id="baseTab-artisans">
@@ -599,6 +609,22 @@
       <div id="baseCombattantsRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
       <button class="btn-capture" id="recruitCombattantTestBtn" style="width:100%;">➕ Recruter un combattant (test)</button>
     </div>
+
+    <div id="baseTab-explorateur" style="display:none;">
+      <div id="explorerSection"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Rapport d'exploration (fin de mission) -->
+<div class="overlay" id="explorerReportOverlay">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">🧭 Rapport d'exploration</h3>
+      <button class="sheet-x" id="explorerReportCloseBtn">✕</button>
+    </div>
+    <p id="explorerReportText" style="line-height:1.5;"></p>
+    <button class="btn-capture" id="explorerReportOkBtn" style="width:100%; margin-top:8px;">Merci !</button>
   </div>
 </div>
 
@@ -1191,6 +1217,16 @@
           <img id="zoneArenaImagePreview" style="width:96px; height:64px; border-radius:8px; object-fit:cover; border:2px solid var(--accent);">
           <button type="button" class="btn-secondary" id="clearZoneArenaImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
         </div>
+
+        <div class="field-label" style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+          <input type="checkbox" id="editZoneExplorable" style="width:auto;">
+          <label for="editZoneExplorable" style="margin:0;">🧭 Découvrable par l'explorateur</label>
+        </div>
+        <p class="meta" style="margin:2px 0 0;">Cette zone pourra être trouvée par la mission d'exploration de la Base, tant qu'elle n'a pas déjà été découverte par le joueur.</p>
+
+        <div class="field-label" style="margin-top:12px;">📜 Rapport d'exploration</div>
+        <p class="meta" style="margin:0 0 6px;">Texte donné par l'explorateur quand il découvre cette zone (avant-goût vague, pas technique). Laisse vide pour un texte générique par défaut.</p>
+        <textarea id="editZoneExplorerReport" class="field-input" rows="3" placeholder="Texte par défaut utilisé si laissé vide."></textarea>
       </div>
 
       <div id="dialogueBlock">
@@ -1543,6 +1579,7 @@ function onSignedIn(user){
   watchPlayerQuests(user.uid);
   watchPlayerInventoryForBase();
   tryResumeSession();
+  loadExplorerConfig();
   if (typeof attachNegotiationListeners === 'function') attachNegotiationListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
@@ -2140,6 +2177,7 @@ function renderAllCreatures(snap){
     if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
     if (d.recruited) return; // recruté : disparaît définitivement de la carte
     if (!isActiveNow(d)) return; // PNJ inactif : pas affiché sur la carte
+    if (d.interactionType === 'zone' && d.explorable && !playerDiscoveredZoneIds.has(doc.id)) return; // zone découvrable pas encore trouvée par l'explorateur
     const conditionOk = creatureConditionMet(d);
     if (!conditionOk && (d.hideOnExitRadius || expiredCreatureIds.has(doc.id))) return; // condition expirée : exclu définitivement
     creatures.push({ id: doc.id, ...d, marker:null, active: true, _conditionOk: conditionOk });
@@ -2515,11 +2553,21 @@ function recruitCreature(creature, metierId){
 /* ---------- Suivi permanent de la progression du joueur (quêtes) ---------- */
 let playerQuestsState = {}; // { questId: 'active' | 'completed' }
 let playerCoins = 0;
+let playerDiscoveredZoneIds = new Set();
+let playerExplorerMissionStartedAt = null;
+let playerExplorerMissionDuration = null;
+let playerExplorerPendingReport = null;
 let coinsBackfillDone = false;
 function watchPlayerQuests(uid){
   if (!db) return;
   db.collection('players').doc(uid).onSnapshot((doc)=>{
     playerQuestsState = (doc.exists && doc.data().quests) || {};
+    playerDiscoveredZoneIds = new Set((doc.exists && doc.data().discoveredZoneIds) || []);
+    playerExplorerMissionStartedAt = (doc.exists && doc.data().explorerMissionStartedAt) || null;
+    playerExplorerMissionDuration = (doc.exists && doc.data().explorerMissionDuration) || null;
+    playerExplorerPendingReport = (doc.exists && doc.data().explorerPendingReport) || null;
+    updateExplorerBadge();
+    if (document.getElementById('baseTab-explorateur').style.display !== 'none' && document.getElementById('baseOverlay').classList.contains('show')) renderExplorerSection();
     if (doc.exists && typeof doc.data().coins !== 'number' && !coinsBackfillDone){
       // Compte créé avant l'ajout de la monnaie : on lui donne les 500 de départ une seule fois
       coinsBackfillDone = true;
@@ -2869,6 +2917,8 @@ function loadForEdit(id){
   document.getElementById('combatBlock').style.display = (interactionType === 'combat') ? 'block' : 'none';
   document.getElementById('zoneBlock').style.display = (interactionType === 'zone') ? 'block' : 'none';
   document.getElementById('editZoneShowName').checked = !!d.zoneShowName;
+  document.getElementById('editZoneExplorable').checked = !!d.explorable;
+  document.getElementById('editZoneExplorerReport').value = d.explorerReport || '';
   document.getElementById('editZoneSceneBtn').style.display = 'block';
   document.getElementById('editZoneSceneHint').style.display = 'none';
   editZoneArenaImageDataUrl = null;
@@ -2962,6 +3012,8 @@ function resetForm(){
   document.getElementById('combatBlock').style.display = 'none';
   document.getElementById('zoneBlock').style.display = 'none';
   document.getElementById('editZoneShowName').checked = false;
+  document.getElementById('editZoneExplorable').checked = false;
+  document.getElementById('editZoneExplorerReport').value = '';
   document.getElementById('editZoneSceneBtn').style.display = 'none';
   document.getElementById('editZoneSceneHint').style.display = 'block';
   editZoneArenaImageDataUrl = null;
@@ -3021,6 +3073,7 @@ document.getElementById('editDuplicateBtn').addEventListener('click', ()=>{
 
 document.getElementById('editHubBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.add('show');
+  loadExplorerDurationSetting();
 });
 document.getElementById('editHubCloseBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
@@ -3058,6 +3111,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
   const shopPhrase = document.getElementById('editShopPhrase').value.trim();
   const zoneShowName = document.getElementById('editZoneShowName').checked;
+  const explorable = document.getElementById('editZoneExplorable').checked;
+  const explorerReport = document.getElementById('editZoneExplorerReport').value.trim();
   const combatStats = {
     tribe: document.getElementById('editCombatTribe').value,
     hp: parseInt(document.getElementById('editCombatHp').value,10) || 1,
@@ -3093,7 +3148,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -4980,6 +5035,8 @@ document.querySelectorAll('#baseOverlay button[data-basetab]').forEach(btn=>{
     btn.className = 'btn-capture';
     document.getElementById('baseTab-artisans').style.display = (btn.dataset.basetab === 'artisans') ? 'block' : 'none';
     document.getElementById('baseTab-combattants').style.display = (btn.dataset.basetab === 'combattants') ? 'block' : 'none';
+    document.getElementById('baseTab-explorateur').style.display = (btn.dataset.basetab === 'explorateur') ? 'block' : 'none';
+    if (btn.dataset.basetab === 'explorateur') renderExplorerSection();
   });
 });
 document.getElementById('recruitCombattantTestBtn').addEventListener('click', ()=>{
@@ -5103,6 +5160,7 @@ function renderRecruitSheet(){
       <button class="btn-secondary" id="cancelCraftBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler ce craft</button>
     `;
     document.getElementById('cancelCraftBtn').addEventListener('click', ()=>{
+      if (!confirm('Annuler ce craft ? Les ressources déjà utilisées ne seront pas remboursées.')) return;
       recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null })
         .then(()=> showToast('Craft annulé (les ressources déjà utilisées ne sont pas remboursées)'));
     });
@@ -5311,6 +5369,7 @@ function renderRecruitAttacksSection(recruit){
       <button class="btn-secondary" id="cancelTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'entraînement</button>
     `;
     document.getElementById('cancelTrainingBtn').addEventListener('click', ()=>{
+      if (!confirm('Annuler cet entraînement ? Le manuel déjà utilisé ne sera pas remboursé.')) return;
       recruitsCol.doc(recruit.id).update({ trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
         .then(()=> showToast('Entraînement annulé (le manuel déjà utilisé n\'est pas remboursé)'));
     });
@@ -5353,6 +5412,7 @@ function renderRecruitRecipesSection(recruit){
       <button class="btn-secondary" id="cancelRecipeTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'apprentissage</button>
     `;
     document.getElementById('cancelRecipeTrainingBtn').addEventListener('click', ()=>{
+      if (!confirm('Annuler cet apprentissage ? Le manuel déjà utilisé ne sera pas remboursé.')) return;
       recruitsCol.doc(recruit.id).update({ recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null })
         .then(()=> showToast('Apprentissage annulé (le manuel déjà utilisé n\'est pas remboursé)'));
     });
@@ -7504,6 +7564,142 @@ document.getElementById('resetZonePointsBtn').addEventListener('click', async ()
   } catch(err){ showToast('Échec : ' + err.message); }
 });
 
+/* ---------- Mission de l'explorateur (Base) ---------- */
+const DEFAULT_EXPLORER_REPORT = "Ton explorateur revient les jambes lourdes mais les yeux brillants : il a repéré un nouvel endroit qui mérite d'être exploré de plus près…";
+let explorerMissionDurationMs = 600000; // 10 minutes par défaut, réglable dans Outils de test
+
+function loadExplorerConfig(){
+  if (!db) return;
+  db.collection('app_config').doc('explorer').get().then(doc=>{
+    if (doc.exists && typeof doc.data().missionDurationSec === 'number'){
+      explorerMissionDurationMs = doc.data().missionDurationSec * 1000;
+    }
+  }).catch(()=>{});
+}
+function loadExplorerDurationSetting(){
+  if (!db) return;
+  db.collection('app_config').doc('explorer').get().then(doc=>{
+    const sec = (doc.exists && typeof doc.data().missionDurationSec === 'number') ? doc.data().missionDurationSec : Math.round(explorerMissionDurationMs/1000);
+    document.getElementById('explorerDurDays').value = Math.floor(sec / 86400);
+    document.getElementById('explorerDurHours').value = Math.floor((sec % 86400) / 3600);
+    document.getElementById('explorerDurMinutes').value = Math.floor((sec % 3600) / 60);
+    document.getElementById('explorerDurSeconds').value = sec % 60;
+  }).catch(()=>{});
+}
+document.getElementById('saveExplorerDurationBtn').addEventListener('click', ()=>{
+  if (!db){ showToast('Firebase indisponible ici'); return; }
+  const dd = parseInt(document.getElementById('explorerDurDays').value, 10) || 0;
+  const hh = parseInt(document.getElementById('explorerDurHours').value, 10) || 0;
+  const mm = parseInt(document.getElementById('explorerDurMinutes').value, 10) || 0;
+  const ss = parseInt(document.getElementById('explorerDurSeconds').value, 10) || 0;
+  const sec = (dd*86400)+(hh*3600)+(mm*60)+ss;
+  db.collection('app_config').doc('explorer').set({ missionDurationSec: sec }, { merge:true }).then(()=>{
+    explorerMissionDurationMs = sec * 1000;
+    showToast('Durée de mission enregistrée pour tout le monde.');
+  }).catch(err=> showToast('Échec : ' + err.message));
+});
+
+function explorerEligibleZones(){
+  const list = [];
+  if (!latestSnap) return list;
+  latestSnap.forEach(doc=>{
+    const d = doc.data();
+    if (d.interactionType === 'zone' && d.explorable && typeof d.lat === 'number' && typeof d.lng === 'number' && !playerDiscoveredZoneIds.has(doc.id)){
+      list.push({ id: doc.id, ...d });
+    }
+  });
+  return list;
+}
+function pickNearestExplorableZone(){
+  const zones = explorerEligibleZones();
+  if (!zones.length) return null;
+  if (!playerPos) return zones[0];
+  let best = zones[0];
+  let bestDist = haversineDist(playerPos.lat, playerPos.lng, best.lat, best.lng);
+  zones.slice(1).forEach(z=>{
+    const dist = haversineDist(playerPos.lat, playerPos.lng, z.lat, z.lng);
+    if (dist < bestDist){ best = z; bestDist = dist; }
+  });
+  return best;
+}
+function updateExplorerBadge(){
+  const badge = document.getElementById('explorerBadge');
+  if (badge) badge.style.display = playerExplorerPendingReport ? 'block' : 'none';
+}
+function openExplorerReport(report){
+  document.getElementById('explorerReportText').textContent = (report && report.text) || DEFAULT_EXPLORER_REPORT;
+  document.getElementById('explorerReportOverlay').classList.add('show');
+}
+document.getElementById('explorerReportCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('explorerReportOverlay').classList.remove('show');
+});
+document.getElementById('explorerReportOkBtn').addEventListener('click', ()=>{
+  document.getElementById('explorerReportOverlay').classList.remove('show');
+  if (playerDocRef) playerDocRef.set({ explorerPendingReport: firebase.firestore.FieldValue.delete() }, { merge:true });
+  renderExplorerSection();
+});
+
+function renderExplorerSection(){
+  const el = document.getElementById('explorerSection');
+  if (!el) return;
+  if (!currentUser || !playerDocRef){ el.innerHTML = '<p class="meta">Firebase indisponible ici.</p>'; return; }
+  if (playerExplorerPendingReport){
+    el.innerHTML = `
+      <p class="meta">Ton explorateur est de retour ! Ouvre le rapport pour découvrir ce qu'il a trouvé.</p>
+      <button class="btn-capture" id="explorerOpenReportBtn" style="width:100%; margin-top:8px;">📜 Voir le rapport</button>
+    `;
+    document.getElementById('explorerOpenReportBtn').addEventListener('click', ()=> openExplorerReport(playerExplorerPendingReport));
+    return;
+  }
+  if (playerExplorerMissionStartedAt){
+    const duration = playerExplorerMissionDuration || explorerMissionDurationMs;
+    const elapsed = Date.now() - playerExplorerMissionStartedAt;
+    const pct = Math.round(Math.max(0, Math.min(1, elapsed / duration)) * 100);
+    const remaining = formatRemainingDuration(Math.max(0, duration - elapsed));
+    el.innerHTML = `
+      <p class="meta">🧭 Ton explorateur est parti en exploration — retour dans ${remaining}</p>
+      <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
+        <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
+      </div>
+      <button class="btn-secondary" id="explorerCancelBtn" style="width:100%; margin-top:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">Rappeler l'explorateur (annuler)</button>
+    `;
+    document.getElementById('explorerCancelBtn').addEventListener('click', ()=>{
+      if (!confirm('Rappeler ton explorateur ? La mission en cours sera annulée, sans découverte.')) return;
+      playerDocRef.set({ explorerMissionStartedAt: null, explorerMissionDuration: null }, { merge:true }).then(()=>{
+        showToast('Explorateur rappelé.');
+      });
+    });
+    return;
+  }
+  const eligible = explorerEligibleZones();
+  if (!eligible.length){
+    el.innerHTML = '<p class="meta">Aucune nouvelle zone à découvrir pour l\'instant.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <p class="meta">Envoie ton explorateur à la recherche de nouvelles zones d'exploration.</p>
+    <button class="btn-capture" id="explorerStartBtn" style="width:100%; margin-top:8px;">🧭 Partir en exploration</button>
+  `;
+  document.getElementById('explorerStartBtn').addEventListener('click', ()=>{
+    playerDocRef.set({ explorerMissionStartedAt: Date.now(), explorerMissionDuration: explorerMissionDurationMs }, { merge:true }).then(()=>{
+      showToast('Ton explorateur est parti en exploration.');
+    });
+  });
+}
+
+/* Vérifie régulièrement si une mission d'exploration est terminée */
+setInterval(()=>{
+  if (!currentUser || !playerDocRef || !playerExplorerMissionStartedAt) return;
+  const duration = playerExplorerMissionDuration || explorerMissionDurationMs;
+  if (Date.now() - playerExplorerMissionStartedAt < duration) return;
+  const zone = pickNearestExplorableZone();
+  const report = { zoneId: zone ? zone.id : null, text: (zone && zone.explorerReport) || DEFAULT_EXPLORER_REPORT };
+  const update = { explorerMissionStartedAt: null, explorerMissionDuration: null, explorerPendingReport: report };
+  if (zone) update.discoveredZoneIds = firebase.firestore.FieldValue.arrayUnion(zone.id);
+  playerExplorerMissionStartedAt = null; // évite un déclenchement multiple avant confirmation Firestore
+  playerDocRef.set(update, { merge:true }).catch(()=>{});
+}, 1000);
+
 /* ---------- Sauvegarde/reprise de session : position en zone d'exploration + combat en cours ---------- */
 function saveCurrentZoneScene(){
   if (!currentUser || !db || !sceneViewCreature) return;
@@ -7537,6 +7733,7 @@ function saveCombatSnapshot(){
     fighters: combatState.fighters.map(serializeFighterForSave),
     log: (combatState.log||[]).slice(0,20),
     zoneId: (sceneViewCreature && sceneViewCreature.id) || null,
+    sceneId: sceneViewCurrentSceneId || null,
     pointId: (combatZoneContext && combatZoneContext.pt && combatZoneContext.pt.id) || null,
     savedAt: Date.now(),
   };
@@ -7551,15 +7748,25 @@ async function tryResumeSavedCombat(saved){
   const enemyFighters = (saved.fighters||[]).filter(f=>f.side==='enemy').map(deserializeFighterFromSave);
   if (!playerFighters.length || !enemyFighters.length) return false;
   let arenaBg = DEFAULT_ARENA_BG;
-  if (saved.zoneId && creatureCol){
+  if (saved.zoneId && creatureCol && zonesCol){
     try {
-      const zoneDoc = await creatureCol.doc(saved.zoneId).get();
-      if (zoneDoc.exists){
-        sceneViewCreature = { id: zoneDoc.id, ...zoneDoc.data() };
+      const zoneDocGet = zonesCol.doc(saved.zoneId).get();
+      const creatureDocGet = creatureCol.doc(saved.zoneId).get();
+      const playerGet = (currentUser && db) ? db.collection('players').doc(currentUser.uid).get() : Promise.resolve(null);
+      const [zoneDoc, creatureDoc, playerDoc] = await Promise.all([zoneDocGet, creatureDocGet, playerGet]);
+      if (creatureDoc.exists){
+        sceneViewCreature = { id: creatureDoc.id, ...creatureDoc.data() };
         if (sceneViewCreature.combatArenaImageRef){
           const url = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef);
           if (url) arenaBg = url;
         }
+        const d = zoneDoc.exists ? zoneDoc.data() : null;
+        const norm = normalizeZoneScenes(d);
+        await resolveImageRefsInScenes(norm.scenes);
+        sceneViewScenes = norm.scenes;
+        sceneViewCurrentSceneId = (saved.sceneId && norm.scenes.some(s=>s.id===saved.sceneId)) ? saved.sceneId : norm.startSceneId;
+        sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creatureDoc.id]) || {};
+        sceneViewPointState = (d && d.pointState) || {};
       }
     } catch(e){}
   }
