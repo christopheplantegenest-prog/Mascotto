@@ -1276,6 +1276,12 @@
           <label for="editCombatRecruitable" style="margin:0;">Recrutable (rejoint l'équipe du joueur au lieu d'être combattu)</label>
         </div>
         <div id="combatMonsterOnlyFields">
+          <div class="field-label">Catégorie (budget de points)</div>
+          <select id="editCombatCategory" class="field-input">
+            <option value="monstre_commun">Monstre commun (80 pts)</option>
+            <option value="mini_boss">Mini-boss (150 pts)</option>
+            <option value="boss">Boss (250 pts)</option>
+          </select>
           <div class="field-label">Rareté (informatif, pour toi)</div>
           <select id="editCombatRarity" class="field-input">
             <option value="commun">Commun</option>
@@ -1286,6 +1292,7 @@
           <div class="field-label">Chance de fuite du joueur face à ce monstre (%)</div>
           <input type="number" id="editCombatFleeChance" class="field-input" value="30" min="0" max="100">
         </div>
+        <div id="combatPointsIndicator" style="margin:8px 0; padding:8px; border-radius:8px; border:1px solid var(--line); font-size:13px; font-weight:600;"></div>
         <div class="field-label">Attaques connues (4 maximum)</div>
         <p class="meta" style="margin:0 0 6px;">Touche ⭐ sur une attaque sélectionnée pour qu'une recrue la connaisse dès son recrutement (au moins une obligatoire si recrutable).</p>
         <div id="combatAttacksList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
@@ -1733,7 +1740,33 @@ document.getElementById('editInteractionType').addEventListener('change', (e)=>{
 document.getElementById('editCombatRecruitable').addEventListener('change', (e)=>{
   document.getElementById('combatMonsterOnlyFields').style.display = e.target.checked ? 'none' : 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = e.target.checked ? 'none' : 'block';
+  updateCombatPointsIndicator();
 });
+document.getElementById('editCombatCategory').addEventListener('change', updateCombatPointsIndicator);
+['editCombatHp','editCombatSpeed','editCombatAtk','editCombatDef','editCombatMatk','editCombatMdef'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', updateCombatPointsIndicator);
+});
+const COMBAT_POINT_BUDGETS = { recrutable: 100, monstre_commun: 80, mini_boss: 150, boss: 250 };
+function combatPointsCost(){
+  const hp = parseInt(document.getElementById('editCombatHp').value, 10) || 0;
+  const speed = parseInt(document.getElementById('editCombatSpeed').value, 10) || 0;
+  const atk = parseInt(document.getElementById('editCombatAtk').value, 10) || 0;
+  const def = parseInt(document.getElementById('editCombatDef').value, 10) || 0;
+  const matk = parseInt(document.getElementById('editCombatMatk').value, 10) || 0;
+  const mdef = parseInt(document.getElementById('editCombatMdef').value, 10) || 0;
+  return Math.round((hp*0.2 + speed*2 + atk + def + matk + mdef) * 10) / 10;
+}
+function updateCombatPointsIndicator(){
+  const el = document.getElementById('combatPointsIndicator');
+  if (!el) return;
+  const recruitable = document.getElementById('editCombatRecruitable').checked;
+  const budget = recruitable ? COMBAT_POINT_BUDGETS.recrutable : COMBAT_POINT_BUDGETS[document.getElementById('editCombatCategory').value];
+  const cost = combatPointsCost();
+  const over = cost > budget;
+  el.textContent = `🎯 Points utilisés : ${cost} / ${budget}` + (over ? ' — dépassement (indicatif, n\'empêche pas d\'enregistrer)' : '');
+  el.style.color = over ? 'var(--danger)' : 'var(--text)';
+  el.style.borderColor = over ? 'rgba(192,57,43,.5)' : 'var(--line)';
+}
 let selectedCombatAttacks = new Set();
 let selectedStartingAttacks = new Set(); // sous-ensemble de selectedCombatAttacks : celles connues dès le recrutement
 const COMBAT_STATUSES = [
@@ -2946,10 +2979,12 @@ function loadForEdit(id){
   document.getElementById('editCombatPrecision').value = cs.precision != null ? cs.precision : 90;
   document.getElementById('editCombatEvasion').value = cs.evasion != null ? cs.evasion : 10;
   document.getElementById('editCombatRecruitable').checked = !!cs.recruitable;
+  document.getElementById('editCombatCategory').value = cs.budgetCategory || 'monstre_commun';
   document.getElementById('editCombatRarity').value = cs.rarity || 'commun';
   document.getElementById('editCombatFleeChance').value = cs.fleeChance != null ? cs.fleeChance : 30;
   document.getElementById('combatMonsterOnlyFields').style.display = cs.recruitable ? 'none' : 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = cs.recruitable ? 'none' : 'block';
+  updateCombatPointsIndicator();
   selectedCombatAttacks = new Set(cs.attackIds || []);
   selectedStartingAttacks = new Set((cs.startingAttackIds && cs.startingAttackIds.length) ? cs.startingAttackIds : (cs.attackIds || []));
   renderCombatAttacksPicker();
@@ -3033,10 +3068,12 @@ function resetForm(){
   document.getElementById('editCombatPrecision').value = 90;
   document.getElementById('editCombatEvasion').value = 10;
   document.getElementById('editCombatRecruitable').checked = false;
+  document.getElementById('editCombatCategory').value = 'monstre_commun';
   document.getElementById('editCombatRarity').value = 'commun';
   document.getElementById('editCombatFleeChance').value = 30;
   document.getElementById('combatMonsterOnlyFields').style.display = 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = 'block';
+  updateCombatPointsIndicator();
   selectedCombatAttacks = new Set();
   selectedStartingAttacks = new Set();
   renderCombatAttacksPicker();
@@ -3124,6 +3161,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     precision: parseInt(document.getElementById('editCombatPrecision').value,10) || 90,
     evasion: parseInt(document.getElementById('editCombatEvasion').value,10) || 10,
     recruitable: document.getElementById('editCombatRecruitable').checked,
+    budgetCategory: document.getElementById('editCombatCategory').value,
     rarity: document.getElementById('editCombatRarity').value,
     fleeChance: parseInt(document.getElementById('editCombatFleeChance').value,10) || 30,
     attackIds: Array.from(selectedCombatAttacks),
@@ -3323,6 +3361,14 @@ function startMultiplayerSync(){
       if (now - (d.lastSeen || 0) > STALE_AFTER_MS) return;
       seenIds.add(doc.id);
       otherPlayersCache[doc.id] = d;
+      if (d.currentZoneId){
+        // En exploration : disparaît de la carte des autres joueurs (visible seulement dans la liste "à proximité")
+        if (otherPlayerMarkers[doc.id]){
+          map.removeLayer(otherPlayerMarkers[doc.id]);
+          delete otherPlayerMarkers[doc.id];
+        }
+        return;
+      }
       if (otherPlayerMarkers[doc.id]){
         otherPlayerMarkers[doc.id].setLatLng([d.lat, d.lng]);
       } else {
@@ -5588,12 +5634,12 @@ function renderNearbyPlayersList(){
   if (!playerPos){ wrap.innerHTML = '<p class="meta">Position inconnue pour l\'instant.</p>'; return; }
   const nearby = Object.entries(otherPlayersCache).map(([uid, d])=>{
     const dist = haversineDist(playerPos.lat, playerPos.lng, d.lat, d.lng);
-    return { uid, pseudo: d.pseudo || 'Joueur', dist };
+    return { uid, pseudo: d.pseudo || 'Joueur', dist, inZone: !!d.currentZoneId };
   }).filter(p=> p.dist <= VISIBLE_RADIUS_M).sort((a,b)=> a.dist - b.dist);
   wrap.innerHTML = nearby.length ? nearby.map(p=>`
     <div class="editor-list-item" style="align-items:center;">
       <div class="thumb">🧑</div>
-      <div class="name" style="flex:1;">${p.pseudo}<span class="meta" style="display:block;">${Math.round(p.dist)} m</span></div>
+      <div class="name" style="flex:1;">${p.pseudo}${p.inZone ? ' <span title="En exploration">🧭</span>' : ''}<span class="meta" style="display:block;">${Math.round(p.dist)} m</span></div>
       <button class="btn-secondary" data-trade-with="${p.uid}" data-trade-pseudo="${p.pseudo}">🤝 Négocier</button>
       <button class="btn-secondary" disabled style="opacity:.4;" title="Bientôt disponible">Combattre</button>
     </div>
