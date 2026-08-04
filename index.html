@@ -1628,6 +1628,10 @@
 </div>
 
 <script>
+window.__diagLog = [];
+function __diag(msg){ try{ window.__diagLog.push((Date.now()%100000) + 'ms: ' + msg); }catch(e){} }
+__diag('script demarre');
+
 /* ---------- Authentification anonyme (automatique) + pseudo ---------- */
 let currentUser = null;
 let currentPseudo = null;
@@ -1636,7 +1640,9 @@ const authOverlay = document.getElementById('authOverlay');
 const authStatus = document.getElementById('authStatus');
 const googleSignInBtn = document.getElementById('googleSignInBtn');
 const pseudoOverlay = document.getElementById('pseudoOverlay');
+__diag('elements DOM ok, typeof firebase=' + typeof firebase + ', typeof auth=' + typeof auth + ', typeof db=' + typeof db);
 const googleProvider = (typeof firebase !== 'undefined' && firebase.auth) ? new firebase.auth.GoogleAuthProvider() : null;
+__diag('googleProvider=' + !!googleProvider);
 
 function showAuthScreen(text, showRetryBtn){
   authStatus.textContent = text;
@@ -1711,36 +1717,41 @@ function linkGoogleAccount(){
 }
 
 try {
+  __diag('bloc init: typeof auth=' + (typeof auth));
   if (typeof auth !== 'undefined' && auth){
+    __diag('appel onAuthStateChanged');
     auth.onAuthStateChanged((user)=>{
+      __diag('callback authStateChanged, user=' + (user ? user.uid : 'null'));
       if (user){
         onSignedIn(user);
       } else {
         showAuthScreen('Connexion en cours…', false);
-        auth.signInAnonymously().catch((err)=>{
+        __diag('appel signInAnonymously');
+        auth.signInAnonymously().then(()=>{
+          __diag('signInAnonymously resolu');
+        }).catch((err)=>{
+          __diag('signInAnonymously erreur: ' + (err && err.code));
           showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
         });
       }
     }, (err)=>{
+      __diag('erreur ecoute: ' + (err && err.message));
       showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
     });
   } else {
+    __diag('auth indisponible');
     showAuthScreen('Connexion indisponible (réseau lent ou coupé) [diag: auth=' + (typeof auth) + ']', true);
   }
 } catch(e){
+  __diag('exception init: ' + (e && e.message));
   showAuthScreen('Erreur d\'initialisation : ' + (e && e.message ? e.message : e), true);
 }
 
-/* Diagnostic temporaire : si toujours bloqué sur "Connexion en cours" après 6s, afficher des infos utiles */
+/* Diagnostic temporaire : affiche le journal complet des étapes après 4s, quoi qu'il arrive */
 setTimeout(()=>{
-  if (authOverlay.classList.contains('show') && authStatus.textContent.indexOf('Connexion en cours') !== -1){
-    authStatus.textContent = 'Connexion en cours… [diag: réseau=' + (navigator.onLine ? 'ok' : 'HORS-LIGNE') +
-      ', auth=' + (typeof auth !== 'undefined' && !!auth) +
-      ', db=' + (typeof db !== 'undefined' && !!db) +
-      ', firebase=' + (typeof firebase !== 'undefined') +
-      ', currentUser=' + !!currentUser + ']';
-  }
-}, 6000);
+  __diag('watchdog 4s, overlay show=' + authOverlay.classList.contains('show'));
+  authStatus.textContent = window.__diagLog.join(' | ');
+}, 4000);
 
 /* ---------- Horloge ---------- */
 function pad(n){ return n.toString().padStart(2,'0'); }
