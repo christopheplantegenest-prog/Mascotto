@@ -4,19 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Mascotto</title>
-<script>
-window.onerror = function(message, source, lineno, colno, error){
-  try {
-    alert('ERREUR JS ATTRAPÉE :\n' + message + '\nFichier: ' + source + '\nLigne: ' + lineno + ', colonne: ' + colno + (error && error.stack ? ('\nPile: ' + error.stack) : ''));
-  } catch(e){}
-  return false;
-};
-window.addEventListener('unhandledrejection', function(event){
-  try {
-    alert('PROMESSE REJETÉE NON GÉRÉE :\n' + (event.reason && event.reason.message ? event.reason.message : event.reason));
-  } catch(e){}
-});
-</script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -84,6 +71,7 @@ window.addEventListener('unhandledrejection', function(event){
   .icon-btn .dot.ok{ background:var(--accent); }
   .icon-btn .dot.err{ background:var(--danger); }
   .icon-btn .dot.pulse{ animation:pulse 1.4s infinite; }
+  .icon-btn.following{ background:var(--accent); border-color:var(--accent); color:#fff; }
   @keyframes pulse{ 0%{opacity:.35;} 50%{opacity:1;} 100%{opacity:.35;} }
 
   .warn{
@@ -1294,6 +1282,13 @@ window.addEventListener('unhandledrejection', function(event){
         <option value="zone">Zone d'exploration</option>
       </select>
 
+      <div class="field-label">Portée du recrutement</div>
+      <select id="editRecruitScope" class="field-input">
+        <option value="perPlayer">Par joueur (chacun peut le recruter, réapparaît si un joueur perd sa progression)</option>
+        <option value="shared">Partagé (une seule fois pour tout le jeu, disparaît pour tout le monde une fois recruté)</option>
+      </select>
+      <p class="meta" style="margin-top:6px;">Ne s'applique que si ce PNJ est recrutable (métier renseigné ou combattant recrutable).</p>
+
       <div id="zoneBlock" style="display:none;">
         <div class="field-label" style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="editZoneShowName" style="width:auto;">
@@ -1641,10 +1636,6 @@ window.addEventListener('unhandledrejection', function(event){
 </div>
 
 <script>
-window.__diagLog = [];
-function __diag(msg){ try{ window.__diagLog.push((Date.now()%100000) + 'ms: ' + msg); }catch(e){} }
-__diag('script demarre');
-
 /* ---------- Authentification anonyme (automatique) + pseudo ---------- */
 let currentUser = null;
 let currentPseudo = null;
@@ -1653,9 +1644,7 @@ const authOverlay = document.getElementById('authOverlay');
 const authStatus = document.getElementById('authStatus');
 const googleSignInBtn = document.getElementById('googleSignInBtn');
 const pseudoOverlay = document.getElementById('pseudoOverlay');
-__diag('elements DOM ok, typeof firebase=' + typeof firebase + ', typeof auth=' + typeof auth + ', typeof db=' + typeof db);
 const mascottoGoogleProvider = (typeof firebase !== 'undefined' && firebase.auth) ? new firebase.auth.GoogleAuthProvider() : null;
-__diag('mascottoGoogleProvider=' + !!mascottoGoogleProvider);
 
 function showAuthScreen(text, showRetryBtn){
   authStatus.textContent = text;
@@ -1730,41 +1719,25 @@ function linkGoogleAccount(){
 }
 
 try {
-  __diag('bloc init: typeof auth=' + (typeof auth));
   if (typeof auth !== 'undefined' && auth){
-    __diag('appel onAuthStateChanged');
     auth.onAuthStateChanged((user)=>{
-      __diag('callback authStateChanged, user=' + (user ? user.uid : 'null'));
       if (user){
         onSignedIn(user);
       } else {
         showAuthScreen('Connexion en cours…', false);
-        __diag('appel signInAnonymously');
-        auth.signInAnonymously().then(()=>{
-          __diag('signInAnonymously resolu');
-        }).catch((err)=>{
-          __diag('signInAnonymously erreur: ' + (err && err.code));
+        auth.signInAnonymously().catch((err)=>{
           showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
         });
       }
     }, (err)=>{
-      __diag('erreur ecoute: ' + (err && err.message));
       showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
     });
   } else {
-    __diag('auth indisponible');
-    showAuthScreen('Connexion indisponible (réseau lent ou coupé) [diag: auth=' + (typeof auth) + ']', true);
+    showAuthScreen('Connexion indisponible (réseau lent ou coupé)', true);
   }
 } catch(e){
-  __diag('exception init: ' + (e && e.message));
   showAuthScreen('Erreur d\'initialisation : ' + (e && e.message ? e.message : e), true);
 }
-
-/* Diagnostic temporaire : affiche le journal complet des étapes après 4s, quoi qu'il arrive */
-setTimeout(()=>{
-  __diag('watchdog 4s, overlay show=' + authOverlay.classList.contains('show'));
-  authStatus.textContent = window.__diagLog.join(' | ');
-}, 4000);
 
 /* ---------- Horloge ---------- */
 function pad(n){ return n.toString().padStart(2,'0'); }
@@ -2305,6 +2278,7 @@ function parseDialogueScript(script){
 let creatures = [];
 const creatureCol = (typeof db !== 'undefined') ? db.collection('creature_types') : null;
 let latestSnap = null;
+let recruitedSourceIds = new Set(); // sourceCreatureId des PNJ déjà recrutés par CE joueur (recrutement "par joueur")
 
 if (creatureCol){
   creatureCol.onSnapshot((snap)=>{
@@ -2332,7 +2306,9 @@ function renderAllCreatures(snap){
   snap.forEach((doc)=>{
     const d = doc.data();
     if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
-    if (d.recruited) return; // recruté : disparaît définitivement de la carte
+    if (d.recruitScope === 'shared'){
+      if (d.recruited) return; // partagé : recruté par n'importe qui, disparaît définitivement pour tout le monde
+    } else if (recruitedSourceIds.has(doc.id)) return; // par joueur : disparu uniquement pour toi
     if (!isActiveNow(d)) return; // PNJ inactif : pas affiché sur la carte
     if (d.interactionType === 'zone' && d.explorable && !playerDiscoveredZoneIds.has(doc.id)) return; // zone découvrable pas encore trouvée par l'explorateur
     const conditionOk = creatureConditionMet(d);
@@ -2780,7 +2756,9 @@ function recruitCreature(creature, metierId){
     recipeTrainingDuration: null,
     createdAt: Date.now(),
   }).then(()=>{
-    return db.collection('creature_types').doc(creature.id).update({ recruited: true });
+    if (creature.recruitScope === 'shared'){
+      return db.collection('creature_types').doc(creature.id).update({ recruited: true });
+    }
   }).then(()=>{
     showToast(`${creature.name} recruté(e) !`);
     if (document.getElementById('sceneViewFull').classList.contains('show')) renderSceneViewCurrentScene();
@@ -3173,6 +3151,7 @@ function loadForEdit(id){
   renderDialogueBuilder();
   const interactionType = d.interactionType || 'dialogue';
   document.getElementById('editInteractionType').value = interactionType;
+  document.getElementById('editRecruitScope').value = d.recruitScope === 'shared' ? 'shared' : 'perPlayer';
   document.getElementById('dialogueBlock').style.display = (interactionType === 'shop' || interactionType === 'zone') ? 'none' : 'block';
   document.getElementById('shopBlock').style.display = (interactionType === 'shop') ? 'block' : 'none';
   document.getElementById('combatBlock').style.display = (interactionType === 'combat') ? 'block' : 'none';
@@ -3267,6 +3246,7 @@ function resetForm(){
   document.getElementById('editVisibilityState').style.display = 'none';
   document.getElementById('editVisibilityState').value = 'not_completed';
   document.getElementById('editHideImmediately').checked = false;
+  document.getElementById('editRecruitScope').value = 'perPlayer';
   document.getElementById('editDuplicateBtn').style.display = 'none';
   currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
   renderDialogueBuilder();
@@ -3415,7 +3395,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -4311,6 +4292,24 @@ initMap();
 const statusDot = document.getElementById('statusDot');
 const accPill = document.getElementById('accPill');
 let hasCentered = false;
+let followMode = true;
+let suppressFollowBreak = false;
+
+function programmaticMapMove(fn){
+  suppressFollowBreak = true;
+  fn();
+  setTimeout(()=>{ suppressFollowBreak = false; }, 50);
+}
+
+function updateRecenterBtnVisual(){
+  document.getElementById('recenterBtn').classList.toggle('following', followMode);
+}
+
+map.on('dragstart zoomstart', ()=>{
+  if (suppressFollowBreak || !followMode) return;
+  followMode = false;
+  updateRecenterBtnVisual();
+});
 
 function setStatus(state, pulsing){
   statusDot.className = 'dot' + (state ? ' '+state : '') + (pulsing ? ' pulse' : '');
@@ -4326,8 +4325,11 @@ function onPosition(pos){
   accCircle = L.circle([latitude, longitude], { radius: accuracy, color:'#0f8a52', weight:1, fillOpacity:0.08 }).addTo(map);
 
   if (!hasCentered){
-    map.setView([latitude, longitude], 18);
+    programmaticMapMove(()=> map.setView([latitude, longitude], 18));
     hasCentered = true;
+    updateRecenterBtnVisual();
+  } else if (followMode){
+    programmaticMapMove(()=> map.panTo([latitude, longitude]));
   }
 
   updateCreatureVisuals();
@@ -4383,7 +4385,9 @@ function startWatch(){
 startWatch();
 
 document.getElementById('recenterBtn').addEventListener('click', ()=>{
-  if (playerPos) map.setView([playerPos.lat, playerPos.lng], 18);
+  followMode = true;
+  updateRecenterBtnVisual();
+  if (playerPos) programmaticMapMove(()=> map.setView([playerPos.lat, playerPos.lng], 18));
   else startWatch();
 });
 
@@ -5021,6 +5025,8 @@ if (recruitsCol){
       });
     }
     recruits = currentUser ? allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid) : [];
+    recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
+    if (typeof latestSnap !== 'undefined' && latestSnap && !movingMarker) renderAllCreatures(latestSnap);
     document.getElementById('baseStatus').textContent = recruits.length ? recruits.length + ' PNJ recruté(s)' : 'Aucun PNJ recruté pour le moment.';
     renderBaseRoster();
     if (activeRecruitId) renderRecruitSheet();
