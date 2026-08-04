@@ -1689,11 +1689,7 @@ function hideAuthScreen(){
 
 googleSignInBtn.addEventListener('click', ()=>{
   if (awaitingGoogleReSignIn && mascottoGoogleProvider && auth){
-    auth.signInWithPopup(mascottoGoogleProvider).catch((err)=>{
-      if (err.code === 'auth/popup-closed-by-user') return;
-      if (err.code === 'auth/popup-blocked'){ showToast('Fenêtre bloquée — autorise les pop-ups pour ce site et réessaie'); return; }
-      showToast('Échec de connexion : ' + err.message);
-    });
+    auth.signInWithRedirect(mascottoGoogleProvider);
   } else {
     location.reload();
   }
@@ -1749,44 +1745,46 @@ function onSignedIn(user){
    (même identifiant, même données — juste une sauvegarde permanente en plus) */
 function linkGoogleAccount(){
   if (!auth || !mascottoGoogleProvider || !currentUser){ showToast('Indisponible ici'); return; }
-  currentUser.linkWithPopup(mascottoGoogleProvider).then((result)=>{
-    if (result && result.user){
-      showToast('Compte Google lié — ta progression est sauvegardée définitivement');
-      if (typeof renderOptionsAccountStatus === 'function') renderOptionsAccountStatus();
-    }
-  }).catch((err)=>{
-    if (err.code === 'auth/credential-already-in-use'){
-      showToast('Ce compte Google est déjà lié à un autre profil');
-    } else if (err.code === 'auth/popup-closed-by-user'){
-      // fenêtre fermée par le joueur avant la fin, rien à signaler
-    } else if (err.code === 'auth/popup-blocked'){
-      showToast('Fenêtre bloquée — autorise les pop-ups pour ce site et réessaie');
-    } else if (err.code) {
-      showToast('Échec de la liaison : ' + err.message);
-    }
-  });
+  currentUser.linkWithRedirect(mascottoGoogleProvider);
 }
 
+/* Démarrage : on traite d'abord un éventuel retour de redirection Google (lien ou connexion)
+   AVANT d'attacher onAuthStateChanged, pour ne jamais risquer de recréer un compte invité
+   par erreur pendant qu'un résultat de connexion Google est encore en cours de traitement. */
 try {
   if (typeof auth !== 'undefined' && auth){
-    auth.onAuthStateChanged((user)=>{
-      if (user){
-        awaitingGoogleReSignIn = false;
-        onSignedIn(user);
-      } else if (awaitingGoogleReSignIn){
-        authStatus.textContent = 'Déconnecté(e). Connecte-toi avec un compte Google, ou continue avec un nouveau profil invité.';
-        googleSignInBtn.textContent = 'Se connecter avec Google';
-        googleSignInBtn.style.display = 'block';
-        guestContinueBtn.style.display = 'block';
-        authOverlay.classList.add('show');
-      } else {
-        showAuthScreen('Connexion en cours…', false);
-        auth.signInAnonymously().catch((err)=>{
-          showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
-        });
+    auth.getRedirectResult().then((result)=>{
+      if (result && result.user){
+        showToast('Connecté avec Google.');
       }
-    }, (err)=>{
-      showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
+    }).catch((err)=>{
+      if (err.code === 'auth/credential-already-in-use'){
+        showToast('Ce compte Google est déjà lié à un autre profil');
+      } else if (err.code === 'auth/no-auth-event' || err.code === 'auth/user-cancelled'){
+        // rien à signaler : pas de retour de redirection en cours, ou annulé par le joueur
+      } else if (err.code) {
+        showToast('Échec de la connexion Google : ' + err.message);
+      }
+    }).finally(()=>{
+      auth.onAuthStateChanged((user)=>{
+        if (user){
+          awaitingGoogleReSignIn = false;
+          onSignedIn(user);
+        } else if (awaitingGoogleReSignIn){
+          authStatus.textContent = 'Déconnecté(e). Connecte-toi avec un compte Google, ou continue avec un nouveau profil invité.';
+          googleSignInBtn.textContent = 'Se connecter avec Google';
+          googleSignInBtn.style.display = 'block';
+          guestContinueBtn.style.display = 'block';
+          authOverlay.classList.add('show');
+        } else {
+          showAuthScreen('Connexion en cours…', false);
+          auth.signInAnonymously().catch((err)=>{
+            showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
+          });
+        }
+      }, (err)=>{
+        showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
+      });
     });
   } else {
     showAuthScreen('Connexion indisponible (réseau lent ou coupé)', true);
@@ -3404,15 +3402,15 @@ function renderOptionsAccountStatus(){
   const linkBtn = document.getElementById('optionsLinkGoogleBtn');
   const unlinkBtn = document.getElementById('optionsUnlinkGoogleBtn');
   if (!currentUser){ statusEl.textContent = '—'; return; }
-  if (currentUser.isAnonymous){
+  const googleProviderData = currentUser.providerData.find(p=> p.providerId === 'google.com');
+  if (googleProviderData){
+    statusEl.textContent = 'Compte Google lié' + (googleProviderData.email ? ' (' + googleProviderData.email + ')' : '') + ' — ta progression est sauvegardée.';
+    linkBtn.style.display = 'none';
+    unlinkBtn.style.display = 'block';
+  } else {
     statusEl.textContent = 'Profil invité — non sauvegardé si tu changes d\'appareil ou effaces les données du site.';
     linkBtn.style.display = 'block';
     unlinkBtn.style.display = 'none';
-  } else {
-    const email = (currentUser.providerData[0] && currentUser.providerData[0].email) || '';
-    statusEl.textContent = 'Compte Google lié' + (email ? ' (' + email + ')' : '') + ' — ta progression est sauvegardée.';
-    linkBtn.style.display = 'none';
-    unlinkBtn.style.display = 'block';
   }
 }
 document.getElementById('optionsBtn').addEventListener('click', ()=>{
@@ -3434,7 +3432,8 @@ document.getElementById('optionsPseudoSaveBtn').addEventListener('click', ()=>{
 document.getElementById('optionsLinkGoogleBtn').addEventListener('click', linkGoogleAccount);
 document.getElementById('optionsUnlinkGoogleBtn').addEventListener('click', async ()=>{
   if (!(await appConfirm('Délier ce compte Google ? Sans compte Google lié, tu risques de perdre l\'accès à ce profil si tu changes d\'appareil ou effaces les données du site. Continuer ?'))) return;
-  currentUser.unlink('google.com').then(()=>{
+  currentUser.unlink('google.com').then((updatedUser)=>{
+    currentUser = updatedUser;
     showToast('Compte Google délié.');
     renderOptionsAccountStatus();
   }).catch((err)=> showToast('Échec : ' + err.message));
