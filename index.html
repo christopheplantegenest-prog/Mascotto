@@ -9063,8 +9063,11 @@ function resolveAttack(attacker, attack, target){
     return;
   }
 
+  const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
+
   // Confusion : chance d'attaquer une cible au hasard (n'importe quel camp) au lieu de la cible choisie.
-  if (attacker.statuses.confuse && Math.random()*100 < 33){
+  // Non applicable aux attaques de groupe (elles touchent tout un camp d'un coup, la confusion n'a pas de sens ici).
+  if (!isGroup && attacker.statuses.confuse && Math.random()*100 < 33){
     const anyAlive = combatState.fighters.filter(f=>f.alive);
     if (anyAlive.length){
       target = anyAlive[Math.floor(Math.random()*anyAlive.length)];
@@ -9072,9 +9075,26 @@ function resolveAttack(attacker, attack, target){
     }
   }
 
+  // Attaque de groupe : on applique l'effet à tous les vivants du même camp que la cible visée
+  // (tous les ennemis pour des dégâts de groupe, tous les alliés pour un soin de groupe).
+  if (isGroup){
+    const groupTargets = combatState.fighters.filter(f=> f.side === target.side && f.alive);
+    groupTargets.forEach(t=> resolveAttackOnTarget(attacker, attack, t));
+    return;
+  }
+
+  resolveAttackOnTarget(attacker, attack, target);
+}
+
+/* Applique l'attaque à une seule cible précise (utilisé directement pour le ciblage individuel,
+   et une fois par cible pour les attaques de groupe). */
+function resolveAttackOnTarget(attacker, attack, target){
+  if (!target || !target.alive) return;
+
   const isDamageKind = attack.kind === 'damage_single' || attack.kind === 'damage_group';
   // Provocation : si la cible visée est sur le camp adverse et qu'un provocateur y est actif, la cible est forcée sur lui.
-  if (isDamageKind && target.side !== attacker.side){
+  // (uniquement pertinent en ciblage individuel — une attaque de groupe touche de toute façon tout le monde)
+  if (attack.kind === 'damage_single' && target.side !== attacker.side){
     const taunters = combatState.fighters.filter(f=> f.side===target.side && f.alive && f.statuses.taunt);
     if (taunters.length && !taunters.includes(target)){
       target = taunters[Math.floor(Math.random()*taunters.length)];
@@ -9107,7 +9127,6 @@ function resolveAttack(attacker, attack, target){
     return;
   }
 
-  // Attaque à dégâts (une cible ou groupe — le groupe est traité comme une cible unique pour l'instant, tant que le ciblage multi-cibles n'est pas géré)
   const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
   if (Math.random()*100 >= hitChance){
     combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
@@ -9304,26 +9323,24 @@ function fighterCardHtml(f, idx, arr){
     ${statusBadgesHtml(f)}
   `;
   // Chevauchement des portraits vers le centre du groupe (2-3 adversaires) : on réduit la largeur de la
-  // carte elle-même (pas seulement l'image) pour que 3 cartes tiennent bien sur une seule ligne, même sur
-  // téléphone étroit. Le texte (PV) reste centré dans cette largeur réduite — sa propre taille (courte,
-  // "NN / NN PV") tient largement dedans, donc pas de risque de chevauchement de texte.
+  // carte elle-même pour que 3 cartes tiennent sur une seule ligne, et on décale l'image ET le texte
+  // ENSEMBLE (même bloc) pour qu'ils restent alignés l'un sur l'autre, quel que soit le décalage.
   const n = arr.length;
   const cardWidth = n <= 1 ? 112 : (n === 2 ? 100 : 92);
   const mid = (n - 1) / 2;
   const overlapStep = n > 1 ? 18 : 0;
   const shiftX = (mid - idx) * overlapStep;
-  const baseMargin = (cardWidth - 100) / 2; // centrage de l'avatar (100px) dans la carte réduite
-  const avatarMarginLeft = baseMargin + shiftX;
-  const avatarMarginRight = baseMargin - shiftX;
   const avatarHtml = `
-    <div class="combat-avatar" style="position:relative; width:100px; height:100px; margin:0 ${avatarMarginRight}px 0 ${avatarMarginLeft}px; ${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
+    <div class="combat-avatar" style="position:relative; width:100px; height:100px; margin:0 auto; ${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
       ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:44px;">${f.side==='player'?'🧑':'👾'}</div>`}
       ${particlesHtml(f)}
     </div>
   `;
   return `
     <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; --lunge-y:${lungeY}px; ${f.alive?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
-      ${f.side==='enemy' ? infoHtml + avatarHtml : avatarHtml + infoHtml}
+      <div style="transform:translateX(${shiftX}px);">
+        ${f.side==='enemy' ? infoHtml + avatarHtml : avatarHtml + infoHtml}
+      </div>
     </div>
   `;
 }
