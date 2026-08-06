@@ -311,17 +311,18 @@
   border-radius:6px; padding:2px 4px; display:inline-block; min-width:44px;
 }
 #combatTurnOrderBar{
-  display:flex; flex-direction:row-reverse; gap:6px; overflow-x:auto;
-  background:rgba(255,255,255,.95); border:1px solid var(--line); border-radius:10px;
-  padding:8px; margin:0 10px 8px;
+  position:absolute; left:6px; top:50%; transform:translateY(-50%); z-index:4; width:26px;
+  display:flex; flex-direction:column; align-items:center; gap:3px; overflow-y:auto;
+  background:rgba(0,0,0,.35); border-radius:10px; padding:5px 3px;
 }
-.combat-to-item{ flex:none; width:32px; text-align:center; }
+.combat-to-item{ flex:none; }
 .combat-to-item .to-emoji{
-  font-size:16px; line-height:1; height:24px; width:24px; margin:0 auto; border-radius:50%;
-  display:flex; align-items:center; justify-content:center; overflow:hidden; background:#eee;
+  position:relative; height:20px; width:20px; border-radius:6px; overflow:hidden; color:#fff;
+  border:1px solid rgba(255,255,255,.55); background:#333;
 }
-.combat-to-item .to-n{ font-size:8px; color:var(--muted); font-weight:700; }
-.combat-to-item.next .to-emoji{ filter:drop-shadow(0 0 3px #a87c00); }
+.combat-to-item .to-emoji img{ position:absolute; top:0; left:50%; height:60px; width:auto; transform:translateX(-50%); }
+.combat-to-item.next .to-emoji{ box-shadow:0 0 0 2px #ffd76a; }
+.combat-to-item.identify-selected .to-emoji img{ filter:drop-shadow(0 0 2px #4fc3f7) drop-shadow(0 0 3px #4fc3f7) brightness(1.12); }
 #combatActionPanel{
   background:#fff; border:2px solid var(--accent); border-radius:12px; padding:0; margin:0 10px 8px;
   height:165px; flex:none; display:flex; flex-direction:column; justify-content:center; overflow:hidden;
@@ -350,7 +351,7 @@
   flex:1 1 0; min-width:0; height:32px; padding:2px; border-radius:8px; font-size:8px; line-height:1.2;
   white-space:normal; word-break:break-word; overflow:hidden; display:flex; align-items:center; justify-content:center;
 }
-#combatCloseAnalysisBtn, #combatItemBackBtn{ height:32px; display:flex; align-items:center; justify-content:center; padding:2px; }
+#combatCloseAnalysisBtn, #combatItemBackBtn{ height:32px; min-height:0; flex:none !important; box-sizing:border-box; display:flex; align-items:center; justify-content:center; padding:2px; }
 #combatLog{
   background:#12241a; color:#dfeee2; border-radius:12px; padding:8px 10px 6px; font-size:11px;
   height:165px; flex:none; min-width:0; overflow:hidden; display:none; flex-direction:column; margin:0 10px 8px;
@@ -627,8 +628,8 @@
 <!-- Combat (structure de base : jauge de vitesse, ciblage, attaques — sans états ni animations pour l'instant) -->
 <div class="scene-full" id="combatFull">
   <div style="flex:1; display:flex; flex-direction:column; overflow-y:auto; padding:10px 0; background:#0b0b0b; position:relative;">
-    <div id="combatTurnOrderBar"></div>
     <div id="combatArena">
+      <div id="combatTurnOrderBar"></div>
       <div id="combatEnemyRow" class="combat-side"></div>
       <div id="combatPlayerRow" class="combat-side"></div>
       <button type="button" id="combatLogToggleBtn" title="Journal de combat">📜</button>
@@ -8902,7 +8903,7 @@ function renderCombatAnalysisPanel(actor, target){
   panel.innerHTML = `
     <div style="display:flex; gap:8px; padding:6px; align-items:stretch; height:96px;">
       <div style="flex:none; width:90px; height:90px; border-radius:10px; overflow:hidden; background:#eef3ee; display:flex; align-items:center; justify-content:center; font-size:40px;">
-        ${target.imageUrl ? `<img src="${target.imageUrl}" style="width:100%;height:100%;object-fit:cover;">` : (target.side==='player'?'🧑':'👾')}
+        ${target.imageUrl ? `<img src="${target.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : (target.side==='player'?'🧑':'👾')}
       </div>
       <div style="flex:1; font-size:11px; line-height:1.5; height:90px; overflow-y:auto; text-align:left;">
         <strong style="font-size:13px;">${target.name}</strong><br>
@@ -8949,18 +8950,35 @@ function computeCombatTurnOrder(n){
 function renderCombatTurnOrderBar(){
   const bar = document.getElementById('combatTurnOrderBar');
   if (!bar || !combatState) return;
-  const queue = computeCombatTurnOrder(8);
-  bar.innerHTML = queue.map((f, idx)=>`
-    <div class="combat-to-item${idx===0?' next':''}">
-      <div class="to-emoji">${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:cover;">` : (f.side==='player'?'🧑':'👾')}</div>
-      <div class="to-n">${idx+1}</div>
+  const queue = computeCombatTurnOrder(10);
+  bar.innerHTML = queue.map((f, idx)=>{
+    const selected = f.identifyUntil && f.identifyUntil > Date.now();
+    return `
+    <div class="combat-to-item${idx===0?' next':''}${selected?' identify-selected':''}">
+      <div class="to-emoji">${f.imageUrl ? `<img src="${f.imageUrl}">` : (f.side==='player'?'🧑':'👾')}</div>
     </div>
-  `).join('');
-  bar.scrollLeft = 0;
+  `;}).join('');
+}
+/* Au clic sur un personnage dans l'arène (avant d'avoir choisi une attaque), son portrait reste
+   brièvement mis en évidence dans la barre d'ordre des tours — utile pour distinguer deux personnages
+   qui se ressemblent. */
+function identifyCombatFighter(uid){
+  const f = combatState.fighters.find(x=>x.uid===uid);
+  if (!f) return;
+  f.identifyUntil = Date.now() + 3000;
+  renderCombatTurnOrderBar();
+  setTimeout(()=>{ if (combatState) renderCombatTurnOrderBar(); }, 3000);
 }
 
 async function onFighterCardClick(uid){
-  if (!combatState || !combatState.pendingActor || !combatState.pendingAttack) return;
+  if (!combatState) return;
+  if (!combatState.pendingAttack){
+    // Avant d'avoir choisi une attaque, cliquer sur un personnage dans l'arène sert juste à
+    // repérer son portrait correspondant dans la barre d'ordre des tours (utile en cas de doublon visuel).
+    identifyCombatFighter(uid);
+    return;
+  }
+  if (!combatState.pendingActor) return;
   const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
   const attack = combatState.pendingAttack;
   const target = combatState.fighters.find(f=>f.uid===uid);
@@ -9310,7 +9328,7 @@ function particlesHtml(f){
 function fighterCardHtml(f, idx, arr){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
   const isActing = combatState.pendingActor === f.uid;
-  const targetable = !!(combatState.pendingActor && combatState.pendingAttack && f.alive);
+  const targetable = !!f.alive;
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   const hasNeg = Object.keys(f.statuses).some(sid=> NEGATIVE_STATUS_IDS.includes(sid));
@@ -9328,7 +9346,7 @@ function fighterCardHtml(f, idx, arr){
   const n = arr.length;
   const cardWidth = n <= 1 ? 112 : (n === 2 ? 100 : 92);
   const mid = (n - 1) / 2;
-  const overlapStep = n > 1 ? 18 : 0;
+  const overlapStep = n > 1 ? 10 : 0;
   const shiftX = (mid - idx) * overlapStep;
   const avatarHtml = `
     <div class="combat-avatar" style="position:relative; width:100px; height:100px; margin:0 auto; ${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
