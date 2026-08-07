@@ -21,6 +21,8 @@
     --bg:#eef3ef; --panel:#ffffff; --line:#c9d6cc; --text:#12241a;
     --muted:#3f6350; --accent:#0f8a52; --warn:#a85d00; --danger:#c0392b;
     --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --avatar-size: clamp(80px, calc(36vw - 15px), 150px);
+    --turnbar-width: clamp(22px, calc(9.5vw - 4px), 40px);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
   html,body{
@@ -289,10 +291,22 @@
   50%{ box-shadow:0 0 10px 3px rgba(241,196,15,.6); }
 }
 .combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
+.combat-avatar{ position:relative; width:var(--avatar-size); height:var(--avatar-size); margin:0 auto; }
 .combat-anim-charge .combat-avatar{ animation:combatCharge .9s ease-in-out; }
 .combat-anim-hit .combat-avatar{ animation:combatHitShake .4s ease-in-out; }
 .combat-anim-halo-neg .combat-avatar{ animation:combatHaloNeg 1.1s ease-in-out infinite; }
 .combat-anim-halo-pos .combat-avatar{ animation:combatHaloPos 1.1s ease-in-out infinite; }
+#cropStage{
+  position:relative; width:100%; max-width:320px; margin:10px auto 0; background:#000; border-radius:8px;
+  overflow:hidden; touch-action:none;
+}
+#cropStage img{ display:block; width:100%; height:auto; pointer-events:none; user-select:none; }
+#cropBox{
+  position:absolute; border:2px solid #4fc3f7; box-shadow:0 0 0 2000px rgba(0,0,0,.5); border-radius:4px;
+  cursor:move;
+}
+#cropPreview{ width:64px; height:64px; border-radius:10px; overflow:hidden; background:#333; border:1px solid var(--line); flex:none; }
+#cropPreview img{ width:100%; height:100%; object-fit:cover; }
 .combat-particle{
   position:absolute; left:50%; top:-6px; transform:translate(-50%,0);
   font-size:13px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8);
@@ -311,16 +325,16 @@
   border-radius:6px; padding:2px 4px; display:inline-block; min-width:44px;
 }
 #combatTurnOrderBar{
-  position:absolute; left:6px; top:50%; transform:translateY(-50%); z-index:4; width:26px;
+  position:absolute; left:6px; top:50%; transform:translateY(-50%); z-index:4; width:var(--turnbar-width);
   display:flex; flex-direction:column; align-items:center; gap:3px; overflow-y:auto;
   background:rgba(0,0,0,.35); border-radius:10px; padding:5px 3px;
 }
 .combat-to-item{ flex:none; }
 .combat-to-item .to-emoji{
-  position:relative; height:20px; width:20px; border-radius:6px; overflow:hidden; color:#fff;
+  position:relative; height:calc(var(--turnbar-width) - 6px); width:calc(var(--turnbar-width) - 6px); border-radius:6px; overflow:hidden; color:#fff;
   border:1px solid rgba(255,255,255,.55); background:#333;
 }
-.combat-to-item .to-emoji img{ position:absolute; top:0; left:50%; height:60px; width:auto; transform:translateX(-50%); }
+.combat-to-item .to-emoji img{ width:100%; height:100%; object-fit:cover; }
 .combat-to-item.next .to-emoji{ box-shadow:0 0 0 2px #ffd76a; }
 .combat-to-item.identify-selected .to-emoji img{ filter:drop-shadow(0 0 2px #4fc3f7) drop-shadow(0 0 3px #4fc3f7) brightness(1.12); }
 #combatActionPanel{
@@ -1352,6 +1366,10 @@
       </select>
       <p class="meta" style="margin-top:6px;">Ne s'applique que si ce PNJ est recrutable (métier renseigné ou combattant recrutable).</p>
 
+      <div class="field-label">Portrait de combat</div>
+      <button type="button" class="btn-secondary" id="editPortraitCropBtn" style="width:100%; display:none;">🎯 Régler le cadrage visage + buste</button>
+      <p class="meta" id="portraitCropHint" style="margin-top:6px;">Détermine l'aperçu affiché dans la barre d'ordre des tours en combat. Enregistre d'abord ce PNJ (avec une image) pour régler ce cadrage.</p>
+
       <div id="zoneBlock" style="display:none;">
         <div class="field-label" style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="editZoneShowName" style="width:auto;">
@@ -1532,6 +1550,29 @@
 
     <div class="actions" style="margin-top:16px;">
       <button class="btn-secondary" id="editorCloseBtn" style="width:100%;">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="portraitCropOverlay">
+  <div class="sheet">
+    <h3 style="margin-top:0;">🎯 Portrait de combat</h3>
+    <p class="meta">Déplace le cadre sur le visage et le buste du personnage — c'est ce qui s'affichera dans la barre d'ordre des tours en combat.</p>
+    <div id="cropStage">
+      <img id="cropStageImg" src="">
+      <div id="cropBox"></div>
+    </div>
+    <div class="field-row" style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+      <span class="meta" style="white-space:nowrap;">Taille du cadre</span>
+      <input type="range" id="cropSizeRange" min="15" max="90" value="50" style="flex:1;">
+    </div>
+    <div class="field-row" style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+      <span class="meta" style="white-space:nowrap;">Aperçu dans la barre :</span>
+      <div id="cropPreview"><img id="cropPreviewImg" src=""></div>
+    </div>
+    <div class="actions" style="margin-top:16px; display:flex; gap:8px;">
+      <button class="btn-secondary" id="cropCancelBtn" style="flex:1;">Annuler</button>
+      <button class="btn-capture" id="cropSaveBtn" style="flex:1;">Valider ce cadrage</button>
     </div>
   </div>
 </div>
@@ -2827,6 +2868,7 @@ function recruitCreature(creature, metierId){
     metierId: metierId,
     ownerUid: (currentUser ? currentUser.uid : null),
     imageUrl: creature.imageUrl || '',
+    combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
     taskTarget: null,
@@ -3067,6 +3109,7 @@ let editingId = null;
 let currentDupeGroup = null;
 let pendingLat = null, pendingLng = null;
 let pendingMapIconScale = 1, pendingMapIconRotation = 0;
+let pendingCombatPortraitCrop = null;
 let pendingAssignedZoneId = null;
 let uploadedImageDataUrl = null;
 
@@ -3253,6 +3296,9 @@ function loadForEdit(id){
   document.getElementById('editZoneExplorerReport').value = d.explorerReport || '';
   document.getElementById('editZoneSceneBtn').style.display = 'block';
   document.getElementById('editZoneSceneHint').style.display = 'none';
+  pendingCombatPortraitCrop = d.combatPortraitCrop || null;
+  document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
+  document.getElementById('portraitCropHint').style.display = d.imageUrl ? 'none' : 'block';
   editZoneArenaImageDataUrl = null;
   editZoneArenaImageRef = d.combatArenaImageRef || null;
   document.getElementById('editZoneArenaImageFile').value = '';
@@ -3352,6 +3398,9 @@ function resetForm(){
   document.getElementById('editZoneExplorerReport').value = '';
   document.getElementById('editZoneSceneBtn').style.display = 'none';
   document.getElementById('editZoneSceneHint').style.display = 'block';
+  pendingCombatPortraitCrop = null;
+  document.getElementById('editPortraitCropBtn').style.display = 'none';
+  document.getElementById('portraitCropHint').style.display = 'block';
   editZoneArenaImageDataUrl = null;
   editZoneArenaImageRef = null;
   document.getElementById('editZoneArenaImageFile').value = '';
@@ -3431,6 +3480,80 @@ document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
 document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('editorOverlay').classList.remove('show');
 });
+
+/* ---------- Outil de cadrage du portrait de combat ---------- */
+document.getElementById('editPortraitCropBtn').addEventListener('click', openPortraitCropTool);
+function openPortraitCropTool(){
+  const imgUrl = uploadedImageDataUrl;
+  if (!imgUrl){ showToast('Ce PNJ n\'a pas d\'image enregistrée.'); return; }
+  document.getElementById('editorOverlay').classList.remove('show');
+  document.getElementById('portraitCropOverlay').classList.add('show');
+
+  let crop = pendingCombatPortraitCrop ? { ...pendingCombatPortraitCrop } : { cx:0.5, cy:0.28, size:0.5 };
+  const stage = document.getElementById('cropStage');
+  const box = document.getElementById('cropBox');
+  const img = document.getElementById('cropStageImg');
+  const sizeRange = document.getElementById('cropSizeRange');
+  img.src = imgUrl;
+  sizeRange.value = Math.round(crop.size*100);
+
+  function updateBoxUI(){
+    const stageW = stage.clientWidth;
+    const boxSize = crop.size * stageW;
+    box.style.width = boxSize + 'px';
+    box.style.height = boxSize + 'px';
+    box.style.left = (crop.cx*stageW - boxSize/2) + 'px';
+    box.style.top = (crop.cy*stageW - boxSize/2) + 'px';
+  }
+  function clampCrop(){
+    const half = crop.size/2;
+    const maxCy = Math.max(half, (img.naturalHeight / img.naturalWidth) - half);
+    crop.cx = Math.min(1-half, Math.max(half, crop.cx));
+    crop.cy = Math.min(maxCy, Math.max(half, crop.cy));
+  }
+  function updatePreview(){
+    buildManualThumb(imgUrl, crop).then(url=>{
+      document.getElementById('cropPreviewImg').src = url;
+    });
+  }
+  function refresh(){ clampCrop(); updateBoxUI(); updatePreview(); }
+
+  img.onload = refresh;
+  if (img.complete) refresh();
+
+  sizeRange.oninput = ()=>{
+    crop.size = parseInt(sizeRange.value,10) / 100;
+    refresh();
+  };
+
+  let dragging = false, startX=0, startY=0, startCx=0, startCy=0;
+  box.onpointerdown = (e)=>{
+    dragging = true;
+    startX = e.clientX; startY = e.clientY;
+    startCx = crop.cx; startCy = crop.cy;
+    box.setPointerCapture(e.pointerId);
+  };
+  box.onpointermove = (e)=>{
+    if (!dragging) return;
+    const rect = stage.getBoundingClientRect();
+    crop.cx = startCx + (e.clientX - startX) / rect.width;
+    crop.cy = startCy + (e.clientY - startY) / rect.width;
+    refresh();
+  };
+  box.onpointerup = ()=>{ dragging = false; };
+  box.onpointercancel = ()=>{ dragging = false; };
+
+  document.getElementById('cropCancelBtn').onclick = ()=>{
+    document.getElementById('portraitCropOverlay').classList.remove('show');
+    document.getElementById('editorOverlay').classList.add('show');
+  };
+  document.getElementById('cropSaveBtn').onclick = ()=>{
+    pendingCombatPortraitCrop = { ...crop };
+    document.getElementById('portraitCropOverlay').classList.remove('show');
+    document.getElementById('editorOverlay').classList.add('show');
+    showToast('🎯 Cadrage enregistré — n\'oublie pas de valider avec "Enregistrer le PNJ" pour le sauvegarder.');
+  };
+}
 
 /* ---------- Menu Options (joueur) ---------- */
 function renderOptionsAccountStatus(){
@@ -3536,7 +3659,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   }
 
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -8128,6 +8251,7 @@ function buildPlayerFighters(){
       const cs = r.combatStats || {};
       return {
         uid:'p'+i, side:'player', sourceId:r.id, name:r.name, imageUrl:r.imageUrl||'', tribe:cs.tribe||'',
+        combatPortraitCrop: r.combatPortraitCrop || null,
         maxHp:cs.hp||1, hp:cs.hp||1,
         atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
         precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
@@ -8142,6 +8266,7 @@ function buildEnemyFighters(monsterList){
     const cs = c.combatStats || {};
     return {
       uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name, imageUrl:c.imageUrl||'', tribe:cs.tribe||'',
+      combatPortraitCrop: c.combatPortraitCrop || null,
       maxHp:cs.hp||1, hp:cs.hp||1,
       atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
       precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
@@ -8362,6 +8487,7 @@ function serializeFighterForSave(f){
     immunities:f.immunities||[], resistances:f.resistances||[],
     rewardItemIds:f.rewardItemIds||[], fleeChance:f.fleeChance!=null?f.fleeChance:30,
     budgetCategory:f.budgetCategory||'monstre_commun',
+    combatPortraitCrop: f.combatPortraitCrop || null,
     gauge:f.gauge, alive:f.alive, statuses:f.statuses||{},
   };
 }
@@ -8618,6 +8744,83 @@ if (typeof db !== 'undefined' && db){
   });
 }
 
+/* ---------- Vignettes de portrait pour la barre d'ordre des tours ----------
+   Une vignette carrée "visage + buste" est générée une seule fois par combattant, au démarrage du
+   combat (pas à chaque affichage) : cadrage manuel (`combatPortraitCrop`, réglé dans l'éditeur PNJ)
+   en priorité, sinon détection automatique du contenu visible de l'image (ignore les marges
+   transparentes), avec repli sur l'image normale si la génération échoue. */
+const THUMB_CACHE = {};
+function buildFaceThumb(imageUrl){
+  if (THUMB_CACHE[imageUrl]) return Promise.resolve(THUMB_CACHE[imageUrl]);
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=>{
+      const scanW = 120, scanH = Math.max(1, Math.round(scanW * img.naturalHeight / img.naturalWidth));
+      const scanCanvas = document.createElement('canvas');
+      scanCanvas.width = scanW; scanCanvas.height = scanH;
+      const scanCtx = scanCanvas.getContext('2d');
+      scanCtx.drawImage(img, 0, 0, scanW, scanH);
+      let minX=scanW, minY=scanH, maxX=0, maxY=0, found=false;
+      try {
+        const data = scanCtx.getImageData(0,0,scanW,scanH).data;
+        for (let y=0; y<scanH; y++){
+          for (let x=0; x<scanW; x++){
+            if (data[(y*scanW+x)*4+3] > 20){
+              found = true;
+              if (x<minX) minX=x; if (x>maxX) maxX=x;
+              if (y<minY) minY=y; if (y>maxY) maxY=y;
+            }
+          }
+        }
+      } catch(e){ /* image distante non lisible (CORS) : repli sur le cadre entier */ }
+      if (!found){ minX=0; minY=0; maxX=scanW; maxY=scanH; }
+      const scale = img.naturalWidth / scanW;
+      const boxX = minX*scale, boxY = minY*scale, boxW = Math.max(1,(maxX-minX))*scale, boxH = Math.max(1,(maxY-minY))*scale;
+      const cropX = boxX, cropY = boxY, cropW = boxW, cropH = boxH * 0.38;
+      const OUT = 96;
+      const out = document.createElement('canvas');
+      out.width = OUT; out.height = OUT;
+      const octx = out.getContext('2d');
+      const s = Math.max(OUT/cropW, OUT/cropH);
+      const drawW = cropW*s, drawH = cropH*s;
+      octx.drawImage(img, cropX, cropY, cropW, cropH, (OUT-drawW)/2, 0, drawW, drawH);
+      const url = out.toDataURL('image/png');
+      THUMB_CACHE[imageUrl] = url;
+      resolve(url);
+    };
+    img.onerror = ()=> resolve(imageUrl);
+    img.src = imageUrl;
+  });
+}
+function buildManualThumb(imageUrl, crop){
+  const cacheKey = imageUrl + '|' + crop.cx + ',' + crop.cy + ',' + crop.size;
+  if (THUMB_CACHE[cacheKey]) return Promise.resolve(THUMB_CACHE[cacheKey]);
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=>{
+      const cropSize = crop.size * img.naturalWidth;
+      const cropX = crop.cx * img.naturalWidth - cropSize/2;
+      const cropY = crop.cy * img.naturalWidth - cropSize/2;
+      const OUT = 96;
+      const out = document.createElement('canvas');
+      out.width = OUT; out.height = OUT;
+      out.getContext('2d').drawImage(img, cropX, cropY, cropSize, cropSize, 0, 0, OUT, OUT);
+      const url = out.toDataURL('image/png');
+      THUMB_CACHE[cacheKey] = url;
+      resolve(url);
+    };
+    img.onerror = ()=> resolve(imageUrl);
+    img.src = imageUrl;
+  });
+}
+function generateThumbFor(f){
+  if (!f.imageUrl) return Promise.resolve();
+  const p = f.combatPortraitCrop ? buildManualThumb(f.imageUrl, f.combatPortraitCrop) : buildFaceThumb(f.imageUrl);
+  return p.then(url=>{ f.thumbUrl = url; });
+}
+
 function startCombat(playerFighters, enemyFighters, arenaBgUrl){
   combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
   combatLogOpen = false;
@@ -8629,6 +8832,7 @@ function startCombat(playerFighters, enemyFighters, arenaBgUrl){
   document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${arenaBgUrl || DEFAULT_ARENA_BG})`);
   renderCombatWaitingPanel();
   renderCombat();
+  Promise.all(combatState.fighters.map(generateThumbFor)).then(()=>{ if (combatState) renderCombatTurnOrderBar(); });
   clearInterval(combatTickTimer);
   combatTickTimer = setInterval(combatTick, 150);
   saveCombatSnapshot();
@@ -8955,7 +9159,7 @@ function renderCombatTurnOrderBar(){
     const selected = f.identifyUntil && f.identifyUntil > Date.now();
     return `
     <div class="combat-to-item${idx===0?' next':''}${selected?' identify-selected':''}">
-      <div class="to-emoji">${f.imageUrl ? `<img src="${f.imageUrl}">` : (f.side==='player'?'🧑':'👾')}</div>
+      <div class="to-emoji">${f.imageUrl ? `<img src="${f.thumbUrl || f.imageUrl}">` : (f.side==='player'?'🧑':'👾')}</div>
     </div>
   `;}).join('');
 }
@@ -9325,6 +9529,9 @@ function particlesHtml(f){
   return mine.map(p=>`<div class="combat-particle">${p.emoji}${p.text?(' '+p.text):''}</div>`).join('');
 }
 
+function getAvatarSizePx(){
+  return Math.max(80, Math.min(150, window.innerWidth * 0.36 - 15)); // même formule que --avatar-size en CSS
+}
 function fighterCardHtml(f, idx, arr){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
   const isActing = combatState.pendingActor === f.uid;
@@ -9343,13 +9550,16 @@ function fighterCardHtml(f, idx, arr){
   // Chevauchement des portraits vers le centre du groupe (2-3 adversaires) : on réduit la largeur de la
   // carte elle-même pour que 3 cartes tiennent sur une seule ligne, et on décale l'image ET le texte
   // ENSEMBLE (même bloc) pour qu'ils restent alignés l'un sur l'autre, quel que soit le décalage.
+  // Tailles adaptatives à la largeur d'écran (voir --avatar-size) : cardWidth/overlapStep suivent la
+  // même proportion que l'avatar réel, pour que 3 combattants tiennent toujours sur une ligne.
   const n = arr.length;
-  const cardWidth = n <= 1 ? 112 : (n === 2 ? 100 : 92);
+  const avatarPx = getAvatarSizePx();
+  const cardWidth = avatarPx * (n <= 1 ? 1.12 : (n === 2 ? 1.00 : 0.92));
   const mid = (n - 1) / 2;
-  const overlapStep = n > 1 ? 10 : 0;
+  const overlapStep = n > 1 ? avatarPx * 0.10 : 0;
   const shiftX = (mid - idx) * overlapStep;
   const avatarHtml = `
-    <div class="combat-avatar" style="position:relative; width:100px; height:100px; margin:0 auto; ${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
+    <div class="combat-avatar" style="${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
       ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:44px;">${f.side==='player'?'🧑':'👾'}</div>`}
       ${particlesHtml(f)}
     </div>
