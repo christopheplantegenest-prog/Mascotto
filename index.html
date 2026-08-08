@@ -423,9 +423,19 @@
         <button class="icon-btn" id="optionsMusicMuteBtn" title="Couper le son" style="width:32px; height:32px; font-size:14px;">🔊</button>
       </div>
 
+      <button class="btn-secondary" id="optionsBlockedListBtn" style="width:100%; margin-top:16px;">🚫 Joueurs bloqués</button>
+
       <button class="btn-secondary" id="optionsSignOutBtn" style="width:100%; margin-top:20px; color:var(--danger); border-color:rgba(192,57,43,.4);">Se déconnecter</button>
 
       <button class="btn-secondary" id="optionsCloseBtn" style="width:100%; margin-top:16px;">Fermer</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="blockedListOverlay">
+    <div class="sheet">
+      <h3 style="margin-top:0;">🚫 Joueurs bloqués</h3>
+      <div id="blockedListContent"><p class="meta">Chargement…</p></div>
+      <button class="btn-secondary" id="blockedListCloseBtn" style="width:100%; margin-top:16px;">Fermer</button>
     </div>
   </div>
 
@@ -6037,6 +6047,51 @@ function toggleBlockPlayer(uid){
     showToast('Joueur bloqué.');
   });
 }
+function unblockPlayer(uid){
+  if (!playerDocRef) return Promise.resolve();
+  return playerDocRef.set({ blockedUids: firebase.firestore.FieldValue.arrayRemove(uid) }, { merge:true }).then(()=>{
+    showToast('Joueur débloqué.');
+  });
+}
+async function renderBlockedList(){
+  const content = document.getElementById('blockedListContent');
+  const blocked = (playerSelfData && playerSelfData.blockedUids) || [];
+  if (!blocked.length){
+    content.innerHTML = '<p class="meta">Aucun joueur bloqué.</p>';
+    return;
+  }
+  content.innerHTML = '<p class="meta">Chargement…</p>';
+  const rows = await Promise.all(blocked.map(async (uid)=>{
+    let pseudo = 'Joueur';
+    try {
+      const doc = await db.collection('players').doc(uid).get();
+      if (doc.exists && doc.data().pseudo) pseudo = doc.data().pseudo;
+    } catch(e){}
+    return { uid, pseudo };
+  }));
+  content.innerHTML = rows.map(r=> `
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line);">
+      <span style="flex:1;">${r.pseudo}</span>
+      <button type="button" class="btn-secondary" data-unblock="${r.uid}">Débloquer</button>
+    </div>
+  `).join('');
+  content.querySelectorAll('[data-unblock]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      btn.disabled = true;
+      await unblockPlayer(btn.dataset.unblock);
+      renderBlockedList();
+    });
+  });
+}
+document.getElementById('optionsBlockedListBtn').addEventListener('click', ()=>{
+  document.getElementById('optionsOverlay').classList.remove('show');
+  document.getElementById('blockedListOverlay').classList.add('show');
+  renderBlockedList();
+});
+document.getElementById('blockedListCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('blockedListOverlay').classList.remove('show');
+  document.getElementById('optionsOverlay').classList.add('show');
+});
 
 function attachPvpListeners(){
   if (!currentUser || !pvpChallengesCol || !pvpDuelsCol) return;
@@ -6173,8 +6228,8 @@ function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
       // tant qu'il reste valide (notre personnage bien vivant) — sinon le joueur perd son tour sans
       // avoir pu jouer, avant même d'avoir eu le temps de choisir une attaque.
       const newFighters = d.fighters.map(sf=> deserializePvpFighter(sf, myRole));
-      const myTurnStillValid = combatState.pendingActor
-        && newFighters.some(f=> f.uid===combatState.pendingActor && f.side==='player' && f.alive);
+      const myTurnStillValid = combatState.showingAnalysis || (combatState.pendingActor
+        && newFighters.some(f=> f.uid===combatState.pendingActor && f.side==='player' && f.alive));
       combatState.fighters = newFighters;
       combatState.log = (d.log||[]).slice(0,20);
       if (!myTurnStillValid){
@@ -9246,6 +9301,7 @@ function renderCombatAnalysisPanel(actor, target){
   document.getElementById('combatCloseAnalysisBtn').addEventListener('click', ()=>{
     decrementFighterStatuses(actor);
     combatState.resolving = false;
+    combatState.showingAnalysis = false;
     checkCombatEnd();
     renderCombatWaitingPanel();
     renderCombat();
@@ -9318,12 +9374,11 @@ async function onFighterCardClick(uid){
     if (target.side === actor.side){ showToast('Cible ennemie requise'); return; }
     combatState.pendingActor = null;
     combatState.pendingAttack = null;
+    combatState.showingAnalysis = true; // protège la fiche : on ne doit pas l'effacer tant qu'elle n'est pas fermée manuellement
     actor.gauge = 0;
     combatState.log.unshift(`🔍 ${actor.name} analyse ${target.name}.`);
     renderCombatAnalysisPanel(actor, target);
     renderCombat();
-    combatState.resolving = false;
-    if (!combatState.finished) saveCombatSnapshot(true);
     return;
   }
   if (attack.kind === 'item'){
