@@ -6183,13 +6183,30 @@ function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
     }
   });
 }
-function syncPvpDuel(){
+/* Verrou de tour en JcJ : la simulation de jauge tourne indépendamment sur chaque téléphone, donc les
+   deux appareils peuvent parfois conclure en même temps que c'est leur tour. Avant d'afficher son
+   panneau d'attaque, chaque appareil doit d'abord "réclamer" le tour via une transaction Firestore
+   (un seul gagnant possible) — si un autre joueur a déjà la main, on patiente et on réessaie bientôt. */
+function claimPvpTurn(){
+  if (!pvpDuelId || !pvpDuelsCol || !db) return Promise.resolve(false);
+  const ref = pvpDuelsCol.doc(pvpDuelId);
+  return db.runTransaction(async (tx)=>{
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const d = snap.data();
+    if (d.activeTurnSide && d.activeTurnSide !== pvpMyRole) return false; // l'adversaire a déjà la main
+    tx.update(ref, { activeTurnSide: pvpMyRole });
+    return true;
+  }).catch(()=> false);
+}
+function syncPvpDuel(releaseTurn){
   if (!pvpDuelId || !pvpDuelsCol) return;
   const update = {
     fighters: combatState.fighters.map(f=> serializePvpFighter({ ...f, owner: f.owner || (f.side==='player'?pvpMyRole:(pvpMyRole==='A'?'B':'A')) })),
     log: (combatState.log||[]).slice(0,20),
     lastActionAt: Date.now(), lastActionByUid: currentUser.uid,
   };
+  if (releaseTurn) update.activeTurnSide = null; // action terminée : on libère la main pour l'adversaire
   if (combatState.finished){
     update.status = 'finished';
     update.winnerUid = combatState.result === 'victory' ? currentUser.uid : (combatState.result === 'defeat' ? pvpOpponentUid : null);
@@ -6204,7 +6221,7 @@ async function abandonPvpDuel(){
   combatState.resolving = false;
   checkCombatEnd();
   renderCombat();
-  syncPvpDuel();
+  syncPvpDuel(true);
 }
 function cleanupPvpState(){
   if (pvpDuelUnsub){ pvpDuelUnsub(); pvpDuelUnsub = null; }
@@ -8566,9 +8583,9 @@ function serializeFighterForSave(f){
 function deserializeFighterFromSave(sf){
   return { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
 }
-function saveCombatSnapshot(){
+function saveCombatSnapshot(releaseTurn){
   if (!currentUser || !db || !combatState || combatState.finished) return;
-  if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(); return; }
+  if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(releaseTurn); return; }
   const data = {
     fighters: combatState.fighters.map(serializeFighterForSave),
     log: (combatState.log||[]).slice(0,20),
@@ -9007,7 +9024,7 @@ async function takeTurn(fighter){
   }
   checkCombatEnd();
   if (combatState.finished){ combatState.resolving = false; renderCombat(); return; }
-  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); saveCombatSnapshot(); return; }
+  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); saveCombatSnapshot(true); return; }
   if (checkTurnSkip(fighter)){
     combatState.hitUids = [fighter.uid];
     renderCombat();
@@ -9017,10 +9034,23 @@ async function takeTurn(fighter){
     decrementFighterStatuses(fighter);
     combatState.resolving = false;
     renderCombat();
-    saveCombatSnapshot();
+    saveCombatSnapshot(true);
     return;
   }
   if (fighter.side === 'player'){
+    if (combatState.isPvp && !combatState.isSpectator){
+      const claimed = await claimPvpTurn();
+      if (!claimed){
+        // L'adversaire a déjà la main : on ne prend pas ce tour maintenant, on retentera bientôt
+        // (jauge laissée telle quelle, le prochain passage de gaugeTick réessaiera automatiquement).
+        renderCombatWaitingPanel(`En attente du tour de ${pvpOpponentPseudo}…`);
+        renderCombat();
+        await sleep(300);
+        if (!combatState || combatState.finished) return;
+        combatState.resolving = false;
+        return;
+      }
+    }
     combatState.pendingActor = fighter.uid;
     combatState.pendingAttack = null;
     renderCombatActionButtons(fighter);
@@ -9040,7 +9070,7 @@ async function takeTurn(fighter){
     combatState.resolving = false;
     checkCombatEnd();
     renderCombat();
-    if (!combatState.finished) saveCombatSnapshot();
+    if (!combatState.finished) saveCombatSnapshot(true);
   }
 }
 
@@ -9149,7 +9179,7 @@ function passCombatTurn(fighter){
   renderCombatWaitingPanel();
   checkCombatEnd();
   renderCombat();
-  if (!combatState.finished) saveCombatSnapshot();
+  if (!combatState.finished) saveCombatSnapshot(true);
 }
 /* Texte d'analyse : tribu (faible/fort contre), point fort/faible statistique, états actifs. */
 function combatAnalysisLines(target){
@@ -9194,7 +9224,7 @@ function renderCombatAnalysisPanel(actor, target){
     checkCombatEnd();
     renderCombatWaitingPanel();
     renderCombat();
-    if (!combatState.finished) saveCombatSnapshot();
+    if (!combatState.finished) saveCombatSnapshot(true);
   });
 }
 /* Simule l'avancement des jauges pour prévoir l'ordre des n prochains tours (même logique que combatTick). */
@@ -9267,6 +9297,8 @@ async function onFighterCardClick(uid){
     combatState.log.unshift(`🔍 ${actor.name} analyse ${target.name}.`);
     renderCombatAnalysisPanel(actor, target);
     renderCombat();
+    combatState.resolving = false;
+    if (!combatState.finished) saveCombatSnapshot(true);
     return;
   }
   if (attack.kind === 'item'){
@@ -9281,7 +9313,7 @@ async function onFighterCardClick(uid){
     combatState.resolving = false;
     checkCombatEnd();
     renderCombat();
-    if (!combatState.finished) saveCombatSnapshot();
+    if (!combatState.finished) saveCombatSnapshot(true);
     return;
   }
   const friendly = isHealAttack(attack) || attack.kind === 'boost';
@@ -9295,7 +9327,7 @@ async function onFighterCardClick(uid){
   combatState.resolving = false;
   checkCombatEnd();
   renderCombat();
-  if (!combatState.finished) saveCombatSnapshot();
+  if (!combatState.finished) saveCombatSnapshot(true);
 }
 
 function tribeMultiplier(attackerTribe, defenderTribe){
