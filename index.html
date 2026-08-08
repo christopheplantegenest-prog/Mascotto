@@ -1597,7 +1597,7 @@
   <div class="scene-topbar">
     <button class="sheet-x" id="sceneEditorCloseBtn">✕</button>
     <span class="meta" id="sceneEditorCurrentLabel" style="background:rgba(255,255,255,.92); padding:4px 10px; border-radius:999px; margin:0; font-weight:700;">Scène 1</span>
-    <span style="width:30px;"></span>
+    <span class="meta" id="sceneEditorLoadTimeLabel" style="background:rgba(255,255,255,.92); padding:4px 8px; border-radius:999px; margin:0; font-size:10px; display:none;"></span>
     <input type="file" id="sceneEditorImageFile" accept="image/*" style="display:none;">
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
@@ -6083,20 +6083,21 @@ document.getElementById('pvpBlockFromChallengeBtn').addEventListener('click', as
 document.getElementById('pvpAcceptBtn').addEventListener('click', async ()=>{
   if (!pvpIncomingChallenge) return;
   if (playerSelfData && playerSelfData.currentZoneId){ showToast('Impossible d\'accepter un défi pendant que tu es en exploration.'); return; }
+  const challenge = pvpIncomingChallenge; // on fige la référence : pvpIncomingChallenge peut devenir null pendant les appels ci-dessous
   const myFighters = buildPvpFighters('B').map(f=> serializePvpFighter(f));
-  const theirFighters = pvpIncomingChallenge.challengerFighters || [];
+  const theirFighters = challenge.challengerFighters || [];
   if (!myFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
   try {
     const duelRef = await pvpDuelsCol.add({
-      playerAUid: pvpIncomingChallenge.challengerUid, playerAPseudo: pvpIncomingChallenge.challengerPseudo,
+      playerAUid: challenge.challengerUid, playerAPseudo: challenge.challengerPseudo,
       playerBUid: currentUser.uid, playerBPseudo: currentPseudo || 'Joueur',
       fighters: theirFighters.concat(myFighters),
       log: [], status: 'active', winnerUid: null,
       createdAt: Date.now(), lastActionAt: Date.now(),
     });
-    await pvpChallengesCol.doc(pvpIncomingChallenge.id).update({ status:'accepted', duelId: duelRef.id });
+    await pvpChallengesCol.doc(challenge.id).update({ status:'accepted', duelId: duelRef.id });
     document.getElementById('pvpIncomingOverlay').classList.remove('show');
-    startPvpDuel(duelRef.id, 'B', pvpIncomingChallenge.challengerUid, pvpIncomingChallenge.challengerPseudo);
+    startPvpDuel(duelRef.id, 'B', challenge.challengerUid, challenge.challengerPseudo);
     pvpIncomingChallenge = null;
   } catch(err){ showToast('Échec : ' + err.message); }
 });
@@ -6159,14 +6160,24 @@ function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
       clearInterval(combatTickTimer);
       combatTickTimer = setInterval(combatTick, 150);
     } else if (d.lastActionByUid !== currentUser.uid){
-      // Mise à jour reçue de l'adversaire : on resynchronise notre état local
-      combatState.fighters = d.fighters.map(sf=> deserializePvpFighter(sf, myRole));
+      // Mise à jour reçue de l'adversaire : on resynchronise notre état local.
+      // Important : les jauges de vitesse tournent indépendamment sur chaque appareil, donc il arrive
+      // que NOTRE tour soit affiché (boutons d'attaque visibles) pile au moment où l'adversaire termine
+      // son propre tour de son côté. On ne doit surtout pas effacer notre tour en cours de décision
+      // tant qu'il reste valide (notre personnage bien vivant) — sinon le joueur perd son tour sans
+      // avoir pu jouer, avant même d'avoir eu le temps de choisir une attaque.
+      const newFighters = d.fighters.map(sf=> deserializePvpFighter(sf, myRole));
+      const myTurnStillValid = combatState.pendingActor
+        && newFighters.some(f=> f.uid===combatState.pendingActor && f.side==='player' && f.alive);
+      combatState.fighters = newFighters;
       combatState.log = (d.log||[]).slice(0,20);
-      combatState.resolving = false;
-      combatState.pendingActor = null;
-      combatState.pendingAttack = null;
-      combatState.waitingForOpponentSince = null;
-      renderCombatWaitingPanel();
+      if (!myTurnStillValid){
+        combatState.resolving = false;
+        combatState.pendingActor = null;
+        combatState.pendingAttack = null;
+        combatState.waitingForOpponentSince = null;
+        renderCombatWaitingPanel();
+      }
       checkCombatEnd();
       renderCombat();
     }
@@ -7874,13 +7885,39 @@ function openSceneEditor(creatureId){
   sceneEditorStartSceneId = sceneEditorScenes[0].id;
   loadSceneIntoEditorState(sceneEditorScenes[0].id);
   document.getElementById('sceneEditorFull').classList.add('show');
+  document.getElementById('sceneEditorLoadTimeLabel').style.display = 'none';
   zonesCol.doc(creatureId).get().then(async (doc)=>{
     const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
+    const imgCount = countZoneImages(norm.scenes);
+    const t0 = performance.now();
     await resolveImageRefsInScenes(norm.scenes);
+    const elapsedSec = (performance.now() - t0) / 1000;
+    const loadLabel = document.getElementById('sceneEditorLoadTimeLabel');
+    loadLabel.textContent = `⏱️ ${imgCount} image${imgCount>1?'s':''} — ${elapsedSec.toFixed(1)} s (sur ta connexion actuelle)`;
+    loadLabel.style.display = 'inline-block';
     sceneEditorScenes = norm.scenes;
     sceneEditorStartSceneId = norm.startSceneId;
     loadSceneIntoEditorState(sceneEditorStartSceneId);
   }).catch((err)=> showToast('Échec du chargement : ' + err.message));
+}
+/* Compte le nombre total d'images utilisées par une zone (fonds + points + variantes), pour l'indicateur de temps de chargement */
+function countZoneImages(scenesArr){
+  let n = 0;
+  (scenesArr||[]).forEach(sc=>{
+    if (sc.imageUrl || sc.imageRef) n++;
+    (sc.points||[]).forEach(pt=>{
+      if (pt.imageUrl || pt.imageRef) n++;
+      if (pt.linkedPnjImageUrl || pt.linkedPnjImageRef) n++;
+    });
+    (sc.variants||[]).forEach(v=>{
+      if (v.imageUrl || v.imageRef) n++;
+      (v.points||[]).forEach(pt=>{
+        if (pt.imageUrl || pt.imageRef) n++;
+        if (pt.linkedPnjImageUrl || pt.linkedPnjImageRef) n++;
+      });
+    });
+  });
+  return n;
 }
 document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
@@ -8004,13 +8041,19 @@ async function renderSceneViewCurrentScene(){
   const sc = resolveSceneContent(scRaw);
   empty.style.display = 'none';
 
-  const img = document.createElement('img');
-  img.onload = ()=>{ if (sceneViewCurrentSceneId === (scRaw && scRaw.id)) positionSceneViewPoints(); };
-  img.src = sc.imageUrl;
-  wrap.insertBefore(img, wrap.firstChild);
-
-  const recruitedPnjIds = await getRecruitedPnjIds(sc);
+  // On prépare tout (image de fond + vérification des PNJ déjà recrutés) AVANT d'afficher quoi que ce
+  // soit, pour que le fond et les PNJ apparaissent ensemble d'un coup, plutôt que le fond seul puis les
+  // PNJ après (la vérification des PNJ prenait un peu de temps en plus, une fois le fond déjà affiché).
+  const imgReady = new Promise((resolve)=>{
+    const im = new Image();
+    im.onload = ()=> resolve(im);
+    im.onerror = ()=> resolve(im);
+    im.src = sc.imageUrl;
+  });
+  const [img, recruitedPnjIds] = await Promise.all([imgReady, getRecruitedPnjIds(sc)]);
   if (sceneViewCurrentSceneId !== scRaw.id) return; // scène changée entretemps, ce rendu est obsolète
+
+  wrap.insertBefore(img, wrap.firstChild);
 
   const wrapPointActions = {};
   sceneViewPointActions = wrapPointActions;
