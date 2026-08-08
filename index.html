@@ -7889,15 +7889,19 @@ function openSceneEditor(creatureId){
   zonesCol.doc(creatureId).get().then(async (doc)=>{
     const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
     const imgCount = countZoneImages(norm.scenes);
-    const t0 = performance.now();
-    await resolveImageRefsInScenes(norm.scenes);
-    const elapsedSec = (performance.now() - t0) / 1000;
-    const loadLabel = document.getElementById('sceneEditorLoadTimeLabel');
-    loadLabel.textContent = `⏱️ ${imgCount} image${imgCount>1?'s':''} — ${elapsedSec.toFixed(1)} s (sur ta connexion actuelle)`;
-    loadLabel.style.display = 'inline-block';
+    await resolveImageRefsInScenes(norm.scenes); // résolution normale (peut profiter du cache) pour afficher l'éditeur tout de suite
     sceneEditorScenes = norm.scenes;
     sceneEditorStartSceneId = norm.startSceneId;
     loadSceneIntoEditorState(sceneEditorStartSceneId);
+    // Mesure séparée du temps de chargement, TOUJOURS à froid (ignore le cache local ET celui de
+    // Firestore) pour donner un chiffre honnête et comparable à chaque fois, même en rouvrant l'éditeur
+    // juste après avoir déjà consulté ces mêmes images.
+    const loadLabel = document.getElementById('sceneEditorLoadTimeLabel');
+    loadLabel.textContent = `⏱️ ${imgCount} image${imgCount>1?'s':''} — mesure en cours…`;
+    loadLabel.style.display = 'inline-block';
+    measureColdZoneLoadTime(norm.scenes).then(elapsedSec=>{
+      loadLabel.textContent = `⏱️ ${imgCount} image${imgCount>1?'s':''} — ${elapsedSec.toFixed(1)} s (temps réel, sans mémoire tampon)`;
+    });
   }).catch((err)=> showToast('Échec du chargement : ' + err.message));
 }
 /* Compte le nombre total d'images utilisées par une zone (fonds + points + variantes), pour l'indicateur de temps de chargement */
@@ -7918,6 +7922,31 @@ function countZoneImages(scenesArr){
     });
   });
   return n;
+}
+/* Mesure le temps de chargement de toutes les images d'une zone en forçant systématiquement un vrai
+   aller-retour réseau (source:'server'), sans jamais utiliser le cache local ni celui de Firestore —
+   donne un chiffre représentatif de ce que verrait un joueur qui arrive pour la première fois. */
+function measureColdZoneLoadTime(scenesArr){
+  const refs = new Set();
+  (scenesArr||[]).forEach(sc=>{
+    if (sc.imageRef) refs.add(sc.imageRef);
+    (sc.points||[]).forEach(pt=>{
+      if (pt.imageRef) refs.add(pt.imageRef);
+      if (pt.linkedPnjImageRef) refs.add(pt.linkedPnjImageRef);
+    });
+    (sc.variants||[]).forEach(v=>{
+      if (v.imageRef) refs.add(v.imageRef);
+      (v.points||[]).forEach(pt=>{
+        if (pt.imageRef) refs.add(pt.imageRef);
+        if (pt.linkedPnjImageRef) refs.add(pt.linkedPnjImageRef);
+      });
+    });
+  });
+  if (!refs.size || !scImagesCol) return Promise.resolve(0);
+  const t0 = performance.now();
+  return Promise.all(Array.from(refs).map(ref=>
+    scImagesCol.doc(ref).get({ source:'server' }).catch(()=> null)
+  )).then(()=> (performance.now() - t0) / 1000);
 }
 document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
