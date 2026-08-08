@@ -303,7 +303,7 @@
 .combat-anim-halo-neg .combat-avatar{ animation:combatHaloNeg 1.1s ease-in-out infinite; }
 .combat-anim-halo-pos .combat-avatar{ animation:combatHaloPos 1.1s ease-in-out infinite; }
 /* ---------- Transition d'entrée en combat ---------- */
-body.ct-shaking{ animation:ctBodyShake .42s ease-in-out; }
+.ct-shaking{ animation:ctBodyShake .42s ease-in-out; }
 @keyframes ctBodyShake{
   0%,100%{ transform:scale(1) translate(0,0); }
   30%{ transform:scale(1.04) translate(-3px,2px); }
@@ -486,6 +486,7 @@ body.ct-shaking{ animation:ctBodyShake .42s ease-in-out; }
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v151</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8242,6 +8243,7 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=>{
         document.getElementById('sceneViewFull').classList.remove('show');
         clearCurrentZoneScene();
+        if (!combatState) clearSavedCombat();
       };
     } else if (pt.type === 'sortie'){
       wrapPointActions[pt.id] = ()=>{
@@ -8253,6 +8255,7 @@ async function renderSceneViewCurrentScene(){
             rollSceneEncounter();
           } else {
             document.getElementById('sceneViewFull').classList.remove('show');
+            if (!combatState) clearSavedCombat();
           }
         };
         if (pt.lockType === 'item'){
@@ -8403,6 +8406,7 @@ async function getRecruitedPnjIds(sc){
 }
 document.getElementById('sceneViewCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneViewFull').classList.remove('show');
+  if (!combatState) clearSavedCombat(); // filet de sécurité : une suppression précédente (fin de combat) a pu être coupée par un rechargement de page juste après
 });
 document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneDialogueOverlay').classList.remove('show');
@@ -9057,16 +9061,18 @@ function playCombatEntryTransition(hasBoss){
   return new Promise((resolve)=>{
     playMusicForKey(hasBoss ? 'combat_boss' : 'combat');
     playTransitionSfx();
-    document.body.classList.add('ct-shaking');
+    const sceneView = document.getElementById('sceneViewFull');
+    const shakeTarget = sceneView.classList.contains('show') ? sceneView : document.body;
+    shakeTarget.classList.add('ct-shaking');
     setTimeout(()=>{
-      document.body.classList.remove('ct-shaking');
+      shakeTarget.classList.remove('ct-shaking');
       const overlay = document.getElementById('combatTransitionOverlay');
       overlay.classList.add('show');
       void overlay.offsetWidth; // relance les animations CSS même si .play était déjà présent juste avant
       overlay.classList.add('play');
       // la scène de zone (si ouverte) ne disparaît qu'ici, une fois l'écran couvert par le flash —
       // avant, elle restait affichée pendant la secousse, ce qui est le but (elle doit trembler, pas la carte en dessous)
-      document.getElementById('sceneViewFull').classList.remove('show');
+      sceneView.classList.remove('show');
       setTimeout(resolve, 340); // pile au plus fort du flash : le bon instant pour révéler le combat en dessous
       setTimeout(()=>{ overlay.classList.remove('show','play'); }, 850);
     }, 420);
