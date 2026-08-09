@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v167</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v168</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8965,10 +8965,16 @@ setInterval(()=>{
 function saveCurrentZoneScene(){
   if (!currentUser || !db || !sceneViewCreature) return;
   db.collection('players').doc(currentUser.uid).set({
-    currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId
+    currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId, zoneSavedAt: Date.now()
   }, { merge:true }).catch(()=>{});
 }
+/* Même principe que markCombatCleared() : un repère local instantané, insensible à une fermeture d'appli
+   brutale, en plus de l'envoi (toujours théoriquement interruptible) au serveur. */
+function markZoneCleared(){
+  try { localStorage.setItem('mascotto_zone_cleared_at', String(Date.now())); } catch(e){}
+}
 function clearCurrentZoneScene(){
+  markZoneCleared();
   if (!currentUser || !db) return;
   db.collection('players').doc(currentUser.uid).set({
     currentZoneId: firebase.firestore.FieldValue.delete(), currentSceneId: firebase.firestore.FieldValue.delete()
@@ -9093,10 +9099,17 @@ async function tryResumeSession(){
       }
     }
     if (pd.currentZoneId && creatureCol){
-      const zoneDoc = await creatureCol.doc(pd.currentZoneId).get();
-      if (zoneDoc.exists){
-        openSceneView({ id: zoneDoc.id, ...zoneDoc.data() }, pd.currentSceneId);
-        showToast('🔄 Reprise de ton exploration en cours…');
+      const zoneClearedAt = parseInt(localStorage.getItem('mascotto_zone_cleared_at') || '0', 10);
+      if (pd.zoneSavedAt && pd.zoneSavedAt <= zoneClearedAt){
+        // même logique que pour le combat : cette position a déjà été quittée sur cet appareil, la
+        // suppression côté serveur n'a simplement pas eu le temps d'arriver. On ne la reprend pas.
+        clearCurrentZoneScene();
+      } else {
+        const zoneDoc = await creatureCol.doc(pd.currentZoneId).get();
+        if (zoneDoc.exists){
+          openSceneView({ id: zoneDoc.id, ...zoneDoc.data() }, pd.currentSceneId);
+          showToast('🔄 Reprise de ton exploration en cours…');
+        }
       }
     }
   } catch(e){}
