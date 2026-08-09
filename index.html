@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v165</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v167</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1561,6 +1561,16 @@
           </select>
           <div class="field-label">Chance de fuite du joueur face à ce monstre (%)</div>
           <input type="number" id="editCombatFleeChance" class="field-input" value="30" min="0" max="100">
+          <div class="field-label">Personnalité en combat (IA)</div>
+          <select id="editCombatAiPersonality" class="field-input">
+            <option value="normal">Normal (équilibré)</option>
+            <option value="agressif">Agressif — fonce sur la cible la plus faible, ignore le soin</option>
+            <option value="defensif">Défensif — se soigne tôt, joue prudemment</option>
+            <option value="chaotique">Chaotique — presque aléatoire, pas de vraie stratégie</option>
+          </select>
+          <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+            <input type="checkbox" id="editCombatCanFlee"> <span>🏃 Peut prendre la fuite lui-même si très affaibli (rare, pas de butin s'il fuit)</span>
+          </label>
         </div>
         <div id="combatPointsIndicator" style="margin:8px 0; padding:8px; border-radius:8px; border:1px solid var(--line); font-size:13px; font-weight:600;"></div>
         <div class="field-label">Attaques connues (4 maximum)</div>
@@ -3428,6 +3438,8 @@ function loadForEdit(id){
   document.getElementById('editCombatCategory').value = cs.budgetCategory || 'monstre_commun';
   document.getElementById('editCombatRarity').value = cs.rarity || 'commun';
   document.getElementById('editCombatFleeChance').value = cs.fleeChance != null ? cs.fleeChance : 30;
+  document.getElementById('editCombatAiPersonality').value = cs.aiPersonality || 'normal';
+  document.getElementById('editCombatCanFlee').checked = !!cs.canFlee;
   document.getElementById('combatMonsterOnlyFields').style.display = cs.recruitable ? 'none' : 'block';
   document.getElementById('combatMonsterOnlyFields2').style.display = cs.recruitable ? 'none' : 'block';
   updateCombatPointsIndicator();
@@ -3737,6 +3749,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     budgetCategory: document.getElementById('editCombatCategory').value,
     rarity: document.getElementById('editCombatRarity').value,
     fleeChance: parseInt(document.getElementById('editCombatFleeChance').value,10) || 30,
+    aiPersonality: document.getElementById('editCombatAiPersonality').value,
+    canFlee: document.getElementById('editCombatCanFlee').checked,
     attackIds: Array.from(selectedCombatAttacks),
     startingAttackIds: Array.from(selectedStartingAttacks),
     immunities: Array.from(selectedCombatImmunities),
@@ -8754,6 +8768,7 @@ function buildEnemyFighters(monsterList){
       attacksList: resolveFighterAttacks(cs.attackIds),
       immunities: cs.immunities||[], resistances: cs.resistances||[],
       rewardItemIds: cs.rewardItemIds||[], fleeChance: cs.fleeChance!=null?cs.fleeChance:30,
+      aiPersonality: cs.aiPersonality || 'normal', canFlee: !!cs.canFlee,
       budgetCategory: cs.budgetCategory || 'monstre_commun',
       gauge: Math.random()*30, alive:true, statuses:{},
     };
@@ -8967,6 +8982,7 @@ function serializeFighterForSave(f){
     attackIds:(f.attacksList||[]).map(a=>a.id),
     immunities:f.immunities||[], resistances:f.resistances||[],
     rewardItemIds:f.rewardItemIds||[], fleeChance:f.fleeChance!=null?f.fleeChance:30,
+    aiPersonality:f.aiPersonality||'normal', canFlee:!!f.canFlee, fled:!!f.fled,
     budgetCategory:f.budgetCategory||'monstre_commun',
     combatPortraitCrop: f.combatPortraitCrop || null,
     gauge:f.gauge, alive:f.alive, statuses:f.statuses||{},
@@ -9629,12 +9645,20 @@ async function takeTurn(fighter){
   } else {
     await sleep(250);
     if (!combatState || combatState.finished) return;
-    const alivePlayers = combatState.fighters.filter(f=>f.side==='player' && f.alive);
-    if (alivePlayers.length){
-      const usable = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
-      const atk = usable.length ? usable[Math.floor(Math.random()*usable.length)] : null;
-      const target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
-      await playTurnAnimation(fighter, atk, target);
+    const decision = chooseEnemyAiAction(fighter);
+    if (decision.flee){
+      fighter.alive = false;
+      fighter.fled = true;
+      combatState.log.unshift(`${fighter.name} prend la fuite !`);
+      combatState.log = combatState.log.slice(0, 20);
+      spawnParticle(fighter.uid, '💨', '');
+      combatState.hitUids = [fighter.uid];
+      renderCombat();
+      await sleep(500);
+      combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
+      combatState.hitUids = [];
+    } else if (decision.atk && decision.target){
+      await playTurnAnimation(fighter, decision.atk, decision.target);
     }
     decrementFighterStatuses(fighter);
     combatState.resolving = false;
@@ -9642,6 +9666,82 @@ async function takeTurn(fighter){
     renderCombat();
     if (!combatState.finished) saveCombatSnapshot(true);
   }
+}
+
+/* IA des monstres/ennemis en combat : petites règles de priorité plutôt qu'un tirage totalement au hasard,
+   ajustées selon la personnalité choisie sur la fiche du monstre. */
+const AI_PERSONALITY_CONFIG = {
+  normal:   { healThreshold:0.45, smartTargetChance:0.75, damagePreference:0.80 },
+  agressif: { healThreshold:0.15, smartTargetChance:1.00, damagePreference:0.95 },
+  defensif: { healThreshold:0.60, smartTargetChance:0.50, damagePreference:0.60 },
+};
+function chooseEnemyAiAction(fighter){
+  // Tentative de fuite : rare, uniquement si autorisée sur ce monstre (case à cocher) et très affaibli.
+  if (fighter.canFlee && fighter.hp/fighter.maxHp <= 0.25 && Math.random() < 0.15){
+    return { flee:true };
+  }
+
+  const mySide = combatState.fighters.filter(f=> f.side===fighter.side);
+  const allyDown = mySide.find(f=> !f.alive);
+  const usable = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
+  if (!usable.length) return { atk:null, target:null };
+  const alivePlayers = combatState.fighters.filter(f=> f.side!==fighter.side && f.alive);
+  if (!alivePlayers.length) return { atk:null, target:null };
+
+  if (fighter.aiPersonality === 'chaotique'){
+    // Presque aucune règle : une attaque et une cible au hasard parmi les cibles valides pour son type.
+    const atk = usable[Math.floor(Math.random()*usable.length)];
+    const friendlyAtk = isHealAttack(atk) || atk.kind === 'boost' || atk.kind === 'revive_single';
+    let target;
+    if (friendlyAtk){
+      const pool = atk.kind === 'revive_single' ? mySide.filter(f=>!f.alive) : mySide.filter(f=>f.alive);
+      target = pool.length ? pool[Math.floor(Math.random()*pool.length)] : null;
+    } else {
+      target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
+    }
+    if (!target) return { atk:null, target:null };
+    return { atk, target };
+  }
+
+  const cfg = AI_PERSONALITY_CONFIG[fighter.aiPersonality] || AI_PERSONALITY_CONFIG.normal;
+
+  // 1) Réanimer un allié K.O. en priorité absolue.
+  if (allyDown){
+    const reviveAtk = usable.find(a=> a.kind === 'revive_single');
+    if (reviveAtk) return { atk: reviveAtk, target: allyDown };
+  }
+
+  // 2) Se soigner / soigner l'allié le plus affaibli, selon le seuil propre à la personnalité.
+  const woundedAllies = mySide.filter(f=> f.alive && f.hp/f.maxHp <= cfg.healThreshold).sort((a,b)=> (a.hp/a.maxHp) - (b.hp/b.maxHp));
+  if (woundedAllies.length){
+    const healAtk = usable.find(a=> a.kind === 'heal_single' || a.kind === 'heal_group');
+    if (healAtk) return { atk: healAtk, target: woundedAllies[0] };
+  }
+
+  // 3) Sinon, attaquer (avec une chance de plutôt booster/affaiblir, selon la personnalité).
+  const damageAtks = usable.filter(a=> a.kind === 'damage_single' || a.kind === 'damage_group');
+  const otherAtks = usable.filter(a=> a.kind === 'boost' || a.kind === 'debuff');
+  let atk;
+  if (damageAtks.length && (!otherAtks.length || Math.random() < cfg.damagePreference)){
+    atk = damageAtks[Math.floor(Math.random()*damageAtks.length)];
+  } else {
+    atk = usable[Math.floor(Math.random()*usable.length)];
+  }
+
+  const friendlyAtk = isHealAttack(atk) || atk.kind === 'boost' || atk.kind === 'revive_single';
+  let target;
+  if (friendlyAtk){
+    const aliveAllies = mySide.filter(f=>f.alive);
+    const deadAllies = mySide.filter(f=>!f.alive);
+    target = (atk.kind === 'revive_single' && deadAllies.length) ? deadAllies[0]
+      : (aliveAllies.length ? aliveAllies[Math.floor(Math.random()*aliveAllies.length)] : null);
+  } else {
+    // Selon la personnalité : achève la cible la plus basse en PV plus ou moins souvent (le reste du temps, cible au hasard).
+    const sorted = [...alivePlayers].sort((a,b)=> (a.hp/a.maxHp) - (b.hp/b.maxHp));
+    target = (Math.random() < cfg.smartTargetChance) ? sorted[0] : alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
+  }
+  if (!target) return { atk:null, target:null };
+  return { atk, target };
 }
 
 /* Séquence d'animation d'une action : élan (physique) ou concentration (magique) sur l'attaquant,
@@ -10186,7 +10286,7 @@ function endCombat(result){
   if (result === 'victory'){
     title.textContent = '🎉 Victoire !';
     const rewardIds = new Set();
-    combatState.fighters.filter(f=>f.side==='enemy').forEach(f=> (f.rewardItemIds||[]).forEach(id=>rewardIds.add(id)));
+    combatState.fighters.filter(f=>f.side==='enemy' && !f.fled).forEach(f=> (f.rewardItemIds||[]).forEach(id=>rewardIds.add(id)));
     if (rewardIds.size && playerDocRef){
       const inc = {};
       rewardIds.forEach(id=> inc[id] = firebase.firestore.FieldValue.increment(1));
