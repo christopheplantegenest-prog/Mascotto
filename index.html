@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v157</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v158</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1373,6 +1373,7 @@
       <span class="meta music-preview-time" data-key="map">0:00 / 0:00</span>
       <button class="btn-secondary music-preview-mark" data-key="map" style="padding:6px 10px;">🔁 Marquer ici</button>
     </div>
+    <input type="range" class="music-preview-seek" data-key="map" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
     <div class="meta music-preview-loopinfo" data-key="map" style="margin-top:2px; min-height:16px;"></div>
 
     <div class="field-label" style="margin-top:14px;">⚔️ Combat</div>
@@ -1382,6 +1383,7 @@
       <span class="meta music-preview-time" data-key="combat">0:00 / 0:00</span>
       <button class="btn-secondary music-preview-mark" data-key="combat" style="padding:6px 10px;">🔁 Marquer ici</button>
     </div>
+    <input type="range" class="music-preview-seek" data-key="combat" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
     <div class="meta music-preview-loopinfo" data-key="combat" style="margin-top:2px; min-height:16px;"></div>
 
     <div class="field-label" style="margin-top:14px;">👑 Combat de boss</div>
@@ -1391,6 +1393,7 @@
       <span class="meta music-preview-time" data-key="combat_boss">0:00 / 0:00</span>
       <button class="btn-secondary music-preview-mark" data-key="combat_boss" style="padding:6px 10px;">🔁 Marquer ici</button>
     </div>
+    <input type="range" class="music-preview-seek" data-key="combat_boss" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
     <div class="meta music-preview-loopinfo" data-key="combat_boss" style="margin-top:2px; min-height:16px;"></div>
 
     <div class="field-label" style="margin-top:14px;">🔊 Effet sonore — Transition de combat</div>
@@ -1399,6 +1402,7 @@
       <button class="btn-secondary music-preview-play" data-key="sfx" style="padding:6px 10px;">▶️</button>
       <span class="meta music-preview-time" data-key="sfx">0:00 / 0:00</span>
     </div>
+    <input type="range" class="music-preview-seek" data-key="sfx" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
 
     <div class="field-label" style="margin-top:14px;">🎉 Victoire de combat</div>
     <input type="text" id="musicUrlCombatVictory" class="field-input" placeholder="https://.../victoire.mp3">
@@ -1406,6 +1410,7 @@
       <button class="btn-secondary music-preview-play" data-key="combat_victory" style="padding:6px 10px;">▶️</button>
       <span class="meta music-preview-time" data-key="combat_victory">0:00 / 0:00</span>
     </div>
+    <input type="range" class="music-preview-seek" data-key="combat_victory" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
 
     <div class="field-label" style="margin-top:18px;">Situations personnalisées</div>
     <p class="meta">Pas encore déclenchées automatiquement en jeu — juste préparées pour plus tard, à mesure que tu en ajoutes.</p>
@@ -6944,6 +6949,7 @@ function renderCustomMusicList(){
         <span class="meta music-preview-time" data-key="custom_${i}">0:00 / 0:00</span>
         <button class="btn-secondary music-preview-mark" data-key="custom_${i}" style="padding:6px 10px;">🔁 Marquer ici</button>
       </div>
+      <input type="range" class="music-preview-seek" data-key="custom_${i}" min="0" max="100" value="0" step="0.01" style="width:100%; margin-top:4px;">
       <div class="meta music-preview-loopinfo" data-key="custom_${i}" style="margin-top:2px; min-height:16px;"></div>
       <button class="btn-secondary custom-music-remove" data-i="${i}" style="width:100%; margin-top:6px; color:var(--danger); border-color:rgba(192,57,43,.4);">Supprimer</button>
     </div>
@@ -7020,12 +7026,19 @@ function updatePreviewTimeUI(){
   const audio = getPreviewAudio();
   const el = document.querySelector(`.music-preview-time[data-key="${previewingKey}"]`);
   if (el) el.textContent = fmtPreviewTime(audio.currentTime) + ' / ' + fmtPreviewTime(audio.duration || 0);
+  const seekEl = document.querySelector(`.music-preview-seek[data-key="${previewingKey}"]`);
+  if (seekEl && !seekEl.dataset.dragging){
+    if (isFinite(audio.duration) && audio.duration > 0) seekEl.max = audio.duration;
+    seekEl.value = audio.currentTime;
+  }
 }
 function stopMusicPreview(){
   if (previewAudioEl) previewAudioEl.pause();
   if (previewingKey){
     const btn = document.querySelector(`.music-preview-play[data-key="${previewingKey}"]`);
     if (btn) btn.textContent = '▶️';
+    const seekEl = document.querySelector(`.music-preview-seek[data-key="${previewingKey}"]`);
+    if (seekEl){ seekEl.value = 0; delete seekEl.dataset.dragging; }
   }
   previewingKey = null;
 }
@@ -7053,7 +7066,7 @@ function toggleMusicPreview(key){
     previewingKey = key;
     const btn = document.querySelector(`.music-preview-play[data-key="${key}"]`);
     if (btn) btn.textContent = '⏸️';
-  }).catch(()=> showToast('Impossible de lire ce fichier'));
+  }).catch((err)=> showToast('Impossible de lire ce fichier' + (err && err.name ? ' (' + err.name + ')' : '')));
 }
 function setLoopPointForKey(key, t){
   if (key === 'map') musicLoopPoints.map = t;
@@ -7098,6 +7111,25 @@ document.getElementById('musicEditorOverlay').addEventListener('click', (e)=>{
     renderLoopInfoForKey(key);
     showToast('Point de reprise marqué à ' + fmtPreviewTime(t));
   }
+});
+document.getElementById('musicEditorOverlay').addEventListener('input', (e)=>{
+  const seekEl = e.target.closest('.music-preview-seek');
+  if (!seekEl) return;
+  const key = seekEl.dataset.key;
+  if (previewingKey !== key) return; // la barre ne fait rien tant que ce n'est pas cette piste qui joue
+  getPreviewAudio().currentTime = +seekEl.value;
+});
+['pointerdown','touchstart'].forEach(evt=>{
+  document.getElementById('musicEditorOverlay').addEventListener(evt, (e)=>{
+    const seekEl = e.target.closest('.music-preview-seek');
+    if (seekEl) seekEl.dataset.dragging = '1';
+  });
+});
+['pointerup','touchend'].forEach(evt=>{
+  document.getElementById('musicEditorOverlay').addEventListener(evt, (e)=>{
+    const seekEl = e.target.closest('.music-preview-seek');
+    if (seekEl) delete seekEl.dataset.dragging;
+  });
 });
 
 /* ---------- Volume musique (menu Options) ---------- */
@@ -9097,6 +9129,7 @@ function playMusicForKey(key){
   currentMusicKey = key;
   const url = key ? (musicConfig[key] || '') : '';
   if (!url){ bgMusicAudio.pause(); return; }
+  bgMusicAudio.loop = (key !== 'combat_victory'); // la victoire est un fanfare ponctuel, ne doit pas boucler
   if (bgMusicAudio.src !== url) bgMusicAudio.src = url;
   if (musicAudioUnlocked) bgMusicAudio.play().catch(()=>{});
 }
