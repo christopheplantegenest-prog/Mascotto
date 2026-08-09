@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v160</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v161</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9235,17 +9235,14 @@ function createCrossfadePlayer(){
   let loopPoint = null; // null = pas de boucle du tout ; sinon secondes de reprise
   let targetVolume = 1;
   let crossfading = false;
-  let handler = null;
-  function attach(){
-    if (handler) active.removeEventListener('timeupdate', handler);
-    handler = ()=>{
-      if (crossfading || loopPoint == null) return;
-      if (!isFinite(active.duration) || active.duration <= 0) return;
-      const remaining = active.duration - active.currentTime;
-      if (remaining <= MUSIC_CROSSFADE_SEC && remaining > 0) startCrossfade();
-    };
-    active.addEventListener('timeupdate', handler);
+  function onTimeUpdate(e){
+    if (e.target !== active || crossfading || loopPoint == null) return;
+    if (!isFinite(active.duration) || active.duration <= 0) return;
+    const remaining = active.duration - active.currentTime;
+    if (remaining <= MUSIC_CROSSFADE_SEC && remaining > 0) startCrossfade();
   }
+  a.addEventListener('timeupdate', onTimeUpdate);
+  b.addEventListener('timeupdate', onTimeUpdate);
   function startCrossfade(){
     crossfading = true;
     inactive.currentTime = loopPoint || 0;
@@ -9261,7 +9258,6 @@ function createCrossfadePlayer(){
         active.pause();
         const tmp = active; active = inactive; inactive = tmp;
         crossfading = false;
-        attach();
       }
     })();
   }
@@ -9273,10 +9269,11 @@ function createCrossfadePlayer(){
       loopPoint = opts.loop ? (opts.loopPoint || 0) : null;
       targetVolume = opts.volume != null ? opts.volume : 1;
       active.src = url;
+      inactive.src = url; // les deux lecteurs pointent vers la même piste dès le départ, prêts à alterner
       active.currentTime = Math.max(0, opts.startAt || 0);
       active.volume = targetVolume;
       active.loop = false;
-      return active.play().then(()=> attach());
+      return active.play();
     },
     stop(){ active.pause(); inactive.pause(); crossfading = false; },
     setVolume(v){ targetVolume = v; if (!crossfading) active.volume = v; },
