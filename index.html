@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v154</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v155</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9057,13 +9057,32 @@ function generateThumbFor(f){
 
 /* Transition d'entrée en combat : secousse d'impact -> flash/éclat -> texte "COMBAT !" -> révélation de
    l'écran de combat. La musique et le bruitage démarrent dès le tout début (cachés derrière l'effet),
-   pour masquer le petit temps de démarrage du fichier audio. */
+   pour masquer le petit temps de démarrage du fichier audio.
+   "Photo" figée de la scène (idée de l'utilisateur) : plutôt que de compter sur la scène en direct pour
+   rester visible pendant toute l'animation (fragile sur certains téléphones, un flash de la carte pouvait
+   transparaître), on clone l'image actuellement affichée dans un calque fixe dédié posé par-dessus tout
+   (sous l'écran de combat, au-dessus de la carte) le temps de l'effet. Même si la scène en direct a un
+   souci d'affichage pendant la secousse, cette photo reste là pour cacher la carte. */
 function playCombatEntryTransition(hasBoss){
   return new Promise((resolve)=>{
     playMusicForKey(hasBoss ? 'combat_boss' : 'combat');
     playTransitionSfx();
     const sceneView = document.getElementById('sceneViewFull');
-    const shakeTarget = sceneView.classList.contains('show') ? sceneView : document.body;
+    const wasInScene = sceneView.classList.contains('show');
+    let freezeFrame = null;
+    if (wasInScene){
+      const liveImg = document.querySelector('#sceneViewImgWrap img');
+      if (liveImg){
+        freezeFrame = document.createElement('div');
+        freezeFrame.style.cssText = 'position:fixed; inset:0; z-index:3990; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden;';
+        const frozenImg = liveImg.cloneNode();
+        frozenImg.style.cssText = 'max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain;';
+        freezeFrame.appendChild(frozenImg);
+        document.body.appendChild(freezeFrame);
+      }
+      sceneView.classList.remove('show'); // remplacée par la photo figée, plus besoin d'attendre
+    }
+    const shakeTarget = freezeFrame || document.body;
     shakeTarget.classList.add('ct-shaking');
     setTimeout(()=>{
       shakeTarget.classList.remove('ct-shaking');
@@ -9071,13 +9090,11 @@ function playCombatEntryTransition(hasBoss){
       overlay.classList.add('show');
       void overlay.offsetWidth; // relance les animations CSS même si .play était déjà présent juste avant
       overlay.classList.add('play');
-      // la scène de zone (si ouverte) ne disparaît qu'une fois le flash déjà bien opaque (~180ms) —
-      // pas au même instant où il démarre : le flash met du temps à monter en opacité (voir @keyframes
-      // ctFlash), donc la cacher trop tôt laissait transparaître la carte en dessous à travers le flash
-      // encore semi-transparent.
-      setTimeout(()=>{ sceneView.classList.remove('show'); }, 180);
       setTimeout(resolve, 340); // pile au plus fort du flash : le bon instant pour révéler le combat en dessous
-      setTimeout(()=>{ overlay.classList.remove('show','play'); }, 850);
+      setTimeout(()=>{
+        overlay.classList.remove('show','play');
+        if (freezeFrame) freezeFrame.remove(); // l'écran de combat est affiché depuis longtemps à ce stade, la photo n'est plus utile
+      }, 850);
     }, 420);
   });
 }
