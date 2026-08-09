@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v164</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v165</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1096,6 +1096,7 @@
         <option value="damage_group">Dégâts — groupe</option>
         <option value="heal_single">Soin — une cible</option>
         <option value="heal_group">Soin — groupe</option>
+        <option value="revive_single">Réanimation — allié K.O.</option>
         <option value="boost">Boost (allié)</option>
         <option value="debuff">Affaiblissement (ennemi)</option>
       </select>
@@ -1117,8 +1118,9 @@
         <option value="ombre">🌑 Ombre</option>
       </select>
 
-      <div class="field-label">Puissance</div>
+      <div class="field-label" id="attackPowerLabel">Puissance</div>
       <input type="number" id="attackPower" class="field-input" value="10" min="0">
+      <p class="meta" id="attackPowerHint" style="display:none;">Pour la réanimation : pourcentage des PV max rendus au réveil (1-100).</p>
 
       <div class="field-label">Temps d'apprentissage</div>
       <div class="field-row">
@@ -1225,6 +1227,7 @@
         <div class="field-label">Effet en combat</div>
         <select id="itemCombatMode" class="field-input">
           <option value="heal">💚 Soigner des PV</option>
+          <option value="revive">💫 Réanimer un allié K.O.</option>
           <option value="purify">🧼 Retirer les états négatifs</option>
           <option value="status_enemy">☠️ Infliger un état à un ennemi</option>
           <option value="status_boost">✨ Booster un allié (état positif)</option>
@@ -1233,6 +1236,11 @@
         <div id="itemCombatHealWrap" style="display:none;">
           <div class="field-label">PV rendus</div>
           <input type="number" id="itemCombatHealPower" class="field-input" value="30" min="1">
+        </div>
+
+        <div id="itemCombatReviveWrap" style="display:none;">
+          <div class="field-label">% des PV max rendus au réveil</div>
+          <input type="number" id="itemCombatRevivePercent" class="field-input" value="30" min="1" max="100">
         </div>
 
         <div id="itemCombatStatusWrap" style="display:none;">
@@ -3993,11 +4001,12 @@ function renderItemCombatStatusOptions(){
 function renderItemCombatModeFields(){
   const mode = document.getElementById('itemCombatMode').value;
   document.getElementById('itemCombatHealWrap').style.display = (mode === 'heal') ? 'block' : 'none';
-  document.getElementById('itemCombatStatusWrap').style.display = (mode === 'heal') ? 'none' : 'block';
+  document.getElementById('itemCombatReviveWrap').style.display = (mode === 'revive') ? 'block' : 'none';
+  document.getElementById('itemCombatStatusWrap').style.display = (mode === 'heal' || mode === 'revive') ? 'none' : 'block';
   const isFixedPurify = (mode === 'purify');
   document.getElementById('itemCombatStatusIdLabel').style.display = isFixedPurify ? 'none' : 'block';
   document.getElementById('itemCombatStatusId').style.display = isFixedPurify ? 'none' : 'block';
-  if (!isFixedPurify && mode !== 'heal') renderItemCombatStatusOptions();
+  if (!isFixedPurify && mode !== 'heal' && mode !== 'revive') renderItemCombatStatusOptions();
 }
 document.getElementById('itemCombatMode').addEventListener('change', renderItemCombatModeFields);
 document.getElementById('itemCombatUsable').addEventListener('change', (e)=>{
@@ -4173,6 +4182,7 @@ function loadItemForEdit(id){
   document.getElementById('itemCombatBlock').style.display = (cu && cu.enabled) ? 'block' : 'none';
   document.getElementById('itemCombatMode').value = (cu && cu.mode) ? cu.mode : 'heal';
   document.getElementById('itemCombatHealPower').value = (cu && cu.healPower != null) ? cu.healPower : 30;
+  document.getElementById('itemCombatRevivePercent').value = (cu && cu.revivePercent != null) ? cu.revivePercent : 30;
   renderItemCombatModeFields();
   if (cu && cu.statusEffect){
     document.getElementById('itemCombatStatusId').value = cu.statusEffect.id || '';
@@ -4221,6 +4231,7 @@ function resetItemForm(){
   document.getElementById('itemCombatBlock').style.display = 'none';
   document.getElementById('itemCombatMode').value = 'heal';
   document.getElementById('itemCombatHealPower').value = 30;
+  document.getElementById('itemCombatRevivePercent').value = 30;
   document.getElementById('itemCombatStatusChance').value = 100;
   document.getElementById('itemCombatStatusDuration').value = 3;
   document.getElementById('itemCombatStatusValue').value = 10;
@@ -4261,6 +4272,8 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
     const mode = document.getElementById('itemCombatMode').value;
     if (mode === 'heal'){
       combatUse = { enabled:true, mode, healPower: parseInt(document.getElementById('itemCombatHealPower').value,10) || 1 };
+    } else if (mode === 'revive'){
+      combatUse = { enabled:true, mode, revivePercent: parseInt(document.getElementById('itemCombatRevivePercent').value,10) || 30 };
     } else {
       const statusId = (mode === 'purify') ? 'purify' : document.getElementById('itemCombatStatusId').value;
       combatUse = { enabled:true, mode, statusEffect: {
@@ -5229,6 +5242,12 @@ function renderAttacksListView(){
   });
 }
 
+function updateAttackPowerLabel(){
+  const isRevive = document.getElementById('attackKind').value === 'revive_single';
+  document.getElementById('attackPowerLabel').textContent = isRevive ? 'Puissance (% des PV max rendus)' : 'Puissance';
+  document.getElementById('attackPowerHint').style.display = isRevive ? 'block' : 'none';
+}
+document.getElementById('attackKind').addEventListener('change', updateAttackPowerLabel);
 function loadAttackForEdit(id){
   const a = attacks.find(x=>x.id===id);
   if (!a) return;
@@ -5240,6 +5259,7 @@ function loadAttackForEdit(id){
   document.getElementById('attackSchool').value = a.school || 'physical';
   document.getElementById('attackTribe').value = a.tribe || '';
   document.getElementById('attackPower').value = a.power != null ? a.power : 10;
+  updateAttackPowerLabel();
   {
     const total = a.learnDuration || 600;
     document.getElementById('attackLearnDays').value = Math.floor(total / 86400);
@@ -5272,6 +5292,7 @@ function resetAttackForm(){
   document.getElementById('attackSchool').value = 'physical';
   document.getElementById('attackTribe').value = '';
   document.getElementById('attackPower').value = 10;
+  updateAttackPowerLabel();
   document.getElementById('attackLearnDays').value = 0;
   document.getElementById('attackLearnHours').value = 0;
   document.getElementById('attackLearnMinutes').value = 10;
@@ -9680,7 +9701,7 @@ function renderCombatActionButtons(fighter){
   panel.querySelectorAll('.combat-action-atk').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       combatState.pendingAttack = fighter.attacksList[parseInt(btn.dataset.idx,10)];
-      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' ? 'alliée' : 'ennemie'));
+      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' || combatState.pendingAttack.kind==='revive_single' ? 'alliée' : 'ennemie'));
     });
   });
   document.getElementById('combatFleeBtn').addEventListener('click', combatState.isPvp ? abandonPvpDuel : attemptFlee);
@@ -9710,7 +9731,7 @@ function renderCombatItemMenu(fighter){
       const it = available.find(i=>i.id===btn.dataset.itemid);
       if (!it) return;
       const cu = it.combatUse;
-      const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost';
+      const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost' || cu.mode === 'revive';
       combatState.pendingAttack = { kind:'item', isItem:true, itemId:it.id, name:it.name, emoji:it.emoji, combatUse:cu, statusEffect: cu.statusEffect||null };
       showToast('Choisis une cible ' + (friendly ? 'alliée' : 'ennemie'));
     });
@@ -9838,7 +9859,14 @@ async function onFighterCardClick(uid){
   const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
   const attack = combatState.pendingAttack;
   const target = combatState.fighters.find(f=>f.uid===uid);
-  if (!actor || !target || !target.alive) return;
+  if (!actor || !target) return;
+  const isReviveAction = attack.kind === 'revive_single' || (attack.kind === 'item' && attack.combatUse && attack.combatUse.mode === 'revive');
+  if (isReviveAction){
+    if (target.side !== actor.side){ showToast('Cible alliée requise'); return; }
+    if (target.alive){ showToast('Ce personnage n\'est pas K.O.'); return; }
+  } else if (!target.alive){
+    return;
+  }
   if (attack.kind === 'analyze'){
     if (target.side === actor.side){ showToast('Cible ennemie requise'); return; }
     combatState.pendingActor = null;
@@ -9852,7 +9880,7 @@ async function onFighterCardClick(uid){
   }
   if (attack.kind === 'item'){
     const cu = attack.combatUse;
-    const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost';
+    const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost' || cu.mode === 'revive';
     if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
     if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
     combatState.pendingActor = null;
@@ -9865,7 +9893,7 @@ async function onFighterCardClick(uid){
     if (!combatState.finished) saveCombatSnapshot(true);
     return;
   }
-  const friendly = isHealAttack(attack) || attack.kind === 'boost';
+  const friendly = isHealAttack(attack) || attack.kind === 'boost' || attack.kind === 'revive_single';
   if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
   if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
   combatState.pendingActor = null;
@@ -9912,11 +9940,20 @@ function applyAttackStatusEffect(attacker, attack, target){
   if (!se || !se.id || !target.alive) return;
   applyStatus(target, se.id, se.chance!=null?se.chance:100, se.duration||3, se.value!=null?se.value:10);
 }
-/* Résout l'usage d'un objet consommable en combat (soin flat / purification / état) et le retire du sac. */
+/* Résout l'usage d'un objet consommable en combat (soin flat / réanimation / purification / état) et le retire du sac. */
 function resolveItemUse(actor, attack, target){
-  if (!target || !target.alive) return;
+  if (!target) return;
   const cu = attack.combatUse;
-  if (cu.mode === 'heal'){
+  if (cu.mode === 'revive'){
+    if (target.alive) return; // ne peut viser qu'un allié K.O.
+    const pct = Math.max(1, Math.min(100, cu.revivePercent || 30));
+    target.alive = true;
+    target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
+    combatState.log.unshift(`${actor.name} utilise ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
+    combatState.log = combatState.log.slice(0, 20);
+  } else if (!target.alive){
+    return;
+  } else if (cu.mode === 'heal'){
     const healAmount = cu.healPower || 1;
     target.hp = Math.min(target.maxHp, target.hp + healAmount);
     combatState.log.unshift(`${actor.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
@@ -9932,7 +9969,13 @@ function resolveItemUse(actor, attack, target){
 }
 
 function resolveAttack(attacker, attack, target){
-  if (!target || !target.alive) return;
+  if (!target) return;
+  const isRevive = attack && attack.kind === 'revive_single';
+  if (isRevive){
+    if (target.alive) return; // ne peut viser qu'un allié K.O.
+  } else if (!target.alive){
+    return;
+  }
   if (!attack){
     combatState.log.unshift(`${attacker.name} n'a aucune attaque à utiliser.`);
     return;
@@ -9941,8 +9984,9 @@ function resolveAttack(attacker, attack, target){
   const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
 
   // Confusion : chance d'attaquer une cible au hasard (n'importe quel camp) au lieu de la cible choisie.
-  // Non applicable aux attaques de groupe (elles touchent tout un camp d'un coup, la confusion n'a pas de sens ici).
-  if (!isGroup && attacker.statuses.confuse && Math.random()*100 < 33){
+  // Non applicable aux attaques de groupe (elles touchent tout un camp d'un coup, la confusion n'a pas de sens ici)
+  // ni à la réanimation (une cible au hasard vivante n'aurait aucun sens pour cette attaque).
+  if (!isGroup && !isRevive && attacker.statuses.confuse && Math.random()*100 < 33){
     const anyAlive = combatState.fighters.filter(f=>f.alive);
     if (anyAlive.length){
       target = anyAlive[Math.floor(Math.random()*anyAlive.length)];
@@ -9964,7 +10008,13 @@ function resolveAttack(attacker, attack, target){
 /* Applique l'attaque à une seule cible précise (utilisé directement pour le ciblage individuel,
    et une fois par cible pour les attaques de groupe). */
 function resolveAttackOnTarget(attacker, attack, target){
-  if (!target || !target.alive) return;
+  if (!target) return;
+  const isRevive = attack.kind === 'revive_single';
+  if (isRevive){
+    if (target.alive) return;
+  } else if (!target.alive){
+    return;
+  }
 
   const isDamageKind = attack.kind === 'damage_single' || attack.kind === 'damage_group';
   // Provocation : si la cible visée est sur le camp adverse et qu'un provocateur y est actif, la cible est forcée sur lui.
@@ -9999,6 +10049,21 @@ function resolveAttackOnTarget(attacker, attack, target){
     combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}.`);
     combatState.log = combatState.log.slice(0, 20);
     applyAttackStatusEffect(attacker, attack, target);
+    return;
+  }
+
+  if (isRevive){
+    const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
+    if (Math.random()*100 >= hitChance){
+      combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
+      combatState.log = combatState.log.slice(0, 20);
+      return;
+    }
+    const pct = Math.max(1, Math.min(100, attack.power || 30));
+    target.alive = true;
+    target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
+    combatState.log.unshift(`${attacker.name} utilise ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
+    combatState.log = combatState.log.slice(0, 20);
     return;
   }
 
@@ -10190,7 +10255,10 @@ function getAvatarSizePx(){
 function fighterCardHtml(f, idx, arr){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
   const isActing = combatState.pendingActor === f.uid;
-  const targetable = !!f.alive;
+  const pendingAttack = combatState.pendingAttack;
+  const pendingActorFighter = combatState.pendingActor ? combatState.fighters.find(x=>x.uid===combatState.pendingActor) : null;
+  const isReviveAction = !!(pendingAttack && (pendingAttack.kind === 'revive_single' || (pendingAttack.kind === 'item' && pendingAttack.combatUse && pendingAttack.combatUse.mode === 'revive')));
+  const targetable = f.alive || (isReviveAction && pendingActorFighter && f.side === pendingActorFighter.side);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   const hasNeg = Object.keys(f.statuses).some(sid=> NEGATIVE_STATUS_IDS.includes(sid));
