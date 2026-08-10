@@ -277,13 +277,6 @@
   40%{ transform:translate(0, var(--lunge-y,-14px)) scale(1.14); }
   100%{ transform:translate(0,0) scale(1); }
 }
-@keyframes combatCharge{
-  /* Remplace l'ancien box-shadow (qui dessinait un rectangle violet autour de la carte du personnage,
-     même défaut que la lueur d'état déjà retirée) par un drop-shadow, qui épouse le contour réel du
-     personnage grâce à sa transparence — plus de rectangle. */
-  0%,100%{ filter:drop-shadow(0 0 0 rgba(155,89,182,0)); }
-  50%{ filter:drop-shadow(0 0 10px rgba(155,89,182,.9)) drop-shadow(0 0 10px rgba(155,89,182,.9)); }
-}
 @keyframes combatHitShake{
   0%,100%{ transform:translate(0,0); }
   20%{ transform:translate(-4px,0); } 40%{ transform:translate(4px,0); }
@@ -295,7 +288,8 @@
 }
 .combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
 .combat-avatar{ position:relative; width:var(--avatar-size); height:var(--avatar-size); margin:0 auto; }
-.combat-anim-charge .combat-avatar{ animation:combatCharge .9s ease-in-out; }
+/* Lueur de charge magique (combatCharge) retirée complètement à la demande de l'utilisateur —
+   n'existe plus du tout, ni en rectangle ni en drop-shadow. */
 /* Lueur d'état (halo rouge/jaune pulsant) retirée à la demande de l'utilisateur : dessinée en
    box-shadow, elle épousait la boîte rectangulaire de la vignette et non la silhouette du
    personnage, d'où un rectangle de couleur bien visible en combat. Les badges d'état sous le
@@ -487,7 +481,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v188</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v189</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5457,7 +5451,7 @@ function renderAttackFxStaticPreview(){
     img.className = 'attack-fx-static-preview';
     img.style.cssText = `position:absolute; width:${size}px; left:${startX}px; top:${startY}px; opacity:${fx.opacityPeak}; transform:rotate(${angle}deg); pointer-events:none; ${behindCss}`;
     stage.style.position = stage.style.position || 'relative';
-    stage.appendChild(img);
+    if (fx.behindTarget){ stage.insertBefore(img, stage.firstChild); } else { stage.appendChild(img); }
   } else {
     const targetEl = document.querySelector(`[data-fighter="${fxPreviewMainSlot()}"] .combat-avatar`);
     if (!targetEl) return;
@@ -5467,7 +5461,7 @@ function renderAttackFxStaticPreview(){
     img.className = 'attack-fx-static-preview';
     img.style.cssText = `position:absolute; width:${size}px; left:50%; top:50%; margin-left:${-size/2+dx}px; margin-top:${-size/2+dy}px; opacity:${fx.opacityPeak}; transform:rotate(${angle}deg); pointer-events:none; ${behindCss}`;
     targetEl.style.position = targetEl.style.position || 'relative';
-    targetEl.appendChild(img);
+    if (fx.behindTarget){ targetEl.insertBefore(img, targetEl.firstChild); } else { targetEl.appendChild(img); }
   }
 }
 
@@ -9280,13 +9274,15 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY, containerEl){
   img.style.left = (cx - size/2 + dx)+'px';
   img.style.top = (cy - size/2 + dy)+'px';
   if (fx.behindTarget){
-    // Passe derrière les combattants. Un z-index NÉGATIF est nécessaire ici (pas juste "petit") :
-    // les cartes de combattant sont position:relative sans z-index explicite, donc un z-index positif,
-    // même faible, les survolerait quand même. Le négatif les place sous elles tout en restant
-    // au-dessus du fond de l'arène.
+    // Passe derrière les combattants. Double sécurité pour ne dépendre d'aucune subtilité
+    // d'empilement CSS : z-index négatif (protège même si un ancêtre venait à créer un contexte
+    // d'empilement) ET insertion en tout premier enfant de l'arène, avant les rangées de
+    // combattants (l'ordre du DOM fait foi entre éléments de même niveau d'empilement).
     img.style.zIndex = '-1';
+    arena.insertBefore(img, arena.firstChild);
+  } else {
+    arena.appendChild(img);
   }
-  arena.appendChild(img);
   return img;
 }
 /* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus.
@@ -9392,8 +9388,12 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
   img.style.opacity = '0'; // masqué tant que l'image n'est pas confirmée chargée (voir waitImageReady)
   img.style.transform = `rotate(${base}deg)`;
   arena.style.position = arena.style.position || 'relative';
-  if (fx.behindTarget){ img.style.zIndex = '-1'; }
-  arena.appendChild(img);
+  if (fx.behindTarget){
+    img.style.zIndex = '-1';
+    arena.insertBefore(img, arena.firstChild);
+  } else {
+    arena.appendChild(img);
+  }
   return waitImageReady(img).then((ok)=>{
     if (!ok){ img.remove(); return; }
     img.style.opacity = fx.opacityPeak;
@@ -11178,7 +11178,7 @@ function fighterCardHtml(f, idx, arr){
   const targetable = f.alive || (isReviveAction && pendingActorFighter && f.side === pendingActorFighter.side);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
   const isHit = (combatState.hitUids||[]).includes(f.uid);
-  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', anim==='magic'?'combat-anim-charge':'', isHit?'combat-anim-hit':''].filter(Boolean).join(' ');
+  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
   const infoHtml = `
