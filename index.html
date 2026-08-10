@@ -490,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v184</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v185</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9231,24 +9231,40 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY, containerEl){
   arena.appendChild(img);
   return img;
 }
-/* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus —
-   sur une connexion lente, sans ça, l'animation pouvait démarrer (et finir) avant que l'image soit là,
-   ce qui donnait un effet invisible, trop bref, ou un simple rectangle de chargement. Filet de sécurité
-   à 1500ms pour ne jamais bloquer indéfiniment si l'image ne charge pas du tout. */
+/* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus.
+   Renvoie true seulement si l'image est réellement affichable : en cas de lien cassé (erreur) ou si
+   elle n'est toujours pas arrivée au bout du délai, on renvoie false — l'appelant retire alors
+   l'élément sans rien animer, plutôt que d'afficher le carré de remplacement du navigateur (les
+   "rectangles de couleur avec un léger halo" vus en combat). Filet de sécurité à 1500ms pour ne
+   jamais bloquer indéfiniment. */
 function waitImageReady(img, maxMs){
-  if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve(true);
   return new Promise(resolve=>{
     let done = false;
-    const finish = ()=>{ if (!done){ done = true; resolve(); } };
-    img.addEventListener('load', finish, { once:true });
-    img.addEventListener('error', finish, { once:true });
-    setTimeout(finish, maxMs || 1500);
+    const finish = (ok)=>{ if (!done){ done = true; resolve(ok); } };
+    img.addEventListener('load', ()=> finish(true), { once:true });
+    img.addEventListener('error', ()=> finish(false), { once:true });
+    setTimeout(()=> finish(img.complete && img.naturalWidth > 0), maxMs || 1500);
   });
+}
+/* Retrait garanti de l'image d'effet, quoi qu'il arrive à l'animation (fin normale, annulation,
+   rejet). Avant, le retrait était accroché uniquement à la fin réussie de l'animation : une
+   animation interrompue laissait l'image collée à l'écran — ce que le redessin périodique masquait
+   jusqu'ici en nettoyant tout par effet de bord. */
+function removeFxWhenDone(img, anim){
+  return anim.finished.catch(()=>{}).then(()=>{ img.remove(); });
+}
+/* Balayage de sécurité : retire les images d'effet qui traîneraient encore (cas limite). */
+function clearStrayFxImages(containerEl){
+  const arena = fxOverlayContainer(containerEl);
+  if (!arena) return;
+  arena.querySelectorAll('.combat-fx-img, .combat-fx-projectile').forEach(el=> el.remove());
 }
 function playFxImpact(targetUid, fx, containerEl){
   const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
-  return waitImageReady(img).then(()=>{
+  return waitImageReady(img).then((ok)=>{
+    if (!ok){ img.remove(); return; }
     const base = fx.baseAngle || 0;
     const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
     const anim = img.animate([
@@ -9256,7 +9272,7 @@ function playFxImpact(targetUid, fx, containerEl){
       { transform:`scale(${(fx.scaleFrom+fx.scaleTo)/2}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.35 },
       { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:0 },
     ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-    return anim.finished.then(()=> img.remove()).catch(()=>{});
+    return removeFxWhenDone(img, anim);
   });
 }
 function playFxBurst(targetUid, fx, containerEl){
@@ -9270,14 +9286,15 @@ function playFxBurst(targetUid, fx, containerEl){
         const oy = (Math.random()*2-1)*(fx.jitter||0);
         const img = spawnFxImage(targetUid, fx, ox, oy, containerEl);
         if (!img){ resolve(); return; }
-        waitImageReady(img).then(()=>{
+        waitImageReady(img).then((ok)=>{
+          if (!ok){ img.remove(); resolve(); return; }
           const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
           const anim = img.animate([
             { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
             { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.4 },
             { transform:`scale(${fx.scaleTo*1.05}) rotate(${rot}deg)`, opacity:0 },
           ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-          anim.finished.then(()=>{ img.remove(); resolve(); }).catch(()=> resolve());
+          removeFxWhenDone(img, anim).then(resolve);
         });
       }, i*(fx.interval||120));
     }));
@@ -9314,7 +9331,8 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
   img.style.transform = `rotate(${base}deg)`;
   arena.style.position = arena.style.position || 'relative';
   arena.appendChild(img);
-  return waitImageReady(img).then(()=>{
+  return waitImageReady(img).then((ok)=>{
+    if (!ok){ img.remove(); return; }
     img.style.opacity = fx.opacityPeak;
     const moveAnim = img.animate([
       { left:startX+'px', top:startY+'px' },
@@ -9323,29 +9341,31 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
     if (fx.spinDuringFlight){
       img.animate([{ transform:`rotate(${base}deg)` }, { transform:`rotate(${base+720}deg)` }], { duration: fx.travelMs || 350, fill:'forwards' });
     }
-    return moveAnim.finished.then(()=>{
+    return moveAnim.finished.catch(()=>{}).then(()=>{
       const impactAnim = img.animate([{ opacity:fx.opacityPeak, transform:`rotate(${base}deg) scale(1)` }, { opacity:0, transform:`rotate(${base}deg) scale(1.4)` }], { duration:150, fill:'forwards' });
-      return impactAnim.finished.then(()=> img.remove()).catch(()=>{});
-    }).catch(()=>{});
+      return removeFxWhenDone(img, impactAnim);
+    });
   });
 }
 function playFxAura(targetUid, fx, containerEl){
   const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
-  return waitImageReady(img).then(()=>{
+  return waitImageReady(img).then((ok)=>{
+    if (!ok){ img.remove(); return; }
     const base = fx.baseAngle || 0;
     const anim = img.animate([
       { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
       { opacity: fx.opacityPeak, transform:`rotate(${base}deg) scale(1.05)` },
       { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
     ], { duration: fx.pulseMs || 450, iterations: Math.max(1, Math.round(fx.pulseCount||3)), easing:'ease-in-out', fill:'forwards' });
-    return anim.finished.then(()=> img.remove()).catch(()=>{});
+    return removeFxWhenDone(img, anim);
   });
 }
 function playFxSweep(targetUid, fx, containerEl){
   const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
-  return waitImageReady(img).then(()=>{
+  return waitImageReady(img).then((ok)=>{
+    if (!ok){ img.remove(); return; }
     const from = fx.sweepStartAngle != null ? fx.sweepStartAngle : -60;
     const to = fx.sweepEndAngle != null ? fx.sweepEndAngle : 60;
     const mid = (from + to) / 2;
@@ -9354,13 +9374,14 @@ function playFxSweep(targetUid, fx, containerEl){
       { transform:`rotate(${mid}deg) scale(${(fx.scaleFrom+fx.scaleTo)/2})`, opacity:fx.opacityPeak, offset:0.4 },
       { transform:`rotate(${to}deg) scale(${fx.scaleTo})`, opacity:0 },
     ], { duration: fx.duration, easing:'ease-in-out', fill:'forwards' });
-    return anim.finished.then(()=> img.remove()).catch(()=>{});
+    return removeFxWhenDone(img, anim);
   });
 }
 function playFxThrust(targetUid, fx, containerEl){
   const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
-  return waitImageReady(img).then(()=>{
+  return waitImageReady(img).then((ok)=>{
+    if (!ok){ img.remove(); return; }
     const rot = fx.baseAngle || 0;
     const rad = rot * Math.PI / 180;
     const dist = fx.thrustDistance != null ? fx.thrustDistance : 60;
@@ -9372,7 +9393,7 @@ function playFxThrust(targetUid, fx, containerEl){
       { transform:`translate(0px, 0px) rotate(${rot}deg) scale(${fx.scaleTo})`, opacity:fx.opacityPeak, offset:0.45 },
       { transform:`translate(${-dx*0.15}px, ${-dy*0.15}px) rotate(${rot}deg) scale(${fx.scaleTo*0.95})`, opacity:0 },
     ], { duration: fx.duration, easing:'cubic-bezier(.2,.8,.3,1)', fill:'forwards' });
-    return anim.finished.then(()=> img.remove()).catch(()=>{});
+    return removeFxWhenDone(img, anim);
   });
 }
 function playAttackFx(attackerUid, targetUids, fx, containerEl){
@@ -10453,7 +10474,9 @@ async function playTurnAnimation(actor, attack, target){
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
   // reconstruirait le DOM et couperait l'animation en cours.
   if (!attack.isItem && attack.fx && attack.fx.image){
+    clearStrayFxImages(); // au cas où un effet précédent aurait laissé un reste
     await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 4000);
+    clearStrayFxImages();
   }
 
   combatState.anim = null;
