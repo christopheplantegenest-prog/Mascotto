@@ -490,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v177</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v179</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5365,7 +5365,8 @@ function renderAttackFxPreviewStage(){
   stage.style.backgroundImage = `url('${ATTACK_FX_PREVIEW_ASSETS.bg}')`;
   stage.style.backgroundSize = 'cover';
   stage.style.backgroundPosition = 'center';
-  const avatarPx = getAvatarSizePx();
+  const stageWidth = stage.clientWidth || 300;
+  const avatarPx = Math.max(45, Math.min(110, stageWidth/3 - 14));
   const slotHtml = (s)=>{
     const isAttacker = s.id === attackFxPreviewAttackerSlot;
     const isTarget = s.id === attackFxPreviewTargetSlot;
@@ -9131,7 +9132,7 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY){
 }
 function playFxImpact(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
-  if (!img) return;
+  if (!img) return Promise.resolve();
   const base = fx.baseAngle || 0;
   const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
   const anim = img.animate([
@@ -9139,45 +9140,55 @@ function playFxImpact(targetUid, fx){
     { transform:`scale(${(fx.scaleFrom+fx.scaleTo)/2}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.35 },
     { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:0 },
   ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-  anim.onfinish = ()=> img.remove();
+  return anim.finished.then(()=> img.remove()).catch(()=>{});
 }
 function playFxBurst(targetUid, fx){
   const n = Math.max(1, Math.round(fx.repeatCount || 4));
   const base = fx.baseAngle || 0;
+  const proms = [];
   for (let i=0;i<n;i++){
-    setTimeout(()=>{
-      const ox = (Math.random()*2-1)*(fx.jitter||0);
-      const oy = (Math.random()*2-1)*(fx.jitter||0);
-      const img = spawnFxImage(targetUid, fx, ox, oy);
-      if (!img) return;
-      const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
-      const anim = img.animate([
-        { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
-        { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.4 },
-        { transform:`scale(${fx.scaleTo*1.05}) rotate(${rot}deg)`, opacity:0 },
-      ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-      anim.onfinish = ()=> img.remove();
-    }, i*(fx.interval||120));
+    proms.push(new Promise(resolve=>{
+      setTimeout(()=>{
+        const ox = (Math.random()*2-1)*(fx.jitter||0);
+        const oy = (Math.random()*2-1)*(fx.jitter||0);
+        const img = spawnFxImage(targetUid, fx, ox, oy);
+        if (!img){ resolve(); return; }
+        const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
+        const anim = img.animate([
+          { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
+          { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.4 },
+          { transform:`scale(${fx.scaleTo*1.05}) rotate(${rot}deg)`, opacity:0 },
+        ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
+        anim.finished.then(()=>{ img.remove(); resolve(); }).catch(()=> resolve());
+      }, i*(fx.interval||120));
+    }));
   }
+  return Promise.all(proms);
 }
 function playFxProjectile(attackerUid, targetUid, fx, containerEl){
   const attackerEl = document.querySelector(`[data-fighter="${attackerUid}"] .combat-avatar`);
   const targetEl = document.querySelector(`[data-fighter="${targetUid}"] .combat-avatar`);
   const arena = containerEl || document.getElementById('combatArena');
-  if (!attackerEl || !targetEl || !arena) return;
+  if (!attackerEl || !targetEl || !arena) return Promise.resolve();
   const aRect = attackerEl.getBoundingClientRect();
   const tRect = targetEl.getBoundingClientRect();
   const arenaRect = arena.getBoundingClientRect();
   const size = fx.sizePx || 60;
-  const base = fx.baseAngle || 0;
-  const img = document.createElement('img');
-  img.src = fx.image;
-  img.className = 'combat-fx-projectile';
-  img.style.width = size+'px';
+  const calibration = fx.baseAngle || 0;
   const startX = aRect.left + aRect.width/2 - arenaRect.left - size/2;
   const startY = aRect.top + aRect.height/2 - arenaRect.top - size/2;
   const endX = tRect.left + tRect.width/2 - arenaRect.left - size/2;
   const endY = tRect.top + tRect.height/2 - arenaRect.top - size/2;
+  // L'angle réglé dans l'éditeur sert de calibrage (orientation d'origine de l'image, 0° = dessinée
+  // pointant vers la droite) : on y ajoute la vraie direction attaquant→cible calculée à chaque tir,
+  // pour que le projectile s'incline automatiquement selon qui il vise, sans devoir régler un angle
+  // différent pour chaque cas.
+  const realAngle = Math.atan2(endY-startY, endX-startX) * 180/Math.PI;
+  const base = realAngle + calibration;
+  const img = document.createElement('img');
+  img.src = fx.image;
+  img.className = 'combat-fx-projectile';
+  img.style.width = size+'px';
   img.style.left = startX+'px';
   img.style.top = startY+'px';
   img.style.opacity = fx.opacityPeak;
@@ -9191,25 +9202,25 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
   if (fx.spinDuringFlight){
     img.animate([{ transform:`rotate(${base}deg)` }, { transform:`rotate(${base+720}deg)` }], { duration: fx.travelMs || 350, fill:'forwards' });
   }
-  moveAnim.onfinish = ()=>{
+  return moveAnim.finished.then(()=>{
     const impactAnim = img.animate([{ opacity:fx.opacityPeak, transform:`rotate(${base}deg) scale(1)` }, { opacity:0, transform:`rotate(${base}deg) scale(1.4)` }], { duration:150, fill:'forwards' });
-    impactAnim.onfinish = ()=> img.remove();
-  };
+    return impactAnim.finished.then(()=> img.remove()).catch(()=>{});
+  }).catch(()=>{});
 }
 function playFxAura(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
-  if (!img) return;
+  if (!img) return Promise.resolve();
   const base = fx.baseAngle || 0;
   const anim = img.animate([
     { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
     { opacity: fx.opacityPeak, transform:`rotate(${base}deg) scale(1.05)` },
     { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
   ], { duration: fx.pulseMs || 450, iterations: Math.max(1, Math.round(fx.pulseCount||3)), easing:'ease-in-out', fill:'forwards' });
-  anim.onfinish = ()=> img.remove();
+  return anim.finished.then(()=> img.remove()).catch(()=>{});
 }
 function playFxSweep(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
-  if (!img) return;
+  if (!img) return Promise.resolve();
   const from = fx.sweepStartAngle != null ? fx.sweepStartAngle : -60;
   const to = fx.sweepEndAngle != null ? fx.sweepEndAngle : 60;
   const mid = (from + to) / 2;
@@ -9218,11 +9229,11 @@ function playFxSweep(targetUid, fx){
     { transform:`rotate(${mid}deg) scale(${(fx.scaleFrom+fx.scaleTo)/2})`, opacity:fx.opacityPeak, offset:0.4 },
     { transform:`rotate(${to}deg) scale(${fx.scaleTo})`, opacity:0 },
   ], { duration: fx.duration, easing:'ease-in-out', fill:'forwards' });
-  anim.onfinish = ()=> img.remove();
+  return anim.finished.then(()=> img.remove()).catch(()=>{});
 }
 function playFxThrust(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
-  if (!img) return;
+  if (!img) return Promise.resolve();
   const rot = fx.baseAngle || 0;
   const rad = rot * Math.PI / 180;
   const dist = fx.thrustDistance != null ? fx.thrustDistance : 60;
@@ -9234,19 +9245,24 @@ function playFxThrust(targetUid, fx){
     { transform:`translate(0px, 0px) rotate(${rot}deg) scale(${fx.scaleTo})`, opacity:fx.opacityPeak, offset:0.45 },
     { transform:`translate(${-dx*0.15}px, ${-dy*0.15}px) rotate(${rot}deg) scale(${fx.scaleTo*0.95})`, opacity:0 },
   ], { duration: fx.duration, easing:'cubic-bezier(.2,.8,.3,1)', fill:'forwards' });
-  anim.onfinish = ()=> img.remove();
+  return anim.finished.then(()=> img.remove()).catch(()=>{});
 }
 function playAttackFx(attackerUid, targetUids, fx, containerEl){
-  if (!fx || !fx.image) return;
+  if (!fx || !fx.image) return Promise.resolve();
   if (fx.sound){ new Audio(fx.sound).play().catch(()=>{}); }
-  targetUids.forEach(uid=>{
-    if (fx.type === 'impact') playFxImpact(uid, fx);
-    else if (fx.type === 'burst') playFxBurst(uid, fx);
-    else if (fx.type === 'projectile') playFxProjectile(attackerUid, uid, fx, containerEl);
-    else if (fx.type === 'aura') playFxAura(uid, fx);
-    else if (fx.type === 'sweep') playFxSweep(uid, fx);
-    else if (fx.type === 'thrust') playFxThrust(uid, fx);
+  const proms = targetUids.map(uid=>{
+    if (fx.type === 'impact') return playFxImpact(uid, fx);
+    if (fx.type === 'burst') return playFxBurst(uid, fx);
+    if (fx.type === 'projectile') return playFxProjectile(attackerUid, uid, fx, containerEl);
+    if (fx.type === 'aura') return playFxAura(uid, fx);
+    if (fx.type === 'sweep') return playFxSweep(uid, fx);
+    if (fx.type === 'thrust') return playFxThrust(uid, fx);
+    return Promise.resolve();
   });
+  return Promise.all(proms);
+}
+function withTimeout(promise, ms){
+  return Promise.race([promise, new Promise(resolve=> setTimeout(resolve, ms))]);
 }
 
 function resolveFighterAttacks(attackIds){
@@ -10299,13 +10315,7 @@ async function playTurnAnimation(actor, attack, target){
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
   // reconstruirait le DOM et couperait l'animation en cours.
   if (!attack.isItem && attack.fx && attack.fx.image){
-    playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx);
-    const fx = attack.fx;
-    const estimatedFxMs = fx.type==='burst' ? (fx.repeatCount*fx.interval + fx.duration)
-      : fx.type==='aura' ? (fx.pulseMs*fx.pulseCount)
-      : fx.type==='projectile' ? (fx.travelMs+150)
-      : fx.duration;
-    await sleep(Math.min(estimatedFxMs || 500, 1800));
+    await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 2500);
   }
 
   combatState.anim = null;
@@ -10982,9 +10992,6 @@ function renderCombat(){
   document.getElementById('combatLogEntries').innerHTML = combatState.log.slice(0, 20).map(l=>`<div>${l}</div>`).join('');
 }
 
-</script>
-</body>
-</html>
 </script>
 </body>
 </html>
