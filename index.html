@@ -490,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v179</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v181</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1191,7 +1191,10 @@
       </div>
 
       <div class="attack-cat-block" id="attackCat-fx" style="display:none;">
-        <button type="button" id="attackFxTestBtn" class="btn-capture" style="width:100%; margin-bottom:8px;">▶️ Rejouer l'effet</button>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button type="button" id="attackFxTestBtn" class="btn-capture" style="flex:1;">▶️ Rejouer l'effet</button>
+          <button type="button" id="attackFxStaticToggleBtn" class="btn-secondary" style="flex:0 0 auto; padding:0 14px;">👁️</button>
+        </div>
         <div id="attackFxPreviewStage" style="background:#111; border-radius:10px; padding:15px 8px 40px; margin-bottom:10px; position:relative;">
           <div id="attackFxPreviewEnemyRow" style="display:flex; justify-content:space-evenly; align-items:flex-end; gap:5px; margin-bottom:30px;"></div>
           <div id="attackFxPreviewAllyRow" style="display:flex; justify-content:space-evenly; align-items:flex-end; gap:5px;"></div>
@@ -5401,6 +5404,49 @@ function renderAttackFxPreviewStage(){
       });
     });
   });
+  renderAttackFxStaticPreview();
+}
+/* Aperçu figé de l'effet sur son point de départ (attaquant pour un projectile, cible pour les autres
+   types), sans jouer l'animation — utile pour juger taille/position/angle sans avoir à rejouer sans arrêt. */
+let attackFxStaticPreviewOn = true;
+function renderAttackFxStaticPreview(){
+  document.querySelectorAll('.attack-fx-static-preview').forEach(el=> el.remove());
+  if (!attackFxStaticPreviewOn) return;
+  const fx = editingAttackFx;
+  if (!fx.image) return;
+  const size = fx.sizePx || 100;
+  const stage = document.getElementById('attackFxPreviewStage');
+  if (!stage) return;
+  if (fx.type === 'projectile'){
+    const attackerEl = document.querySelector(`[data-fighter="${attackFxPreviewAttackerSlot}"] .combat-avatar`);
+    const targetEl = document.querySelector(`[data-fighter="${attackFxPreviewTargetSlot}"] .combat-avatar`);
+    if (!attackerEl || !targetEl) return;
+    const aRect = attackerEl.getBoundingClientRect();
+    const tRect = targetEl.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    const startX = aRect.left + aRect.width/2 - stageRect.left - size/2;
+    const startY = aRect.top + aRect.height/2 - stageRect.top - size/2;
+    const endX = tRect.left + tRect.width/2 - stageRect.left - size/2;
+    const endY = tRect.top + tRect.height/2 - stageRect.top - size/2;
+    const realAngle = Math.atan2(endY-startY, endX-startX) * 180/Math.PI;
+    const angle = realAngle + (fx.baseAngle||0);
+    const img = document.createElement('img');
+    img.src = fx.image;
+    img.className = 'attack-fx-static-preview';
+    img.style.cssText = `position:absolute; width:${size}px; left:${startX}px; top:${startY}px; opacity:${fx.opacityPeak}; transform:rotate(${angle}deg); pointer-events:none; z-index:9;`;
+    stage.style.position = stage.style.position || 'relative';
+    stage.appendChild(img);
+  } else {
+    const targetEl = document.querySelector(`[data-fighter="${attackFxPreviewTargetSlot}"] .combat-avatar`);
+    if (!targetEl) return;
+    const angle = (fx.type === 'aura') ? 0 : (fx.baseAngle||0);
+    const img = document.createElement('img');
+    img.src = fx.image;
+    img.className = 'attack-fx-static-preview';
+    img.style.cssText = `position:absolute; width:${size}px; left:50%; top:50%; margin-left:${-size/2}px; margin-top:${-size/2}px; opacity:${fx.opacityPeak}; transform:rotate(${angle}deg); pointer-events:none; z-index:9;`;
+    targetEl.style.position = targetEl.style.position || 'relative';
+    targetEl.appendChild(img);
+  }
 }
 
 const ATTACK_FX_DEFAULTS = {
@@ -5498,7 +5544,7 @@ function renderAttackFxSettingContent(){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Image</div>
       <input type="text" id="attackFxImage" class="field-input" placeholder="https://..." value="${editingAttackFx.image||''}">
       <button type="button" class="btn-secondary" id="attackFxImageBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>`;
-    document.getElementById('attackFxImage').addEventListener('change', (e)=>{ editingAttackFx.image = e.target.value.trim(); });
+    document.getElementById('attackFxImage').addEventListener('change', (e)=>{ editingAttackFx.image = e.target.value.trim(); renderAttackFxStaticPreview(); });
     document.getElementById('attackFxImageBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('attackFxImage'));
   } else if (s.kind === 'sound'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Son</div>
@@ -5525,6 +5571,7 @@ function renderAttackFxSettingContent(){
       editingAttackFx.type = e.target.value;
       renderAttackFxSettingsGrid();
       renderAttackFxSettingContent();
+      renderAttackFxStaticPreview();
     });
   } else {
     wrap.innerHTML = attackFxSliderRowHtml(s.def);
@@ -5537,14 +5584,29 @@ function renderAttackFxSettingContent(){
           const label = document.querySelector(`#attackFxSettingContent [data-attackfx-val="${key}"]`);
           if (label) label.textContent = el.value;
         }
+        renderAttackFxStaticPreview();
       });
     });
   }
 }
 
 document.getElementById('attackFxTestBtn').addEventListener('click', ()=>{
-  playAttackFx(attackFxPreviewAttackerSlot, [attackFxPreviewTargetSlot], editingAttackFx, document.getElementById('attackFxPreviewStage'));
+  document.querySelectorAll('.attack-fx-static-preview').forEach(el=> el.style.visibility = 'hidden');
+  Promise.resolve(playAttackFx(attackFxPreviewAttackerSlot, [attackFxPreviewTargetSlot], editingAttackFx, document.getElementById('attackFxPreviewStage')))
+    .then(()=> renderAttackFxStaticPreview());
 });
+function renderAttackFxStaticToggleBtn(){
+  const btn = document.getElementById('attackFxStaticToggleBtn');
+  btn.textContent = attackFxStaticPreviewOn ? '👁️' : '🚫';
+  btn.style.borderColor = attackFxStaticPreviewOn ? 'var(--accent)' : '#444';
+  btn.style.color = attackFxStaticPreviewOn ? 'var(--accent)' : '#888';
+}
+document.getElementById('attackFxStaticToggleBtn').addEventListener('click', ()=>{
+  attackFxStaticPreviewOn = !attackFxStaticPreviewOn;
+  renderAttackFxStaticToggleBtn();
+  renderAttackFxStaticPreview();
+});
+renderAttackFxStaticToggleBtn();
 
 function updateAttackPowerLabel(){
   const kind = document.getElementById('attackKind').value;
@@ -9121,6 +9183,7 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY){
   const img = document.createElement('img');
   img.src = fx.image;
   img.className = 'combat-fx-img';
+  img.style.opacity = '0'; // masqué tant que l'image n'est pas confirmée chargée (voir waitImageReady)
   const size = fx.sizePx || 100;
   img.style.width = size+'px';
   img.style.left = '50%';
@@ -9130,17 +9193,33 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY){
   targetEl.appendChild(img);
   return img;
 }
+/* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus —
+   sur une connexion lente, sans ça, l'animation pouvait démarrer (et finir) avant que l'image soit là,
+   ce qui donnait un effet invisible, trop bref, ou un simple rectangle de chargement. Filet de sécurité
+   à 1500ms pour ne jamais bloquer indéfiniment si l'image ne charge pas du tout. */
+function waitImageReady(img, maxMs){
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+  return new Promise(resolve=>{
+    let done = false;
+    const finish = ()=>{ if (!done){ done = true; resolve(); } };
+    img.addEventListener('load', finish, { once:true });
+    img.addEventListener('error', finish, { once:true });
+    setTimeout(finish, maxMs || 1500);
+  });
+}
 function playFxImpact(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
   if (!img) return Promise.resolve();
-  const base = fx.baseAngle || 0;
-  const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
-  const anim = img.animate([
-    { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
-    { transform:`scale(${(fx.scaleFrom+fx.scaleTo)/2}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.35 },
-    { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:0 },
-  ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-  return anim.finished.then(()=> img.remove()).catch(()=>{});
+  return waitImageReady(img).then(()=>{
+    const base = fx.baseAngle || 0;
+    const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
+    const anim = img.animate([
+      { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
+      { transform:`scale(${(fx.scaleFrom+fx.scaleTo)/2}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.35 },
+      { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:0 },
+    ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
+    return anim.finished.then(()=> img.remove()).catch(()=>{});
+  });
 }
 function playFxBurst(targetUid, fx){
   const n = Math.max(1, Math.round(fx.repeatCount || 4));
@@ -9153,13 +9232,15 @@ function playFxBurst(targetUid, fx){
         const oy = (Math.random()*2-1)*(fx.jitter||0);
         const img = spawnFxImage(targetUid, fx, ox, oy);
         if (!img){ resolve(); return; }
-        const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
-        const anim = img.animate([
-          { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
-          { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.4 },
-          { transform:`scale(${fx.scaleTo*1.05}) rotate(${rot}deg)`, opacity:0 },
-        ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
-        anim.finished.then(()=>{ img.remove(); resolve(); }).catch(()=> resolve());
+        waitImageReady(img).then(()=>{
+          const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
+          const anim = img.animate([
+            { transform:`scale(${fx.scaleFrom}) rotate(${rot}deg)`, opacity:0 },
+            { transform:`scale(${fx.scaleTo}) rotate(${rot}deg)`, opacity:fx.opacityPeak, offset:0.4 },
+            { transform:`scale(${fx.scaleTo*1.05}) rotate(${rot}deg)`, opacity:0 },
+          ], { duration: fx.duration, easing:'ease-out', fill:'forwards' });
+          anim.finished.then(()=>{ img.remove(); resolve(); }).catch(()=> resolve());
+        });
       }, i*(fx.interval||120));
     }));
   }
@@ -9191,61 +9272,70 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
   img.style.width = size+'px';
   img.style.left = startX+'px';
   img.style.top = startY+'px';
-  img.style.opacity = fx.opacityPeak;
+  img.style.opacity = '0'; // masqué tant que l'image n'est pas confirmée chargée (voir waitImageReady)
   img.style.transform = `rotate(${base}deg)`;
   arena.style.position = arena.style.position || 'relative';
   arena.appendChild(img);
-  const moveAnim = img.animate([
-    { left:startX+'px', top:startY+'px' },
-    { left:endX+'px', top:endY+'px' },
-  ], { duration: fx.travelMs || 350, easing:'ease-in', fill:'forwards' });
-  if (fx.spinDuringFlight){
-    img.animate([{ transform:`rotate(${base}deg)` }, { transform:`rotate(${base+720}deg)` }], { duration: fx.travelMs || 350, fill:'forwards' });
-  }
-  return moveAnim.finished.then(()=>{
-    const impactAnim = img.animate([{ opacity:fx.opacityPeak, transform:`rotate(${base}deg) scale(1)` }, { opacity:0, transform:`rotate(${base}deg) scale(1.4)` }], { duration:150, fill:'forwards' });
-    return impactAnim.finished.then(()=> img.remove()).catch(()=>{});
-  }).catch(()=>{});
+  return waitImageReady(img).then(()=>{
+    img.style.opacity = fx.opacityPeak;
+    const moveAnim = img.animate([
+      { left:startX+'px', top:startY+'px' },
+      { left:endX+'px', top:endY+'px' },
+    ], { duration: fx.travelMs || 350, easing:'ease-in', fill:'forwards' });
+    if (fx.spinDuringFlight){
+      img.animate([{ transform:`rotate(${base}deg)` }, { transform:`rotate(${base+720}deg)` }], { duration: fx.travelMs || 350, fill:'forwards' });
+    }
+    return moveAnim.finished.then(()=>{
+      const impactAnim = img.animate([{ opacity:fx.opacityPeak, transform:`rotate(${base}deg) scale(1)` }, { opacity:0, transform:`rotate(${base}deg) scale(1.4)` }], { duration:150, fill:'forwards' });
+      return impactAnim.finished.then(()=> img.remove()).catch(()=>{});
+    }).catch(()=>{});
+  });
 }
 function playFxAura(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
   if (!img) return Promise.resolve();
-  const base = fx.baseAngle || 0;
-  const anim = img.animate([
-    { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
-    { opacity: fx.opacityPeak, transform:`rotate(${base}deg) scale(1.05)` },
-    { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
-  ], { duration: fx.pulseMs || 450, iterations: Math.max(1, Math.round(fx.pulseCount||3)), easing:'ease-in-out', fill:'forwards' });
-  return anim.finished.then(()=> img.remove()).catch(()=>{});
+  return waitImageReady(img).then(()=>{
+    const base = fx.baseAngle || 0;
+    const anim = img.animate([
+      { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
+      { opacity: fx.opacityPeak, transform:`rotate(${base}deg) scale(1.05)` },
+      { opacity: fx.opacityMin, transform:`rotate(${base}deg) scale(0.95)` },
+    ], { duration: fx.pulseMs || 450, iterations: Math.max(1, Math.round(fx.pulseCount||3)), easing:'ease-in-out', fill:'forwards' });
+    return anim.finished.then(()=> img.remove()).catch(()=>{});
+  });
 }
 function playFxSweep(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
   if (!img) return Promise.resolve();
-  const from = fx.sweepStartAngle != null ? fx.sweepStartAngle : -60;
-  const to = fx.sweepEndAngle != null ? fx.sweepEndAngle : 60;
-  const mid = (from + to) / 2;
-  const anim = img.animate([
-    { transform:`rotate(${from}deg) scale(${fx.scaleFrom})`, opacity:0 },
-    { transform:`rotate(${mid}deg) scale(${(fx.scaleFrom+fx.scaleTo)/2})`, opacity:fx.opacityPeak, offset:0.4 },
-    { transform:`rotate(${to}deg) scale(${fx.scaleTo})`, opacity:0 },
-  ], { duration: fx.duration, easing:'ease-in-out', fill:'forwards' });
-  return anim.finished.then(()=> img.remove()).catch(()=>{});
+  return waitImageReady(img).then(()=>{
+    const from = fx.sweepStartAngle != null ? fx.sweepStartAngle : -60;
+    const to = fx.sweepEndAngle != null ? fx.sweepEndAngle : 60;
+    const mid = (from + to) / 2;
+    const anim = img.animate([
+      { transform:`rotate(${from}deg) scale(${fx.scaleFrom})`, opacity:0 },
+      { transform:`rotate(${mid}deg) scale(${(fx.scaleFrom+fx.scaleTo)/2})`, opacity:fx.opacityPeak, offset:0.4 },
+      { transform:`rotate(${to}deg) scale(${fx.scaleTo})`, opacity:0 },
+    ], { duration: fx.duration, easing:'ease-in-out', fill:'forwards' });
+    return anim.finished.then(()=> img.remove()).catch(()=>{});
+  });
 }
 function playFxThrust(targetUid, fx){
   const img = spawnFxImage(targetUid, fx);
   if (!img) return Promise.resolve();
-  const rot = fx.baseAngle || 0;
-  const rad = rot * Math.PI / 180;
-  const dist = fx.thrustDistance != null ? fx.thrustDistance : 60;
-  const dir = fx.thrustReverse ? -1 : 1;
-  const dx = Math.cos(rad) * dist * dir;
-  const dy = Math.sin(rad) * dist * dir;
-  const anim = img.animate([
-    { transform:`translate(${dx}px, ${dy}px) rotate(${rot}deg) scale(${fx.scaleFrom})`, opacity:0 },
-    { transform:`translate(0px, 0px) rotate(${rot}deg) scale(${fx.scaleTo})`, opacity:fx.opacityPeak, offset:0.45 },
-    { transform:`translate(${-dx*0.15}px, ${-dy*0.15}px) rotate(${rot}deg) scale(${fx.scaleTo*0.95})`, opacity:0 },
-  ], { duration: fx.duration, easing:'cubic-bezier(.2,.8,.3,1)', fill:'forwards' });
-  return anim.finished.then(()=> img.remove()).catch(()=>{});
+  return waitImageReady(img).then(()=>{
+    const rot = fx.baseAngle || 0;
+    const rad = rot * Math.PI / 180;
+    const dist = fx.thrustDistance != null ? fx.thrustDistance : 60;
+    const dir = fx.thrustReverse ? -1 : 1;
+    const dx = Math.cos(rad) * dist * dir;
+    const dy = Math.sin(rad) * dist * dir;
+    const anim = img.animate([
+      { transform:`translate(${dx}px, ${dy}px) rotate(${rot}deg) scale(${fx.scaleFrom})`, opacity:0 },
+      { transform:`translate(0px, 0px) rotate(${rot}deg) scale(${fx.scaleTo})`, opacity:fx.opacityPeak, offset:0.45 },
+      { transform:`translate(${-dx*0.15}px, ${-dy*0.15}px) rotate(${rot}deg) scale(${fx.scaleTo*0.95})`, opacity:0 },
+    ], { duration: fx.duration, easing:'cubic-bezier(.2,.8,.3,1)', fill:'forwards' });
+    return anim.finished.then(()=> img.remove()).catch(()=>{});
+  });
 }
 function playAttackFx(attackerUid, targetUids, fx, containerEl){
   if (!fx || !fx.image) return Promise.resolve();
@@ -10315,7 +10405,7 @@ async function playTurnAnimation(actor, attack, target){
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
   // reconstruirait le DOM et couperait l'animation en cours.
   if (!attack.isItem && attack.fx && attack.fx.image){
-    await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 2500);
+    await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 4000);
   }
 
   combatState.anim = null;
