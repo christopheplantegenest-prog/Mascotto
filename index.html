@@ -290,20 +290,14 @@
   0%{ opacity:1; transform:translate(-50%,0); }
   100%{ opacity:0; transform:translate(-50%,-32px); }
 }
-@keyframes combatHaloNeg{
-  0%,100%{ box-shadow:0 0 0 rgba(231,76,60,0); }
-  50%{ box-shadow:0 0 10px 3px rgba(231,76,60,.6); }
-}
-@keyframes combatHaloPos{
-  0%,100%{ box-shadow:0 0 0 rgba(241,196,15,0); }
-  50%{ box-shadow:0 0 10px 3px rgba(241,196,15,.6); }
-}
 .combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
 .combat-avatar{ position:relative; width:var(--avatar-size); height:var(--avatar-size); margin:0 auto; }
 .combat-anim-charge .combat-avatar{ animation:combatCharge .9s ease-in-out; }
+/* Lueur d'état (halo rouge/jaune pulsant) retirée à la demande de l'utilisateur : dessinée en
+   box-shadow, elle épousait la boîte rectangulaire de la vignette et non la silhouette du
+   personnage, d'où un rectangle de couleur bien visible en combat. Les badges d'état sous le
+   personnage suffisent à indiquer les altérations. Un effet dédié pourra être créé plus tard. */
 .combat-anim-hit .combat-avatar{ animation:combatHitShake .4s ease-in-out; }
-.combat-anim-halo-neg .combat-avatar{ animation:combatHaloNeg 1.1s ease-in-out infinite; }
-.combat-anim-halo-pos .combat-avatar{ animation:combatHaloPos 1.1s ease-in-out infinite; }
 /* ---------- Transition d'entrée en combat ---------- */
 .ct-shaking{ animation:ctBodyShake .42s ease-in-out; }
 @keyframes ctBodyShake{
@@ -490,7 +484,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v185</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v186</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1191,6 +1185,7 @@
       </div>
 
       <div class="attack-cat-block" id="attackCat-fx" style="display:none;">
+        <div id="attackFxModeNav" style="display:flex; gap:6px; margin-bottom:8px;"></div>
         <div style="display:flex; gap:6px; margin-bottom:8px;">
           <button type="button" id="attackFxTestBtn" class="btn-capture" style="flex:1;">▶️ Rejouer l'effet</button>
           <button type="button" id="attackFxStaticToggleBtn" class="btn-secondary" style="flex:0 0 auto; padding:0 14px;">👁️</button>
@@ -5347,11 +5342,12 @@ function renderAttackCatNav(){
         document.getElementById('attackCat-'+c.id).style.display = (c.id===attackActiveCategory) ? 'block' : 'none';
       });
       if (attackActiveCategory === 'fx'){
+        renderAttackFxModeNav();
         renderAttackFxSettingsGrid();
         renderAttackFxSettingContent();
         renderAttackFxPreviewStage();
-        if (editingAttackFx.image){
-          setTimeout(()=> playAttackFx(attackFxPreviewAttackerSlot, [attackFxPreviewTargetSlot], editingAttackFx, document.getElementById('attackFxPreviewStage')), 150);
+        if (curFx().image){
+          setTimeout(()=> playAttackFx(attackFxPreviewAttackerSlot, [fxPreviewMainSlot()], curFx(), document.getElementById('attackFxPreviewStage')), 150);
         }
       }
     });
@@ -5431,12 +5427,12 @@ let attackFxStaticPreviewOn = true;
 function renderAttackFxStaticPreview(){
   document.querySelectorAll('.attack-fx-static-preview').forEach(el=> el.remove());
   if (!attackFxStaticPreviewOn) return;
-  const fx = editingAttackFx;
+  const fx = curFx();
   if (!fx.image) return;
   const size = fx.sizePx || 100;
   const stage = document.getElementById('attackFxPreviewStage');
   if (!stage) return;
-  if (fx.type === 'projectile'){
+  if (fx.type === 'projectile' && attackFxMode !== 'self'){
     const attackerEl = document.querySelector(`[data-fighter="${attackFxPreviewAttackerSlot}"] .combat-avatar`);
     const targetEl = document.querySelector(`[data-fighter="${attackFxPreviewTargetSlot}"] .combat-avatar`);
     if (!attackerEl || !targetEl) return;
@@ -5456,7 +5452,7 @@ function renderAttackFxStaticPreview(){
     stage.style.position = stage.style.position || 'relative';
     stage.appendChild(img);
   } else {
-    const targetEl = document.querySelector(`[data-fighter="${attackFxPreviewTargetSlot}"] .combat-avatar`);
+    const targetEl = document.querySelector(`[data-fighter="${fxPreviewMainSlot()}"] .combat-avatar`);
     if (!targetEl) return;
     const angle = (fx.type === 'aura') ? 0 : (fx.baseAngle||0);
     const img = document.createElement('img');
@@ -5478,6 +5474,40 @@ const ATTACK_FX_DEFAULTS = {
   sweepStartAngle: -60, sweepEndAngle: 60, thrustDistance: 60, thrustReverse: false,
 };
 let editingAttackFx = { ...ATTACK_FX_DEFAULTS };
+/* Second effet, joué sur le LANCEUR (ex. concentration magique) juste avant l'effet sur la cible.
+   Mêmes réglages que l'effet d'attaque : on réutilise tout l'écran d'édition existant, un sélecteur
+   en haut de la catégorie bascule simplement l'objet en cours d'édition. Vide = rien ne se joue. */
+let editingAttackFxSelf = { ...ATTACK_FX_DEFAULTS };
+let attackFxMode = 'target'; // 'target' = effet sur la cible, 'self' = effet sur le lanceur
+function curFx(){ return attackFxMode === 'self' ? editingAttackFxSelf : editingAttackFx; }
+/* Emplacement sur lequel l'aperçu se joue selon le mode : le lanceur pour l'effet du lanceur. */
+function fxPreviewMainSlot(){
+  return attackFxMode === 'self' ? attackFxPreviewAttackerSlot : attackFxPreviewTargetSlot;
+}
+/* Sélecteur en haut de la catégorie : bascule entre l'effet joué sur la cible et celui joué sur le
+   lanceur (concentration magique, etc.). Les deux se règlent avec exactement les mêmes options. */
+function renderAttackFxModeNav(){
+  const wrap = document.getElementById('attackFxModeNav');
+  if (!wrap) return;
+  const modes = [
+    { id:'target', label:'🎯 Sur la cible' },
+    { id:'self', label:'🧘 Sur le lanceur' },
+  ];
+  wrap.innerHTML = modes.map(m=>{
+    const on = m.id === attackFxMode;
+    const set = (m.id === 'self' ? editingAttackFxSelf : editingAttackFx).image ? ' ●' : '';
+    return `<button type="button" class="attack-fx-mode-btn" data-fxmode="${m.id}" style="flex:1; font-size:11px; padding:8px 6px; border-radius:8px; border:1px solid ${on?'var(--accent)':'#444'}; background:${on?'var(--accent)':'transparent'}; color:${on?'#fff':'var(--accent)'};">${m.label}${set}</button>`;
+  }).join('');
+  wrap.querySelectorAll('.attack-fx-mode-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      attackFxMode = btn.dataset.fxmode;
+      renderAttackFxModeNav();
+      renderAttackFxSettingsGrid();
+      renderAttackFxSettingContent();
+      renderAttackFxStaticPreview();
+    });
+  });
+}
 const ATTACK_FX_APPEARANCE_SLIDERS = [
   { key:'sizePx', label:"Taille de l'image (px)", min:30, max:220, step:5 },
   { key:'scaleFrom', label:'Taille de départ (×)', min:0.1, max:1.5, step:0.05 },
@@ -5524,9 +5554,9 @@ const ATTACK_FX_SHORT_LABELS = {
 let attackFxActiveSetting = 'image';
 function attackFxSliderRowHtml(def){
   if (def.bool){
-    return `<label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:12px;"><input type="checkbox" data-attackfx-key="${def.key}" ${editingAttackFx[def.key] ? 'checked':''}> ${def.label}</label>`;
+    return `<label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:12px;"><input type="checkbox" data-attackfx-key="${def.key}" ${curFx()[def.key] ? 'checked':''}> ${def.label}</label>`;
   }
-  const v = editingAttackFx[def.key];
+  const v = curFx()[def.key];
   return `<label style="display:block; margin-bottom:12px; font-size:12px;">${def.label} : <span data-attackfx-val="${def.key}">${v}</span>
     <input type="range" data-attackfx-key="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${v}" style="width:100%; margin-top:4px;"></label>`;
 }
@@ -5538,7 +5568,7 @@ function attackFxSettingsList(){
   ];
   ATTACK_FX_APPEARANCE_SLIDERS.forEach(d=> list.push({ id:d.key, short: ATTACK_FX_SHORT_LABELS[d.key]||d.label, kind: d.bool?'toggle':'slider', def:d }));
   ATTACK_FX_TIMING_COMMON.forEach(d=> list.push({ id:d.key, short: ATTACK_FX_SHORT_LABELS[d.key]||d.label, kind: d.bool?'toggle':'slider', def:d }));
-  (ATTACK_FX_TIMING_BY_TYPE[editingAttackFx.type]||[]).forEach(d=> list.push({ id:d.key, short: ATTACK_FX_SHORT_LABELS[d.key]||d.label, kind: d.bool?'toggle':'slider', def:d }));
+  (ATTACK_FX_TIMING_BY_TYPE[curFx().type]||[]).forEach(d=> list.push({ id:d.key, short: ATTACK_FX_SHORT_LABELS[d.key]||d.label, kind: d.bool?'toggle':'slider', def:d }));
   return list;
 }
 function renderAttackFxSettingsGrid(){
@@ -5561,16 +5591,16 @@ function renderAttackFxSettingContent(){
   const wrap = document.getElementById('attackFxSettingContent');
   if (s.kind === 'image'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Image</div>
-      <input type="text" id="attackFxImage" class="field-input" placeholder="https://..." value="${editingAttackFx.image||''}">
+      <input type="text" id="attackFxImage" class="field-input" placeholder="https://..." value="${curFx().image||''}">
       <button type="button" class="btn-secondary" id="attackFxImageBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>`;
-    document.getElementById('attackFxImage').addEventListener('change', (e)=>{ editingAttackFx.image = e.target.value.trim(); renderAttackFxStaticPreview(); });
+    document.getElementById('attackFxImage').addEventListener('change', (e)=>{ curFx().image = e.target.value.trim(); renderAttackFxStaticPreview(); });
     document.getElementById('attackFxImageBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('attackFxImage'));
   } else if (s.kind === 'sound'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Son</div>
-      <input type="text" id="attackFxSound" class="field-input" placeholder="https://..." value="${editingAttackFx.sound||''}">
+      <input type="text" id="attackFxSound" class="field-input" placeholder="https://..." value="${curFx().sound||''}">
       <button type="button" class="btn-secondary" id="attackFxSoundBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>
       <button type="button" class="btn-secondary" id="attackFxSoundTestBtn" style="width:100%; margin-top:8px;">🔊 Écouter le son seul</button>`;
-    document.getElementById('attackFxSound').addEventListener('change', (e)=>{ editingAttackFx.sound = e.target.value.trim(); });
+    document.getElementById('attackFxSound').addEventListener('change', (e)=>{ curFx().sound = e.target.value.trim(); });
     document.getElementById('attackFxSoundBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('attackFxSound'));
     document.getElementById('attackFxSoundTestBtn').addEventListener('click', ()=>{
       const url = document.getElementById('attackFxSound').value.trim();
@@ -5579,15 +5609,15 @@ function renderAttackFxSettingContent(){
   } else if (s.kind === 'type'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Type d'animation</div>
       <select id="attackFxType" class="field-input">
-        <option value="impact" ${editingAttackFx.type==='impact'?'selected':''}>Flash d'impact</option>
-        <option value="burst" ${editingAttackFx.type==='burst'?'selected':''}>Rafale répétée</option>
-        <option value="projectile" ${editingAttackFx.type==='projectile'?'selected':''}>Projectile</option>
-        <option value="aura" ${editingAttackFx.type==='aura'?'selected':''}>Halo / Aura</option>
-        <option value="sweep" ${editingAttackFx.type==='sweep'?'selected':''}>Balayage (rotation)</option>
-        <option value="thrust" ${editingAttackFx.type==='thrust'?'selected':''}>Coup d'estoc (poussée)</option>
+        <option value="impact" ${curFx().type==='impact'?'selected':''}>Flash d'impact</option>
+        <option value="burst" ${curFx().type==='burst'?'selected':''}>Rafale répétée</option>
+        <option value="projectile" ${curFx().type==='projectile'?'selected':''}>Projectile</option>
+        <option value="aura" ${curFx().type==='aura'?'selected':''}>Halo / Aura</option>
+        <option value="sweep" ${curFx().type==='sweep'?'selected':''}>Balayage (rotation)</option>
+        <option value="thrust" ${curFx().type==='thrust'?'selected':''}>Coup d'estoc (poussée)</option>
       </select>`;
     document.getElementById('attackFxType').addEventListener('change', (e)=>{
-      editingAttackFx.type = e.target.value;
+      curFx().type = e.target.value;
       renderAttackFxSettingsGrid();
       renderAttackFxSettingContent();
       renderAttackFxStaticPreview();
@@ -5597,9 +5627,9 @@ function renderAttackFxSettingContent(){
     document.querySelectorAll('#attackFxSettingContent [data-attackfx-key]').forEach(el=>{
       el.addEventListener('input', ()=>{
         const key = el.dataset.attackfxKey;
-        if (el.type === 'checkbox'){ editingAttackFx[key] = el.checked; }
+        if (el.type === 'checkbox'){ curFx()[key] = el.checked; }
         else {
-          editingAttackFx[key] = parseFloat(el.value);
+          curFx()[key] = parseFloat(el.value);
           const label = document.querySelector(`#attackFxSettingContent [data-attackfx-val="${key}"]`);
           if (label) label.textContent = el.value;
         }
@@ -5611,7 +5641,7 @@ function renderAttackFxSettingContent(){
 
 document.getElementById('attackFxTestBtn').addEventListener('click', ()=>{
   document.querySelectorAll('.attack-fx-static-preview').forEach(el=> el.style.visibility = 'hidden');
-  Promise.resolve(playAttackFx(attackFxPreviewAttackerSlot, [attackFxPreviewTargetSlot], editingAttackFx, document.getElementById('attackFxPreviewStage')))
+  Promise.resolve(playAttackFx(attackFxPreviewAttackerSlot, [fxPreviewMainSlot()], curFx(), document.getElementById('attackFxPreviewStage')))
     .then(()=> renderAttackFxStaticPreview());
 });
 function renderAttackFxStaticToggleBtn(){
@@ -5673,6 +5703,8 @@ function loadAttackForEdit(id){
   document.getElementById('attackSaveBtn').textContent = 'Mettre à jour l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'block';
   editingAttackFx = { ...ATTACK_FX_DEFAULTS, ...(a.fx || {}) };
+  editingAttackFxSelf = { ...ATTACK_FX_DEFAULTS, ...(a.fxSelf || {}) };
+  attackFxMode = 'target';
   attackFxActiveSetting = 'image';
   attackActiveCategory = 'basic';
   renderAttackCatNav();
@@ -5704,6 +5736,8 @@ function resetAttackForm(){
   document.getElementById('attackSaveBtn').textContent = 'Enregistrer l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'none';
   editingAttackFx = { ...ATTACK_FX_DEFAULTS };
+  editingAttackFxSelf = { ...ATTACK_FX_DEFAULTS };
+  attackFxMode = 'target';
   attackFxActiveSetting = 'image';
   attackActiveCategory = 'basic';
   renderAttackCatNav();
@@ -5737,15 +5771,16 @@ document.getElementById('attackSaveBtn').addEventListener('click', ()=>{
   // Filet de sécurité : si le champ image/son de l'effet est actuellement affiché mais pas encore
   // "quitté" (pas de blur), on relit sa valeur directement pour ne pas la perdre à l'enregistrement.
   const fxImgEl = document.getElementById('attackFxImage');
-  if (fxImgEl) editingAttackFx.image = fxImgEl.value.trim();
+  if (fxImgEl) curFx().image = fxImgEl.value.trim();
   const fxSndEl = document.getElementById('attackFxSound');
-  if (fxSndEl) editingAttackFx.sound = fxSndEl.value.trim();
+  if (fxSndEl) curFx().sound = fxSndEl.value.trim();
   const fx = { ...editingAttackFx };
+  const fxSelf = { ...editingAttackFxSelf };
 
   if (!name){ showToast('Donne un nom à l\'attaque'); return; }
   if (!attacksCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, description, kind, school, tribe, power, learnDuration, allowedMetiers, statusEffect, fx, updatedAt: Date.now() };
+  const data = { name, emoji, description, kind, school, tribe, power, learnDuration, allowedMetiers, statusEffect, fx, fxSelf, updatedAt: Date.now() };
   const op = editingAttackId ? attacksCol.doc(editingAttackId).set(data) : attacksCol.add({ ...data, createdAt: Date.now() });
   op.then((ref)=>{
     const attackId = editingAttackId || (ref && ref.id);
@@ -10473,6 +10508,13 @@ async function playTurnAnimation(actor, attack, target){
   // L'image d'effet (si réglée sur cette attaque) vient s'ajouter PAR-DESSUS le bond/la charge, pas à
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
   // reconstruirait le DOM et couperait l'animation en cours.
+  // Effet sur le LANCEUR (concentration magique, etc.) : se joue en premier, avant que l'attaque
+  // n'atteigne la cible. Vide = rien, comportement inchangé.
+  if (!attack.isItem && attack.fxSelf && attack.fxSelf.image){
+    clearStrayFxImages();
+    await withTimeout(playAttackFx(actor.uid, [actor.uid], attack.fxSelf), 4000);
+    clearStrayFxImages();
+  }
   if (!attack.isItem && attack.fx && attack.fx.image){
     clearStrayFxImages(); // au cas où un effet précédent aurait laissé un reste
     await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 4000);
@@ -11108,9 +11150,7 @@ function fighterCardHtml(f, idx, arr){
   const targetable = f.alive || (isReviveAction && pendingActorFighter && f.side === pendingActorFighter.side);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
   const isHit = (combatState.hitUids||[]).includes(f.uid);
-  const hasNeg = Object.keys(f.statuses).some(sid=> NEGATIVE_STATUS_IDS.includes(sid));
-  const hasPos = Object.keys(f.statuses).some(sid=> !NEGATIVE_STATUS_IDS.includes(sid));
-  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', anim==='magic'?'combat-anim-charge':'', isHit?'combat-anim-hit':'', hasNeg?'combat-anim-halo-neg':(hasPos?'combat-anim-halo-pos':'')].filter(Boolean).join(' ');
+  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', anim==='magic'?'combat-anim-charge':'', isHit?'combat-anim-hit':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
   const infoHtml = `
