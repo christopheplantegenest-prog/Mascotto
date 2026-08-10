@@ -490,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v183</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v184</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9203,20 +9203,32 @@ function spawnParticle(uid, emoji, text){
    fiche de l'attaque, animée en CSS/JS selon 6 types, plus un son optionnel joué en même temps.
    Le bond/la charge de l'attaquant restent inchangés — l'effet vient s'ajouter par-dessus.
    ================================================================== */
-function spawnFxImage(targetUid, fx, offsetX, offsetY){
+/* IMPORTANT : l'image d'effet est déposée dans l'ARÈNE (ou la scène de prévisualisation), jamais à
+   l'intérieur de la carte du combattant. Raison : l'écran de combat se redessine toutes les 150 ms
+   (boucle de la jauge de vitesse, `combatTick` → `renderCombat`), et ce redessin reconstruit
+   entièrement les cartes via innerHTML — tout ce qui était posé dedans était donc détruit dans la
+   fraction de seconde qui suivait, d'où les effets très brefs voire jamais visibles. L'arène, elle,
+   n'est jamais reconstruite. On calcule donc la position de la cible et on place l'image dessus. */
+function fxOverlayContainer(containerEl){
+  return containerEl || document.getElementById('combatArena');
+}
+function spawnFxImage(targetUid, fx, offsetX, offsetY, containerEl){
   const targetEl = document.querySelector(`[data-fighter="${targetUid}"] .combat-avatar`);
-  if (!targetEl) return null;
+  const arena = fxOverlayContainer(containerEl);
+  if (!targetEl || !arena) return null;
+  const tRect = targetEl.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  const size = fx.sizePx || 100;
+  const cx = tRect.left + tRect.width/2 - arenaRect.left;
+  const cy = tRect.top + tRect.height/2 - arenaRect.top;
   const img = document.createElement('img');
   img.src = fx.image;
   img.className = 'combat-fx-img';
   img.style.opacity = '0'; // masqué tant que l'image n'est pas confirmée chargée (voir waitImageReady)
-  const size = fx.sizePx || 100;
   img.style.width = size+'px';
-  img.style.left = '50%';
-  img.style.top = '50%';
-  img.style.marginLeft = (-size/2 + (offsetX||0))+'px';
-  img.style.marginTop = (-size/2 + (offsetY||0))+'px';
-  targetEl.appendChild(img);
+  img.style.left = (cx - size/2 + (offsetX||0))+'px';
+  img.style.top = (cy - size/2 + (offsetY||0))+'px';
+  arena.appendChild(img);
   return img;
 }
 /* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus —
@@ -9233,8 +9245,8 @@ function waitImageReady(img, maxMs){
     setTimeout(finish, maxMs || 1500);
   });
 }
-function playFxImpact(targetUid, fx){
-  const img = spawnFxImage(targetUid, fx);
+function playFxImpact(targetUid, fx, containerEl){
+  const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
   return waitImageReady(img).then(()=>{
     const base = fx.baseAngle || 0;
@@ -9247,7 +9259,7 @@ function playFxImpact(targetUid, fx){
     return anim.finished.then(()=> img.remove()).catch(()=>{});
   });
 }
-function playFxBurst(targetUid, fx){
+function playFxBurst(targetUid, fx, containerEl){
   const n = Math.max(1, Math.round(fx.repeatCount || 4));
   const base = fx.baseAngle || 0;
   const proms = [];
@@ -9256,7 +9268,7 @@ function playFxBurst(targetUid, fx){
       setTimeout(()=>{
         const ox = (Math.random()*2-1)*(fx.jitter||0);
         const oy = (Math.random()*2-1)*(fx.jitter||0);
-        const img = spawnFxImage(targetUid, fx, ox, oy);
+        const img = spawnFxImage(targetUid, fx, ox, oy, containerEl);
         if (!img){ resolve(); return; }
         waitImageReady(img).then(()=>{
           const rot = base + (fx.randomRotation ? (Math.random()*360-180) : 0);
@@ -9317,8 +9329,8 @@ function playFxProjectile(attackerUid, targetUid, fx, containerEl){
     }).catch(()=>{});
   });
 }
-function playFxAura(targetUid, fx){
-  const img = spawnFxImage(targetUid, fx);
+function playFxAura(targetUid, fx, containerEl){
+  const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
   return waitImageReady(img).then(()=>{
     const base = fx.baseAngle || 0;
@@ -9330,8 +9342,8 @@ function playFxAura(targetUid, fx){
     return anim.finished.then(()=> img.remove()).catch(()=>{});
   });
 }
-function playFxSweep(targetUid, fx){
-  const img = spawnFxImage(targetUid, fx);
+function playFxSweep(targetUid, fx, containerEl){
+  const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
   return waitImageReady(img).then(()=>{
     const from = fx.sweepStartAngle != null ? fx.sweepStartAngle : -60;
@@ -9345,8 +9357,8 @@ function playFxSweep(targetUid, fx){
     return anim.finished.then(()=> img.remove()).catch(()=>{});
   });
 }
-function playFxThrust(targetUid, fx){
-  const img = spawnFxImage(targetUid, fx);
+function playFxThrust(targetUid, fx, containerEl){
+  const img = spawnFxImage(targetUid, fx, 0, 0, containerEl);
   if (!img) return Promise.resolve();
   return waitImageReady(img).then(()=>{
     const rot = fx.baseAngle || 0;
@@ -9367,12 +9379,12 @@ function playAttackFx(attackerUid, targetUids, fx, containerEl){
   if (!fx || !fx.image) return Promise.resolve();
   if (fx.sound){ new Audio(fx.sound).play().catch(()=>{}); }
   const proms = targetUids.map(uid=>{
-    if (fx.type === 'impact') return playFxImpact(uid, fx);
-    if (fx.type === 'burst') return playFxBurst(uid, fx);
+    if (fx.type === 'impact') return playFxImpact(uid, fx, containerEl);
+    if (fx.type === 'burst') return playFxBurst(uid, fx, containerEl);
     if (fx.type === 'projectile') return playFxProjectile(attackerUid, uid, fx, containerEl);
-    if (fx.type === 'aura') return playFxAura(uid, fx);
-    if (fx.type === 'sweep') return playFxSweep(uid, fx);
-    if (fx.type === 'thrust') return playFxThrust(uid, fx);
+    if (fx.type === 'aura') return playFxAura(uid, fx, containerEl);
+    if (fx.type === 'sweep') return playFxSweep(uid, fx, containerEl);
+    if (fx.type === 'thrust') return playFxThrust(uid, fx, containerEl);
     return Promise.resolve();
   });
   return Promise.all(proms);
@@ -10193,7 +10205,13 @@ function speedMultiplier(f){
 }
 
 function combatTick(){
-  if (!combatState || combatState.finished || combatState.resolving){ renderCombat(); return; }
+  if (!combatState || combatState.finished || combatState.resolving){
+    // Pas de redessin pendant qu'une animation d'attaque est en cours : le redessin reconstruit les
+    // cartes des combattants et couperait l'effet visuel en plein vol (sécurité complémentaire —
+    // les images d'effet sont déjà posées dans l'arène, hors de portée du redessin).
+    if (!(combatState && combatState.anim)) renderCombat();
+    return;
+  }
   let acted = false;
   combatState.fighters.forEach(f=>{
     if (!f.alive || acted) return;
