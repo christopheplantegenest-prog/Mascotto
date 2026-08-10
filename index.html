@@ -124,6 +124,7 @@
   .overlay.show{ display:flex; }
   #recipeItemChooserOverlay{ z-index:4500; }
   #pnjChooserOverlay{ z-index:4500; }
+  #githubPickerOverlay{ z-index:4500; }
   #appConfirmOverlay{ z-index:5000; }
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
@@ -489,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v171</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v172</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1071,6 +1072,17 @@
 </div>
 
 <!-- Éditeur d'attaques (miroir des recettes) -->
+<div class="overlay" id="githubPickerOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin-top:0;">📂 Choisir un fichier sur GitHub</h3>
+      <button class="sheet-x" id="githubPickerCloseBtn">✕</button>
+    </div>
+    <p class="meta" id="githubPickerPath" style="word-break:break-all;"></p>
+    <div id="githubPickerList"></div>
+  </div>
+</div>
+
 <div class="overlay" id="attacksEditorOverlay">
   <div class="sheet" style="max-height:85vh; overflow-y:auto;">
     <h3 style="margin-top:0;">Attaques</h3>
@@ -1432,6 +1444,7 @@
     </div>
     <input type="text" id="musicTrackEditorName" class="field-input" placeholder="Nom de la situation" style="display:none; margin-bottom:8px;">
     <input type="text" id="musicTrackEditorUrl" class="field-input" placeholder="https://.../fichier.mp3">
+    <button type="button" class="btn-secondary" id="musicTrackEditorBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>
     <p class="meta">Colle le lien direct vers ton fichier audio. Laisse vide pour ne pas avoir de musique sur cette situation.</p>
     <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
       <button class="btn-secondary" id="musicTrackEditorPlayBtn" style="padding:6px 10px;">▶️</button>
@@ -5428,13 +5441,17 @@ function renderAttackFxSettingContent(){
   const wrap = document.getElementById('attackFxSettingContent');
   if (s.kind === 'image'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Lien de l'image (hébergée par toi, laisser vide = pas d'effet ajouté)</div>
-      <input type="text" id="attackFxImage" class="field-input" placeholder="https://..." value="${editingAttackFx.image||''}">`;
+      <input type="text" id="attackFxImage" class="field-input" placeholder="https://..." value="${editingAttackFx.image||''}">
+      <button type="button" class="btn-secondary" id="attackFxImageBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>`;
     document.getElementById('attackFxImage').addEventListener('change', (e)=>{ editingAttackFx.image = e.target.value.trim(); });
+    document.getElementById('attackFxImageBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('attackFxImage'));
   } else if (s.kind === 'sound'){
     wrap.innerHTML = `<div class="field-label" style="margin-top:0;">Lien du son (hébergé par toi, comme les musiques — optionnel)</div>
       <input type="text" id="attackFxSound" class="field-input" placeholder="https://..." value="${editingAttackFx.sound||''}">
+      <button type="button" class="btn-secondary" id="attackFxSoundBrowseBtn" style="width:100%; margin-top:6px;">📂 Parcourir mes fichiers GitHub</button>
       <button type="button" class="btn-secondary" id="attackFxSoundTestBtn" style="width:100%; margin-top:8px;">🔊 Écouter le son seul</button>`;
     document.getElementById('attackFxSound').addEventListener('change', (e)=>{ editingAttackFx.sound = e.target.value.trim(); });
+    document.getElementById('attackFxSoundBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('attackFxSound'));
     document.getElementById('attackFxSoundTestBtn').addEventListener('click', ()=>{
       const url = document.getElementById('attackFxSound').value.trim();
       if (url){ new Audio(url).play().catch(()=> showToast('Impossible de lire ce son (lien invalide ?)')); }
@@ -7370,6 +7387,7 @@ function closeMusicTrackEditor(){
 }
 document.getElementById('musicTrackEditorPlayBtn').addEventListener('click', toggleMusicPreview);
 document.getElementById('musicTrackEditorUrl').addEventListener('input', (e)=>{ if (editingTrackKey) setUrlForKey(editingTrackKey, e.target.value); });
+document.getElementById('musicTrackEditorBrowseBtn').addEventListener('click', ()=> openGithubFilePicker('musicTrackEditorUrl'));
 document.getElementById('musicTrackEditorName').addEventListener('input', (e)=>{
   if (editingTrackKey && editingTrackKey.startsWith('custom_')){
     const i = +editingTrackKey.slice(7);
@@ -8972,6 +8990,67 @@ const NEGATIVE_STATUS_IDS = ['poison','burn','sleep','stun','confuse','paralysis
 const TRIBE_LABELS = { feu:'🔥 Feu', eau:'💧 Eau', terre:'🌿 Terre', air:'🌪️ Air', lumiere:'✨ Lumière', ombre:'🌑 Ombre' };
 const TRIBE_STRONG_AGAINST = { feu:'terre', terre:'air', air:'eau', eau:'feu', lumiere:'ombre', ombre:'lumiere' };
 function sleep(ms){ return new Promise(resolve=> setTimeout(resolve, ms)); }
+/* ==================================================================
+   Sélecteur de fichiers hébergés sur GitHub : évite le copier-coller manuel du lien.
+   Liste le contenu du dépôt via l'API publique de GitHub, navigable dossier par dossier.
+   ================================================================== */
+const GITHUB_REPO_OWNER = 'christopheplantegenest-prog';
+const GITHUB_REPO_NAME = 'Mascotto';
+let githubPickerTargetInputId = null;
+function openGithubFilePicker(targetInputId){
+  githubPickerTargetInputId = targetInputId;
+  document.getElementById('githubPickerOverlay').classList.add('show');
+  loadGithubPickerPath('');
+}
+async function loadGithubPickerPath(path){
+  const listEl = document.getElementById('githubPickerList');
+  document.getElementById('githubPickerPath').textContent = path ? ('📁 ' + path) : '📁 (racine du dépôt)';
+  listEl.innerHTML = '<p class="meta">Chargement…</p>';
+  try {
+    const apiUrl = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${path}`;
+    const res = await fetch(apiUrl);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const items = await res.json();
+    if (!Array.isArray(items)) throw new Error('réponse inattendue');
+    const sorted = [...items].sort((a,b)=> (a.type===b.type) ? a.name.localeCompare(b.name) : (a.type==='dir' ? -1 : 1));
+    let html = '';
+    if (path){
+      html += `<button type="button" class="btn-secondary" id="githubPickerUpBtn" style="width:100%; margin-bottom:8px; text-align:left;">⬆️ Dossier parent</button>`;
+    }
+    html += sorted.map(it=>{
+      if (it.type === 'dir'){
+        return `<button type="button" class="btn-secondary github-picker-dir" data-path="${it.path}" style="width:100%; margin-bottom:6px; text-align:left;">📁 ${it.name}</button>`;
+      }
+      return `<button type="button" class="btn-secondary github-picker-file" data-url="${it.download_url}" style="width:100%; margin-bottom:6px; text-align:left;">📄 ${it.name}</button>`;
+    }).join('');
+    listEl.innerHTML = html || '<p class="meta">Dossier vide.</p>';
+    const upBtn = document.getElementById('githubPickerUpBtn');
+    if (upBtn) upBtn.addEventListener('click', ()=>{
+      const parts = path.split('/'); parts.pop();
+      loadGithubPickerPath(parts.join('/'));
+    });
+    listEl.querySelectorAll('.github-picker-dir').forEach(btn=>{
+      btn.addEventListener('click', ()=> loadGithubPickerPath(btn.dataset.path));
+    });
+    listEl.querySelectorAll('.github-picker-file').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const input = document.getElementById(githubPickerTargetInputId);
+        if (input){
+          input.value = btn.dataset.url;
+          input.dispatchEvent(new Event('change'));
+          input.dispatchEvent(new Event('input'));
+        }
+        document.getElementById('githubPickerOverlay').classList.remove('show');
+      });
+    });
+  } catch(e){
+    listEl.innerHTML = '<p class="meta">Impossible de charger la liste (dépôt privé, connexion indisponible, ou dossier introuvable). Tu peux toujours coller le lien à la main.</p>';
+  }
+}
+document.getElementById('githubPickerCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('githubPickerOverlay').classList.remove('show');
+});
+
 function spawnParticle(uid, emoji, text){
   combatState.particles.push({ uid, emoji, text, key: Math.random().toString(36).slice(2) });
 }
