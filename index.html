@@ -388,6 +388,7 @@
 }
 .combat-to-item .to-emoji img{ width:100%; height:100%; object-fit:cover; }
 .combat-to-item.current-actor .to-emoji{ box-shadow:0 0 0 2px #ffd76a; }
+.combat-to-item.pinned{ margin-right:6px; padding-right:6px; border-right:1px solid rgba(255,255,255,.15); }
 .combat-to-item.preview-move .to-emoji{ box-shadow:0 0 0 2px #4fc3f7; opacity:.75; }
 .combat-to-item.identify-selected .to-emoji img{ filter:drop-shadow(0 0 2px #4fc3f7) drop-shadow(0 0 3px #4fc3f7) brightness(1.12); }
 @keyframes combatFleeOut{ 0%{ transform:translateY(0); opacity:1; } 100%{ transform:translateY(-160px); opacity:0; } }
@@ -496,7 +497,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v200</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v203</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -10458,6 +10459,7 @@ async function takeTurn(fighter){
     const decision = chooseEnemyAiAction(fighter);
     if (decision.flee){
       fighter.alive = false;
+      fighter.fleeing = true; // reste vrai pendant TOUTE la fuite (message + glissement) pour éviter la transparence de K.O.
       combatState.log.unshift(`${fighter.name} prend la fuite !`);
       combatState.log = combatState.log.slice(0, 20);
       // Message "Fuite !" affiché sur l'emplacement du fuyard (comme "Raté !"), avant l'animation de sortie.
@@ -10473,6 +10475,7 @@ async function takeTurn(fighter){
       renderCombat();
       await sleep(600);
       fighter.fleeingOut = false;
+      fighter.fleeing = false;
       // Marqué maintenant : renderCombat() l'exclura complètement de la ligne d'adversaires,
       // et les survivants se recentrent automatiquement (le nombre de cartes change).
       fighter.fled = true;
@@ -10758,6 +10761,20 @@ function combatAnalysisLines(target){
   parts.push(`Point faible : ${weakest[0]} (${weakest[1]})`);
   const activeStatuses = Object.keys(target.statuses||{});
   if (activeStatuses.length) parts.push(`États actifs : ${activeStatuses.map(sid=> (STATUS_META[sid]&&STATUS_META[sid].label) || sid).join(', ')}`);
+  if (target.side === 'enemy'){
+    const personalityLabels = { normal:'Normal', agressif:'Agressif', defensif:'Défensif', chaotique:'Chaotique' };
+    parts.push(`Personnalité : ${personalityLabels[target.aiPersonality] || 'Normal'}`);
+    const stealBits = [];
+    if (target.stealEasyItemId && !target.stolenEasy){
+      const it = items.find(i=>i.id===target.stealEasyItemId);
+      if (it) stealBits.push(it.name);
+    }
+    if (target.stealHardItemId && !target.stolenHard){
+      const it = items.find(i=>i.id===target.stealHardItemId);
+      if (it) stealBits.push(it.name);
+    }
+    if (stealBits.length) parts.push(`Objet(s) volable(s) : ${stealBits.join(', ')}`);
+  }
   return parts;
 }
 /* Affiche la fiche d'analyse dans le panneau d'action. Le temps reste en pause (resolving=true) jusqu'à la fermeture. */
@@ -10818,16 +10835,28 @@ function renderCombatTurnOrderBar(){
   const bar = document.getElementById('combatTurnOrderBar');
   if (!bar || !combatState) return;
   const previewUid = combatState.passPreviewUid || null;
-  const queue = computeCombatTurnOrder(10, previewUid);
-  bar.innerHTML = queue.map((f, idx)=>{
+  // Emplacement du haut FIXE : toujours le combattant en train de jouer, jamais déplacé par la
+  // simulation ci-dessous. En dessous, la file glissante des prochains tours (là, les portraits
+  // changent de position d'un rendu à l'autre, pas le rectangle doré qui reste en haut).
+  const currentFighter = combatState.fighters.find(f=> f.uid===combatState.currentActorUid && f.alive);
+  const queue = computeCombatTurnOrder(9, previewUid);
+  let html = '';
+  if (currentFighter){
+    const selected = currentFighter.identifyUntil && currentFighter.identifyUntil > Date.now();
+    html += `
+    <div class="combat-to-item current-actor pinned${selected?' identify-selected':''}">
+      <div class="to-emoji">${currentFighter.imageUrl ? `<img src="${currentFighter.thumbUrl || currentFighter.imageUrl}">` : (currentFighter.side==='player'?'🧑':'👾')}</div>
+    </div>`;
+  }
+  html += queue.map(f=>{
     const selected = f.identifyUntil && f.identifyUntil > Date.now();
-    const isCurrent = f.uid === combatState.currentActorUid;
     const isPreviewed = previewUid && f.uid === previewUid;
     return `
-    <div class="combat-to-item${isCurrent?' current-actor':''}${isPreviewed?' preview-move':''}${selected?' identify-selected':''}">
+    <div class="combat-to-item${isPreviewed?' preview-move':''}${selected?' identify-selected':''}">
       <div class="to-emoji">${f.imageUrl ? `<img src="${f.thumbUrl || f.imageUrl}">` : (f.side==='player'?'🧑':'👾')}</div>
     </div>
   `;}).join('');
+  bar.innerHTML = html;
 }
 /* Au clic sur un personnage dans l'arène (avant d'avoir choisi une attaque), son portrait reste
    brièvement mis en évidence dans la barre d'ordre des tours — utile pour distinguer deux personnages
@@ -11321,7 +11350,7 @@ function fighterCardHtml(f, idx, arr){
     </div>
   `;
   return `
-    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${(f.alive || f.fleeingOut)?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
+    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${(f.alive || f.fleeing)?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
       <div style="transform:translateX(${shiftX}px);">
         ${f.side==='enemy' ? infoHtml + avatarHtml : avatarHtml + infoHtml}
       </div>
