@@ -359,6 +359,9 @@
   font-size:13px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8);
   animation:combatParticleFloat 1s ease-out forwards; pointer-events:none; white-space:nowrap;
 }
+.combat-particle-dmg{ color:#ff4d4d; }
+.combat-particle-heal{ color:#4dd67a; }
+.combat-particle-miss{ color:#fff; }
 .combat-fx-img{ position:absolute; pointer-events:none; z-index:7; }
 .combat-fx-projectile{ position:absolute; pointer-events:none; z-index:8; }
 /* ===== Habillage visuel du combat (repris du prototype donjon-proto.html) ===== */
@@ -487,7 +490,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v192</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v193</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9241,8 +9244,8 @@ document.getElementById('githubPickerCloseBtn').addEventListener('click', ()=>{
   document.getElementById('githubPickerOverlay').classList.remove('show');
 });
 
-function spawnParticle(uid, emoji, text){
-  combatState.particles.push({ uid, emoji, text, key: Math.random().toString(36).slice(2) });
+function spawnParticle(uid, emoji, text, colorClass){
+  combatState.particles.push({ uid, emoji, text, colorClass: colorClass||'', key: Math.random().toString(36).slice(2) });
 }
 
 /* ==================================================================
@@ -10535,6 +10538,7 @@ async function playTurnAnimation(actor, attack, target){
 
   const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
   const fxTargets = isGroup ? combatState.fighters.filter(f=> f.side===target.side) : [target];
+  combatState.missedUids = []; // rempli par resolveAttackOnTarget en cas de raté sur ce tour
 
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
@@ -10560,8 +10564,9 @@ async function playTurnAnimation(actor, attack, target){
   const hitUids = [];
   combatState.fighters.forEach(f=>{
     const diff = f.hp - hpBefore[f.uid];
-    if (diff < 0){ spawnParticle(f.uid, '', String(diff)); hitUids.push(f.uid); }
-    else if (diff > 0){ spawnParticle(f.uid, '', '+'+diff); hitUids.push(f.uid); }
+    if (diff < 0){ spawnParticle(f.uid, '', String(diff), 'combat-particle-dmg'); hitUids.push(f.uid); }
+    else if (diff > 0){ spawnParticle(f.uid, '', '+'+diff, 'combat-particle-heal'); hitUids.push(f.uid); }
+    else if ((combatState.missedUids||[]).includes(f.uid)){ spawnParticle(f.uid, '', 'Raté !', 'combat-particle-miss'); hitUids.push(f.uid); }
     if (aliveBefore[f.uid] && !f.alive){ spawnParticle(f.uid, '💀', ''); hitUids.push(f.uid); }
     else if (!aliveBefore[f.uid] && f.alive){ hitUids.push(f.uid); }
   });
@@ -10994,6 +10999,10 @@ function resolveAttackOnTarget(attacker, attack, target){
   if (Math.random()*100 >= hitChance){
     combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
     combatState.log = combatState.log.slice(0, 20);
+    // Mémorise le raté pour que playTurnAnimation affiche "Raté !" sur la cible (les PV n'ayant pas
+    // bougé, rien ne le distinguerait sinon d'un tour sans aucun effet).
+    combatState.missedUids = combatState.missedUids || [];
+    combatState.missedUids.push(target.uid);
     return;
   }
 
@@ -11169,7 +11178,7 @@ function statusBadgesHtml(f){
 function particlesHtml(f){
   const mine = (combatState.particles||[]).filter(p=>p.uid===f.uid);
   if (!mine.length) return '';
-  return mine.map(p=>`<div class="combat-particle">${p.emoji}${(p.emoji && p.text) ? ' ' : ''}${p.text||''}</div>`).join('');
+  return mine.map(p=>`<div class="combat-particle ${p.colorClass||''}">${p.emoji}${(p.emoji && p.text) ? ' ' : ''}${p.text||''}</div>`).join('');
 }
 
 function getAvatarSizePx(){
