@@ -545,7 +545,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v206</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v207</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3165,7 +3165,10 @@ function watchPlayerQuests(uid){
     playerSelfData = doc.exists ? doc.data() : null;
     try {
       const rid = (doc.exists && doc.data().robotId) || null;
-      if (rid !== myRobotId){
+      // on n'applique que si le serveur designe vraiment un robot, ou si le
+      // joueur a explicitement demande le point : sinon on garde l'affichage
+      // en cours (un snapshot partiel ne doit pas faire revenir le point)
+      if (rid && rid !== myRobotId){
         myRobotId = rid;
         renderRobotPicker();
         refreshPlayerRobotVisual();
@@ -7533,7 +7536,14 @@ function renderRobotPicker(){
 function setMyRobot(id){
   myRobotId = id || null;
   renderRobotPicker();
-  refreshPlayerRobotVisual();
+  if (!myRobotId){
+    // choix explicite du point : on force le retour au marqueur d'origine
+    lastRobotPaintKey = null;
+    if (playerMarker) playerMarker.setIcon(L.divIcon({ className:'', html:'<div class="player-icon"></div>', iconSize:[18,18] }));
+    lastRobotPaintKey = 'point';
+  } else {
+    refreshPlayerRobotVisual();
+  }
   if (typeof uid !== 'undefined' && uid && typeof db !== 'undefined'){
     db.collection('players').doc(uid).set({ robotId: myRobotId }, { merge:true }).catch(()=>{});
   }
@@ -7619,7 +7629,7 @@ function currentRobotImages(){
    sur un petit et un grand telephone. Bornee pour rester lisible. */
 function robotIconSize(){
   const vmin = Math.min(window.innerWidth, window.innerHeight);
-  const h = Math.max(26, Math.min(46, Math.round(vmin * 0.075)));
+  const h = Math.max(52, Math.min(92, Math.round(vmin * 0.15)));
   const w = Math.round(h * 0.68);   // les vues sont plus hautes que larges
   return { w, h };
 }
@@ -7639,6 +7649,9 @@ function paintPlayerRobot(force){
   const imgs = currentRobotImages();
 
   if (!imgs){
+    // un robot est choisi mais ses images ne sont pas encore chargees :
+    // on garde ce qui est affiche plutot que de revenir au point
+    if (myRobotId) return;
     if (lastRobotPaintKey === 'point' && !force) return;
     lastRobotPaintKey = 'point';
     playerMarker.setIcon(L.divIcon({ className:'', html:'<div class="player-icon"></div>', iconSize:[18,18] }));
