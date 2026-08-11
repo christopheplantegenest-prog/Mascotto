@@ -493,7 +493,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v197</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v199</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2242,7 +2242,7 @@ function renderCombatRewardsPicker(){
   const wrap = document.getElementById('combatRewardsList');
   if (!wrap) return;
   wrap.innerHTML = items.map(it=>`
-    <button type="button" class="btn-secondary combat-reward-btn" data-item="${it.id}" style="${selectedCombatRewards.has(it.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${it.emoji||'📦'} ${it.name}</button>
+    <button type="button" class="btn-secondary combat-reward-btn" data-item="${it.id}" style="display:inline-flex; align-items:center; gap:5px; ${selectedCombatRewards.has(it.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${itemThumbHtml(it, 18)} ${it.name}</button>
   `).join('') || '<p class="meta">Aucun objet créé pour l\'instant (éditeur "Objets").</p>';
   wrap.querySelectorAll('.combat-reward-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -2251,7 +2251,8 @@ function renderCombatRewardsPicker(){
       renderCombatRewardsPicker();
     });
   });
-  const itemOptionsHtml = items.map(it=> `<option value="${it.id}">${it.emoji||'📦'} ${it.name}</option>`).join('');
+  // Les <option> d'une liste déroulante ne peuvent pas afficher d'image (limite HTML) : nom seul ici.
+  const itemOptionsHtml = items.map(it=> `<option value="${it.id}">${it.name}</option>`).join('');
   document.getElementById('editCombatStealEasy').innerHTML = '<option value="">— Aucun —</option>' + itemOptionsHtml;
   document.getElementById('editCombatStealHard').innerHTML = '<option value="">— Aucun —</option>' + itemOptionsHtml;
 }
@@ -2442,7 +2443,7 @@ function renderDialogueBuilder(){
       const itemSelect = document.createElement('select');
       itemSelect.className = 'field-input';
       let itemOpts = '<option value="">Aucun</option>';
-      items.forEach(it=>{ itemOpts += `<option value="${it.name}">${it.emoji||'📦'} ${it.name}</option>`; });
+      items.forEach(it=>{ itemOpts += `<option value="${it.name}">${it.name}</option>`; }); // pas d'image possible dans une <option>
       itemSelect.innerHTML = itemOpts;
       itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
 
@@ -3021,7 +3022,7 @@ function grantItemToPlayer(itemName, quantity){
   db.collection('players').doc(currentUser.uid).set({
     inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
   }, { merge: true })
-    .then(()=> showToast(`+${quantity} ${it.emoji || ''} ${it.name}`))
+    .then(()=> showToast(`+${quantity} ${it.name}`, it.imageUrl || ITEM_PLACEHOLDER_IMG))
     .catch((err)=> showToast('Échec : ' + err.message));
 }
 function recruitCreature(creature, metierId){
@@ -3244,9 +3245,13 @@ document.getElementById('closeBtn').addEventListener('click', ()=>{
   document.getElementById('overlay').style.zIndex = '';
 });
 
-function showToast(msg){
+function showToast(msg, iconUrl){
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  if (iconUrl){
+    t.innerHTML = `<img src="${iconUrl}" style="width:20px; height:20px; object-fit:contain; vertical-align:middle; border-radius:4px; margin-right:5px;">${msg}`;
+  } else {
+    t.textContent = msg;
+  }
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
@@ -4167,7 +4172,7 @@ function renderItemsListView(){
   items.forEach((it)=>{
     const row = document.createElement('div');
     row.className = 'editor-list-item';
-    const thumb = it.imageUrl ? `<img src="${it.imageUrl}" style="width:30px;height:30px;object-fit:contain;">` : (it.emoji || '📦');
+    const thumb = itemThumbHtml(it, 30);
     row.innerHTML = `
       <div class="thumb">${thumb}</div>
       <div class="name">${it.name || '(sans nom)'}</div>
@@ -4443,9 +4448,7 @@ function renderPickupMarkers(){
       pickupMarkers[p.id].setLatLng([p.lat, p.lng]);
       return;
     }
-    const inner = p.itemImageUrl
-      ? `<img src="${p.itemImageUrl}" style="width:36px;height:36px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));">`
-      : `<div style="font-size:28px; filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));">${p.itemEmoji || '📦'}</div>`;
+    const inner = `<img src="${p.itemImageUrl || ITEM_PLACEHOLDER_IMG}" style="width:36px;height:36px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35));">`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[36,36] });
     const marker = L.marker([p.lat, p.lng], { icon });
     marker.on('click', ()=>{ if (!isMovingMarker) handlePickupClick(p); });
@@ -4495,7 +4498,7 @@ function handlePickupClick(p){
   }
 
   Promise.all([playerUpdate, pickupUpdate])
-    .then(()=> showToast(`+${qty} ${p.itemEmoji || ''} ${p.itemName || ''}`))
+    .then(()=> showToast(`+${qty} ${p.itemName || ''}`, p.itemImageUrl || ITEM_PLACEHOLDER_IMG))
     .catch((err)=> showToast('Échec : ' + err.message));
 }
 
@@ -4512,7 +4515,7 @@ function renderPickupsSplitLists(){
 
   pickups.forEach((p)=>{
     const gone = isPermanentlyGone(p);
-    const thumb = p.itemImageUrl ? `<img src="${p.itemImageUrl}" style="width:30px;height:30px;object-fit:contain;">` : (p.itemEmoji || '📦');
+    const thumb = `<img src="${p.itemImageUrl || ITEM_PLACEHOLDER_IMG}" style="width:30px;height:30px;object-fit:contain;">`;
     const row = document.createElement('div');
     row.className = 'editor-list-item';
     row.innerHTML = `
@@ -4680,7 +4683,7 @@ function renderInventoryList(){
 
   listEl.innerHTML = '';
   pageEntries.forEach(({itemId, qty, it})=>{
-    const thumbHtml = it && it.imageUrl ? `<img src="${it.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : (it ? it.emoji : '📦');
+    const thumbHtml = it ? `<img src="${it.imageUrl || ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;">` : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;">`;
     const row = document.createElement('div');
     row.className = 'editor-list-item';
     row.innerHTML = `
@@ -4925,7 +4928,7 @@ function renderRecipeItemChooserList(){
   if (search) pool = pool.filter(it=> (it.name||'').toLowerCase().includes(search));
   listEl.innerHTML = pool.length ? pool.map(it=>`
     <div class="editor-list-item" data-choose-item="${it.id}" style="cursor:pointer;">
-      <div class="thumb">${it.imageUrl ? `<img src="${it.imageUrl}">` : (it.emoji||'📦')}</div>
+      <div class="thumb"><img src="${it.imageUrl || ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;"></div>
       <div class="name">${it.name}</div>
     </div>
   `).join('') : '<p class="meta">Aucun objet trouvé.</p>';
@@ -4990,9 +4993,15 @@ document.getElementById('pnjChooserCloseBtn').addEventListener('click', ()=>{
   document.getElementById('pnjChooserOverlay').classList.remove('show');
 });
 
-function itemThumbHtml(it){
-  if (!it) return '📦';
-  return it.imageUrl ? `<img src="${it.imageUrl}" style="width:22px; height:22px; object-fit:contain; vertical-align:middle;">` : (it.emoji || '📦');
+// Image neutre utilisée partout où un objet n'a pas (encore) d'image uploadée — remplace l'ancien
+// repli sur l'emoji de l'objet, qui n'est plus utilisé nulle part dans le jeu.
+const ITEM_PLACEHOLDER_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="3" y="3" width="58" height="58" rx="12" fill="#3a3a42" stroke="#5c5c66" stroke-width="3"/><circle cx="23" cy="23" r="6" fill="#7a7a86"/><path d="M9 47 L25 29 L35 39 L47 24 L57 47 Z" fill="#7a7a86"/></svg>`
+);
+function itemThumbHtml(it, sizePx){
+  const size = sizePx || 22;
+  const src = (it && it.imageUrl) ? it.imageUrl : ITEM_PLACEHOLDER_IMG;
+  return `<img src="${src}" style="width:${size}px; height:${size}px; object-fit:contain; vertical-align:middle; border-radius:4px;">`;
 }
 function renderRecipeInputsBuilder(){
   const wrap = document.getElementById('recipeInputsList');
@@ -5882,7 +5891,7 @@ function renderBaseResources(){
   if (!items.length){ el.innerHTML = '<span class="meta">Crée des objets dans l\'éditeur pour les voir ici.</span>'; return; }
   el.innerHTML = items.map(it=>{
     const qty = baseResources[it.id] || 0;
-    const thumb = it.imageUrl ? `<img src="${it.imageUrl}" style="width:16px; height:16px; object-fit:contain; vertical-align:middle;">` : (it.emoji||'📦');
+    const thumb = itemThumbHtml(it, 16);
     return `<span style="background:var(--bg); border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:12px; font-weight:700;">${thumb} ${qty}</span>`;
   }).join('');
 }
@@ -6120,7 +6129,7 @@ function renderRecruitSheet(){
       const canAfford = (r.inputs||[]).every(inp => (baseResources[inp.itemId]||0) >= inp.qty);
       const inputsLabel = (r.inputs||[]).map(inp=>{
         const it = items.find(i=>i.id===inp.itemId);
-        const thumb = it && it.imageUrl ? `<img src="${it.imageUrl}" style="width:14px; height:14px; object-fit:contain; vertical-align:middle;">` : (it ? it.emoji : '?');
+        const thumb = it ? itemThumbHtml(it, 14) : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:14px; height:14px; object-fit:contain; vertical-align:middle;">`;
         return `${inp.qty} ${thumb}`;
       }).join(' + ') || 'Aucune ressource';
       return `
@@ -8861,7 +8870,7 @@ function grantItemByIdToPlayer(itemId, quantity){
   db.collection('players').doc(currentUser.uid).set({
     inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
   }, { merge: true })
-    .then(()=> showToast(`+${quantity} ${it.emoji || ''} ${it.name}`))
+    .then(()=> showToast(`+${quantity} ${it.name}`, it.imageUrl || ITEM_PLACEHOLDER_IMG))
     .catch((err)=> showToast('Échec : ' + err.message));
 }
 
@@ -10445,15 +10454,20 @@ async function takeTurn(fighter){
     const decision = chooseEnemyAiAction(fighter);
     if (decision.flee){
       fighter.alive = false;
-      fighter.fled = true;
       combatState.log.unshift(`${fighter.name} prend la fuite !`);
       combatState.log = combatState.log.slice(0, 20);
-      spawnParticle(fighter.uid, '💨', '');
+      // Message "Fuite !" affiché sur l'emplacement du fuyard (comme "Raté !"), avant qu'il ne
+      // disparaisse : on ne marque fled=true qu'après ce délai, pour que le rendu ci-dessous
+      // l'affiche encore le temps du message.
+      spawnParticle(fighter.uid, '💨', 'Fuite !', 'combat-particle-miss');
       combatState.hitUids = [fighter.uid];
       renderCombat();
-      await sleep(500);
+      await sleep(700);
       combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
       combatState.hitUids = [];
+      // Marqué maintenant : renderCombat() l'exclura complètement de la ligne d'adversaires,
+      // et les survivants se recentrent automatiquement (le nombre de cartes change).
+      fighter.fled = true;
     } else if (decision.atk && decision.target){
       await playTurnAnimation(fighter, decision.atk, decision.target);
     }
@@ -10560,6 +10574,7 @@ async function playTurnAnimation(actor, attack, target){
   const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
   const fxTargets = isGroup ? combatState.fighters.filter(f=> f.side===target.side) : [target];
   combatState.missedUids = []; // rempli par resolveAttackOnTarget en cas de raté sur ce tour
+  combatState.nothingToStealUids = []; // idem, cas "plus rien à voler" sur une tentative de vol
 
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
@@ -10588,6 +10603,7 @@ async function playTurnAnimation(actor, attack, target){
     if (diff < 0){ spawnParticle(f.uid, '', String(-diff), 'combat-particle-dmg'); hitUids.push(f.uid); }
     else if (diff > 0){ spawnParticle(f.uid, '', String(diff), 'combat-particle-heal'); hitUids.push(f.uid); }
     else if ((combatState.missedUids||[]).includes(f.uid)){ spawnParticle(f.uid, '', 'Raté !', 'combat-particle-miss'); hitUids.push(f.uid); }
+    else if ((combatState.nothingToStealUids||[]).includes(f.uid)){ spawnParticle(f.uid, '', 'Rien à voler !', 'combat-particle-miss'); hitUids.push(f.uid); }
     if (aliveBefore[f.uid] && !f.alive){ spawnParticle(f.uid, '💀', ''); hitUids.push(f.uid); }
     else if (!aliveBefore[f.uid] && f.alive){ hitUids.push(f.uid); }
   });
@@ -10644,7 +10660,7 @@ function renderCombatItemMenu(fighter){
   const slots = available.length ? available.map(it=>{
     const qty = baseResources[it.id]||0;
     return `<button type="button" class="btn-secondary combat-action-item" data-itemid="${it.id}">
-      <strong>${it.emoji||'📦'} ${it.name} <span class="meta">(x${qty})</span></strong>${it.description ? `<div class="combat-atk-desc">${it.description}</div>` : ''}
+      <strong>${itemThumbHtml(it, 16)} ${it.name} <span class="meta">(x${qty})</span></strong>${it.description ? `<div class="combat-atk-desc">${it.description}</div>` : ''}
     </button>`;
   }).join('') : '<p class="meta" style="padding:8px; text-align:center;">Aucun objet utilisable en combat dans le sac.</p>';
   panel.innerHTML = `<div class="combat-attack-grid" style="max-height:118px; overflow-y:auto;">${slots}</div>`
@@ -10999,6 +11015,9 @@ function resolveAttackOnTarget(attacker, attack, target){
     if (!itemId || (tryHard && target.stolenHard)){
       combatState.log.unshift(`${attacker.name} essaie de voler ${target.name}... il n'y a plus rien à voler !`);
       combatState.log = combatState.log.slice(0, 20);
+      // Comme pour le raté, affiche un message dédié sur la cible plutôt que rien du tout.
+      combatState.nothingToStealUids = combatState.nothingToStealUids || [];
+      combatState.nothingToStealUids.push(target.uid);
       return;
     }
     const baseChance = Math.max(5, Math.min(95, attack.power || 50));
@@ -11017,6 +11036,7 @@ function resolveAttackOnTarget(attacker, attack, target){
     if (playerDocRef){
       playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
     }
+    showToast(`Volé : ${stolenItem ? (stolenItem.emoji||'📦')+' '+stolenItem.name : 'un objet'}`);
     return;
   }
 
@@ -11149,8 +11169,12 @@ function endCombat(result){
       rewardIds.forEach(id=> inc[id] = firebase.firestore.FieldValue.increment(1));
       playerDocRef.set({ inventory: inc }, { merge:true });
     }
-    const rewardNames = Array.from(rewardIds).map(id=>{ const it=items.find(i=>i.id===id); return it ? (it.emoji||'📦')+' '+it.name : null; }).filter(Boolean);
-    desc.textContent = rewardNames.length ? ('Butin : ' + rewardNames.join(', ')) : 'Combat remporté (pas de butin configuré).';
+    const rewardItemsFound = Array.from(rewardIds).map(id=> items.find(i=>i.id===id)).filter(Boolean);
+    if (rewardItemsFound.length){
+      desc.innerHTML = 'Butin : ' + rewardItemsFound.map(it=> `<span style="display:inline-flex; align-items:center; gap:3px;">${itemThumbHtml(it, 18)}${it.name}</span>`).join(', ');
+    } else {
+      desc.textContent = 'Combat remporté (pas de butin configuré).';
+    }
   } else if (result === 'defeat'){
     title.textContent = '💀 Défaite';
     desc.textContent = 'Ton équipe a été vaincue. Pas de pénalité pour ce test.';
@@ -11253,7 +11277,7 @@ function fighterCardHtml(f, idx, arr){
 function renderCombat(){
   if (!combatState) return;
   renderCombatTurnOrderBar();
-  document.getElementById('combatEnemyRow').innerHTML = combatState.fighters.filter(f=>f.side==='enemy').map(fighterCardHtml).join('');
+  document.getElementById('combatEnemyRow').innerHTML = combatState.fighters.filter(f=>f.side==='enemy' && !f.fled).map(fighterCardHtml).join('');
   document.getElementById('combatPlayerRow').innerHTML = combatState.fighters.filter(f=>f.side==='player').map(fighterCardHtml).join('');
   document.querySelectorAll('.combat-fighter').forEach(el=>{
     el.addEventListener('click', ()=> onFighterCardClick(el.dataset.fighter));
