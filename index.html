@@ -387,8 +387,11 @@
   border:1px solid rgba(255,255,255,.55); background:#333;
 }
 .combat-to-item .to-emoji img{ width:100%; height:100%; object-fit:cover; }
-.combat-to-item.next .to-emoji{ box-shadow:0 0 0 2px #ffd76a; }
+.combat-to-item.current-actor .to-emoji{ box-shadow:0 0 0 2px #ffd76a; }
+.combat-to-item.preview-move .to-emoji{ box-shadow:0 0 0 2px #4fc3f7; opacity:.75; }
 .combat-to-item.identify-selected .to-emoji img{ filter:drop-shadow(0 0 2px #4fc3f7) drop-shadow(0 0 3px #4fc3f7) brightness(1.12); }
+@keyframes combatFleeOut{ 0%{ transform:translateY(0); opacity:1; } 100%{ transform:translateY(-160px); opacity:0; } }
+.combat-fighter.combat-fleeing-out{ animation: combatFleeOut .6s ease-in forwards; }
 #combatActionPanel{
   background:#fff; border:2px solid var(--accent); border-radius:12px; padding:0; margin:0 10px 8px;
   height:var(--action-panel-height); flex:none; display:flex; flex-direction:column; justify-content:center; overflow:hidden;
@@ -493,7 +496,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v199</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v200</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -10394,6 +10397,7 @@ function decrementFighterStatuses(fighter){
 }
 
 async function takeTurn(fighter){
+  combatState.currentActorUid = fighter.uid;
   if (combatState.isPvp && fighter.side === 'enemy' && !combatState.isSpectator){
     // En JcJ, seul l'appareil du joueur concerné calcule et envoie le résultat de son propre tour.
     combatState.resolving = true;
@@ -10456,15 +10460,19 @@ async function takeTurn(fighter){
       fighter.alive = false;
       combatState.log.unshift(`${fighter.name} prend la fuite !`);
       combatState.log = combatState.log.slice(0, 20);
-      // Message "Fuite !" affiché sur l'emplacement du fuyard (comme "Raté !"), avant qu'il ne
-      // disparaisse : on ne marque fled=true qu'après ce délai, pour que le rendu ci-dessous
-      // l'affiche encore le temps du message.
+      // Message "Fuite !" affiché sur l'emplacement du fuyard (comme "Raté !"), avant l'animation de sortie.
       spawnParticle(fighter.uid, '💨', 'Fuite !', 'combat-particle-miss');
       combatState.hitUids = [fighter.uid];
       renderCombat();
       await sleep(700);
       combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
       combatState.hitUids = [];
+      // Glissement complet hors de l'écran (vers le haut) avant disparition totale — plus d'état
+      // semi-transparent laissé sur place comme avant.
+      fighter.fleeingOut = true;
+      renderCombat();
+      await sleep(600);
+      fighter.fleeingOut = false;
       // Marqué maintenant : renderCombat() l'exclura complètement de la ligne d'adversaires,
       // et les survivants se recentrent automatiquement (le nombre de cartes change).
       fighter.fled = true;
@@ -10619,6 +10627,22 @@ function renderCombatWaitingPanel(msg){
   const panel = document.getElementById('combatActionPanel');
   if (panel) panel.innerHTML = `<p class="meta" style="text-align:center;">${msg || 'En attente du prochain tour…'}</p>`;
 }
+/* Message "Choisis une cible…" affiché dans le rectangle d'attaques (plus en toast en haut), avec un
+   bouton Retour pour annuler l'attaque/l'objet/l'analyse en cours et revenir au choix précédent. */
+function renderCombatTargetingPanel(actor, promptText){
+  const panel = document.getElementById('combatActionPanel');
+  panel.innerHTML = `
+    <div style="padding:16px 8px; text-align:center;">
+      <p class="meta" style="margin:0 0 12px; font-size:13px;">${promptText}</p>
+      <button type="button" class="btn-secondary" id="combatTargetBackBtn">↩️ Retour</button>
+    </div>
+  `;
+  document.getElementById('combatTargetBackBtn').addEventListener('click', ()=>{
+    const wasItem = combatState.pendingAttack && combatState.pendingAttack.kind === 'item';
+    combatState.pendingAttack = null;
+    if (wasItem) renderCombatItemMenu(actor); else renderCombatActionButtons(actor);
+  });
+}
 function renderCombatActionButtons(fighter){
   const panel = document.getElementById('combatActionPanel');
   const silencedNote = fighter.statuses.silence ? '<p class="meta" style="padding:5px 8px 0; margin:0; color:var(--danger);">🔇 Réduit au silence : attaques magiques indisponibles.</p>' : '';
@@ -10640,7 +10664,7 @@ function renderCombatActionButtons(fighter){
   panel.querySelectorAll('.combat-action-atk').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       combatState.pendingAttack = fighter.attacksList[parseInt(btn.dataset.idx,10)];
-      showToast('Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' || combatState.pendingAttack.kind==='revive_single' ? 'alliée' : 'ennemie'));
+      renderCombatTargetingPanel(fighter, 'Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' || combatState.pendingAttack.kind==='revive_single' ? 'alliée' : 'ennemie'));
     });
   });
   document.getElementById('combatFleeBtn').addEventListener('click', combatState.isPvp ? abandonPvpDuel : attemptFlee);
@@ -10648,10 +10672,35 @@ function renderCombatActionButtons(fighter){
     const enemyPool = combatState.fighters.filter(f=>f.side!==fighter.side && f.alive);
     if (!enemyPool.length){ showToast('Aucune cible à analyser.'); return; }
     combatState.pendingAttack = { kind:'analyze' };
-    showToast('Choisis une cible ennemie à analyser');
+    renderCombatTargetingPanel(fighter, 'Choisis une cible ennemie à analyser');
   });
-  document.getElementById('combatPassBtn').addEventListener('click', ()=> passCombatTurn(fighter));
+  document.getElementById('combatPassBtn').addEventListener('click', ()=> renderCombatPassConfirmPanel(fighter));
   document.getElementById('combatItemBtn').addEventListener('click', ()=> renderCombatItemMenu(fighter));
+}
+/* Confirmation avant de passer son tour, dans le rectangle d'attaques : montre en même temps, dans la
+   barre des tours, la position que le personnage prendrait dans la file s'il passait (jauge à 50). */
+function renderCombatPassConfirmPanel(fighter){
+  const panel = document.getElementById('combatActionPanel');
+  panel.innerHTML = `
+    <div style="padding:14px 8px; text-align:center;">
+      <p class="meta" style="margin:0 0 12px; font-size:13px;">Passer ton tour ? La jauge repart à 50% (retour plus rapide qu'après une vraie action).</p>
+      <div style="display:flex; gap:8px; justify-content:center;">
+        <button type="button" class="btn-secondary" id="combatPassConfirmBtn">✔️ Confirmer</button>
+        <button type="button" class="btn-secondary" id="combatPassBackBtn">↩️ Retour</button>
+      </div>
+    </div>
+  `;
+  combatState.passPreviewUid = fighter.uid;
+  renderCombatTurnOrderBar();
+  document.getElementById('combatPassConfirmBtn').addEventListener('click', ()=>{
+    combatState.passPreviewUid = null;
+    passCombatTurn(fighter);
+  });
+  document.getElementById('combatPassBackBtn').addEventListener('click', ()=>{
+    combatState.passPreviewUid = null;
+    renderCombatActionButtons(fighter);
+    renderCombatTurnOrderBar();
+  });
 }
 /* Liste des objets consommables utilisables en combat présents dans le sac, avec un retour vers les attaques. */
 function renderCombatItemMenu(fighter){
@@ -10672,7 +10721,7 @@ function renderCombatItemMenu(fighter){
       const cu = it.combatUse;
       const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost' || cu.mode === 'revive';
       combatState.pendingAttack = { kind:'item', isItem:true, itemId:it.id, name:it.name, emoji:it.emoji, combatUse:cu, statusEffect: cu.statusEffect||null };
-      showToast('Choisis une cible ' + (friendly ? 'alliée' : 'ennemie'));
+      renderCombatTargetingPanel(fighter, 'Choisis une cible ' + (friendly ? 'alliée' : 'ennemie'));
     });
   });
   document.getElementById('combatItemBackBtn').addEventListener('click', ()=> renderCombatActionButtons(fighter));
@@ -10737,12 +10786,14 @@ function renderCombatAnalysisPanel(actor, target){
     if (!combatState.finished) saveCombatSnapshot(true);
   });
 }
-/* Simule l'avancement des jauges pour prévoir l'ordre des n prochains tours (même logique que combatTick). */
-function computeCombatTurnOrder(n){
+/* Simule l'avancement des jauges pour prévoir l'ordre des n prochains tours (même logique que combatTick).
+   previewUid : si fourni, simule la jauge de ce combattant à 50 (comme après un "Passer son tour"), pour
+   montrer sa future position dans la file sans rien changer réellement tant que ce n'est pas confirmé. */
+function computeCombatTurnOrder(n, previewUid){
   if (!combatState) return [];
   const all = combatState.fighters.filter(f=>f.alive);
   if (!all.length) return [];
-  const sim = all.map(f=>({ ref:f, gauge:f.gauge }));
+  const sim = all.map(f=>({ ref:f, gauge: (previewUid && f.uid===previewUid) ? 50 : f.gauge }));
   const queue = [];
   for (let i=0; i<n; i++){
     let minTicks = Infinity;
@@ -10766,11 +10817,14 @@ function computeCombatTurnOrder(n){
 function renderCombatTurnOrderBar(){
   const bar = document.getElementById('combatTurnOrderBar');
   if (!bar || !combatState) return;
-  const queue = computeCombatTurnOrder(10);
+  const previewUid = combatState.passPreviewUid || null;
+  const queue = computeCombatTurnOrder(10, previewUid);
   bar.innerHTML = queue.map((f, idx)=>{
     const selected = f.identifyUntil && f.identifyUntil > Date.now();
+    const isCurrent = f.uid === combatState.currentActorUid;
+    const isPreviewed = previewUid && f.uid === previewUid;
     return `
-    <div class="combat-to-item${idx===0?' next':''}${selected?' identify-selected':''}">
+    <div class="combat-to-item${isCurrent?' current-actor':''}${isPreviewed?' preview-move':''}${selected?' identify-selected':''}">
       <div class="to-emoji">${f.imageUrl ? `<img src="${f.thumbUrl || f.imageUrl}">` : (f.side==='player'?'🧑':'👾')}</div>
     </div>
   `;}).join('');
@@ -11242,7 +11296,7 @@ function fighterCardHtml(f, idx, arr){
   const targetable = f.alive || (isReviveAction && pendingActorFighter && f.side === pendingActorFighter.side);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
   const isHit = (combatState.hitUids||[]).includes(f.uid);
-  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':''].filter(Boolean).join(' ');
+  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'', f.fleeingOut?'combat-fleeing-out':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
   const infoHtml = `
@@ -11267,7 +11321,7 @@ function fighterCardHtml(f, idx, arr){
     </div>
   `;
   return `
-    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${f.alive?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
+    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${(f.alive || f.fleeingOut)?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
       <div style="transform:translateX(${shiftX}px);">
         ${f.side==='enemy' ? infoHtml + avatarHtml : avatarHtml + infoHtml}
       </div>
