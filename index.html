@@ -109,20 +109,33 @@
     box-shadow:0 0 0 2px rgba(255,255,255,.9);
   }
   .player-robot{
-    width:44px; height:44px; position:relative;
-    display:flex; align-items:flex-end; justify-content:center;
+    position:relative; display:flex; align-items:flex-end; justify-content:center;
+    width:100%; height:100%;
   }
   .player-robot img{
-    max-width:100%; max-height:100%; object-fit:contain;
+    width:100%; height:100%; object-fit:contain; object-position:center bottom;
     display:block; filter:drop-shadow(0 2px 3px rgba(0,0,0,.4));
-    transition:opacity .13s linear;
-    will-change:transform;
+    animation:robotFloat 2.2s ease-in-out infinite;
+    transform-origin:center bottom;
+  }
+  .player-robot.mir img{ animation-name:robotFloatMir; }
+  @keyframes robotFloat{
+    0%,100%{ transform:translateY(0); }
+    50%{ transform:translateY(-9%); }
+  }
+  @keyframes robotFloatMir{
+    0%,100%{ transform:translateY(0) scaleX(-1); }
+    50%{ transform:translateY(-9%) scaleX(-1); }
   }
   .player-robot .prshadow{
-    position:absolute; left:50%; bottom:-2px; width:22px; height:6px;
-    margin-left:-11px; border-radius:50%;
+    position:absolute; left:50%; bottom:0; width:46%; height:10%;
+    transform:translateX(-50%); border-radius:50%;
     background:radial-gradient(ellipse, rgba(0,0,0,.45), transparent 70%);
-    pointer-events:none;
+    pointer-events:none; animation:robotShadow 2.2s ease-in-out infinite;
+  }
+  @keyframes robotShadow{
+    0%,100%{ transform:translateX(-50%) scaleX(1); opacity:.55; }
+    50%{ transform:translateX(-50%) scaleX(.8); opacity:.35; }
   }
   .robot-pick-grid{ display:flex; gap:8px; overflow-x:auto; padding:4px 0 6px; }
   .robot-pick-grid button{
@@ -532,7 +545,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v205</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v206</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7530,7 +7543,6 @@ function setMyRobot(id){
 let robotFacing = 4;              // on demarre de face (Sud)
 let robotLastFixPos = null;       // derniere position retenue apres filtrage
 let robotRecentCaps = [];         // caps recents, pour lisser
-let robotFloatRaf = null;
 
 const ROBOT_MOVE_THRESHOLD_M = 2; // en dessous, c'est du bruit GPS
 const ROBOT_CAP_SAMPLES = 3;      // nb de caps moyennes
@@ -7603,63 +7615,69 @@ function currentRobotImages(){
   return (r && r.images && r.images.face) ? r.images : null;
 }
 
-function paintPlayerRobot(){
-  const el = document.querySelector('.player-robot img');
-  if (!el) return;
-  const imgs = currentRobotImages();
-  if (!imgs) return;
-  const d = ROBOT_DIRS[robotFacing] || ROBOT_DIRS[4];
-  const src = imgs[d.k] || imgs.face;
-  if (src && el.getAttribute('src') !== src) el.setAttribute('src', src);
-  el.style.transform = d.m ? 'scaleX(-1)' : 'none';
+/* Taille du robot : proportionnelle a l'ecran, pour rendre pareil
+   sur un petit et un grand telephone. Bornee pour rester lisible. */
+function robotIconSize(){
+  const vmin = Math.min(window.innerWidth, window.innerHeight);
+  const h = Math.max(26, Math.min(46, Math.round(vmin * 0.075)));
+  const w = Math.round(h * 0.68);   // les vues sont plus hautes que larges
+  return { w, h };
 }
 
-// bascule entre le point d'origine et le robot, selon le choix du joueur
-function refreshPlayerRobotVisual(){
+let lastRobotPaintKey = null;
+
+function robotIconHtml(imgs, dirIdx){
+  const d = ROBOT_DIRS[dirIdx] || ROBOT_DIRS[4];
+  const src = imgs[d.k] || imgs.face;
+  return `<div class="player-robot${d.m ? ' mir' : ''}"><div class="prshadow"></div><img src="${src}" alt=""></div>`;
+}
+
+/* Repeint uniquement si quelque chose a vraiment change : evite de
+   recreer le marqueur en boucle (c'est ce qui le faisait clignoter). */
+function paintPlayerRobot(force){
   if (typeof playerMarker === 'undefined' || !playerMarker) return;
   const imgs = currentRobotImages();
+
   if (!imgs){
+    if (lastRobotPaintKey === 'point' && !force) return;
+    lastRobotPaintKey = 'point';
     playerMarker.setIcon(L.divIcon({ className:'', html:'<div class="player-icon"></div>', iconSize:[18,18] }));
-    stopRobotFloat();
     return;
   }
-  const d = ROBOT_DIRS[robotFacing] || ROBOT_DIRS[4];
-  const src = imgs[d.k] || imgs.face;
+
+  const size = robotIconSize();
+  const key = (myRobotId || '') + '|' + robotFacing + '|' + size.h;
+  if (key === lastRobotPaintKey && !force){
+    // rien n'a change : on verifie juste que l'element est toujours la
+    if (document.querySelector('.player-robot')) return;
+  }
+  lastRobotPaintKey = key;
+
   playerMarker.setIcon(L.divIcon({
     className: '',
-    html: `<div class="player-robot"><div class="prshadow"></div><img src="${src}" style="transform:${d.m?'scaleX(-1)':'none'}"></div>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 40],
+    html: robotIconHtml(imgs, robotFacing),
+    iconSize: [size.w, size.h],
+    iconAnchor: [Math.round(size.w/2), size.h],
   }));
-  startRobotFloat();
 }
 
-function startRobotFloat(){
-  if (robotFloatRaf) return;
-  const t0 = performance.now();
-  const step = (t)=>{
-    robotFloatRaf = requestAnimationFrame(step);
-    const holder = document.querySelector('.player-robot');
-    if (!holder) return;
-    const img = holder.querySelector('img');
-    const sh = holder.querySelector('.prshadow');
-    const ph = Math.sin((t - t0) / 2000 * Math.PI * 2);
-    if (img){
-      const d = ROBOT_DIRS[robotFacing] || ROBOT_DIRS[4];
-      const mir = d.m ? ' scaleX(-1)' : '';
-      img.style.transform = `translateY(${(-ph*4).toFixed(1)}px)${mir}`;
-    }
-    if (sh){
-      sh.style.transform = `scaleX(${(1 + ph*0.18).toFixed(3)})`;
-      sh.style.opacity = (0.55 - Math.max(0, ph) * 0.2).toFixed(2);
-    }
-  };
-  robotFloatRaf = requestAnimationFrame(step);
+function refreshPlayerRobotVisual(){
+  paintPlayerRobot(true);
 }
 
-function stopRobotFloat(){
-  if (robotFloatRaf){ cancelAnimationFrame(robotFloatRaf); robotFloatRaf = null; }
-}
+/* Filet de securite : si le marqueur disparait pour une raison
+   exterieure (re-rendu de la carte, changement d'onglet...), on le
+   remet sans que le joueur ait a faire quoi que ce soit. */
+setInterval(()=>{
+  try {
+    if (!myRobotId) return;
+    if (typeof playerMarker === 'undefined' || !playerMarker) return;
+    if (!currentRobotImages()) return;
+    if (!document.querySelector('.player-robot')) paintPlayerRobot(true);
+  } catch(e){}
+}, 1200);
+
+window.addEventListener('resize', ()=>{ try { paintPlayerRobot(true); } catch(e){} });
 
 const questsCol = (typeof db !== 'undefined') ? db.collection('quests') : null;
 let quests = [];
