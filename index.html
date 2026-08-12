@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v224</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v226</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -605,6 +605,7 @@
     <div class="icon-row">
       <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
       <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
+      <button class="icon-btn" id="shipBtn" title="Vaisseau" style="display:none;">🚀</button>
       <button class="icon-btn" id="nearbyPlayersBtn" title="Joueurs proches">👥</button>
       <button class="icon-btn" id="tradeOffersBtn" title="Négociations">🤝<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
       <button class="icon-btn" id="questTrackerBtn" title="Suivi des quêtes">🧭</button>
@@ -827,6 +828,8 @@
       <input type="number" id="missionsPerDayInput" class="field-input" min="1" max="10" step="1" placeholder="3">
       <button class="btn-secondary" id="saveMissionsPerDayBtn" style="flex:1;">Enregistrer</button>
     </div>
+    <button class="btn-secondary" id="toggleMissionChanceBtn" style="width:100%; margin-top:6px;">👁️ Afficher domaine et % (équilibrage)</button>
+    <p class="meta" style="margin:4px 0 0;">Les joueurs ne voient ni le domaine ni le pourcentage : ils doivent lire le courrier pour deviner quel profil envoyer.</p>
 
     <div class="field-label" style="margin-top:14px;">🏥 Infirmerie</div>
     <p class="meta" style="margin:0 0 6px;">Durée d'un K.O. (minutes), PV au réveil (% du max), récupération au repos (% du max par minute).</p>
@@ -1971,6 +1974,7 @@
     <div class="scene-actionrow">
       <button id="sceneEditorDeleteBtn" style="background:var(--danger); color:#fff; display:none;">🗑️ Supprimer le point</button>
       <button class="btn-capture" id="sceneEditorSaveBtn">💾 Enregistrer la scène</button>
+      <button class="btn-secondary" id="sceneEditorShipBtn" style="width:100%; margin-top:8px;">🚀 Utiliser cette zone comme vaisseau</button>
     </div>
   </div>
 </div>
@@ -6769,21 +6773,26 @@ document.getElementById('recruitCombattantTestBtn').addEventListener('click', ()
    Un domaine ne se règle nulle part sur la fiche du combattant : il se DÉDUIT de ce qu'il sait
    déjà faire (ses attaques apprises, sa meilleure caractéristique). Rien à saisir en double. */
 const MISSION_DOMAINS = [
-  { id:'soin',    label:'🩹 Soin',    hint:'connaît une attaque de soin' },
-  { id:'secours', label:'✨ Secours', hint:'connaît une attaque de réanimation' },
-  { id:'vol',     label:'🗝️ Vol',    hint:'connaît une attaque de vol' },
-  { id:'chasse',  label:'⚔️ Chasse',  hint:'sa meilleure caractéristique est l\'attaque' },
-  { id:'magie',   label:'🔮 Magie',   hint:'sa meilleure caractéristique est l\'attaque magique' },
-  { id:'escorte', label:'🛡️ Escorte', hint:'sa meilleure caractéristique est la défense' },
-  { id:'course',  label:'⚡ Course',  hint:'sa meilleure caractéristique est la vitesse' },
+  { id:'soin',    label:'🩹 Soin',    hint:'connaît une attaque de soin',              need:'quelqu\'un sachant soigner' },
+  { id:'secours', label:'✨ Secours', hint:'connaît une attaque de réanimation',       need:'quelqu\'un capable de ranimer un blessé' },
+  { id:'vol',     label:'🗝️ Vol',    hint:'connaît une attaque de vol',               need:'quelqu\'un sachant dérober discrètement' },
+  { id:'chasse',  label:'⚔️ Chasse',  hint:'sa meilleure caractéristique est l\'attaque', need:'quelqu\'un de redoutable au combat' },
+  { id:'magie',   label:'🔮 Magie',   hint:'sa meilleure caractéristique est l\'attaque magique', need:'quelqu\'un de versé dans la magie' },
+  { id:'escorte', label:'🛡️ Escorte', hint:'sa meilleure caractéristique est la défense', need:'quelqu\'un de solide, capable d\'encaisser' },
+  { id:'course',  label:'⚡ Course',  hint:'sa meilleure caractéristique est la vitesse', need:'quelqu\'un de rapide' },
 ];
 function missionDomainLabel(id){
   const d = MISSION_DOMAINS.find(x=> x.id === id);
   return d ? d.label : '—';
 }
+function missionDomainNeed(id){
+  const d = MISSION_DOMAINS.find(x=> x.id === id);
+  return d ? d.need : 'un autre profil';
+}
 const missionsCol = (typeof db !== 'undefined') ? db.collection('missions') : null;
 let missionTemplates = [];
 let missionsPerDay = 3;
+let missionShowChance = false; // outil d'équilibrage : réaffiche le domaine et le % de réussite
 let playerMissionRuns = {};   // { missionId: { recruitId, startedAt, durationSec, success, reported } }
 let playerDailyMissions = { date:null, ids:[] };
 
@@ -6798,6 +6807,9 @@ if (typeof db !== 'undefined' && db){
   db.collection('app_config').doc('missions').onSnapshot((doc)=>{
     const d = doc.exists ? doc.data() : {};
     if (d.perDay != null) missionsPerDay = d.perDay;
+    missionShowChance = !!d.showChance;
+    const b = document.getElementById('toggleMissionChanceBtn');
+    if (b) b.textContent = missionShowChance ? '👁️ Masquer domaine et % (vue joueur)' : '👁️ Afficher domaine et % (équilibrage)';
     const input = document.getElementById('missionsPerDayInput');
     if (input && document.activeElement !== input) input.value = missionsPerDay;
   }, ()=>{});
@@ -6830,6 +6842,22 @@ function missionSuccessChance(m, r){
   if (m.requiredTribe && (r.combatStats||{}).tribe === m.requiredTribe) c += (m.tribeBonus != null) ? m.tribeBonus : 20;
   if (m.requiredMetierId && r.metierId === m.requiredMetierId) c += (m.metierBonus != null) ? m.metierBonus : 20;
   return Math.max(0, Math.min(100, Math.round(c)));
+}
+/* Ce que le joueur doit savoir d'un combattant pour choisir : ses spécialités et son métier.
+   C'est volontairement le SEUL indice donné — l'exigence de la mission, elle, n'est écrite
+   que dans le texte du courrier, pour qu'il faille le lire (décision de conception v225 :
+   sans ça, le joueur appariait deux étiquettes sans jamais lire une ligne). */
+function recruitSpecialtyLabel(r){
+  const out = [];
+  if (recruitHasAttackKind(r, a=> a.kind === 'heal_single' || a.kind === 'heal_group')) out.push('🩹 Soin');
+  if (recruitHasAttackKind(r, a=> a.kind === 'revive_single')) out.push('✨ Secours');
+  if (recruitHasAttackKind(r, a=> a.kind === 'steal')) out.push('🗝️ Vol');
+  out.push(missionDomainLabel(recruitBestStat(r)));
+  const metier = metiers.find(m=> m.id === r.metierId);
+  if (metier) out.push('🛠️ ' + metier.name);
+  const tribu = (r.combatStats || {}).tribe;
+  if (tribu) out.push(tribu);
+  return out.join(' · ');
 }
 function missionRunOf(recruitId){
   const mid = Object.keys(playerMissionRuns).find(k=> playerMissionRuns[k] && playerMissionRuns[k].recruitId === recruitId);
@@ -6870,6 +6898,7 @@ function sendRecruitOnMission(m, r){
     durationSec: m.durationSec || 600,
     chance,
     success: (Math.random()*100 < chance), // tiré au départ : recharger la page ne rejoue pas le dé
+    matched: recruitMatchesDomain(r, m.domain), // sert à expliquer l'échec dans le rapport
     reported: false,
   };
   playerMissionRuns[m.id] = run;
@@ -6935,10 +6964,20 @@ function openMissionReport(missionId){
     }
   }
 
+  /* Le joueur n'a jamais su ce que la mission demandait : c'est ici qu'il l'apprend, après coup.
+     C'est la contrepartie du domaine masqué — sinon il ne progresserait jamais. */
+  let lecon = '';
+  if (!run.success){
+    const matched = (run.matched != null) ? run.matched : (r ? recruitMatchesDomain(r, m.domain) : false);
+    lecon = matched
+      ? 'Il avait le bon profil, mais la chance n\'était pas de son côté.'
+      : 'Ce n\'était pas son domaine : il fallait ' + missionDomainNeed(m.domain) + '.';
+  }
   document.getElementById('missionReportTitle').textContent = (run.success ? '✅ ' : '❌ ') + (m.name || 'Mission');
   document.getElementById('missionReportBody').innerHTML = `
     <p class="meta" style="margin-top:0;">${nom} est rentré${run.success ? '' : ''}.</p>
     <p style="font-size:14px;">${(run.success ? (m.successText || 'La mission est un succès.') : (m.failText || 'La mission a échoué.'))}</p>
+    ${lecon ? `<p class="meta">${lecon}</p>` : ''}
     ${extra ? `<p class="meta">${extra}</p>` : ''}
     ${(recompense > 0 && it) || coins > 0 ? `<div class="field-label">Rapporté</div>${(recompense > 0 && it) ? `<div class="pos-status">${itemThumbHtml(it, 18)} ${it.name} × ${recompense}</div>` : ''}${coins > 0 ? `<div class="pos-status">🪙 ${coins} pièce(s)</div>` : ''}` : '<p class="meta">Aucune récompense.</p>'}
   `;
@@ -7002,7 +7041,7 @@ function renderMissionTracker(){
       const it = items.find(i=> i.id === m.rewardItemId);
       return `<div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${m.name || '(sans nom)'}<span class="meta" style="display:block;">${m.description || ''}</span></div>
-        <div class="meta" style="margin-top:4px;">${missionDomainLabel(m.domain)} · ${formatRemainingDuration((m.durationSec||600)*1000)}${it ? ' · ' + it.name + ' × ' + (m.rewardQty||1) : ''}${m.rewardCoins ? ' · 🪙 ' + m.rewardCoins : ''}</div>
+        <div class="meta" style="margin-top:4px;">${missionShowChance ? missionDomainLabel(m.domain) + ' · ' : ''}${formatRemainingDuration((m.durationSec||600)*1000)}${it ? ' · ' + it.name + ' × ' + (m.rewardQty||1) : ''}${m.rewardCoins ? ' · 🪙 ' + m.rewardCoins : ''}</div>
         <button class="btn-capture" data-mission-send="${m.id}" style="width:100%; margin-top:6px;">Envoyer un combattant</button>
         <div data-mission-team="${m.id}" style="display:none; margin-top:6px;"></div>
       </div>`;
@@ -7025,12 +7064,13 @@ function renderMissionTracker(){
         box.innerHTML = '<p class="meta" style="margin:0;">Aucun combattant disponible : ils sont dans ton équipe, K.O., ou déjà partis.</p>';
       } else {
         box.innerHTML = cands.map(r=>{
-          const ch = missionSuccessChance(m, r);
-          const ok = recruitMatchesDomain(r, m.domain);
-          return `<button class="btn-secondary" data-mission-pick="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px;">
-            ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:22px;height:22px;object-fit:contain;border-radius:50%;flex:none;">` : '<span style="flex:none;">⚔️</span>'}
-            <span style="flex:1; text-align:left;">${r.name}${ok ? ' ✓' : ''}</span>
-            <span class="meta" style="font-size:11px;">${ch}%</span>
+          return `<button class="btn-secondary" data-mission-pick="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; text-align:left;">
+            ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:26px;height:26px;object-fit:contain;border-radius:50%;flex:none;">` : '<span style="flex:none;">⚔️</span>'}
+            <span style="flex:1; min-width:0;">
+              <span style="display:block; font-weight:700;">${r.name}</span>
+              <span class="meta" style="display:block; font-size:10px;">${recruitSpecialtyLabel(r)}</span>
+            </span>
+            ${missionShowChance ? `<span class="meta" style="font-size:11px; flex:none;">${missionSuccessChance(m, r)}%${recruitMatchesDomain(r, m.domain) ? ' ✓' : ''}</span>` : ''}
           </button>`;
         }).join('');
       }
@@ -7183,6 +7223,13 @@ function saveMissionForm(){
 document.getElementById('missionNewBtn').addEventListener('click', ()=> openMissionForm(null));
 document.getElementById('missionReportCloseBtn').addEventListener('click', ()=>{
   document.getElementById('missionReportOverlay').classList.remove('show');
+});
+document.getElementById('toggleMissionChanceBtn').addEventListener('click', ()=>{
+  if (!db){ showToast('Firebase indisponible ici'); return; }
+  const v = !missionShowChance;
+  db.collection('app_config').doc('missions').set({ showChance: v }, { merge:true })
+    .then(()=>{ missionShowChance = v; renderMissionTracker(); showToast(v ? 'Domaine et % affichés' : 'Vue joueur rétablie'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
 });
 document.getElementById('saveMissionsPerDayBtn').addEventListener('click', ()=>{
   if (!db){ showToast('Firebase indisponible ici'); return; }
@@ -8060,6 +8107,10 @@ setInterval(()=>{
 }, 1000);
 
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
+document.getElementById('shipBtn').addEventListener('click', ()=>{
+  if (!shipZoneId){ showToast('Aucune zone n\'est désignée comme vaisseau'); return; }
+  openSceneView({ id: shipZoneId, name: 'Vaisseau' }, null, { isShip:true });
+});
 document.getElementById('baseBtn').addEventListener('click', ()=>{
   watchPlayerInventoryForBase();
   renderBaseResources();
@@ -9651,6 +9702,23 @@ optionsMusicMuteBtn.addEventListener('click', ()=>{
 
 /* ---------- Scène d'exploration : structure minimale (image + points, pas encore de comportement) ---------- */
 const zonesCol = (typeof db !== 'undefined') ? db.collection('exploration_zones') : null;
+
+/* ---------- Le vaisseau (v226) ----------
+   Le vaisseau est une zone d'exploration ORDINAIRE, créée dans l'éditeur de zones comme les
+   autres : l'auteur y pose son hall, ses couloirs et ses chambres avec les outils qu'il connaît
+   déjà. Une seule chose la distingue : elle est désignée comme « le vaisseau », ce qui la rend
+   accessible par un bouton au lieu d'être découverte en marchant sur la carte.
+
+   Elle ne sauvegarde pas la position du joueur et ne déclenche pas de rencontres : on n'explore
+   pas chez soi, et se retrouver dans son vaisseau après un rechargement serait déroutant. */
+let shipZoneId = null;
+if (typeof db !== 'undefined' && db){
+  db.collection('app_config').doc('ship').onSnapshot((doc)=>{
+    shipZoneId = (doc.exists && doc.data().zoneId) || null;
+    const btn = document.getElementById('shipBtn');
+    if (btn) btn.style.display = shipZoneId ? 'flex' : 'none';
+  }, ()=>{});
+}
 const SCENE_POINT_TYPES = [
   { id:'sortie', label:'🚪 Sortie' },
   { id:'objet', label:'🎒 Objet' },
@@ -9660,6 +9728,7 @@ const SCENE_POINT_TYPES = [
   { id:'sortie_zone', label:'🏳️ Sortie de zone' },
   { id:'decor', label:'🖼️ Décor' },
   { id:'image', label:'🔍 Image en grand' },
+  { id:'chambre', label:'🛏️ Chambre' },
 ];
 
 /* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
@@ -10633,6 +10702,36 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'chambre'){
+    const otherScenes = sceneEditorScenes.filter(s=>s.id !== sceneEditorCurrentSceneId);
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une porte de chambre. Elle ne s'ouvre que si son habitant est recruté ET présent au vaisseau — sinon elle reste verrouillée, en disant pourquoi.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Qui habite ici</div>
+      <button type="button" class="btn-secondary" data-room-pnj-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.25) !important;">${pt.linkedPnjName ? '👤 ' + pt.linkedPnjName : 'Choisir un PNJ…'}</button>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Sa chambre</div>
+      <select data-room-target class="field-input">
+        <option value="">Aucune scène choisie</option>
+        ${otherScenes.map(s=>`<option value="${s.id}" ${pt.targetSceneId===s.id?'selected':''}>${s.name}</option>`).join('')}
+      </select>
+      ${!otherScenes.length ? `<p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Crée d'abord une scène pour sa chambre (bouton 🎬 Scènes), avec son image.</p>` : ''}
+    `;
+    typeWrap.querySelector('[data-room-pnj-pick]').addEventListener('click', ()=>{
+      openPnjChooser((id, c)=>{
+        pt.linkedPnjId = id;
+        pt.linkedPnjName = c.name || 'PNJ';
+        pt.linkedPnjEmoji = c.emoji || '👤';
+        pt.linkedPnjImageUrl = c.imageUrl || '';
+        renderSceneEditorPoints();
+        renderSceneDetailAppearance(pt);
+        renderSceneDetailTypeSpecific(pt);
+      });
+    });
+    typeWrap.querySelector('[data-room-target]').addEventListener('change', (e)=>{
+      pt.targetSceneId = e.target.value || null;
+    });
+    return;
+  }
+
   if (pt.type === 'pnj'){
     typeWrap.innerHTML = `
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">PNJ affiché à ce point</div>
@@ -10886,6 +10985,20 @@ document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openS
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorFull').classList.remove('show');
 });
+document.getElementById('sceneEditorShipBtn').addEventListener('click', async ()=>{
+  if (!sceneEditorZoneId || !db){ showToast('Firebase indisponible ici'); return; }
+  if (shipZoneId === sceneEditorZoneId){
+    if (!(await appConfirm('Cette zone est déjà le vaisseau. Ne plus l\'utiliser comme vaisseau ?'))) return;
+    db.collection('app_config').doc('ship').set({ zoneId: null }, { merge:true })
+      .then(()=> showToast('Ce n\'est plus le vaisseau'))
+      .catch((err)=> showToast('Échec : ' + err.message));
+    return;
+  }
+  if (!(await appConfirm('Utiliser cette zone comme vaisseau ? Elle ne sera plus explorée depuis la carte mais depuis le bouton 🚀.'))) return;
+  db.collection('app_config').doc('ship').set({ zoneId: sceneEditorZoneId }, { merge:true })
+    .then(()=> showToast('Zone désignée comme vaisseau'))
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
 document.getElementById('sceneEditorSaveBtn').addEventListener('click', async ()=>{
   if (!sceneEditorZoneId || !zonesCol) return;
   syncCurrentVariantFromEditorState();
@@ -10920,6 +11033,7 @@ let sceneViewCreature = null;
 let lastZoneExitId = null, lastZoneExitAt = 0;
 const ZONE_REENTRY_COOLDOWN_MS = 3000;
 let sceneViewScenes = [];
+let sceneViewIsShip = false;
 let sceneViewCurrentSceneId = null;
 let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
 let sceneViewPointState = {}; // état partagé de la zone (modes once/timed) : { [pointId]: { takenAt } }
@@ -10955,7 +11069,8 @@ function markScenePointTaken(pt){
   }, { merge: true });
 }
 
-function openSceneView(creature, resumeSceneId){
+function openSceneView(creature, resumeSceneId, opts){
+  sceneViewIsShip = !!(opts && opts.isShip);
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
@@ -10981,8 +11096,10 @@ function openSceneView(creature, resumeSceneId){
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
-    saveCurrentZoneScene();
-    if (!resumeSceneId) rollSceneEncounter();
+    if (!sceneViewIsShip){
+      saveCurrentZoneScene();
+      if (!resumeSceneId) rollSceneEncounter();
+    }
   }).catch(()=>{ empty.style.display = 'block'; });
 }
 
@@ -11058,8 +11175,7 @@ async function renderSceneViewCurrentScene(){
           if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
             sceneViewCurrentSceneId = pt.targetSceneId;
             renderSceneViewCurrentScene();
-            saveCurrentZoneScene();
-            rollSceneEncounter();
+            if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
           } else {
             document.getElementById('sceneViewFull').classList.remove('show');
             if (!combatState) await clearSavedCombat();
@@ -11101,6 +11217,24 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=>{
         document.getElementById('sceneDialogueText').textContent = pt.text || '(pas de texte configuré)';
         document.getElementById('sceneDialogueOverlay').classList.add('show');
+      };
+    } else if (pt.type === 'chambre'){
+      /* Trois états, et un seul message par état : une porte qui refuse de s'ouvrir sans dire
+         pourquoi est frustrante, alors qu'avec la raison c'est une information utile. */
+      wrapPointActions[pt.id] = ()=>{
+        if (!pt.linkedPnjId){ showToast('Cette porte n\'a pas encore d\'habitant configuré'); return; }
+        const hab = recruits.find(r=> r.sourceCreatureId === pt.linkedPnjId);
+        if (!hab){ showToast('🚪 Chambre inoccupée'); return; }
+        if (recruitIsAway(hab)){ showToast('🔒 ' + hab.name + ' est parti en mission'); return; }
+        if (recruitIsKo(hab)){ showToast('🔒 ' + hab.name + ' est à l\'infirmerie'); return; }
+        if (recruitIsResting(hab)){ showToast('🔒 ' + hab.name + ' se repose à l\'infirmerie'); return; }
+        if (!pt.targetSceneId || !sceneViewScenes.find(s=> s.id === pt.targetSceneId)){
+          showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
+          return;
+        }
+        sceneViewCurrentSceneId = pt.targetSceneId;
+        renderSceneViewCurrentScene();
+        if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
       };
     } else if (pt.type === 'image'){
       wrapPointActions[pt.id] = ()=>{
