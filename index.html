@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v220</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v221</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -807,6 +807,8 @@
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
     <button class="btn-secondary" id="createStarterRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Créer les robots de départ</button>
+    <button class="btn-secondary" id="createTestMissionsBtn" style="width:100%; margin-bottom:10px;">📨 Créer 20 missions de test</button>
+    <button class="btn-secondary" id="deleteTestMissionsBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les missions de test</button>
     <button class="btn-secondary" id="resetZonePointsBtn" style="width:100%; margin-bottom:10px;">🔄 Réinitialiser mes points de zone pris (objets/boss)</button>
 
     <div class="field-label" style="margin-top:14px;">🧭 Durée de la mission d'exploration (fixe, pour tout le monde)</div>
@@ -6616,7 +6618,7 @@ function watchPlayerInventoryForBase(){
     baseResources = (doc.exists && doc.data().inventory) || {};
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
-    playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[] };
+    playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
     renderMissionTracker();
     renderBaseResources();
     renderCombattantsRoster();
@@ -6705,6 +6707,7 @@ function renderBaseRoster(){
   renderCombattantsRoster();
 }
 function renderCombattantsRoster(){
+  tidyFinishedRest();
   renderInfirmarySection(); // tient le badge de l'onglet à jour
   const grid = document.getElementById('baseCombattantsRoster');
   if (!grid) return;
@@ -6719,7 +6722,7 @@ function renderCombattantsRoster(){
         <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '⚔️'}</div>
         <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
         <div style="margin:3px 0 2px;">${hpBarHtml(recruitEffectiveHp(r), recruitMaxHp(r), 5)}</div>
-        <div class="meta" style="font-size:10px;">${recruitIsAway(r) ? '📨 En mission' : (recruitIsKo(r) ? '💀 K.O.' : (r.restingSince ? '🛏️ Au repos' : recruitEffectiveHp(r) + '/' + recruitMaxHp(r) + ' PV'))}</div>
+        <div class="meta" style="font-size:10px;">${recruitIsAway(r) ? '📨 En mission' : (recruitIsKo(r) ? '💀 K.O.' : (recruitIsResting(r) ? '🛏️ Au repos' : recruitEffectiveHp(r) + '/' + recruitMaxHp(r) + ' PV'))}</div>
       </div>
     `;
   }).join('') || '<p class="meta">Aucun combattant recruté pour l\'instant.</p>';
@@ -6847,7 +6850,7 @@ function ensureDailyMissions(){
   if (!missionTemplates.length) return;
   const pool = missionTemplates.slice().sort(()=> Math.random() - 0.5);
   const ids = pool.slice(0, Math.max(1, missionsPerDay)).map(m=> m.id);
-  playerDailyMissions = { date: todayKey(), ids };
+  playerDailyMissions = { date: todayKey(), ids, done: [] }; // `done` : traitées aujourd'hui, voir plus bas
   playerDocRef.set({ dailyMissions: playerDailyMissions }, { merge:true })
     .catch((err)=> showToast('Courrier non enregistré : ' + err.message));
 }
@@ -6900,12 +6903,15 @@ function openMissionReport(missionId){
   const nom = r ? r.name : 'Ton combattant';
   const it = items.find(i=> i.id === m.rewardItemId);
   let recompense = 0;
+  let coins = 0;
   let extra = '';
 
   if (run.success){
     recompense = m.rewardQty || 1;
+    coins = m.rewardCoins || 0;
   } else if (m.failMode === 'reduit'){
     recompense = Math.max(1, Math.floor((m.rewardQty || 1) / 2));
+    coins = Math.floor((m.rewardCoins || 0) / 2);
     extra = 'Il rapporte quand même une partie de ce qui était prévu.';
   } else if (m.failMode === 'blesse' && r){
     const max = recruitMaxHp(r);
@@ -6917,9 +6923,14 @@ function openMissionReport(missionId){
     extra = 'Il rentre blessé : ' + hp + '/' + max + ' PV.';
   }
 
-  if (recompense > 0 && it && playerDocRef){
-    playerDocRef.set({ inventory: { [it.id]: firebase.firestore.FieldValue.increment(recompense) } }, { merge:true })
-      .catch((err)=> showToast('Récompense non ajoutée : ' + err.message));
+  if (playerDocRef){
+    const maj = {};
+    if (recompense > 0 && it) maj.inventory = { [it.id]: firebase.firestore.FieldValue.increment(recompense) };
+    if (coins > 0) maj.coins = firebase.firestore.FieldValue.increment(coins);
+    if (Object.keys(maj).length){
+      playerDocRef.set(maj, { merge:true })
+        .catch((err)=> showToast('Récompense non ajoutée : ' + err.message));
+    }
   }
 
   document.getElementById('missionReportTitle').textContent = (run.success ? '✅ ' : '❌ ') + (m.name || 'Mission');
@@ -6927,9 +6938,16 @@ function openMissionReport(missionId){
     <p class="meta" style="margin-top:0;">${nom} est rentré${run.success ? '' : ''}.</p>
     <p style="font-size:14px;">${(run.success ? (m.successText || 'La mission est un succès.') : (m.failText || 'La mission a échoué.'))}</p>
     ${extra ? `<p class="meta">${extra}</p>` : ''}
-    ${(recompense > 0 && it) ? `<div class="field-label">Rapporté</div><div class="pos-status">${itemThumbHtml(it, 18)} ${it.name} × ${recompense}</div>` : '<p class="meta">Aucune récompense.</p>'}
+    ${(recompense > 0 && it) || coins > 0 ? `<div class="field-label">Rapporté</div>${(recompense > 0 && it) ? `<div class="pos-status">${itemThumbHtml(it, 18)} ${it.name} × ${recompense}</div>` : ''}${coins > 0 ? `<div class="pos-status">🪙 ${coins} pièce(s)</div>` : ''}` : '<p class="meta">Aucune récompense.</p>'}
   `;
   document.getElementById('missionReportOverlay').classList.add('show');
+  if (!(playerDailyMissions.done || []).includes(missionId)){
+    playerDailyMissions.done = (playerDailyMissions.done || []).concat([missionId]);
+    if (playerDocRef){
+      playerDocRef.set({ dailyMissions: playerDailyMissions }, { merge:true })
+        .catch((err)=> showToast('Courrier non mis à jour : ' + err.message));
+    }
+  }
   clearMissionRun(missionId);
   renderMissionTracker();
   renderCombattantsRoster();
@@ -6948,9 +6966,13 @@ function renderMissionTracker(){
   const badge = document.getElementById('missionBadge');
   if (badge) badge.style.display = rentres.length ? 'block' : 'none';
 
+  /* Une mission traitée aujourd'hui ne doit pas revenir dans le courrier du jour : sans la liste
+     `done`, elle redevenait disponible dès que son rapport était lu, puisque la mission en cours
+     venait d'être effacée. Elle reste repiochable les jours suivants, c'est le principe des modèles. */
+  const dejaFaites = playerDailyMissions.done || [];
   const dispo = (playerDailyMissions.ids || [])
     .map(id=> missionTemplates.find(x=> x.id === id))
-    .filter(m=> m && !playerMissionRuns[m.id]);
+    .filter(m=> m && !playerMissionRuns[m.id] && !dejaFaites.includes(m.id));
 
   let html = '';
 
@@ -6978,7 +7000,7 @@ function renderMissionTracker(){
       const it = items.find(i=> i.id === m.rewardItemId);
       return `<div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${m.name || '(sans nom)'}<span class="meta" style="display:block;">${m.description || ''}</span></div>
-        <div class="meta" style="margin-top:4px;">${missionDomainLabel(m.domain)} · ${formatRemainingDuration((m.durationSec||600)*1000)}${it ? ' · Récompense : ' + it.name + ' × ' + (m.rewardQty||1) : ''}</div>
+        <div class="meta" style="margin-top:4px;">${missionDomainLabel(m.domain)} · ${formatRemainingDuration((m.durationSec||600)*1000)}${it ? ' · ' + it.name + ' × ' + (m.rewardQty||1) : ''}${m.rewardCoins ? ' · 🪙 ' + m.rewardCoins : ''}</div>
         <button class="btn-capture" data-mission-send="${m.id}" style="width:100%; margin-top:6px;">Envoyer un combattant</button>
         <div data-mission-team="${m.id}" style="display:none; margin-top:6px;"></div>
       </div>`;
@@ -7080,14 +7102,16 @@ function openMissionForm(id){
       <input type="number" id="missionMetierBonus" class="field-input" min="0" max="100" style="flex:1;" value="${m.metierBonus!=null?m.metierBonus:20}">
     </div>
 
-    <div class="field-label">Récompense</div>
+    <div class="field-label">Récompense : objet et quantité</div>
     <div style="display:flex; gap:6px;">
       <select id="missionRewardItem" class="field-input" style="flex:2;">
-        <option value="">Aucune</option>
+        <option value="">Aucun</option>
         ${items.map(it=> `<option value="${it.id}" ${m.rewardItemId===it.id?'selected':''}>${it.name}</option>`).join('')}
       </select>
       <input type="number" id="missionRewardQty" class="field-input" min="1" style="flex:1;" value="${m.rewardQty||1}">
     </div>
+    <div class="field-label">Récompense : pièces (0 = aucune)</div>
+    <input type="number" id="missionRewardCoins" class="field-input" min="0" value="${m.rewardCoins||0}">
 
     <div class="field-label">Rapport en cas de réussite</div>
     <textarea id="missionSuccessText" class="field-input" style="min-height:50px;" placeholder="Ce que le combattant raconte en rentrant.">${m.successText||''}</textarea>
@@ -7139,6 +7163,7 @@ function saveMissionForm(){
     metierBonus: parseInt(document.getElementById('missionMetierBonus').value,10) || 0,
     rewardItemId: document.getElementById('missionRewardItem').value || null,
     rewardQty: parseInt(document.getElementById('missionRewardQty').value,10) || 1,
+    rewardCoins: Math.max(0, parseInt(document.getElementById('missionRewardCoins').value,10) || 0),
     successText: document.getElementById('missionSuccessText').value.trim(),
     failText: document.getElementById('missionFailText').value.trim(),
     failMode,
@@ -7173,6 +7198,88 @@ setInterval(()=>{
   if (!document.getElementById('baseOverlay').classList.contains('show')) return;
   renderMissionTracker();
 }, 5000);
+
+/* ---------- Jeu de 20 missions de test ----------
+   Chacune éprouve un cas précis du système : les 7 domaines, les conditions de tribu et de
+   métier, les 3 conséquences d'échec, et les cas limites (très court, très long, chance
+   minuscule, chance énorme, sans récompense, sans texte de rapport). Le préfixe permet de
+   toutes les retrouver pour les supprimer d'un coup. */
+const TEST_MISSION_PREFIX = 'Test : ';
+const TEST_MISSIONS = [
+  { name:'Livrer un remède au hameau', description:'Une famille est souffrante à Lanville. Quelqu\'un sachant soigner ferait la différence.', domain:'soin', minutes:15, successText:'Il a veillé la famille toute la nuit. Tout le monde est sur pied.', failText:'Il a fait ce qu\'il a pu, mais sans savoir-faire médical, la fièvre n\'est pas tombée.' },
+  { name:'Relever un éclaireur tombé', description:'Un éclaireur est resté au sol près du cimetière. Il faudrait quelqu\'un capable de le ranimer.', domain:'secours', minutes:20, successText:'L\'éclaireur est revenu à lui et a pu rentrer sur ses jambes.', failText:'Impossible de le ranimer. D\'autres s\'en sont chargés plus tard.' },
+  { name:'Récupérer un colis volé', description:'Un colis a disparu du marché. Le reprendre discrètement vaudra mieux qu\'un esclandre.', domain:'vol', minutes:25, successText:'Le colis est revenu sans que personne ne s\'aperçoive de rien.', failText:'Repéré avant d\'avoir pu s\'en approcher.' },
+  { name:'Chasser un rôdeur', description:'Une bête tourne autour de la salle des fêtes la nuit. Il faut de la poigne.', domain:'chasse', minutes:30, successText:'La bête a été chassée au bout de la troisième nuit.', failText:'La bête était plus coriace que prévu. Elle rôde toujours.' },
+  { name:'Sceller une faille', description:'Quelque chose suinte d\'une vieille cave. Un esprit versé dans la magie saurait quoi faire.', domain:'magie', minutes:35, successText:'La faille est scellée. Le calme est revenu dans la cave.', failText:'Le sceau n\'a pas tenu. Il faudra recommencer.' },
+  { name:'Escorter un convoi', description:'Un convoi de vivres traverse la route de Lanville. Il lui faut quelqu\'un de solide.', domain:'escorte', minutes:40, successText:'Le convoi est arrivé entier, pas une caisse perdue.', failText:'Le convoi a été détroussé en chemin.' },
+  { name:'Porter un pli urgent', description:'Un pli doit partir avant la nuit. Seule la vitesse compte.', domain:'course', minutes:10, successText:'Le pli est arrivé avant la tombée du jour.', failText:'Arrivé trop tard, le destinataire était parti.' },
+
+  { name:'Éteindre un foyer', description:'Un incendie couve sous les planchers. L\'eau serait bienvenue.', domain:'magie', minutes:30, tribe:'eau', successText:'Le feu a été noyé avant de prendre.', failText:'Le foyer a repris de plus belle.' },
+  { name:'Traverser les cendres', description:'Le passage est brûlant. Mieux vaut y être insensible.', domain:'chasse', minutes:30, tribe:'feu', successText:'Il a traversé sans une brûlure.', failText:'Il a dû rebrousser chemin devant la chaleur.' },
+  { name:'Réparer une pompe', description:'La pompe de la place ne tire plus d\'eau. Un métier précis serait utile.', domain:'escorte', minutes:45, useFirstMetier:true, successText:'La pompe refonctionne, l\'eau est revenue sur la place.', failText:'La pompe est restée muette.' },
+
+  { name:'Veiller un malade', description:'Rien de dangereux : juste rester au chevet de quelqu\'un.', domain:'soin', minutes:20, failMode:'rien', successText:'La nuit s\'est bien passée.', failText:'La nuit a été longue et rien n\'a changé.' },
+  { name:'Convoyer des vivres', description:'Un chargement à mener à bon port. On paiera au prorata.', domain:'escorte', minutes:25, failMode:'reduit', successText:'Tout le chargement est arrivé.', failText:'La moitié du chargement s\'est perdue en route.' },
+  { name:'Déloger un nid', description:'Un nid s\'est installé sous le kiosque. Ça peut mordre.', domain:'chasse', minutes:30, failMode:'blesse', failHp:40, successText:'Le nid est vide, sans une égratignure.', failText:'Il s\'est fait mordre en approchant du nid.' },
+  { name:'Affronter la meute', description:'Ils sont nombreux. Y aller seul est une mauvaise idée.', domain:'chasse', minutes:60, base:25, failMode:'blesse', failHp:15, successText:'Contre toute attente, la meute a reculé.', failText:'Il rentre en piteux état. La meute tient toujours le terrain.' },
+
+  { name:'Course contre la montre', description:'Deux minutes, pour voir revenir quelqu\'un tout de suite.', domain:'course', minutes:2, successText:'Déjà de retour, et bredouille de rien.', failText:'Même en deux minutes, on peut se tromper de chemin.' },
+  { name:'Longue expédition', description:'Un départ pour la journée entière.', domain:'escorte', minutes:480, coins:300, successText:'Huit heures de marche, mais la cargaison est là.', failText:'Huit heures perdues.' },
+  { name:'Mission désespérée', description:'Presque personne n\'en revient. Sauf peut-être le bon profil.', domain:'secours', minutes:45, base:5, domainBonus:80, coins:500, successText:'Personne n\'y croyait. Il est revenu.', failText:'C\'était perdu d\'avance.' },
+  { name:'Corvée facile', description:'Ranger un entrepôt. N\'importe qui fera l\'affaire.', domain:'escorte', minutes:15, base:90, domainBonus:5, successText:'L\'entrepôt est rangé.', failText:'Même ça, ça n\'a pas marché.' },
+  { name:'Service rendu', description:'On ne paie pas, mais on s\'en souviendra.', domain:'soin', minutes:20, noReward:true, successText:'Aucune pièce, mais une famille reconnaissante.', failText:'Ni pièce ni reconnaissance.' },
+  { name:'Mission muette', description:'Aucun texte de rapport n\'est réglé sur cette mission : c\'est fait exprès, pour vérifier les phrases par défaut.', domain:'course', minutes:5, noText:true },
+];
+function buildTestMission(t){
+  const consommables = items.filter(i=> i.type === 'consommable');
+  const recompense = consommables.length ? consommables[0] : (items[0] || null);
+  return {
+    name: TEST_MISSION_PREFIX + t.name,
+    description: t.description || '',
+    domain: t.domain,
+    durationSec: t.minutes * 60,
+    baseChance: (t.base != null) ? t.base : 40,
+    domainBonus: (t.domainBonus != null) ? t.domainBonus : 40,
+    requiredTribe: t.tribe || null,
+    tribeBonus: 20,
+    requiredMetierId: (t.useFirstMetier && metiers.length) ? metiers[0].id : null,
+    metierBonus: 20,
+    rewardItemId: t.noReward ? null : (recompense ? recompense.id : null),
+    rewardQty: 1,
+    rewardCoins: t.noReward ? 0 : (t.coins != null ? t.coins : 50),
+    successText: t.noText ? '' : (t.successText || ''),
+    failText: t.noText ? '' : (t.failText || ''),
+    failMode: t.failMode || 'rien',
+    failHpPercent: (t.failHp != null) ? t.failHp : 40,
+    updatedAt: Date.now(),
+  };
+}
+document.getElementById('createTestMissionsBtn').addEventListener('click', async ()=>{
+  if (!missionsCol){ showToast('Firebase indisponible ici'); return; }
+  if (!(await appConfirm('Créer les ' + TEST_MISSIONS.length + ' missions de test ?'))) return;
+  try {
+    let n = 0;
+    for (const t of TEST_MISSIONS){
+      const nom = TEST_MISSION_PREFIX + t.name;
+      const existante = missionTemplates.find(m=> m.name === nom);
+      const data = buildTestMission(t);
+      if (existante) await missionsCol.doc(existante.id).set(data, { merge:true });
+      else await missionsCol.add(data);
+      n++;
+    }
+    showToast(n + ' missions de test créées');
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
+document.getElementById('deleteTestMissionsBtn').addEventListener('click', async ()=>{
+  if (!missionsCol){ showToast('Firebase indisponible ici'); return; }
+  const aSupprimer = missionTemplates.filter(m=> (m.name||'').startsWith(TEST_MISSION_PREFIX));
+  if (!aSupprimer.length){ showToast('Aucune mission de test à supprimer'); return; }
+  if (!(await appConfirm('Supprimer les ' + aSupprimer.length + ' missions de test ?'))) return;
+  try {
+    for (const m of aSupprimer) await missionsCol.doc(m.id).delete();
+    showToast(aSupprimer.length + ' mission(s) supprimée(s)');
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
 
 /* ---------- PV persistants et infirmerie (v215) ----------
    Avant, chaque combattant repartait à PV pleins à chaque combat. Maintenant ses PV
@@ -7217,6 +7324,14 @@ function recruitEffectiveHp(r){
 }
 function recruitIsKo(r){ return recruitEffectiveHp(r) <= 0; }
 function recruitIsResting(r){ return !!r.restingSince && recruitEffectiveHp(r) < recruitMaxHp(r); }
+/* Un combattant dont le repos a fait le plein garde sinon la marque `restingSince` pour toujours,
+   et s'affichait « au repos » alors qu'il était guéri. On efface la marque une fois — un seul
+   enregistrement par combattant, puisque recruitWakeUp la met aussitôt à null en mémoire. */
+function tidyFinishedRest(){
+  (recruits || []).forEach(r=>{
+    if (r.recruitType === 'combattant' && r.restingSince && recruitEffectiveHp(r) >= recruitMaxHp(r)) recruitWakeUp(r);
+  });
+}
 /* Temps restant avant qu'un K.O. se relève, en ms (0 si ce n'est pas le cas) */
 function recruitKoRemainingMs(r){
   if (!r.restingSince || recruitEffectiveHp(r) > 0) return 0;
@@ -7240,12 +7355,6 @@ function recruitStartRest(r){
     playerDocRef.set({ activeTeamIds: team }, { merge:true });
     activeTeamIds = team;
   }
-}
-/* Objets consommables capables de soigner ou réanimer, et disponibles dans le sac */
-function healingItemsInBag(forKo){
-  return items.filter(it=> it.type === 'consommable' && it.combatUse && it.combatUse.enabled
-    && (baseResources[it.id] || 0) > 0
-    && (forKo ? it.combatUse.mode === 'revive' : it.combatUse.mode === 'heal'));
 }
 function useHealingItemOnRecruit(r, it){
   const max = recruitMaxHp(r);
@@ -7302,14 +7411,11 @@ function renderInfirmarySection(){
   const badge = document.getElementById('infirmaryBadge');
   if (badge) badge.style.display = blesses.length ? 'block' : 'none';
 
-  /* Jamais redessiner par-dessus une liste d'objets ouverte : elle disparaîtrait sous le doigt.
-     Le badge ci-dessus reste à jour, seule la liste est figée le temps du choix. */
-  if (Array.from(el.querySelectorAll('[data-inf-items]')).some(b=> b.style.display === 'block')) return;
 
   if (!combattants.length){ el.innerHTML = '<p class="meta">Aucun combattant recruté pour l\'instant.</p>'; return; }
   if (!blesses.length){ el.innerHTML = '<p class="meta">Tout le monde est en pleine forme.</p>'; return; }
 
-  el.innerHTML = '<p class="meta" style="margin-top:0;">Le repos est gratuit mais lent. Une potion soigne tout de suite mais se consomme. Un combattant au repos quitte l\'équipe active.</p>' +
+  el.innerHTML = '<p class="meta" style="margin-top:0;">Le repos est gratuit mais lent, et un combattant au repos quitte l\'équipe active. Pour soigner tout de suite, utilise une potion depuis ton sac 🎒.</p>' +
     blesses.map(r=>{
       const max = recruitMaxHp(r);
       const hp = recruitEffectiveHp(r);
@@ -7330,11 +7436,7 @@ function renderInfirmarySection(){
             </div>
           </div>
           <div style="margin-top:6px;">${hpBarHtml(hp, max, 8)}</div>
-          <div style="display:flex; gap:6px; margin-top:8px;">
-            <button class="btn-secondary" data-inf-rest="${r.id}" style="flex:1; font-size:12px;">${resting ? '⏹️ Sortir du repos' : '🛏️ Mettre au repos'}</button>
-            <button class="btn-secondary" data-inf-heal="${r.id}" style="flex:1; font-size:12px;">🧪 Soigner</button>
-          </div>
-          <div data-inf-items="${r.id}" style="display:none; margin-top:6px;"></div>
+          <button class="btn-secondary" data-inf-rest="${r.id}" style="width:100%; margin-top:8px; font-size:12px;">${resting ? '⏹️ Sortir du repos' : '🛏️ Mettre au repos'}</button>
         </div>`;
     }).join('');
 
@@ -7345,34 +7447,6 @@ function renderInfirmarySection(){
       if (r.restingSince) recruitWakeUp(r); else recruitStartRest(r);
       renderInfirmarySection();
       renderCombattantsRoster();
-    });
-  });
-  el.querySelectorAll('[data-inf-heal]').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      const r = recruits.find(x=> x.id === b.dataset.infHeal);
-      if (!r) return;
-      const box = el.querySelector('[data-inf-items="' + r.id + '"]');
-      if (!box) return;
-      if (box.style.display === 'block'){ box.style.display = 'none'; return; }
-      const usable = healingItemsInBag(recruitIsKo(r));
-      if (!usable.length){
-        box.innerHTML = '<p class="meta" style="margin:0;">' + (recruitIsKo(r)
-          ? 'Aucun objet de réanimation dans le sac.'
-          : 'Aucun objet de soin dans le sac.') + '</p>';
-      } else {
-        box.innerHTML = usable.map(it=>
-          `<button class="btn-secondary" data-inf-use="${r.id}|${it.id}" style="width:100%; margin-top:4px; font-size:12px;">${it.name} (${baseResources[it.id]||0})</button>`
-        ).join('');
-      }
-      box.style.display = 'block';
-      box.querySelectorAll('[data-inf-use]').forEach(ib=>{
-        ib.addEventListener('click', ()=>{
-          const [rid, iid] = ib.dataset.infUse.split('|');
-          const rr = recruits.find(x=> x.id === rid);
-          const it = items.find(x=> x.id === iid);
-          if (rr && it) useHealingItemOnRecruit(rr, it);
-        });
-      });
     });
   });
 }
@@ -7678,7 +7752,7 @@ function renderRecruitCombatStatsInner(recruit, cs){
       ? (recruit.restingSince
           ? '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft)
           : '💀 K.O. — réanimation nécessaire (🎒 objet, ou 🏥 repos)')
-      : (recruit.restingSince ? '🛏️ Au repos — ' : '') + curHp + '/' + maxHp + ' PV'}</div>
+      : (recruitIsResting(recruit) ? '🛏️ Au repos — ' : '') + curHp + '/' + maxHp + ' PV'}</div>
     <div class="meta">❤️ ${cs.hp||'?'} · ⚔️ ${cs.atk||'?'} · 🛡️ ${cs.def||'?'} · 🔮 ${cs.matk||'?'} · ✨ ${cs.mdef||'?'} · ⚡ ${cs.speed||'?'} · 🎯 ${cs.precision||'?'}% · 💨 ${cs.evasion||'?'}%</div>
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
