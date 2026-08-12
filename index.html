@@ -586,7 +586,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v213</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v214</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -803,6 +803,8 @@
     <p class="meta" style="margin:0 0 6px;">Les images choisies via « 📁 Image hébergée » sont enregistrées en chemin relatif. Cette adresse les complète. Si tu changes un jour d'hébergeur, seule cette ligne est à modifier.</p>
     <input type="text" id="mediaBaseUrlInput" class="field-input" placeholder="https://…/">
     <button class="btn-secondary" id="saveMediaBaseUrlBtn" style="width:100%; margin-top:6px;">Enregistrer cette adresse</button>
+    <button class="btn-secondary" id="refreshPnjMediaBtn" style="width:100%; margin-top:6px;">🔄 Réappliquer l'adresse aux images de PNJ</button>
+    <p class="meta" style="margin:4px 0 10px;">Objets, recettes, robots, scènes et arènes suivent l'adresse tout seuls. Les PNJ ont besoin de ce bouton une fois, après un changement d'adresse.</p>
   </div>
 </div>
 
@@ -1094,6 +1096,7 @@
 
       <div class="field-label">Photo (optionnel, remplace l'emoji)</div>
       <input type="file" id="recipeImageFile" accept="image/*" class="field-input">
+      <button type="button" class="btn-secondary" id="recipeImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
       <div id="recipeImagePreviewWrap" style="display:none; margin-top:8px;">
         <img id="recipeImagePreview" style="width:60px; height:60px; object-fit:contain;">
         <button class="btn-secondary" id="recipeClearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
@@ -1345,6 +1348,7 @@
 
       <div class="field-label">Photo</div>
       <input type="file" id="itemImageFile" accept="image/*" class="field-input">
+      <button type="button" class="btn-secondary" id="itemImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
       <div id="itemImagePreviewWrap" style="display:none; margin-top:8px;">
         <img id="itemImagePreview" style="width:60px; height:60px; object-fit:contain;">
         <button class="btn-secondary" id="itemClearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
@@ -1623,6 +1627,7 @@
 
       <div class="field-label">Photo depuis ton téléphone</div>
       <input type="file" id="editImageFile" accept="image/*" class="field-input">
+      <button type="button" class="btn-secondary" id="editImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
       <div id="imagePreviewWrap" style="display:none; margin-top:8px;">
         <img id="imagePreview" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
         <button class="btn-secondary" id="clearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
@@ -1659,6 +1664,7 @@
         <div class="field-label" style="margin-top:12px;">🖼️ Image d'arène de combat</div>
         <p class="meta" style="margin:0 0 6px;">Utilisée comme fond derrière les combattants pour tout combat qui se déclenche dans cette zone.</p>
         <input type="file" id="editZoneArenaImageFile" accept="image/*" class="field-input">
+        <button type="button" class="btn-secondary" id="editZoneArenaImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
         <div id="zoneArenaImagePreviewWrap" style="display:none; margin-top:8px;">
           <img id="zoneArenaImagePreview" style="width:96px; height:64px; border-radius:8px; object-fit:cover; border:2px solid var(--accent);">
           <button type="button" class="btn-secondary" id="clearZoneArenaImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
@@ -3838,6 +3844,7 @@ let pendingMapIconScale = 1, pendingMapIconRotation = 0;
 let pendingCombatPortraitCrop = null;
 let pendingAssignedZoneId = null;
 let uploadedImageDataUrl = null;
+let uploadedImagePath = null; // chemin relatif si l'image est hébergée (voir resolveMediaPath)
 
 document.getElementById('editImageFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
@@ -3856,6 +3863,7 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       uploadedImageDataUrl = canvas.toDataURL('image/png');
+      uploadedImagePath = null; // photo du téléphone : on repasse en base64
       document.getElementById('imagePreview').src = uploadedImageDataUrl;
       document.getElementById('imagePreviewWrap').style.display = 'block';
     };
@@ -3863,8 +3871,18 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
   };
   reader.readAsDataURL(file);
 });
+document.getElementById('editImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    uploadedImagePath = item.path;
+    uploadedImageDataUrl = resolveMediaPath(item.path);
+    document.getElementById('imagePreview').src = uploadedImageDataUrl;
+    document.getElementById('imagePreviewWrap').style.display = 'block';
+    showToast('Image : ' + item.path);
+  });
+});
 document.getElementById('clearImageBtn').addEventListener('click', ()=>{
   uploadedImageDataUrl = null;
+  uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
   document.getElementById('imagePreviewWrap').style.display = 'none';
 });
@@ -3872,6 +3890,7 @@ document.getElementById('clearImageBtn').addEventListener('click', ()=>{
 /* Image d'arène de combat (zone d'exploration) : même compression que les images de scène (JPEG, redim, externalisation dédupliquée) */
 let editZoneArenaImageDataUrl = null; // dataURL brute si nouvellement choisie
 let editZoneArenaImageRef = null; // ref déjà externalisée (chargée depuis Firestore)
+let editZoneArenaImagePath = null; // chemin relatif si l'image est hébergée
 function renderZoneArenaImagePreview(){
   const wrap = document.getElementById('zoneArenaImagePreviewWrap');
   if (editZoneArenaImageDataUrl){
@@ -3899,15 +3918,26 @@ document.getElementById('editZoneArenaImageFile').addEventListener('change', (e)
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       editZoneArenaImageDataUrl = canvas.toDataURL('image/jpeg', 0.82);
       editZoneArenaImageRef = null; // sera régénérée à la sauvegarde
+      editZoneArenaImagePath = null; // photo du téléphone : on repasse en base64
       renderZoneArenaImagePreview();
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
 });
+document.getElementById('editZoneArenaImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    editZoneArenaImagePath = item.path;
+    editZoneArenaImageDataUrl = resolveMediaPath(item.path);
+    editZoneArenaImageRef = null;
+    renderZoneArenaImagePreview();
+    showToast('Image d\'arène : ' + item.path);
+  });
+});
 document.getElementById('clearZoneArenaImageBtn').addEventListener('click', ()=>{
   editZoneArenaImageDataUrl = null;
   editZoneArenaImageRef = null;
+  editZoneArenaImagePath = null;
   document.getElementById('editZoneArenaImageFile').value = '';
   renderZoneArenaImagePreview();
 });
@@ -4029,8 +4059,9 @@ function loadForEdit(id){
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
   document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
   document.getElementById('portraitCropHint').style.display = d.imageUrl ? 'none' : 'block';
-  editZoneArenaImageDataUrl = null;
-  editZoneArenaImageRef = d.combatArenaImageRef || null;
+  editZoneArenaImagePath = d.combatArenaImagePath || null;
+  editZoneArenaImageDataUrl = editZoneArenaImagePath ? resolveMediaPath(editZoneArenaImagePath) : null;
+  editZoneArenaImageRef = editZoneArenaImagePath ? null : (d.combatArenaImageRef || null);
   document.getElementById('editZoneArenaImageFile').value = '';
   renderZoneArenaImagePreview();
   if (editZoneArenaImageRef){
@@ -4081,9 +4112,10 @@ function loadForEdit(id){
   document.getElementById('editEndTime').value = d.endTime || '';
   setSelectedDays(d.daysOfWeek);
 
-  uploadedImageDataUrl = d.imageUrl || null;
-  if (d.imageUrl){
-    document.getElementById('imagePreview').src = d.imageUrl;
+  uploadedImagePath = d.imagePath || null;
+  uploadedImageDataUrl = uploadedImagePath ? resolveMediaPath(uploadedImagePath) : (d.imageUrl || null);
+  if (uploadedImageDataUrl){
+    document.getElementById('imagePreview').src = uploadedImageDataUrl;
     document.getElementById('imagePreviewWrap').style.display = 'block';
   } else {
     document.getElementById('imagePreviewWrap').style.display = 'none';
@@ -4112,6 +4144,7 @@ function resetForm(){
   pendingMapIconScale = 1; pendingMapIconRotation = 0;
   pendingAssignedZoneId = null;
   uploadedImageDataUrl = null;
+  uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
   document.getElementById('imagePreviewWrap').style.display = 'none';
   document.getElementById('editName').value = '';
@@ -4140,6 +4173,7 @@ function resetForm(){
   document.getElementById('portraitCropHint').style.display = 'block';
   editZoneArenaImageDataUrl = null;
   editZoneArenaImageRef = null;
+  editZoneArenaImagePath = null;
   document.getElementById('editZoneArenaImageFile').value = '';
   renderZoneArenaImagePreview();
   currentShopItems = [];
@@ -4402,13 +4436,15 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   if (interactionType === 'combat' && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  let combatArenaImageRef = editZoneArenaImageRef || null;
+  const combatArenaImagePath = editZoneArenaImagePath || null;
+  let combatArenaImageRef = combatArenaImagePath ? null : (editZoneArenaImageRef || null);
   if (editZoneArenaImageDataUrl && editZoneArenaImageDataUrl.startsWith('data:')){
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
-  const data = { name, metier, emoji, imageUrl, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const imagePath = uploadedImagePath || null;
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -4711,7 +4747,7 @@ let editingItemId = null;
 
 if (itemsCol){
   itemsCol.onSnapshot((snap)=>{
-    items = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    items = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
     renderPickupItemSelect();
@@ -4750,6 +4786,7 @@ function renderItemsListView(){
 }
 
 let uploadedItemImageDataUrl = null;
+let uploadedItemImagePath = null;
 
 document.getElementById('items50TestBtn').addEventListener('click', ()=>{
   if (!itemsCol){ showToast('Firebase indisponible ici'); return; }
@@ -4801,6 +4838,7 @@ document.getElementById('itemImageFile').addEventListener('change', (e)=>{
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       uploadedItemImageDataUrl = canvas.toDataURL('image/png');
+      uploadedItemImagePath = null;
       document.getElementById('itemImagePreview').src = uploadedItemImageDataUrl;
       document.getElementById('itemImagePreviewWrap').style.display = 'block';
     };
@@ -4808,8 +4846,18 @@ document.getElementById('itemImageFile').addEventListener('change', (e)=>{
   };
   reader.readAsDataURL(file);
 });
+document.getElementById('itemImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    uploadedItemImagePath = item.path;
+    uploadedItemImageDataUrl = resolveMediaPath(item.path);
+    document.getElementById('itemImagePreview').src = uploadedItemImageDataUrl;
+    document.getElementById('itemImagePreviewWrap').style.display = 'block';
+    showToast('Image : ' + item.path);
+  });
+});
 document.getElementById('itemClearImageBtn').addEventListener('click', ()=>{
   uploadedItemImageDataUrl = null;
+  uploadedItemImagePath = null;
   document.getElementById('itemImageFile').value = '';
   document.getElementById('itemImagePreviewWrap').style.display = 'none';
 });
@@ -4855,6 +4903,7 @@ function loadItemForEdit(id){
   document.getElementById('itemSellable').checked = sellable;
   document.getElementById('itemBasePriceWrap').style.display = sellable ? 'block' : 'none';
   document.getElementById('itemBasePrice').value = it.basePrice || 10;
+  uploadedItemImagePath = it.imagePath || null;
   uploadedItemImageDataUrl = it.imageUrl || null;
   document.getElementById('itemImageFile').value = '';
   if (it.imageUrl){
@@ -4869,6 +4918,7 @@ function loadItemForEdit(id){
 function resetItemForm(){
   editingItemId = null;
   uploadedItemImageDataUrl = null;
+  uploadedItemImagePath = null;
   document.getElementById('itemImageFile').value = '';
   document.getElementById('itemImagePreviewWrap').style.display = 'none';
   document.getElementById('itemName').value = '';
@@ -4935,7 +4985,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
       }};
     }
   }
-  const data = { name, emoji, imageUrl, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -5459,7 +5509,7 @@ let currentRecipeInputs = [ { itemId:'', qty:1 } ];
 
 if (recipesCol){
   recipesCol.onSnapshot((snap)=>{
-    recipes = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    recipes = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
     document.getElementById('recipesStatus').textContent = recipes.length ? recipes.length + ' recette(s)' : 'Aucune recette pour le moment.';
     renderRecipesListView();
   }, (err)=>{
@@ -5664,6 +5714,7 @@ function loadRecipeForEdit(id){
   editingRecipeId = id;
   document.getElementById('recipeName').value = r.name || '';
   document.getElementById('recipeEmoji').value = r.emoji || '';
+  uploadedRecipeImagePath = r.imagePath || null;
   uploadedRecipeImageDataUrl = r.imageUrl || null;
   document.getElementById('recipeImageFile').value = '';
   if (r.imageUrl){
@@ -5703,6 +5754,7 @@ function resetRecipeForm(){
   document.getElementById('recipeName').value = '';
   document.getElementById('recipeEmoji').value = '';
   uploadedRecipeImageDataUrl = null;
+  uploadedRecipeImagePath = null;
   document.getElementById('recipeImageFile').value = '';
   document.getElementById('recipeImagePreviewWrap').style.display = 'none';
   currentRecipeInputs = [ { itemId:'', qty:1 } ];
@@ -5731,6 +5783,7 @@ document.getElementById('recipeRequiresLearning').addEventListener('change', (e)
 document.getElementById('recipeCancelBtn').addEventListener('click', resetRecipeForm);
 
 let uploadedRecipeImageDataUrl = null;
+let uploadedRecipeImagePath = null;
 document.getElementById('recipeImageFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if (!file) return;
@@ -5746,6 +5799,7 @@ document.getElementById('recipeImageFile').addEventListener('change', (e)=>{
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       uploadedRecipeImageDataUrl = canvas.toDataURL('image/png');
+      uploadedRecipeImagePath = null;
       document.getElementById('recipeImagePreview').src = uploadedRecipeImageDataUrl;
       document.getElementById('recipeImagePreviewWrap').style.display = 'block';
     };
@@ -5753,8 +5807,18 @@ document.getElementById('recipeImageFile').addEventListener('change', (e)=>{
   };
   reader.readAsDataURL(file);
 });
+document.getElementById('recipeImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    uploadedRecipeImagePath = item.path;
+    uploadedRecipeImageDataUrl = resolveMediaPath(item.path);
+    document.getElementById('recipeImagePreview').src = uploadedRecipeImageDataUrl;
+    document.getElementById('recipeImagePreviewWrap').style.display = 'block';
+    showToast('Image : ' + item.path);
+  });
+});
 document.getElementById('recipeClearImageBtn').addEventListener('click', ()=>{
   uploadedRecipeImageDataUrl = null;
+  uploadedRecipeImagePath = null;
   document.getElementById('recipeImageFile').value = '';
   document.getElementById('recipeImagePreviewWrap').style.display = 'none';
 });
@@ -5784,7 +5848,7 @@ document.getElementById('recipeSaveBtn').addEventListener('click', ()=>{
   if (duration <= 0){ showToast('La durée doit être supérieure à 0'); return; }
   if (!recipesCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, emoji, imageUrl, inputs, outputItemId, outputQty, duration, allowedMetiers, requiresLearning, learnDuration, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, imagePath: uploadedRecipeImagePath || null, inputs, outputItemId, outputQty, duration, allowedMetiers, requiresLearning, learnDuration, updatedAt: Date.now() };
   const op = editingRecipeId ? recipesCol.doc(editingRecipeId).set(data) : recipesCol.add({ ...data, createdAt: Date.now() });
   op.then((ref)=>{
     const recipeId = editingRecipeId || (ref && ref.id);
@@ -7795,6 +7859,7 @@ const robotsCol = (typeof db !== 'undefined') ? db.collection('robots') : null;
 let robots = [];
 let editingRobotId = null;
 let robotFormImages = {};
+let robotFormImagePaths = {}; // par vue : chemin relatif quand l'image est hébergée
 
 const ROBOT_VIEWS = [
   { key:'face',   label:'Face' },
@@ -7818,7 +7883,7 @@ const ROBOT_DIRS = [
 
 if (robotsCol){
   robotsCol.onSnapshot((snap)=>{
-    robots = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    robots = snap.docs.map(d=> applyRobotMediaPaths({ id:d.id, ...d.data() }));
     const statusEl = document.getElementById('robotsStatus');
     if (statusEl) statusEl.textContent = robots.length ? robots.length + ' robot(s)' : 'Aucun robot pour le moment.';
     renderRobotsListView();
@@ -7873,7 +7938,11 @@ function openRobotForm(id){
   editingRobotId = id || null;
   const r = id ? getRobotById(id) : null;
   document.getElementById('robotNameInput').value = r ? (r.name || '') : '';
+  robotFormImagePaths = (r && r.imagePaths) ? { ...r.imagePaths } : {};
   robotFormImages = (r && r.images) ? { ...r.images } : {};
+  Object.keys(robotFormImagePaths).forEach(k=>{
+    if (robotFormImagePaths[k]) robotFormImages[k] = resolveMediaPath(robotFormImagePaths[k]);
+  });
   document.getElementById('deleteRobotBtn').style.display = id ? 'block' : 'none';
   renderRobotImgSlots();
   showRobotSection('form');
@@ -7891,6 +7960,7 @@ function renderRobotImgSlots(){
       <div class="box">${cur ? `<img src="${cur}">` : '<span class="meta">vide</span>'}</div>
       <div class="meta" style="margin:4px 0 3px;">${v.label}</div>
       <button class="btn-secondary robot-img-btn" data-view="${v.key}" style="width:100%; padding:5px 0; font-size:12px;">${cur ? 'Changer' : 'Importer'}</button>
+      <button class="btn-secondary robot-img-github" data-view="${v.key}" style="width:100%; padding:4px 0; font-size:11px; margin-top:3px;">📁 Hébergée</button>
       ${cur ? `<button class="btn-secondary robot-img-clear" data-view="${v.key}" style="width:100%; padding:4px 0; font-size:11px; margin-top:3px; color:var(--danger); border-color:rgba(192,57,43,.35);">Retirer</button>` : ''}
       <input type="file" accept="image/*" class="robot-img-input" data-view="${v.key}" style="display:none;">`;
     wrap.appendChild(slot);
@@ -7901,7 +7971,21 @@ function renderRobotImgSlots(){
     });
   });
   wrap.querySelectorAll('.robot-img-clear').forEach(b=>{
-    b.addEventListener('click', ()=>{ delete robotFormImages[b.dataset.view]; renderRobotImgSlots(); });
+    b.addEventListener('click', ()=>{
+      delete robotFormImages[b.dataset.view];
+      delete robotFormImagePaths[b.dataset.view];
+      renderRobotImgSlots();
+    });
+  });
+  wrap.querySelectorAll('.robot-img-github').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const view = b.dataset.view;
+      openGithubFilePicker(null, (item)=>{
+        robotFormImagePaths[view] = item.path;
+        robotFormImages[view] = resolveMediaPath(item.path);
+        renderRobotImgSlots();
+      });
+    });
   });
   wrap.querySelectorAll('.robot-img-input').forEach(inp=>{
     inp.addEventListener('change', (e)=>{
@@ -7921,6 +8005,7 @@ function renderRobotImgSlots(){
           canvas.width = w; canvas.height = h;
           canvas.getContext('2d').drawImage(im, 0, 0, w, h);
           robotFormImages[view] = canvas.toDataURL('image/png');
+          delete robotFormImagePaths[view];
           renderRobotImgSlots();
         };
         im.src = ev.target.result;
@@ -7936,7 +8021,7 @@ async function saveRobot(){
   if (!robotsCol){ showToast('Firebase indisponible ici'); return; }
   const name = document.getElementById('robotNameInput').value.trim();
   if (!name){ showToast('Donne un nom à ce robot'); return; }
-  const data = { name, images: { ...robotFormImages }, updatedAt: Date.now() };
+  const data = { name, images: { ...robotFormImages }, imagePaths: { ...robotFormImagePaths }, updatedAt: Date.now() };
   try {
     if (editingRobotId){
       await robotsCol.doc(editingRobotId).set(data, { merge:true });
@@ -8709,6 +8794,22 @@ let scImageCache = {}; // ref -> dataUrl
    Valeur écrite en dur ici volontairement : ce code s'exécute bien avant la déclaration des constantes
    GitHub plus bas, et lire une const non encore initialisée tuerait tout le script (piège déjà vu en v205). */
 let mediaBaseUrl = 'https://raw.githubusercontent.com/christopheplantegenest-prog/Mascotto/main/';
+/* Applique un chemin hébergé à un objet chargé depuis Firestore : le reste du code
+   continue de lire .imageUrl sans rien savoir de l'hébergement. Recalculé à chaque
+   chargement, donc changer l'adresse de base déplace tout d'un coup. */
+function applyMediaPath(o){
+  if (o && o.imagePath) o.imageUrl = resolveMediaPath(o.imagePath);
+  return o;
+}
+function applyRobotMediaPaths(r){
+  if (r && r.imagePaths){
+    r.images = { ...(r.images || {}) };
+    Object.keys(r.imagePaths).forEach(k=>{
+      if (r.imagePaths[k]) r.images[k] = resolveMediaPath(r.imagePaths[k]);
+    });
+  }
+  return r;
+}
 function resolveMediaPath(path){
   if (!path) return '';
   if (/^(https?:|data:)/i.test(path)) return path; // déjà une adresse complète : on n'y touche pas
@@ -10357,6 +10458,26 @@ if (typeof db !== 'undefined' && db){
     if (input && document.activeElement !== input) input.value = mediaBaseUrl;
   }, ()=>{});
 }
+/* Les fiches PNJ sont lues à une quinzaine d'endroits différents sous forme brute (doc.data()),
+   donc leur imageUrl est enregistrée déjà résolue plutôt que recalculée partout. Ce bouton la
+   réécrit à partir du chemin quand l'adresse de base a changé. */
+document.getElementById('refreshPnjMediaBtn').addEventListener('click', async ()=>{
+  if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+  if (!(await appConfirm('Réappliquer l\'adresse de base à toutes les fiches PNJ qui utilisent une image hébergée ?'))) return;
+  try {
+    const snap = await creatureCol.get();
+    let n = 0;
+    for (const doc of snap.docs){
+      const d = doc.data();
+      if (!d.imagePath) continue;
+      const url = resolveMediaPath(d.imagePath);
+      if (url === d.imageUrl) continue;
+      await creatureCol.doc(doc.id).set({ imageUrl: url }, { merge:true });
+      n++;
+    }
+    showToast(n ? (n + ' fiche(s) mise(s) à jour') : 'Rien à mettre à jour');
+  } catch(err){ showToast('Échec : ' + err.message); }
+});
 document.getElementById('saveMediaBaseUrlBtn').addEventListener('click', ()=>{
   const input = document.getElementById('mediaBaseUrlInput');
   const val = (input.value || '').trim();
@@ -10923,7 +11044,9 @@ async function tryResumeSavedCombat(saved){
       const [zoneDoc, creatureDoc, playerDoc] = await Promise.all([zoneDocGet, creatureDocGet, playerGet]);
       if (creatureDoc.exists){
         sceneViewCreature = { id: creatureDoc.id, ...creatureDoc.data() };
-        if (sceneViewCreature.combatArenaImageRef){
+        if (sceneViewCreature.combatArenaImagePath){
+          arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
+        } else if (sceneViewCreature.combatArenaImageRef){
           const url = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef);
           if (url) arenaBg = url;
         }
@@ -11013,7 +11136,9 @@ async function launchZoneCombat(enemyCreatureList, pt){
   }
   const enemyFighters = buildEnemyFighters(enemyCreatureList);
   let arenaBg = DEFAULT_ARENA_BG;
-  if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
+  if (sceneViewCreature && sceneViewCreature.combatArenaImagePath){
+    arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
+  } else if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
     try { arenaBg = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef); } catch(e){}
   }
   combatZoneContext = { pt: pt || null };
