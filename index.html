@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v221</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v224</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -809,6 +809,8 @@
     <button class="btn-secondary" id="createStarterRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Créer les robots de départ</button>
     <button class="btn-secondary" id="createTestMissionsBtn" style="width:100%; margin-bottom:10px;">📨 Créer 20 missions de test</button>
     <button class="btn-secondary" id="deleteTestMissionsBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les missions de test</button>
+    <button class="btn-secondary" id="resetDailyMissionsBtn" style="width:100%; margin-bottom:10px;">🔄 Retirer mon courrier du jour</button>
+    <button class="btn-secondary" id="rushMissionsBtn" style="width:100%; margin-bottom:10px;">⏩ Faire rentrer mes combattants tout de suite</button>
     <button class="btn-secondary" id="resetZonePointsBtn" style="width:100%; margin-bottom:10px;">🔄 Réinitialiser mes points de zone pris (objets/boss)</button>
 
     <div class="field-label" style="margin-top:14px;">🧭 Durée de la mission d'exploration (fixe, pour tout le monde)</div>
@@ -7270,6 +7272,38 @@ document.getElementById('createTestMissionsBtn').addEventListener('click', async
     showToast(n + ' missions de test créées');
   } catch(err){ showToast('Échec : ' + err.message); }
 });
+/* Outils de test : sans ça, il faut attendre le lendemain pour revoir du courrier, et jusqu'à
+   huit heures pour voir rentrer un combattant. */
+document.getElementById('resetDailyMissionsBtn').addEventListener('click', async ()=>{
+  if (!playerDocRef){ showToast('Firebase indisponible ici'); return; }
+  const enCours = Object.keys(playerMissionRuns).length;
+  const question = enCours
+    ? 'Retirer un nouveau courrier ? Les ' + enCours + ' mission(s) en cours seront annulées.'
+    : 'Retirer un nouveau courrier du jour ?';
+  if (!(await appConfirm(question))) return;
+  playerMissionRuns = {};
+  playerDailyMissions = { date:null, ids:[], done:[] };
+  playerDocRef.set({
+    dailyMissions: firebase.firestore.FieldValue.delete(),
+    missionRuns: firebase.firestore.FieldValue.delete(),
+  }, { merge:true })
+    .then(()=>{ ensureDailyMissions(); renderMissionTracker(); renderCombattantsRoster(); showToast('Nouveau courrier tiré'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+document.getElementById('rushMissionsBtn').addEventListener('click', ()=>{
+  const ids = Object.keys(playerMissionRuns);
+  if (!ids.length){ showToast('Aucun combattant en mission'); return; }
+  ids.forEach(id=>{
+    const run = playerMissionRuns[id];
+    run.startedAt = Date.now() - (run.durationSec || 0) * 1000 - 1000; // départ reculé : la mission est finie
+  });
+  if (playerDocRef){
+    playerDocRef.set({ missionRuns: playerMissionRuns }, { merge:true })
+      .catch((err)=> showToast('Échec : ' + err.message));
+  }
+  renderMissionTracker();
+  showToast(ids.length + ' mission(s) terminée(s) — va lire les rapports');
+});
 document.getElementById('deleteTestMissionsBtn').addEventListener('click', async ()=>{
   if (!missionsCol){ showToast('Firebase indisponible ici'); return; }
   const aSupprimer = missionTemplates.filter(m=> (m.name||'').startsWith(TEST_MISSION_PREFIX));
@@ -7345,6 +7379,8 @@ function recruitWakeUp(r){
     .catch((err)=> showToast('Réveil non enregistré : ' + err.message));
 }
 function recruitStartRest(r){
+  // L'affichage ne suffit pas comme sécurité : on refuse aussi ici, quel que soit l'appelant.
+  if (recruitIsAway(r)){ showToast(r.name + ' est parti en mission'); return; }
   const hp = recruitEffectiveHp(r);
   r.currentHp = hp; r.restingSince = Date.now();
   if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: r.restingSince })
@@ -7407,13 +7443,13 @@ function renderInfirmarySection(){
   const el = document.getElementById('infirmarySection');
   if (!el) return;
   const combattants = recruits.filter(r=> r.recruitType === 'combattant');
-  const blesses = combattants.filter(r=> recruitEffectiveHp(r) < recruitMaxHp(r));
+  const blesses = combattants.filter(r=> recruitEffectiveHp(r) < recruitMaxHp(r) && !recruitIsAway(r));
   const badge = document.getElementById('infirmaryBadge');
   if (badge) badge.style.display = blesses.length ? 'block' : 'none';
 
 
   if (!combattants.length){ el.innerHTML = '<p class="meta">Aucun combattant recruté pour l\'instant.</p>'; return; }
-  if (!blesses.length){ el.innerHTML = '<p class="meta">Tout le monde est en pleine forme.</p>'; return; }
+  if (!blesses.length){ el.innerHTML = '<p class="meta">Personne à soigner pour l\'instant.</p>'; return; }
 
   el.innerHTML = '<p class="meta" style="margin-top:0;">Le repos est gratuit mais lent, et un combattant au repos quitte l\'équipe active. Pour soigner tout de suite, utilise une potion depuis ton sac 🎒.</p>' +
     blesses.map(r=>{
