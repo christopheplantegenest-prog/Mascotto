@@ -236,6 +236,36 @@
   .choice-row .field-label{ margin:8px 0 3px; font-size:10px; }
   .choice-row .field-input{ font-size:13px; padding:8px; }
 
+  /* Éditeur de dialogue : navigation par boutons + vue arbre (v211) */
+  .dlg-topbar{ display:flex; gap:6px; margin-bottom:8px; }
+  .dlg-nav{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0; }
+  .dlg-pill{
+    font-size:12px; padding:6px 11px; border-radius:999px; font-weight:600;
+    border:1px solid var(--line); background:var(--panel); color:var(--text);
+    min-width:32px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .dlg-pill.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .dlg-pill.add{ border-style:dashed; color:var(--muted); }
+  .dlg-tree{ font-size:13px; padding:4px 0; }
+  .dlg-tree-node{ border-left:1px solid var(--line); padding-left:8px; margin-top:4px; }
+  .dlg-tree-head{ display:flex; align-items:center; gap:4px; }
+  .dlg-tree-tw{ background:transparent; border:none; color:var(--muted); font-size:12px; padding:2px 4px; flex:none; }
+  .dlg-tree-open{
+    flex:1; text-align:left; background:transparent; border:none; color:var(--text);
+    font-size:13px; padding:4px 2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .dlg-tree-text{ color:var(--muted); font-size:12px; }
+  .dlg-tree-choice{
+    display:block; width:100%; text-align:left; background:transparent; border:none;
+    color:var(--muted); font-size:12px; padding:3px 2px 3px 14px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .dlg-tree-orphans{
+    margin-top:12px; padding:8px; border-radius:8px; font-size:12px;
+    background:rgba(192,57,43,.08); border:1px solid rgba(192,57,43,.35); color:var(--danger);
+  }
+  .dlg-tree-orphans .dlg-pill{ margin:6px 6px 0 0; }
+
   .editor-list-item{
     display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);
   }
@@ -545,7 +575,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v210</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v211</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -746,9 +776,7 @@
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:10px;">🧭 Activer le mode libre (test)</button>
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
-    <button class="btn-secondary" id="createCombatTestDataBtn" style="width:100%; margin-bottom:10px;">🧪 Créer attaques/monstres/objets de test (combat)</button>
     <button class="btn-secondary" id="createStarterRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Créer les robots de départ</button>
-    <button class="btn-secondary" id="cleanupCombatTestDataBtn" style="width:100%; margin-bottom:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🧹 Supprimer les attaques/monstres/objets de test</button>
     <button class="btn-secondary" id="resetZonePointsBtn" style="width:100%; margin-bottom:10px;">🔄 Réinitialiser mes points de zone pris (objets/boss)</button>
 
     <div class="field-label" style="margin-top:14px;">🧭 Durée de la mission d'exploration (fixe, pour tout le monde)</div>
@@ -1634,7 +1662,6 @@
       <div id="dialogueBlock">
         <div class="field-label">Dialogue</div>
         <div id="dialogueStepsBuilder"></div>
-        <button class="btn-secondary" id="addStepBtn" style="width:100%; margin-top:4px;">➕ Nouvelle étape</button>
       </div>
 
       <div id="shopBlock" style="display:none;">
@@ -2342,289 +2369,588 @@ function renderCombatRewardsPicker(){
   document.getElementById('editCombatStealHard').innerHTML = '<option value="">— Aucun —</option>' + itemOptionsHtml;
 }
 
+/* ---------- Éditeur de dialogue : navigation par boutons + vue arbre (v211) ----------
+   Avant, toutes les étapes étaient dépliées d'un coup dans la fiche du PNJ : sur un long
+   dialogue il fallait faire défiler très longtemps, avec le risque de modifier la mauvaise
+   étape. Maintenant : une barre de boutons en haut, UNE SEULE étape affichée, et à
+   l'intérieur une seule variante de texte / un seul choix ouvert à la fois.
+   Le bouton "🌳 Arbre" affiche la carte du dialogue (qui mène où). */
+let dlgStepIdx = 0;
+let dlgVariantIdx = null;   // null = texte par défaut de l'étape, sinon index dans textVariants
+let dlgChoiceIdx = null;    // null = aucun choix ouvert
+let dlgTreeMode = false;
+let dlgTreeCollapsed = new Set();
+
+function newChoiceId(){
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+/* Chaque choix a besoin d'un identifiant FIXE : le suivi "déjà pris une fois" ne peut pas
+   reposer sur la position dans la liste, sinon déplacer ou supprimer un choix ferait
+   pointer le suivi sur le mauvais. Les anciens PNJ reçoivent leurs identifiants ici,
+   au premier chargement dans l'éditeur, et les gardent au prochain enregistrement. */
+function ensureChoiceIds(steps){
+  (steps || []).forEach(s=>{
+    (s.choices || []).forEach(c=>{ if (!c.id) c.id = newChoiceId(); });
+  });
+}
+function dlgShortText(t, n){
+  t = (t || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '(vide)';
+  n = n || 34;
+  return t.length > n ? t.slice(0, n-1) + '…' : t;
+}
+function dlgAllChoices(){
+  const out = [];
+  currentDialogueSteps.forEach((s, si)=>{
+    (s.choices || []).forEach(ch=>{
+      if (ch.id) out.push({ id: ch.id, label: 'Étape ' + si + ' · « ' + dlgShortText(ch.label, 22) + ' »' });
+    });
+  });
+  return out;
+}
+function dlgPill(label, active, onClick){
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'dlg-pill' + (active ? ' on' : '');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+function dlgSelectStep(i){
+  dlgStepIdx = i;
+  dlgVariantIdx = null;
+  dlgChoiceIdx = null;
+  renderDialogueBuilder();
+}
+/* Appelée à chaque ouverture d'une fiche PNJ : on repart de l'étape 0, en mode Édition. */
+function resetDialogueNav(){
+  dlgStepIdx = 0;
+  dlgVariantIdx = null;
+  dlgChoiceIdx = null;
+  dlgTreeMode = false;
+  dlgTreeCollapsed = new Set();
+}
+
 function renderDialogueBuilder(){
   const wrap = document.getElementById('dialogueStepsBuilder');
+  if (!wrap) return;
+  if (!currentDialogueSteps.length) currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+  ensureChoiceIds(currentDialogueSteps);
+  if (dlgStepIdx >= currentDialogueSteps.length) dlgStepIdx = currentDialogueSteps.length - 1;
+  if (dlgStepIdx < 0) dlgStepIdx = 0;
   wrap.innerHTML = '';
-  currentDialogueSteps.forEach((step, stepIdx)=>{
-    const card = document.createElement('div');
-    card.className = 'step-card';
 
-    const head = document.createElement('div');
-    head.className = 'step-card-head';
-    head.innerHTML = `<b>Étape ${stepIdx}</b>`;
-    if (currentDialogueSteps.length > 1){
-      const delBtn = document.createElement('button');
-      delBtn.className = 'icon-del';
-      delBtn.textContent = '🗑️';
-      delBtn.addEventListener('click', ()=>{
-        currentDialogueSteps.splice(stepIdx, 1);
-        currentDialogueSteps.forEach(s=>{
-          s.choices.forEach(ch=>{
-            if (ch.next === stepIdx) ch.next = null;
-            else if (ch.next !== null && ch.next > stepIdx) ch.next -= 1;
-          });
+  const topBar = document.createElement('div');
+  topBar.className = 'dlg-topbar';
+  topBar.appendChild(dlgPill('✏️ Édition', !dlgTreeMode, ()=>{ dlgTreeMode = false; renderDialogueBuilder(); }));
+  topBar.appendChild(dlgPill('🌳 Arbre', dlgTreeMode, ()=>{ dlgTreeMode = true; renderDialogueBuilder(); }));
+  wrap.appendChild(topBar);
+
+  if (dlgTreeMode){ renderDialogueTree(wrap); return; }
+
+  /* --- barre de navigation entre étapes --- */
+  const nav = document.createElement('div');
+  nav.className = 'dlg-nav';
+  currentDialogueSteps.forEach((s, i)=>{
+    const b = dlgPill(String(i), i === dlgStepIdx, ()=> dlgSelectStep(i));
+    b.title = dlgShortText(s.text, 40);
+    nav.appendChild(b);
+  });
+  const addStepBtn = dlgPill('➕ Étape', false, ()=>{
+    currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+    dlgSelectStep(currentDialogueSteps.length - 1);
+  });
+  addStepBtn.classList.add('add');
+  nav.appendChild(addStepBtn);
+  wrap.appendChild(nav);
+
+  const step = currentDialogueSteps[dlgStepIdx];
+  const stepIdx = dlgStepIdx;
+  if (!step.textVariants) step.textVariants = [];
+  if (!step.choices) step.choices = [];
+
+  const card = document.createElement('div');
+  card.className = 'step-card';
+
+  const head = document.createElement('div');
+  head.className = 'step-card-head';
+  head.innerHTML = '<b>Étape ' + stepIdx + '</b>';
+  if (currentDialogueSteps.length > 1){
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'icon-del';
+    delBtn.textContent = '🗑️';
+    delBtn.addEventListener('click', async ()=>{
+      if (!(await appConfirm('Supprimer l\'étape ' + stepIdx + ' et tous ses choix ?'))) return;
+      currentDialogueSteps.splice(stepIdx, 1);
+      currentDialogueSteps.forEach(s=>{
+        (s.choices || []).forEach(ch=>{
+          if (ch.next === stepIdx) ch.next = null;
+          else if (ch.next !== null && ch.next !== undefined && ch.next > stepIdx) ch.next -= 1;
         });
-        renderDialogueBuilder();
       });
-      head.appendChild(delBtn);
-    }
-    card.appendChild(head);
+      dlgSelectStep(Math.max(0, stepIdx - 1));
+    });
+    head.appendChild(delBtn);
+  }
+  card.appendChild(head);
 
+  /* --- textes : par défaut + variantes, un seul affiché --- */
+  const vBar = document.createElement('div');
+  vBar.className = 'dlg-nav';
+  vBar.appendChild(dlgPill('📄 Par défaut', dlgVariantIdx === null, ()=>{ dlgVariantIdx = null; renderDialogueBuilder(); }));
+  step.textVariants.forEach((v, i)=>{
+    vBar.appendChild(dlgPill('🕒 ' + (i+1), dlgVariantIdx === i, ()=>{ dlgVariantIdx = i; renderDialogueBuilder(); }));
+  });
+  const addVBtn = dlgPill('➕ Variante', false, ()=>{
+    const choicesAvail = dlgAllChoices();
+    if (!quests.length && !choicesAvail.length){ showToast('Crée d\'abord une quête ou un choix'); return; }
+    if (quests.length) step.textVariants.push({ kind:'quest', questId: quests[0].id, state:'active', text:'' });
+    else step.textVariants.push({ kind:'choice', choiceId: choicesAvail[0].id, taken:'yes', text:'' });
+    dlgVariantIdx = step.textVariants.length - 1;
+    renderDialogueBuilder();
+  });
+  addVBtn.classList.add('add');
+  vBar.appendChild(addVBtn);
+  card.appendChild(vBar);
+
+  if (dlgVariantIdx === null){
     const textInput = document.createElement('textarea');
     textInput.className = 'field-input';
     textInput.placeholder = 'Ce que dit le PNJ à cette étape…';
-    textInput.style.minHeight = '54px';
+    textInput.style.minHeight = '64px';
     textInput.value = step.text || '';
     textInput.addEventListener('input', ()=>{ step.text = textInput.value; });
     card.appendChild(textInput);
+  } else {
+    const variant = step.textVariants[dlgVariantIdx];
+    const vIdx = dlgVariantIdx;
+    const vRow = document.createElement('div');
+    vRow.style.cssText = 'border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:6px;';
 
-    if (!step.textVariants) step.textVariants = [];
-    const variantsLabel = document.createElement('div');
-    variantsLabel.className = 'field-label';
-    variantsLabel.textContent = 'Variantes de ce texte selon une quête (optionnel)';
-    card.appendChild(variantsLabel);
+    const kindLabel = document.createElement('div');
+    kindLabel.className = 'field-label';
+    kindLabel.style.marginTop = '0';
+    kindLabel.textContent = 'Dire ce texte plutôt que celui par défaut si…';
+    vRow.appendChild(kindLabel);
 
-    step.textVariants.forEach((variant, vIdx)=>{
-      const vRow = document.createElement('div');
-      vRow.style.cssText = 'border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:6px;';
+    const kindSel = document.createElement('select');
+    kindSel.className = 'field-input';
+    kindSel.innerHTML = '<option value="quest">une quête est dans tel état</option><option value="choice">un choix a déjà été pris</option>';
+    kindSel.value = (variant.kind === 'choice') ? 'choice' : 'quest';
+    vRow.appendChild(kindSel);
 
-      const selRow = document.createElement('div');
-      selRow.style.cssText = 'display:flex; gap:6px; margin-bottom:6px;';
-      const qSel = document.createElement('select');
-      qSel.className = 'field-input';
-      qSel.innerHTML = quests.map(q=>`<option value="${q.id}">${q.name}</option>`).join('');
-      qSel.value = variant.questId || '';
-      qSel.style.flex = '2';
-      qSel.addEventListener('change', ()=>{ variant.questId = qSel.value; });
+    const condRow = document.createElement('div');
+    condRow.style.cssText = 'display:flex; gap:6px; margin-top:6px;';
+    vRow.appendChild(condRow);
 
-      const stSel = document.createElement('select');
-      stSel.className = 'field-input';
-      stSel.innerHTML = `<option value="active">en cours</option><option value="completed">terminée</option><option value="not_active">pas commencée</option>`;
-      stSel.value = variant.state || 'active';
-      stSel.style.flex = '1';
-      stSel.addEventListener('change', ()=>{ variant.state = stSel.value; });
+    function paintVariantCondition(){
+      condRow.innerHTML = '';
+      if (kindSel.value === 'choice'){
+        const list = dlgAllChoices();
+        if (!list.length){
+          const p = document.createElement('p');
+          p.className = 'meta';
+          p.textContent = 'Aucun choix disponible dans ce dialogue pour l\'instant.';
+          condRow.appendChild(p);
+          return;
+        }
+        const cSel = document.createElement('select');
+        cSel.className = 'field-input';
+        cSel.innerHTML = list.map(o=> '<option value="' + o.id + '">' + o.label + '</option>').join('');
+        cSel.value = variant.choiceId || list[0].id;
+        variant.choiceId = cSel.value;
+        cSel.style.flex = '2';
+        cSel.addEventListener('change', ()=>{ variant.choiceId = cSel.value; });
 
-      selRow.appendChild(qSel); selRow.appendChild(stSel);
-      vRow.appendChild(selRow);
+        const tSel = document.createElement('select');
+        tSel.className = 'field-input';
+        tSel.innerHTML = '<option value="yes">a été pris</option><option value="no">n\'a pas été pris</option>';
+        tSel.value = (variant.taken === 'no') ? 'no' : 'yes';
+        variant.taken = tSel.value;
+        tSel.style.flex = '1';
+        tSel.addEventListener('change', ()=>{ variant.taken = tSel.value; });
 
-      const vText = document.createElement('textarea');
-      vText.className = 'field-input';
-      vText.style.minHeight = '46px';
-      vText.placeholder = 'Texte à dire dans ce cas...';
-      vText.value = variant.text || '';
-      vText.addEventListener('input', ()=>{ variant.text = vText.value; });
-      vRow.appendChild(vText);
+        condRow.appendChild(cSel); condRow.appendChild(tSel);
+      } else {
+        if (!quests.length){
+          const p = document.createElement('p');
+          p.className = 'meta';
+          p.textContent = 'Aucune quête créée pour l\'instant.';
+          condRow.appendChild(p);
+          return;
+        }
+        const qSel = document.createElement('select');
+        qSel.className = 'field-input';
+        qSel.innerHTML = quests.map(q=> '<option value="' + q.id + '">' + q.name + '</option>').join('');
+        qSel.value = variant.questId || quests[0].id;
+        variant.questId = qSel.value;
+        qSel.style.flex = '2';
+        qSel.addEventListener('change', ()=>{ variant.questId = qSel.value; });
 
-      const delVBtn = document.createElement('button');
-      delVBtn.className = 'btn-secondary';
-      delVBtn.textContent = '✕ Retirer cette variante';
-      delVBtn.style.cssText = 'width:100%; margin-top:6px; color:var(--danger);';
-      delVBtn.addEventListener('click', ()=>{ step.textVariants.splice(vIdx,1); renderDialogueBuilder(); });
-      vRow.appendChild(delVBtn);
+        const stSel = document.createElement('select');
+        stSel.className = 'field-input';
+        stSel.innerHTML = '<option value="active">en cours</option><option value="completed">terminée</option><option value="not_active">pas commencée</option>';
+        stSel.value = variant.state || 'active';
+        variant.state = stSel.value;
+        stSel.style.flex = '1';
+        stSel.addEventListener('change', ()=>{ variant.state = stSel.value; });
 
-      card.appendChild(vRow);
+        condRow.appendChild(qSel); condRow.appendChild(stSel);
+      }
+    }
+    kindSel.addEventListener('change', ()=>{
+      variant.kind = kindSel.value;
+      paintVariantCondition();
     });
+    variant.kind = kindSel.value;
+    paintVariantCondition();
 
-    const addVariantBtn = document.createElement('button');
-    addVariantBtn.className = 'btn-secondary';
-    addVariantBtn.textContent = '+ Ajouter une variante de texte';
-    addVariantBtn.style.cssText = 'width:100%; margin-bottom:10px;';
-    addVariantBtn.addEventListener('click', ()=>{
-      if (!quests.length){ showToast('Crée d\'abord une quête'); return; }
-      step.textVariants.push({ questId: quests[0].id, state:'active', text:'' });
+    const vText = document.createElement('textarea');
+    vText.className = 'field-input';
+    vText.style.cssText = 'min-height:58px; margin-top:6px;';
+    vText.placeholder = 'Texte à dire dans ce cas…';
+    vText.value = variant.text || '';
+    vText.addEventListener('input', ()=>{ variant.text = vText.value; });
+    vRow.appendChild(vText);
+
+    const delVBtn = document.createElement('button');
+    delVBtn.type = 'button';
+    delVBtn.className = 'btn-secondary';
+    delVBtn.textContent = '✕ Retirer cette variante';
+    delVBtn.style.cssText = 'width:100%; margin-top:6px; color:var(--danger);';
+    delVBtn.addEventListener('click', ()=>{
+      step.textVariants.splice(vIdx, 1);
+      dlgVariantIdx = null;
       renderDialogueBuilder();
     });
-    card.appendChild(addVariantBtn);
+    vRow.appendChild(delVBtn);
+    card.appendChild(vRow);
+  }
 
-    step.choices.forEach((choice, choiceIdx)=>{
-      const row = document.createElement('div');
-      row.className = 'choice-row';
+  /* --- choix : un seul ouvert à la fois --- */
+  const cLabel = document.createElement('div');
+  cLabel.className = 'field-label';
+  cLabel.textContent = 'Choix proposés au joueur';
+  card.appendChild(cLabel);
 
-      const rowHead = document.createElement('div');
-      rowHead.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
-      rowHead.innerHTML = `<span class="field-label" style="margin:0;">Choix ${choiceIdx+1}</span>`;
-      const delChoiceBtn = document.createElement('button');
-      delChoiceBtn.className = 'icon-del';
-      delChoiceBtn.textContent = '🗑️';
-      delChoiceBtn.addEventListener('click', ()=>{
-        step.choices.splice(choiceIdx, 1);
-        renderDialogueBuilder();
-      });
-      rowHead.appendChild(delChoiceBtn);
-      row.appendChild(rowHead);
-
-      const labelInput = document.createElement('input');
-      labelInput.type = 'text';
-      labelInput.className = 'field-input';
-      labelInput.placeholder = 'Texte du bouton (ex: "Qui es-tu ?")';
-      labelInput.value = choice.label || '';
-      labelInput.addEventListener('input', ()=>{ choice.label = labelInput.value; });
-      row.appendChild(labelInput);
-
-      const showIfLabel = document.createElement('div');
-      showIfLabel.className = 'field-label';
-      showIfLabel.textContent = 'N\'afficher ce choix que si (optionnel)';
-      row.appendChild(showIfLabel);
-
-      const showIfRow = document.createElement('div');
-      showIfRow.style.cssText = 'display:flex; gap:6px;';
-      const showIfQuestSelect = document.createElement('select');
-      showIfQuestSelect.className = 'field-input';
-      let showIfQuestOpts = '<option value="">Aucune condition</option>';
-      quests.forEach(q=>{ showIfQuestOpts += `<option value="${q.id}">${q.name}</option>`; });
-      showIfQuestSelect.innerHTML = showIfQuestOpts;
-      showIfQuestSelect.value = (choice.showIf && choice.showIf.questId) || '';
-      showIfQuestSelect.style.flex = '2';
-
-      const showIfStateSelect = document.createElement('select');
-      showIfStateSelect.className = 'field-input';
-      showIfStateSelect.innerHTML = `
-        <option value="active">est en cours</option>
-        <option value="completed">est terminée</option>
-        <option value="not_active">n'est pas (encore) en cours</option>
-      `;
-      showIfStateSelect.value = (choice.showIf && choice.showIf.state) || 'active';
-      showIfStateSelect.style.flex = '2';
-      showIfStateSelect.style.display = showIfQuestSelect.value ? 'block' : 'none';
-
-      showIfQuestSelect.addEventListener('change', ()=>{
-        if (!showIfQuestSelect.value){
-          choice.showIf = null;
-          showIfStateSelect.style.display = 'none';
-        } else {
-          choice.showIf = { questId: showIfQuestSelect.value, state: showIfStateSelect.value };
-          showIfStateSelect.style.display = 'block';
-        }
-      });
-      showIfStateSelect.addEventListener('change', ()=>{
-        if (choice.showIf) choice.showIf.state = showIfStateSelect.value;
-      });
-      showIfRow.appendChild(showIfQuestSelect);
-      showIfRow.appendChild(showIfStateSelect);
-      row.appendChild(showIfRow);
-
-      const nextLabel = document.createElement('div');
-      nextLabel.className = 'field-label';
-      nextLabel.textContent = 'Ensuite';
-      row.appendChild(nextLabel);
-
-      const nextSelect = document.createElement('select');
-      nextSelect.className = 'field-input';
-      let optsHtml = '<option value="fin">Fin de la conversation</option>';
-      currentDialogueSteps.forEach((s, i)=>{
-        if (i === stepIdx) return;
-        optsHtml += `<option value="${i}">Étape ${i}</option>`;
-      });
-      nextSelect.innerHTML = optsHtml;
-      nextSelect.value = (choice.next === null || choice.next === undefined) ? 'fin' : String(choice.next);
-      nextSelect.addEventListener('change', ()=>{ choice.next = (nextSelect.value === 'fin') ? null : parseInt(nextSelect.value, 10); });
-      row.appendChild(nextSelect);
-
-      const itemLabel = document.createElement('div');
-      itemLabel.className = 'field-label';
-      itemLabel.textContent = 'Donner un objet';
-      row.appendChild(itemLabel);
-
-      const itemSelect = document.createElement('select');
-      itemSelect.className = 'field-input';
-      let itemOpts = '<option value="">Aucun</option>';
-      items.forEach(it=>{ itemOpts += `<option value="${it.name}">${it.name}</option>`; }); // pas d'image possible dans une <option>
-      itemSelect.innerHTML = itemOpts;
-      itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
-
-      const qtyInput = document.createElement('input');
-      qtyInput.type = 'number';
-      qtyInput.className = 'field-input';
-      qtyInput.min = '1';
-      qtyInput.style.marginTop = '6px';
-      qtyInput.style.display = itemSelect.value ? 'block' : 'none';
-      qtyInput.value = (choice.itemGrant && choice.itemGrant.quantity) || 1;
-
-      itemSelect.addEventListener('change', ()=>{
-        if (!itemSelect.value){
-          choice.itemGrant = null;
-          qtyInput.style.display = 'none';
-        } else {
-          choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
-          qtyInput.style.display = 'block';
-        }
-      });
-      qtyInput.addEventListener('input', ()=>{
-        if (choice.itemGrant) choice.itemGrant.quantity = parseInt(qtyInput.value,10) || 1;
-      });
-
-      row.appendChild(itemSelect);
-      row.appendChild(qtyInput);
-
-      const recruitLabel = document.createElement('div');
-      recruitLabel.className = 'field-label';
-      recruitLabel.textContent = 'Recruter ce PNJ';
-      row.appendChild(recruitLabel);
-
-      const recruitSelect = document.createElement('select');
-      recruitSelect.className = 'field-input';
-      let recruitOpts = '<option value="">Ne recrute pas</option>';
-      metiers.forEach(m=>{ recruitOpts += `<option value="${m.id}">${m.name}</option>`; });
-      recruitSelect.innerHTML = recruitOpts;
-      recruitSelect.value = (choice.recruit && choice.recruit.metierId) || '';
-      recruitSelect.addEventListener('change', ()=>{
-        choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value } : null;
-      });
-      row.appendChild(recruitSelect);
-
-      const questGiveLabel = document.createElement('div');
-      questGiveLabel.className = 'field-label';
-      questGiveLabel.textContent = 'Donner cette quête';
-      row.appendChild(questGiveLabel);
-
-      const questGiveSelect = document.createElement('select');
-      questGiveSelect.className = 'field-input';
-      let questGiveOpts = '<option value="">Aucune</option>';
-      quests.forEach(q=>{ questGiveOpts += `<option value="${q.id}">${q.name}</option>`; });
-      questGiveSelect.innerHTML = questGiveOpts;
-      questGiveSelect.value = (choice.questGive && choice.questGive.questId) || '';
-      questGiveSelect.addEventListener('change', ()=>{
-        choice.questGive = questGiveSelect.value ? { questId: questGiveSelect.value } : null;
-      });
-      row.appendChild(questGiveSelect);
-
-      const questValidateLabel = document.createElement('div');
-      questValidateLabel.className = 'field-label';
-      questValidateLabel.textContent = 'Valider cette quête';
-      row.appendChild(questValidateLabel);
-
-      const questValidateSelect = document.createElement('select');
-      questValidateSelect.className = 'field-input';
-      let questValidateOpts = '<option value="">Aucune</option>';
-      quests.forEach(q=>{ questValidateOpts += `<option value="${q.id}">${q.name}</option>`; });
-      questValidateSelect.innerHTML = questValidateOpts;
-      questValidateSelect.value = (choice.questValidate && choice.questValidate.questId) || '';
-      questValidateSelect.addEventListener('change', ()=>{
-        choice.questValidate = questValidateSelect.value ? { questId: questValidateSelect.value } : null;
-      });
-      row.appendChild(questValidateSelect);
-
-      card.appendChild(row);
-    });
-
-    const addChoiceBtn = document.createElement('button');
-    addChoiceBtn.className = 'btn-secondary';
-    addChoiceBtn.style.cssText = 'width:100%; margin-top:10px;';
-    addChoiceBtn.textContent = '➕ Ajouter un choix';
-    addChoiceBtn.addEventListener('click', ()=>{
-      step.choices.push({ label:'', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null });
+  const cBar = document.createElement('div');
+  cBar.className = 'dlg-nav';
+  const choicePills = [];
+  step.choices.forEach((ch, i)=>{
+    const b = dlgPill(dlgShortText(ch.label, 16), dlgChoiceIdx === i, ()=>{
+      dlgChoiceIdx = (dlgChoiceIdx === i) ? null : i;
       renderDialogueBuilder();
     });
-    card.appendChild(addChoiceBtn);
-
-    wrap.appendChild(card);
+    b.title = ch.label || '(sans texte)';
+    choicePills.push(b);
+    cBar.appendChild(b);
   });
+  const addChoiceBtn = dlgPill('➕ Choix', false, ()=>{
+    step.choices.push({ id:newChoiceId(), label:'', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null, once:false });
+    dlgChoiceIdx = step.choices.length - 1;
+    renderDialogueBuilder();
+  });
+  addChoiceBtn.classList.add('add');
+  cBar.appendChild(addChoiceBtn);
+  card.appendChild(cBar);
+
+  if (dlgChoiceIdx !== null && step.choices[dlgChoiceIdx]){
+    const choice = step.choices[dlgChoiceIdx];
+    const choiceIdx = dlgChoiceIdx;
+    const row = document.createElement('div');
+    row.className = 'choice-row';
+
+    const rowHead = document.createElement('div');
+    rowHead.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+    rowHead.innerHTML = '<span class="field-label" style="margin:0;">Choix ' + (choiceIdx+1) + '</span>';
+    const delChoiceBtn = document.createElement('button');
+    delChoiceBtn.type = 'button';
+    delChoiceBtn.className = 'icon-del';
+    delChoiceBtn.textContent = '🗑️';
+    delChoiceBtn.addEventListener('click', async ()=>{
+      if (!(await appConfirm('Supprimer ce choix ?'))) return;
+      step.choices.splice(choiceIdx, 1);
+      dlgChoiceIdx = null;
+      renderDialogueBuilder();
+    });
+    rowHead.appendChild(delChoiceBtn);
+    row.appendChild(rowHead);
+
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'field-input';
+    labelInput.placeholder = 'Texte du bouton (ex: "Qui es-tu ?")';
+    labelInput.value = choice.label || '';
+    labelInput.addEventListener('input', ()=>{
+      choice.label = labelInput.value;
+      if (choicePills[choiceIdx]) choicePills[choiceIdx].textContent = dlgShortText(choice.label, 16);
+    });
+    row.appendChild(labelInput);
+
+    const showIfLabel = document.createElement('div');
+    showIfLabel.className = 'field-label';
+    showIfLabel.textContent = 'N\'afficher ce choix que si (optionnel)';
+    row.appendChild(showIfLabel);
+
+    const showIfRow = document.createElement('div');
+    showIfRow.style.cssText = 'display:flex; gap:6px;';
+    const showIfQuestSelect = document.createElement('select');
+    showIfQuestSelect.className = 'field-input';
+    let showIfQuestOpts = '<option value="">Aucune condition</option>';
+    quests.forEach(q=>{ showIfQuestOpts += '<option value="' + q.id + '">' + q.name + '</option>'; });
+    showIfQuestSelect.innerHTML = showIfQuestOpts;
+    showIfQuestSelect.value = (choice.showIf && choice.showIf.questId) || '';
+    showIfQuestSelect.style.flex = '2';
+
+    const showIfStateSelect = document.createElement('select');
+    showIfStateSelect.className = 'field-input';
+    showIfStateSelect.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_active">n\'est pas (encore) en cours</option>';
+    showIfStateSelect.value = (choice.showIf && choice.showIf.state) || 'active';
+    showIfStateSelect.style.flex = '2';
+    showIfStateSelect.style.display = showIfQuestSelect.value ? 'block' : 'none';
+
+    showIfQuestSelect.addEventListener('change', ()=>{
+      if (!showIfQuestSelect.value){
+        choice.showIf = null;
+        showIfStateSelect.style.display = 'none';
+      } else {
+        choice.showIf = { questId: showIfQuestSelect.value, state: showIfStateSelect.value };
+        showIfStateSelect.style.display = 'block';
+      }
+    });
+    showIfStateSelect.addEventListener('change', ()=>{
+      if (choice.showIf) choice.showIf.state = showIfStateSelect.value;
+    });
+    showIfRow.appendChild(showIfQuestSelect);
+    showIfRow.appendChild(showIfStateSelect);
+    row.appendChild(showIfRow);
+
+    /* Usage unique : le choix disparaît définitivement pour ce joueur une fois pris.
+       Sert surtout aux cadeaux ("Tiens, j'ai une potion pour toi"), mais marche pour
+       n'importe quel choix. */
+    const onceWrap = document.createElement('div');
+    onceWrap.className = 'field-label';
+    onceWrap.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:10px;';
+    const onceBox = document.createElement('input');
+    onceBox.type = 'checkbox';
+    onceBox.style.width = 'auto';
+    onceBox.checked = !!choice.once;
+    onceBox.addEventListener('change', ()=>{ choice.once = onceBox.checked; });
+    const onceLbl = document.createElement('label');
+    onceLbl.style.margin = '0';
+    onceLbl.textContent = '🎁 Ne proposer ce choix qu\'une seule fois';
+    onceLbl.addEventListener('click', ()=>{ onceBox.checked = !onceBox.checked; choice.once = onceBox.checked; });
+    onceWrap.appendChild(onceBox); onceWrap.appendChild(onceLbl);
+    row.appendChild(onceWrap);
+    const onceHint = document.createElement('p');
+    onceHint.className = 'meta';
+    onceHint.style.margin = '2px 0 0';
+    onceHint.textContent = 'Une fois pris, ce bouton ne réapparaît plus pour ce joueur. Pour que le PNJ change aussi de phrase, ajoute une variante de texte conditionnée à ce choix.';
+    row.appendChild(onceHint);
+
+    const nextLabel = document.createElement('div');
+    nextLabel.className = 'field-label';
+    nextLabel.textContent = 'Ensuite';
+    row.appendChild(nextLabel);
+
+    const nextSelect = document.createElement('select');
+    nextSelect.className = 'field-input';
+    let optsHtml = '<option value="fin">Fin de la conversation</option>';
+    currentDialogueSteps.forEach((s, i)=>{
+      if (i === stepIdx) return;
+      optsHtml += '<option value="' + i + '">Étape ' + i + '</option>';
+    });
+    nextSelect.innerHTML = optsHtml;
+    nextSelect.value = (choice.next === null || choice.next === undefined) ? 'fin' : String(choice.next);
+    nextSelect.addEventListener('change', ()=>{ choice.next = (nextSelect.value === 'fin') ? null : parseInt(nextSelect.value, 10); });
+    row.appendChild(nextSelect);
+
+    const itemLabel = document.createElement('div');
+    itemLabel.className = 'field-label';
+    itemLabel.textContent = 'Donner un objet';
+    row.appendChild(itemLabel);
+
+    const itemSelect = document.createElement('select');
+    itemSelect.className = 'field-input';
+    let itemOpts = '<option value="">Aucun</option>';
+    items.forEach(it=>{ itemOpts += '<option value="' + it.name + '">' + it.name + '</option>'; }); // pas d'image possible dans une <option>
+    itemSelect.innerHTML = itemOpts;
+    itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
+
+    const qtyInput = document.createElement('input');
+    qtyInput.type = 'number';
+    qtyInput.className = 'field-input';
+    qtyInput.min = '1';
+    qtyInput.style.marginTop = '6px';
+    qtyInput.style.display = itemSelect.value ? 'block' : 'none';
+    qtyInput.value = (choice.itemGrant && choice.itemGrant.quantity) || 1;
+
+    itemSelect.addEventListener('change', ()=>{
+      if (!itemSelect.value){
+        choice.itemGrant = null;
+        qtyInput.style.display = 'none';
+      } else {
+        choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
+        qtyInput.style.display = 'block';
+      }
+    });
+    qtyInput.addEventListener('input', ()=>{
+      if (choice.itemGrant) choice.itemGrant.quantity = parseInt(qtyInput.value,10) || 1;
+    });
+
+    row.appendChild(itemSelect);
+    row.appendChild(qtyInput);
+
+    const recruitLabel = document.createElement('div');
+    recruitLabel.className = 'field-label';
+    recruitLabel.textContent = 'Recruter ce PNJ';
+    row.appendChild(recruitLabel);
+
+    const recruitSelect = document.createElement('select');
+    recruitSelect.className = 'field-input';
+    let recruitOpts = '<option value="">Ne recrute pas</option>';
+    metiers.forEach(m=>{ recruitOpts += '<option value="' + m.id + '">' + m.name + '</option>'; });
+    recruitSelect.innerHTML = recruitOpts;
+    recruitSelect.value = (choice.recruit && choice.recruit.metierId) || '';
+    recruitSelect.addEventListener('change', ()=>{
+      choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value } : null;
+    });
+    row.appendChild(recruitSelect);
+
+    const questGiveLabel = document.createElement('div');
+    questGiveLabel.className = 'field-label';
+    questGiveLabel.textContent = 'Donner cette quête';
+    row.appendChild(questGiveLabel);
+
+    const questGiveSelect = document.createElement('select');
+    questGiveSelect.className = 'field-input';
+    let questGiveOpts = '<option value="">Aucune</option>';
+    quests.forEach(q=>{ questGiveOpts += '<option value="' + q.id + '">' + q.name + '</option>'; });
+    questGiveSelect.innerHTML = questGiveOpts;
+    questGiveSelect.value = (choice.questGive && choice.questGive.questId) || '';
+    questGiveSelect.addEventListener('change', ()=>{
+      choice.questGive = questGiveSelect.value ? { questId: questGiveSelect.value } : null;
+    });
+    row.appendChild(questGiveSelect);
+
+    const questValidateLabel = document.createElement('div');
+    questValidateLabel.className = 'field-label';
+    questValidateLabel.textContent = 'Valider cette quête';
+    row.appendChild(questValidateLabel);
+
+    const questValidateSelect = document.createElement('select');
+    questValidateSelect.className = 'field-input';
+    let questValidateOpts = '<option value="">Aucune</option>';
+    quests.forEach(q=>{ questValidateOpts += '<option value="' + q.id + '">' + q.name + '</option>'; });
+    questValidateSelect.innerHTML = questValidateOpts;
+    questValidateSelect.value = (choice.questValidate && choice.questValidate.questId) || '';
+    questValidateSelect.addEventListener('change', ()=>{
+      choice.questValidate = questValidateSelect.value ? { questId: questValidateSelect.value } : null;
+    });
+    row.appendChild(questValidateSelect);
+
+    card.appendChild(row);
+  }
+
+  wrap.appendChild(card);
 }
 
-document.getElementById('addStepBtn').addEventListener('click', ()=>{
-  currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
-  renderDialogueBuilder();
-});
+/* ---------- Vue arbre : la carte du dialogue ----------
+   Un dialogue peut reboucler (deux choix vers la même étape) : une étape déjà dessinée
+   n'est pas redessinée, on affiche "↩ Étape N" à la place. Les étapes qu'aucun choix
+   n'atteint sont listées à part : c'est une erreur fréquente et invisible autrement. */
+function renderDialogueTree(wrap){
+  const box = document.createElement('div');
+  box.className = 'dlg-tree';
+  const drawn = new Set();
+
+  function drawStep(idx, depth, container){
+    const s = currentDialogueSteps[idx];
+    if (!s) return;
+    drawn.add(idx);
+    const node = document.createElement('div');
+    node.className = 'dlg-tree-node';
+    node.style.marginLeft = Math.min(depth, 6) * 12 + 'px';
+
+    const headRow = document.createElement('div');
+    headRow.className = 'dlg-tree-head';
+    const choices = s.choices || [];
+    const collapsed = dlgTreeCollapsed.has(idx);
+
+    const tw = document.createElement('button');
+    tw.type = 'button';
+    tw.className = 'dlg-tree-tw';
+    tw.textContent = choices.length ? (collapsed ? '▶' : '▼') : '•';
+    if (choices.length){
+      tw.addEventListener('click', ()=>{
+        if (collapsed) dlgTreeCollapsed.delete(idx); else dlgTreeCollapsed.add(idx);
+        renderDialogueBuilder();
+      });
+    }
+    headRow.appendChild(tw);
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'dlg-tree-open';
+    const nb = document.createElement('b');
+    nb.textContent = 'Étape ' + idx;
+    const tx = document.createElement('span');
+    tx.className = 'dlg-tree-text';
+    tx.textContent = ' « ' + dlgShortText(s.text, 30) + ' »' + ((s.textVariants && s.textVariants.length) ? '  🕒' + s.textVariants.length : '');
+    openBtn.appendChild(nb); openBtn.appendChild(tx);
+    openBtn.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(idx); });
+    headRow.appendChild(openBtn);
+    node.appendChild(headRow);
+
+    if (!collapsed){
+      choices.forEach((ch, ci)=>{
+        const line = document.createElement('button');
+        line.type = 'button';
+        line.className = 'dlg-tree-choice';
+        const target = (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= currentDialogueSteps.length)
+          ? 'Fin'
+          : (drawn.has(ch.next) ? '↩ Étape ' + ch.next : 'Étape ' + ch.next);
+        line.textContent = '└ « ' + dlgShortText(ch.label, 22) + ' » → ' + target + (ch.once ? '  🎁1×' : '');
+        line.addEventListener('click', ()=>{
+          dlgTreeMode = false;
+          dlgStepIdx = idx; dlgVariantIdx = null; dlgChoiceIdx = ci;
+          renderDialogueBuilder();
+        });
+        node.appendChild(line);
+
+        const nx = ch.next;
+        if (nx !== null && nx !== undefined && !isNaN(nx) && currentDialogueSteps[nx] && !drawn.has(nx)){
+          drawStep(nx, depth + 1, node);
+        }
+      });
+    }
+    container.appendChild(node);
+  }
+
+  drawStep(0, 0, box);
+
+  const orphans = [];
+  currentDialogueSteps.forEach((s, i)=>{ if (!drawn.has(i)) orphans.push(i); });
+  if (orphans.length){
+    const warn = document.createElement('div');
+    warn.className = 'dlg-tree-orphans';
+    const t = document.createElement('div');
+    t.textContent = '⚠️ Étapes qu\'aucun choix n\'atteint :';
+    warn.appendChild(t);
+    orphans.forEach(i=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dlg-pill';
+      b.textContent = 'Étape ' + i;
+      b.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(i); });
+      warn.appendChild(b);
+    });
+    box.appendChild(warn);
+  }
+
+  wrap.appendChild(box);
+}
 
 function parseDialogueScript(script){
   if (!script) return [];
@@ -3017,9 +3343,32 @@ function logToActiveQuestJournals(text, npcId){
     if (Object.keys(updates).length) db.collection('players').doc(currentUser.uid).update(updates).catch(()=>{});
   });
 }
-function resolveStepText(step){
+/* Clé de suivi d'un choix déjà pris. Les choix créés avant la v211 n'ont pas encore
+   d'identifiant fixe : on retombe alors sur leur position, le temps que le PNJ soit
+   ré-enregistré une fois dans l'éditeur (qui leur en attribue un). */
+function choiceUsedKey(creatureId, choiceId){
+  return (creatureId || 'x') + '__' + choiceId;
+}
+function choiceKeyFor(creatureId, ch, stepIdx, choiceIdx){
+  return choiceUsedKey(creatureId, ch.id || ('s' + stepIdx + 'c' + choiceIdx));
+}
+function markChoiceUsed(key){
+  playerUsedChoices[key] = true; // effet immédiat, sans attendre le retour du serveur
+  if (!currentUser || !db) return;
+  db.collection('players').doc(currentUser.uid)
+    .set({ usedChoices: { [key]: true } }, { merge:true })
+    .catch((err)=> showToast('Choix non mémorisé : ' + err.message));
+}
+function resolveStepText(step, creatureId){
   const variants = step.textVariants || [];
   for (const v of variants){
+    if (v.kind === 'choice'){
+      if (!v.choiceId) continue;
+      const taken = !!playerUsedChoices[choiceUsedKey(creatureId, v.choiceId)];
+      if (v.taken === 'no'){ if (!taken) return v.text; }
+      else if (taken) return v.text;
+      continue;
+    }
     const state = playerQuestsState[v.questId] || 'none';
     if (v.state === 'active' && state === 'active') return v.text;
     if (v.state === 'completed' && state === 'completed') return v.text;
@@ -3044,7 +3393,7 @@ function renderSheet(){
   }
 
   const step = activeSteps[currentStepIdx];
-  const resolvedText = resolveStepText(step);
+  const resolvedText = resolveStepText(step, c.id);
   document.getElementById('sheetMeta').textContent = resolvedText;
   const stepKey = c.id + '_' + currentStepIdx;
   if (stepKey !== lastLoggedStepKey){
@@ -3052,7 +3401,8 @@ function renderSheet(){
     logToActiveQuestJournals(resolvedText, c.id);
   }
 
-  const visibleChoices = step.choices.filter(ch=>{
+  const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) })).filter(({ ch, key })=>{
+    if (ch.once && playerUsedChoices[key]) return false; // choix à usage unique déjà pris
     if (ch.questGive){
       const state = playerQuestsState[ch.questGive.questId];
       if (state === 'active' || state === 'completed') return false; // déjà acceptée ou terminée : ne plus proposer
@@ -3079,11 +3429,12 @@ function renderSheet(){
     return;
   }
 
-  visibleChoices.forEach(ch=>{
+  visibleChoices.forEach(({ ch, key })=>{
     const btn = document.createElement('button');
     btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
     btn.addEventListener('click', ()=>{
+      if (ch.once) markChoiceUsed(key);
       if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
       if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
       if (ch.questGive) giveQuestToPlayer(ch.questGive.questId);
@@ -3152,6 +3503,7 @@ function recruitCreature(creature, metierId){
 
 /* ---------- Suivi permanent de la progression du joueur (quêtes) ---------- */
 let playerQuestsState = {}; // { questId: 'active' | 'completed' }
+let playerUsedChoices = {}; // { "<idPnj>__<idChoix>": true } — choix à usage unique déjà pris
 let playerCoins = 0;
 let playerDiscoveredZoneIds = new Set();
 let playerExplorerMissionStartedAt = null;
@@ -3174,6 +3526,7 @@ function watchPlayerQuests(uid){
       }
     } catch(e){}
     playerQuestsState = (doc.exists && doc.data().quests) || {};
+    playerUsedChoices = (doc.exists && doc.data().usedChoices) || {};
     playerDiscoveredZoneIds = new Set((doc.exists && doc.data().discoveredZoneIds) || []);
     playerExplorerMissionStartedAt = (doc.exists && doc.data().explorerMissionStartedAt) || null;
     playerExplorerMissionDuration = (doc.exists && doc.data().explorerMissionDuration) || null;
@@ -3553,6 +3906,7 @@ function loadForEdit(id){
   } else {
     currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
   }
+  resetDialogueNav();
   renderDialogueBuilder();
   const interactionType = d.interactionType || 'dialogue';
   document.getElementById('editInteractionType').value = interactionType;
@@ -3663,6 +4017,7 @@ function resetForm(){
   document.getElementById('editRecruitScope').value = 'perPlayer';
   document.getElementById('editDuplicateBtn').style.display = 'none';
   currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
+  resetDialogueNav();
   renderDialogueBuilder();
   document.getElementById('editInteractionType').value = 'dialogue';
   document.getElementById('dialogueBlock').style.display = 'block';
@@ -3896,7 +4251,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const hideOnExitRadius = document.getElementById('editHideImmediately').checked;
   const dupeGroup = currentDupeGroup;
   const dialogueSteps = currentDialogueSteps
-    .map(s=>({ text: (s.text||'').trim(), choices: s.choices.filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=>v.questId && v.text && v.text.trim()) }))
+    .map(s=>({ text: (s.text||'').trim(), choices: (s.choices||[]).filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=> v.text && v.text.trim() && (v.kind === 'choice' ? !!v.choiceId : !!v.questId)) }))
     .filter(s=> s.text || s.choices.length || s.textVariants.length);
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
@@ -10432,8 +10787,7 @@ function rollSceneEncounter(){
   }, 350);
 }
 
-/* ---------- Jeu de données de test pour le combat : attaques + monstres (couvre les 17 états) ---------- */
-const COMBAT_TEST_PREFIX = 'Test combat : ';
+/* ---------- Robots de départ (bouton des Outils de test) ---------- */
 const STARTER_ROBOTS = [
 {name:"Sentinelle bleue",images:{face:"data:image/png;base64,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",av34:"data:image/png;base64,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",profil:"data:image/png;base64,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",ar34:"data:image/png;base64,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",dos:"data:image/png;base64,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"}},
 {name:"Contremaître",images:{face:"data:image/png;base64,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",av34:"data:image/png;base64,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",profil:"data:image/png;base64,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",ar34:"data:image/png;base64,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",dos:"data:image/png;base64,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"}},
@@ -10467,92 +10821,6 @@ document.getElementById('createStarterRobotsBtn').addEventListener('click', asyn
   }
 });
 
-document.getElementById('createCombatTestDataBtn').addEventListener('click', async ()=>{
-  if (!attacksCol || !creatureCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
-  if (attacks.find(a=>a.name && a.name.startsWith(COMBAT_TEST_PREFIX))){ showToast('Les attaques de test existent déjà. Supprime-les d\'abord si tu veux les régénérer.'); return; }
-  try {
-    async function ensureAttack(name, data){
-      const ref = await attacksCol.add({ name, description:'', learnDuration:60, allowedMetiers:[], statusEffect:null, createdAt:Date.now(), updatedAt:Date.now(), ...data });
-      await syncAttackLearnItem(ref.id, name);
-      return ref.id;
-    }
-    const epeeId = await ensureAttack(COMBAT_TEST_PREFIX+'Coup d\'épée', { emoji:'🗡️', kind:'damage_single', school:'physical', tribe:'', power:15 });
-    const feuId = await ensureAttack(COMBAT_TEST_PREFIX+'Boule de feu', { emoji:'🔥', kind:'damage_single', school:'magic', tribe:'feu', power:15, statusEffect:{ id:'burn', chance:40, duration:3, value:10 } });
-    const soinId = await ensureAttack(COMBAT_TEST_PREFIX+'Soin', { emoji:'💚', kind:'heal_single', school:'magic', tribe:'', power:20 });
-    const boucId = await ensureAttack(COMBAT_TEST_PREFIX+'Bouclier', { emoji:'🛡️', kind:'boost', school:'physical', tribe:'', power:0, statusEffect:{ id:'shield', chance:100, duration:4, value:30 } });
-    const poisonId = await ensureAttack(COMBAT_TEST_PREFIX+'Morsure venimeuse', { emoji:'🤢', kind:'debuff', school:'physical', tribe:'', power:0, statusEffect:{ id:'poison', chance:80, duration:4, value:10 } });
-    const provocId = await ensureAttack(COMBAT_TEST_PREFIX+'Provocation', { emoji:'📣', kind:'boost', school:'physical', tribe:'', power:0, statusEffect:{ id:'taunt', chance:100, duration:3, value:0 } });
-    const purifId = await ensureAttack(COMBAT_TEST_PREFIX+'Purification', { emoji:'🧼', kind:'boost', school:'magic', tribe:'', power:0, statusEffect:{ id:'purify', chance:100, duration:1, value:0 } });
-    const etourId = await ensureAttack(COMBAT_TEST_PREFIX+'Coup étourdissant', { emoji:'💫', kind:'damage_single', school:'physical', tribe:'', power:8, statusEffect:{ id:'stun', chance:50, duration:1, value:0 } });
-
-    function buildCombatStats(overrides){
-      return { tribe:'', hp:80, speed:10, atk:12, def:8, matk:8, mdef:8, precision:90, evasion:10, recruitable:false, rarity:'commun', fleeChance:35, attackIds:[], startingAttackIds:[], immunities:[], resistances:[], rewardItemIds:[], ...overrides };
-    }
-    async function ensureMonster(name, lat, lng, emoji, combatStats){
-      const attackIds = combatStats.attackIds;
-      await creatureCol.add({
-        name, metier:null, emoji, imageUrl:'', visibilityCondition:null, hideOnExitRadius:false, dupeGroup:null,
-        dialogueSteps:[], interactionType:'combat', shopItems:[], shopPhrase:'',
-        combatStats: { ...combatStats, attackIds, startingAttackIds: attackIds },
-        zoneShowName:false, lat, lng, assignedZoneId:null,
-        startDate:null, endDate:null, startTime:null, endTime:null, daysOfWeek:[],
-        createdAt: Date.now(), updatedAt: Date.now(),
-      });
-    }
-    await ensureMonster(COMBAT_TEST_PREFIX+'Gobelin d\'essai', 45.8463, 0.0199, '👺', buildCombatStats({ tribe:'terre', hp:70, speed:12, atk:14, def:7, attackIds:[epeeId, poisonId, etourId] }));
-    await ensureMonster(COMBAT_TEST_PREFIX+'Sorcière d\'essai', 45.8461, 0.0201, '🧙', buildCombatStats({ tribe:'feu', hp:60, speed:8, matk:16, mdef:10, attackIds:[feuId, soinId, boucId, provocId] }));
-    await ensureMonster(COMBAT_TEST_PREFIX+'Esprit gardien d\'essai', 45.8465, 0.0203, '👻', buildCombatStats({ tribe:'lumiere', hp:90, speed:9, atk:10, matk:10, attackIds:[epeeId, purifId, boucId] }));
-
-    async function ensureConsumable(name, emoji, description, combatUse){
-      const ref = await itemsCol.add({
-        name, emoji, imageUrl:'', type:'consommable', description, equippable:false, equipCategory:'accessoire',
-        effectType:'speed_boost', effectValue:0, effectDuration:'permanent', effectSeconds:0, effectMetiers:[],
-        sellable:false, basePrice:0, combatUse, createdAt:Date.now(), updatedAt:Date.now(),
-      });
-      return ref.id;
-    }
-    const potionId = await ensureConsumable(COMBAT_TEST_PREFIX+'Potion de soin', '🧪', 'Restaure des PV.', { enabled:true, mode:'heal', healPower:40 });
-    const grandePotionId = await ensureConsumable(COMBAT_TEST_PREFIX+'Grande potion de soin', '🍯', 'Restaure beaucoup de PV.', { enabled:true, mode:'heal', healPower:80 });
-    const purifianteId = await ensureConsumable(COMBAT_TEST_PREFIX+'Fiole purifiante', '🧼', 'Retire les états négatifs d\'un allié.', { enabled:true, mode:'purify' });
-    const poisonFioleId = await ensureConsumable(COMBAT_TEST_PREFIX+'Fiole empoisonnée', '☠️', 'Empoisonne un ennemi.', { enabled:true, mode:'status_enemy', statusEffect:{ id:'poison', chance:80, duration:4, value:10 } });
-    const bombeId = await ensureConsumable(COMBAT_TEST_PREFIX+'Bombe étourdissante', '💣', 'Étourdit un ennemi.', { enabled:true, mode:'status_enemy', statusEffect:{ id:'stun', chance:60, duration:1, value:0 } });
-    const elixirId = await ensureConsumable(COMBAT_TEST_PREFIX+'Élixir de vitesse', '✨', 'Accélère un allié.', { enabled:true, mode:'status_boost', statusEffect:{ id:'haste', chance:100, duration:3, value:50 } });
-    if (playerDocRef){
-      await playerDocRef.set({ inventory: {
-        [potionId]: firebase.firestore.FieldValue.increment(3),
-        [grandePotionId]: firebase.firestore.FieldValue.increment(2),
-        [purifianteId]: firebase.firestore.FieldValue.increment(2),
-        [poisonFioleId]: firebase.firestore.FieldValue.increment(3),
-        [bombeId]: firebase.firestore.FieldValue.increment(2),
-        [elixirId]: firebase.firestore.FieldValue.increment(2),
-      } }, { merge:true });
-    }
-
-    showToast('7 attaques, 3 monstres et 6 objets de test créés (près du Marcivil sur la carte, objets ajoutés à ton sac).');
-  } catch(err){ showToast('Échec : ' + err.message); }
-});
-
-document.getElementById('cleanupCombatTestDataBtn').addEventListener('click', async ()=>{
-  if (!attacksCol || !creatureCol || !itemsCol){ showToast('Firebase indisponible ici'); return; }
-  if (!(await appConfirm('Supprimer définitivement les attaques et monstres de test créés pour le combat ? (les personnages déjà recrutés dans ta Base ne seront pas touchés)'))) return;
-  try {
-    const testAttacks = attacks.filter(a=> a.name && a.name.startsWith(COMBAT_TEST_PREFIX));
-    const testAttackIds = new Set(testAttacks.map(a=>a.id));
-    const testManuals = items.filter(it=> it.teachesAttackId && testAttackIds.has(it.teachesAttackId));
-    const testCreatures = creatures.filter(c=> c.name && c.name.startsWith(COMBAT_TEST_PREFIX));
-    const testConsumables = items.filter(it=> it.name && it.name.startsWith(COMBAT_TEST_PREFIX) && it.type==='consommable');
-    await Promise.all(testCreatures.map(c=> creatureCol.doc(c.id).delete()));
-    await Promise.all(testAttacks.map(a=> attacksCol.doc(a.id).delete()));
-    await Promise.all(testManuals.map(it=> itemsCol.doc(it.id).delete()));
-    await Promise.all(testConsumables.map(it=> itemsCol.doc(it.id).delete()));
-    if (playerDocRef && testConsumables.length){
-      const clearInv = {};
-      testConsumables.forEach(it=> clearInv[it.id] = firebase.firestore.FieldValue.delete());
-      await playerDocRef.set({ inventory: clearInv }, { merge:true });
-    }
-    showToast(`Supprimé : ${testCreatures.length} monstre(s), ${testAttacks.length} attaque(s), ${testManuals.length} manuel(s), ${testConsumables.length} objet(s).`);
-  } catch(err){ showToast('Échec : ' + err.message); }
-});
 
 /* ---------- Musique d'ambiance, avec vrai fondu enchaîné en boucle ----------
    Plutôt qu'une boucle native (qui recommence brutalement à 0), on utilise deux lecteurs <audio> en
