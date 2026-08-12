@@ -575,7 +575,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v211</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v212</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2399,11 +2399,12 @@ function dlgShortText(t, n){
   n = n || 34;
   return t.length > n ? t.slice(0, n-1) + '…' : t;
 }
-function dlgAllChoices(){
+function dlgAllChoices(excludeId){
   const out = [];
   currentDialogueSteps.forEach((s, si)=>{
     (s.choices || []).forEach(ch=>{
-      if (ch.id) out.push({ id: ch.id, label: 'Étape ' + si + ' · « ' + dlgShortText(ch.label, 22) + ' »' });
+      if (!ch.id || ch.id === excludeId) return; // un choix ne peut pas se conditionner à lui-même
+      out.push({ id: ch.id, label: 'Étape ' + si + ' · « ' + dlgShortText(ch.label, 22) + ' »' });
     });
   });
   return out;
@@ -2688,43 +2689,98 @@ function renderDialogueBuilder(){
     });
     row.appendChild(labelInput);
 
+    /* Condition d'affichage : quête (comme avant) OU « tel autre choix a déjà été pris »
+       — la même liste que dans les variantes de texte, pour que les deux mécanismes
+       se règlent de la même façon (v212). */
     const showIfLabel = document.createElement('div');
     showIfLabel.className = 'field-label';
     showIfLabel.textContent = 'N\'afficher ce choix que si (optionnel)';
     row.appendChild(showIfLabel);
 
+    const showIfKindSel = document.createElement('select');
+    showIfKindSel.className = 'field-input';
+    showIfKindSel.innerHTML = '<option value="">Aucune condition</option><option value="quest">une quête est dans tel état</option><option value="choice">un autre choix a déjà été pris</option>';
+    showIfKindSel.value = choice.showIf ? (choice.showIf.kind === 'choice' ? 'choice' : 'quest') : '';
+    row.appendChild(showIfKindSel);
+
     const showIfRow = document.createElement('div');
-    showIfRow.style.cssText = 'display:flex; gap:6px;';
-    const showIfQuestSelect = document.createElement('select');
-    showIfQuestSelect.className = 'field-input';
-    let showIfQuestOpts = '<option value="">Aucune condition</option>';
-    quests.forEach(q=>{ showIfQuestOpts += '<option value="' + q.id + '">' + q.name + '</option>'; });
-    showIfQuestSelect.innerHTML = showIfQuestOpts;
-    showIfQuestSelect.value = (choice.showIf && choice.showIf.questId) || '';
-    showIfQuestSelect.style.flex = '2';
-
-    const showIfStateSelect = document.createElement('select');
-    showIfStateSelect.className = 'field-input';
-    showIfStateSelect.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_active">n\'est pas (encore) en cours</option>';
-    showIfStateSelect.value = (choice.showIf && choice.showIf.state) || 'active';
-    showIfStateSelect.style.flex = '2';
-    showIfStateSelect.style.display = showIfQuestSelect.value ? 'block' : 'none';
-
-    showIfQuestSelect.addEventListener('change', ()=>{
-      if (!showIfQuestSelect.value){
-        choice.showIf = null;
-        showIfStateSelect.style.display = 'none';
-      } else {
-        choice.showIf = { questId: showIfQuestSelect.value, state: showIfStateSelect.value };
-        showIfStateSelect.style.display = 'block';
-      }
-    });
-    showIfStateSelect.addEventListener('change', ()=>{
-      if (choice.showIf) choice.showIf.state = showIfStateSelect.value;
-    });
-    showIfRow.appendChild(showIfQuestSelect);
-    showIfRow.appendChild(showIfStateSelect);
+    showIfRow.style.cssText = 'display:flex; gap:6px; margin-top:6px;';
     row.appendChild(showIfRow);
+
+    function paintShowIfCondition(){
+      showIfRow.innerHTML = '';
+      if (!showIfKindSel.value){ choice.showIf = null; return; }
+
+      if (showIfKindSel.value === 'choice'){
+        const list = dlgAllChoices(choice.id);
+        if (!list.length){
+          const p = document.createElement('p');
+          p.className = 'meta';
+          p.style.margin = '0';
+          p.textContent = 'Aucun autre choix disponible dans ce dialogue pour l\'instant.';
+          showIfRow.appendChild(p);
+          choice.showIf = null; // rien de sélectionnable : on n'enregistre pas une condition mensongère
+          return;
+        }
+        if (!choice.showIf || choice.showIf.kind !== 'choice'){
+          choice.showIf = { kind:'choice', choiceId:list[0].id, taken:'yes' };
+        }
+        if (!list.find(o=> o.id === choice.showIf.choiceId)) choice.showIf.choiceId = list[0].id;
+
+        const cSel = document.createElement('select');
+        cSel.className = 'field-input';
+        cSel.innerHTML = list.map(o=> '<option value="' + o.id + '">' + o.label + '</option>').join('');
+        cSel.value = choice.showIf.choiceId;
+        cSel.style.flex = '2';
+        cSel.addEventListener('change', ()=>{ choice.showIf.choiceId = cSel.value; });
+
+        const tSel = document.createElement('select');
+        tSel.className = 'field-input';
+        tSel.innerHTML = '<option value="yes">a été pris</option><option value="no">n\'a pas été pris</option>';
+        tSel.value = (choice.showIf.taken === 'no') ? 'no' : 'yes';
+        choice.showIf.taken = tSel.value;
+        tSel.style.flex = '1';
+        tSel.addEventListener('change', ()=>{ choice.showIf.taken = tSel.value; });
+
+        showIfRow.appendChild(cSel); showIfRow.appendChild(tSel);
+        return;
+      }
+
+      if (!quests.length){
+        const p = document.createElement('p');
+        p.className = 'meta';
+        p.style.margin = '0';
+        p.textContent = 'Aucune quête créée pour l\'instant.';
+        showIfRow.appendChild(p);
+        choice.showIf = null;
+        return;
+      }
+      if (!choice.showIf || choice.showIf.kind === 'choice'){
+        choice.showIf = { kind:'quest', questId:quests[0].id, state:'active' };
+      }
+      if (!choice.showIf.questId) choice.showIf.questId = quests[0].id;
+      choice.showIf.kind = 'quest';
+
+      const qSel = document.createElement('select');
+      qSel.className = 'field-input';
+      qSel.innerHTML = quests.map(q=> '<option value="' + q.id + '">' + q.name + '</option>').join('');
+      qSel.value = choice.showIf.questId;
+      choice.showIf.questId = qSel.value;
+      qSel.style.flex = '2';
+      qSel.addEventListener('change', ()=>{ choice.showIf.questId = qSel.value; });
+
+      const stSel = document.createElement('select');
+      stSel.className = 'field-input';
+      stSel.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_active">n\'est pas (encore) en cours</option>';
+      stSel.value = choice.showIf.state || 'active';
+      choice.showIf.state = stSel.value;
+      stSel.style.flex = '2';
+      stSel.addEventListener('change', ()=>{ choice.showIf.state = stSel.value; });
+
+      showIfRow.appendChild(qSel); showIfRow.appendChild(stSel);
+    }
+    showIfKindSel.addEventListener('change', paintShowIfCondition);
+    paintShowIfCondition();
 
     /* Usage unique : le choix disparaît définitivement pour ce joueur une fois pris.
        Sert surtout aux cadeaux ("Tiens, j'ai une potion pour toi"), mais marche pour
@@ -2746,7 +2802,7 @@ function renderDialogueBuilder(){
     const onceHint = document.createElement('p');
     onceHint.className = 'meta';
     onceHint.style.margin = '2px 0 0';
-    onceHint.textContent = 'Une fois pris, ce bouton ne réapparaît plus pour ce joueur. Pour que le PNJ change aussi de phrase, ajoute une variante de texte conditionnée à ce choix.';
+    onceHint.textContent = 'Une fois pris, ce bouton ne réapparaît plus pour ce joueur. Pas nécessaire pour conditionner un autre choix ou une variante de texte à celui-ci : ça marche même sans cocher.';
     row.appendChild(onceHint);
 
     const nextLabel = document.createElement('div');
@@ -2911,7 +2967,8 @@ function renderDialogueTree(wrap){
         const target = (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= currentDialogueSteps.length)
           ? 'Fin'
           : (drawn.has(ch.next) ? '↩ Étape ' + ch.next : 'Étape ' + ch.next);
-        line.textContent = '└ « ' + dlgShortText(ch.label, 22) + ' » → ' + target + (ch.once ? '  🎁1×' : '');
+        const condMark = (ch.showIf ? (ch.showIf.kind === 'choice' ? '  🔗' : '  🔒') : '');
+        line.textContent = '└ « ' + dlgShortText(ch.label, 22) + ' » → ' + target + (ch.once ? '  🎁1×' : '') + condMark;
         line.addEventListener('click', ()=>{
           dlgTreeMode = false;
           dlgStepIdx = idx; dlgVariantIdx = null; dlgChoiceIdx = ci;
@@ -3316,10 +3373,12 @@ function renderShopSellList(){
 let activeCreature = null;
 let activeSteps = [];
 let currentStepIdx = 0;
+let activeReferencedChoiceIds = new Set(); // choix cités par une condition du dialogue en cours
 
 function openSheet(c){
   activeCreature = c;
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
+  activeReferencedChoiceIds = dialogueReferencedChoiceIds(activeSteps);
   currentStepIdx = 0;
   renderSheet();
   document.getElementById('overlay').classList.add('show');
@@ -3351,6 +3410,24 @@ function choiceUsedKey(creatureId, choiceId){
 }
 function choiceKeyFor(creatureId, ch, stepIdx, choiceIdx){
   return choiceUsedKey(creatureId, ch.id || ('s' + stepIdx + 'c' + choiceIdx));
+}
+/* Correctif du couplage (v212) : jusqu'ici un choix n'était mémorisé que s'il était marqué
+   « usage unique ». Or les conditions « tel choix a déjà été pris » (sur une variante de texte
+   comme sur la visibilité d'un choix) lisent ce même suivi : sans ça, une condition visant un
+   choix sans 🎁 ne basculait jamais. On mémorise donc aussi tout choix RÉFÉRENCÉ quelque part
+   dans le dialogue — et rien d'autre, pour ne pas écrire à chaque réplique. */
+function dialogueReferencedChoiceIds(steps){
+  const ids = new Set();
+  (steps || []).forEach(s=>{
+    (s.textVariants || []).forEach(v=>{ if (v.kind === 'choice' && v.choiceId) ids.add(v.choiceId); });
+    (s.choices || []).forEach(ch=>{
+      if (ch.showIf && ch.showIf.kind === 'choice' && ch.showIf.choiceId) ids.add(ch.showIf.choiceId);
+    });
+  });
+  return ids;
+}
+function shouldRememberChoice(ch){
+  return !!ch.once || !!(ch.id && activeReferencedChoiceIds.has(ch.id));
 }
 function markChoiceUsed(key){
   playerUsedChoices[key] = true; // effet immédiat, sans attendre le retour du serveur
@@ -3411,7 +3488,13 @@ function renderSheet(){
       const state = playerQuestsState[ch.questValidate.questId];
       if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
     }
-    if (ch.showIf && ch.showIf.questId){
+    if (ch.showIf && ch.showIf.kind === 'choice'){
+      if (ch.showIf.choiceId){
+        const taken = !!playerUsedChoices[choiceUsedKey(c.id, ch.showIf.choiceId)];
+        if (ch.showIf.taken === 'no'){ if (taken) return false; }
+        else if (!taken) return false;
+      }
+    } else if (ch.showIf && ch.showIf.questId){
       const state = playerQuestsState[ch.showIf.questId] || 'none';
       if (ch.showIf.state === 'active' && state !== 'active') return false;
       if (ch.showIf.state === 'completed' && state !== 'completed') return false;
@@ -3434,7 +3517,7 @@ function renderSheet(){
     btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
     btn.addEventListener('click', ()=>{
-      if (ch.once) markChoiceUsed(key);
+      if (shouldRememberChoice(ch)) markChoiceUsed(key);
       if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
       if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
       if (ch.questGive) giveQuestToPlayer(ch.questGive.questId);
