@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v230</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v231</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -10318,6 +10318,31 @@ document.getElementById('sceneListAddBtn').addEventListener('click', ()=>{
   renderSceneListOverlay();
 });
 
+/* ---------- Enseignes de porte (v230-231) ----------
+   Une enseigne peut porter le portrait de l'habitant, son nom, ou rien. Elle se place avec le
+   MÊME pavé directionnel que le point lui-même, mais indépendamment : le point sert à toucher
+   la porte, l'enseigne se pose souvent ailleurs (au-dessus, en saillie du mur). Les deux sont
+   donc liés mais réglés séparément. */
+function roomLabelMode(pt){
+  if (pt.roomLabelMode) return pt.roomLabelMode;
+  return (pt.showPortrait === false) ? 'aucun' : 'portrait'; // compatibilité v230
+}
+function roomLabelGeom(pt){
+  return {
+    size: (pt.portraitSize != null ? pt.portraitSize : 55),
+    x: (pt.portraitX != null ? pt.portraitX : 50),
+    y: (pt.portraitY != null ? pt.portraitY : 45),
+  };
+}
+/* Le nom est dessiné en SVG : il se met alors à l'échelle exactement comme une image, quelle
+   que soit la taille de l'enseigne. Un nom long est resserré au lieu de déborder. */
+function roomNameSvg(nom, couleur){
+  const propre = String(nom || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const serrer = propre.length > 8 ? ' textLength="112" lengthAdjust="spacingAndGlyphs"' : '';
+  return `<svg viewBox="0 0 120 34" preserveAspectRatio="xMidYMid meet" style="width:100%; height:100%; overflow:visible;">
+    <text x="60" y="24" text-anchor="middle" font-size="22" font-weight="700" font-family="system-ui, sans-serif" fill="${couleur}"${serrer}>${propre}</text>
+  </svg>`;
+}
 function sceneTypeEmoji(typeId){
   const t = SCENE_POINT_TYPES.find(x=>x.id===typeId);
   return t ? t.label.split(' ')[0] : '📍';
@@ -10442,13 +10467,19 @@ function renderSceneEditorPoints(){
     }
     /* Repère de portrait : l'éditeur ne sait pas qui habitera là, mais il faut bien pouvoir
        viser. On dessine donc un cercle gris à l'emplacement exact qu'occupera le portrait. */
-    if (pt.type === 'chambre' && pt.showPortrait !== false){
+    if (pt.type === 'chambre' && roomLabelMode(pt) !== 'aucun'){
+      const mode = roomLabelMode(pt);
+      const g = roomLabelGeom(pt);
+      const vise = (selected && sceneEditorDpadTarget === 'enseigne');
       const marque = document.createElement('div');
-      const taille = (pt.portraitSize != null ? pt.portraitSize : 55) / 100;
-      const px = (pt.portraitX != null ? pt.portraitX : 50);
-      const py = (pt.portraitY != null ? pt.portraitY : 45);
-      marque.style.cssText = `position:absolute; left:${px}%; top:${py}%; width:${taille*100}%; height:${taille*100}%; transform:translate(-50%,-50%) rotate(${pt.rotation||0}deg); border-radius:50%; background:rgba(255,255,255,.85); border:2px dashed rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; font-size:11px; pointer-events:none;`;
-      marque.textContent = '👤';
+      const commun = `position:absolute; left:${g.x}%; top:${g.y}%; width:${g.size}%; transform:translate(-50%,-50%) rotate(${pt.rotation||0}deg); pointer-events:none; box-sizing:border-box;`;
+      if (mode === 'nom'){
+        marque.style.cssText = commun + `height:${g.size*0.32}%; background:rgba(255,255,255,.9); border:2px ${vise?'solid var(--danger)':'dashed rgba(0,0,0,.45)'}; border-radius:4px;`;
+        marque.innerHTML = roomNameSvg('Nom', pt.labelColor || '#1a1a1a');
+      } else {
+        marque.style.cssText = commun + `height:${g.size}%; border-radius:50%; background:rgba(255,255,255,.85); border:2px ${vise?'solid var(--danger)':'dashed rgba(0,0,0,.45)'}; display:flex; align-items:center; justify-content:center; font-size:11px;`;
+        marque.textContent = '👤';
+      }
       el.appendChild(marque);
     }
     wrap.appendChild(el);
@@ -10457,6 +10488,7 @@ function renderSceneEditorPoints(){
 
 function selectScenePoint(id){
   sceneEditorSelectedPointId = id;
+  sceneEditorDpadTarget = 'point'; // on repart toujours sur le point en changeant de sélection
   renderSceneEditorPoints();
   renderSceneEditorDpad();
   document.getElementById('sceneEditorDeleteBtn').style.display = id ? 'block' : 'none';
@@ -10464,10 +10496,13 @@ function selectScenePoint(id){
   renderSceneEditorDetails();
 }
 
+let sceneEditorDpadTarget = 'point'; // 'point' ou 'enseigne'
 function renderSceneEditorDpad(){
   const dpad = document.getElementById('sceneEditorDpad');
   const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
   if (!pt){ dpad.innerHTML = ''; return; }
+  const peutEnseigne = (pt.type === 'chambre' && roomLabelMode(pt) !== 'aucun');
+  if (!peutEnseigne) sceneEditorDpadTarget = 'point';
   const btn = 'pointer-events:auto; width:42px; height:42px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,.4);';
   dpad.innerHTML = `
     <button type="button" id="scDpadUp" style="${btn} position:absolute; left:50%; top:10px; transform:translateX(-50%);">▲</button>
@@ -10478,10 +10513,30 @@ function renderSceneEditorDpad(){
       <button type="button" id="scDpadSizeUp" style="${btn}">＋</button>
       <button type="button" id="scDpadSizeDown" style="${btn}">－</button>
     </div>
+    ${peutEnseigne ? `<button type="button" id="scDpadTarget" style="pointer-events:auto; position:absolute; left:10px; bottom:10px; height:42px; padding:0 14px; border-radius:21px; border:none; background:${sceneEditorDpadTarget==='enseigne'?'var(--accent)':'rgba(0,0,0,.6)'}; color:#fff; font-size:13px; font-weight:700;">${sceneEditorDpadTarget==='enseigne' ? '🪧 Enseigne' : '📍 Point'}</button>` : ''}
   `;
   const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
   const step = 2;
-  const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); };
+  const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); renderSceneEditorDetails(); };
+  const cible = document.getElementById('scDpadTarget');
+  if (cible) cible.addEventListener('click', ()=>{
+    sceneEditorDpadTarget = (sceneEditorDpadTarget === 'enseigne') ? 'point' : 'enseigne';
+    renderSceneEditorDpad();
+  });
+
+  if (sceneEditorDpadTarget === 'enseigne'){
+    /* Mêmes touches, appliquées à l'enseigne. Elle peut sortir du point (valeurs hors 0-100) :
+       c'est justement ce qui permet de poser le nom au-dessus de la porte qu'on touche. */
+    const g = ()=> roomLabelGeom(pt);
+    document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.portraitY = clamp(g().y-step,-80,180); after(); });
+    document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.portraitY = clamp(g().y+step,-80,180); after(); });
+    document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.portraitX = clamp(g().x-step,-80,180); after(); });
+    document.getElementById('scDpadRight').addEventListener('click', ()=>{ pt.portraitX = clamp(g().x+step,-80,180); after(); });
+    document.getElementById('scDpadSizeUp').addEventListener('click', ()=>{ pt.portraitSize = clamp(g().size+step,5,300); after(); });
+    document.getElementById('scDpadSizeDown').addEventListener('click', ()=>{ pt.portraitSize = clamp(g().size-step,5,300); after(); });
+    return;
+  }
+
   document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
   document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
   document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
@@ -10843,36 +10898,44 @@ function renderSceneDetailTypeSpecific(pt){
 
   if (pt.type === 'chambre'){
     if (!pt.roomSlot) pt.roomSlot = 1;
+    const mode = roomLabelMode(pt);
+    const geo = roomLabelGeom(pt);
     typeWrap.innerHTML = `
       <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une porte de chambre. Elle ne désigne personne : c'est un emplacement numéroté. Les recrutés s'y installent tout seuls, dans l'ordre où tu les recrutes, et l'image affichée est celle réglée sur leur fiche de PNJ.</p>
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Numéro de la chambre</div>
       <input type="number" data-room-slot class="field-input" min="1" max="99" value="${pt.roomSlot}">
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Donne un numéro différent à chaque porte du vaisseau : 1, 2, 3, 4…</p>
 
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Portrait de l'habitant sur ce point</div>
-      <p class="meta" style="color:rgba(255,255,255,.6); margin:0 0 6px;">Si tu donnes une image à ce point (section Apparence), elle sert d'enseigne et le portrait de l'habitant vient se poser dessus. Le cercle gris de l'éditeur montre où il tombera.</p>
-      <select data-room-portrait class="field-input">
-        <option value="1" ${pt.showPortrait !== false ? 'selected' : ''}>Afficher le portrait</option>
-        <option value="0" ${pt.showPortrait === false ? 'selected' : ''}>Ne rien afficher</option>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Enseigne de la porte</div>
+      <select data-room-label class="field-input">
+        <option value="portrait" ${mode==='portrait'?'selected':''}>Le portrait de l'habitant</option>
+        <option value="nom" ${mode==='nom'?'selected':''}>Le nom de l'habitant</option>
+        <option value="aucun" ${mode==='aucun'?'selected':''}>Rien</option>
       </select>
-      <div data-room-portrait-wrap style="display:${pt.showPortrait === false ? 'none' : 'block'};">
-        <div class="field-label" style="color:rgba(255,255,255,.75);">Taille du portrait (% du point)</div>
-        <input type="number" data-room-psize class="field-input" min="5" max="200" value="${pt.portraitSize != null ? pt.portraitSize : 55}">
-        <div class="field-label" style="color:rgba(255,255,255,.75);">Position sur le point (% horizontal puis vertical)</div>
+      ${mode !== 'aucun' ? `
+        <p class="meta" style="color:rgba(255,255,255,.6); margin:6px 0 0;">Pour la placer : touche <b>📍 Point</b> en bas à gauche de l'image pour passer sur <b>🪧 Enseigne</b>. Les flèches et les ＋/－ règlent alors l'enseigne seule, sans bouger la zone que le joueur touche. Elle peut sortir du point, pour se poser au-dessus de la porte.</p>
+        <div class="field-label" style="color:rgba(255,255,255,.75);">Taille et position (% du point)</div>
         <div style="display:flex; gap:6px;">
-          <input type="number" data-room-px class="field-input" min="-50" max="150" value="${pt.portraitX != null ? pt.portraitX : 50}">
-          <input type="number" data-room-py class="field-input" min="-50" max="150" value="${pt.portraitY != null ? pt.portraitY : 45}">
+          <input type="number" data-room-psize class="field-input" min="5" max="300" value="${geo.size}">
+          <input type="number" data-room-px class="field-input" min="-80" max="180" value="${geo.x}">
+          <input type="number" data-room-py class="field-input" min="-80" max="180" value="${geo.y}">
         </div>
-      </div>
+        ${mode === 'nom' ? `
+          <div class="field-label" style="color:rgba(255,255,255,.75);">Couleur du nom</div>
+          <input type="color" data-room-color class="field-input" style="height:42px; padding:4px;" value="${pt.labelColor || '#1a1a1a'}">
+        ` : ''}
+      ` : ''}
     `;
     typeWrap.querySelector('[data-room-slot]').addEventListener('input', (e)=>{
       pt.roomSlot = Math.max(1, parseInt(e.target.value,10) || 1);
       renderSceneEditorPoints();
     });
-    typeWrap.querySelector('[data-room-portrait]').addEventListener('change', (e)=>{
-      pt.showPortrait = (e.target.value === '1');
+    typeWrap.querySelector('[data-room-label]').addEventListener('change', (e)=>{
+      pt.roomLabelMode = e.target.value;
+      delete pt.showPortrait; // remplacé par roomLabelMode
       renderSceneDetailTypeSpecific(pt);
       renderSceneEditorPoints();
+      renderSceneEditorDpad();
     });
     const bind = (sel, champ, defaut)=>{
       const el = typeWrap.querySelector(sel);
@@ -10886,6 +10949,8 @@ function renderSceneDetailTypeSpecific(pt){
     bind('[data-room-psize]', 'portraitSize', 55);
     bind('[data-room-px]', 'portraitX', 50);
     bind('[data-room-py]', 'portraitY', 45);
+    const couleur = typeWrap.querySelector('[data-room-color]');
+    if (couleur) couleur.addEventListener('input', (e)=>{ pt.labelColor = e.target.value; renderSceneEditorPoints(); });
     return;
   }
 
@@ -11322,18 +11387,23 @@ async function renderSceneViewCurrentScene(){
     /* Enseigne de porte : le portrait de l'habitant, cadré exactement comme dans l'ordre des
        tours en combat, vient se poser sur le point. Chambre libre = enseigne vide, ce qui rend
        le couloir lisible d'un coup d'œil. */
-    if (pt.type === 'chambre' && pt.showPortrait !== false){
+    if (pt.type === 'chambre' && roomLabelMode(pt) !== 'aucun'){
       const hab = recruitInRoomSlot(pt.roomSlot || 1);
-      if (hab && hab.imageUrl){
+      const mode = roomLabelMode(pt);
+      const g = roomLabelGeom(pt);
+      const commun = `position:absolute; left:${g.x}%; top:${g.y}%; width:${g.size}%; transform:translate(-50%,-50%) rotate(${pt.rotation||0}deg); pointer-events:none;`;
+      if (hab && mode === 'nom'){
+        const n = document.createElement('div');
+        n.style.cssText = commun + `height:${g.size*0.32}%;`;
+        n.innerHTML = roomNameSvg(hab.name, pt.labelColor || '#1a1a1a');
+        el.appendChild(n);
+      } else if (hab && hab.imageUrl){
         const f = { imageUrl: hab.imageUrl, combatPortraitCrop: hab.combatPortraitCrop || null };
         generateThumbFor(f).then(()=>{
           if (!f.thumbUrl || !el.isConnected) return;
-          const taille = (pt.portraitSize != null ? pt.portraitSize : 55);
-          const px = (pt.portraitX != null ? pt.portraitX : 50);
-          const py = (pt.portraitY != null ? pt.portraitY : 45);
           const p = document.createElement('img');
           p.src = f.thumbUrl;
-          p.style.cssText = `position:absolute; left:${px}%; top:${py}%; width:${taille}%; height:${taille}%; transform:translate(-50%,-50%) rotate(${pt.rotation||0}deg); border-radius:50%; object-fit:cover; pointer-events:none;`;
+          p.style.cssText = commun + `height:${g.size}%; border-radius:50%; object-fit:cover;`;
           el.appendChild(p);
         }).catch(()=>{});
       }
