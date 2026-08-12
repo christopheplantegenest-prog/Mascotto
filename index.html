@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v226</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v227</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1706,6 +1706,15 @@
         <option value="shared">Partagé (une seule fois pour tout le jeu, disparaît pour tout le monde une fois recruté)</option>
       </select>
       <p class="meta" style="margin-top:6px;">Ne s'applique que si ce PNJ est recrutable (métier renseigné ou combattant recrutable).</p>
+
+      <div class="field-label" style="margin-top:12px;">🛏️ Image de sa chambre</div>
+      <p class="meta" style="margin:0 0 6px;">Sa chambre à bord du vaisseau, avec lui dedans. Au recrutement, il prend automatiquement une chambre libre.</p>
+      <input type="file" id="editRoomImageFile" accept="image/*" class="field-input">
+      <button type="button" class="btn-secondary" id="editRoomImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
+      <div id="roomImagePreviewWrap" style="display:none; margin-top:8px;">
+        <img id="roomImagePreview" style="width:64px; height:96px; border-radius:8px; object-fit:cover; border:2px solid var(--accent);">
+        <button type="button" class="btn-secondary" id="clearRoomImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+      </div>
 
       <div class="field-label">Portrait de combat</div>
       <button type="button" class="btn-secondary" id="editPortraitCropBtn" style="width:100%; display:none;">🎯 Régler le cadrage visage + buste</button>
@@ -3653,6 +3662,8 @@ function recruitCreature(creature, metierId){
     craftingStartedAt: null,
     recruitType: isCombattant ? 'combattant' : 'artisan',
     sourceCreatureId: creature.id,
+    roomSlot: null, // attribué au premier passage dans le vaisseau
+
     combatStats: isCombattant ? cs : null,
     learnedAttackIds: isCombattant ? startingAttackIds : [],
     learnedRecipeIds: [],
@@ -4003,6 +4014,63 @@ document.getElementById('clearZoneArenaImageBtn').addEventListener('click', ()=>
   renderZoneArenaImagePreview();
 });
 
+/* Image de la chambre d'un PNJ : même traitement que l'image d'arène (compression, hébergement
+   GitHub ou base64, externalisation dédupliquée). Elle vit sur le PNJ et non sur la porte :
+   la chambre voyage avec le personnage, et une porte du vaisseau n'est qu'un emplacement. */
+let editRoomImageDataUrl = null;
+let editRoomImageRef = null;
+let editRoomImagePath = null;
+function renderRoomImagePreview(){
+  const wrap = document.getElementById('roomImagePreviewWrap');
+  if (editRoomImageDataUrl){
+    document.getElementById('roomImagePreview').src = editRoomImageDataUrl;
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+document.getElementById('editRoomImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 900;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      editRoomImageDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      editRoomImageRef = null;
+      editRoomImagePath = null;
+      renderRoomImagePreview();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('editRoomImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    editRoomImagePath = item.path;
+    editRoomImageDataUrl = resolveMediaPath(item.path);
+    editRoomImageRef = null;
+    renderRoomImagePreview();
+    showToast('Chambre : ' + item.path);
+  });
+});
+document.getElementById('clearRoomImageBtn').addEventListener('click', ()=>{
+  editRoomImageDataUrl = null;
+  editRoomImageRef = null;
+  editRoomImagePath = null;
+  document.getElementById('editRoomImageFile').value = '';
+  renderRoomImagePreview();
+});
+
 function renderEditorList(snap){
   const editorStatus = document.getElementById('editorStatus');
   editorStatus.textContent = snap.empty ? 'Aucun PNJ pour le moment.' : snap.size + ' PNJ dans Firebase';
@@ -4120,6 +4188,18 @@ function loadForEdit(id){
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
   document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
   document.getElementById('portraitCropHint').style.display = d.imageUrl ? 'none' : 'block';
+  editRoomImagePath = d.roomImagePath || null;
+  editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
+  editRoomImageRef = editRoomImagePath ? null : (d.roomImageRef || null);
+  document.getElementById('editRoomImageFile').value = '';
+  renderRoomImagePreview();
+  if (editRoomImageRef){
+    internalizeSceneImage(editRoomImageRef).then(url=>{
+      if (editingId !== id) return;
+      editRoomImageDataUrl = url;
+      renderRoomImagePreview();
+    }).catch(()=>{});
+  }
   editZoneArenaImagePath = d.combatArenaImagePath || null;
   editZoneArenaImageDataUrl = editZoneArenaImagePath ? resolveMediaPath(editZoneArenaImagePath) : null;
   editZoneArenaImageRef = editZoneArenaImagePath ? null : (d.combatArenaImageRef || null);
@@ -4237,6 +4317,11 @@ function resetForm(){
   editZoneArenaImagePath = null;
   document.getElementById('editZoneArenaImageFile').value = '';
   renderZoneArenaImagePreview();
+  editRoomImageDataUrl = null;
+  editRoomImageRef = null;
+  editRoomImagePath = null;
+  document.getElementById('editRoomImageFile').value = '';
+  renderRoomImagePreview();
   currentShopItems = [];
   renderShopItemsBuilder();
   document.getElementById('editShopPhrase').value = '';
@@ -4503,9 +4588,15 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
+  const roomImagePath = editRoomImagePath || null;
+  let roomImageRef = roomImagePath ? null : (editRoomImageRef || null);
+  if (editRoomImageDataUrl && editRoomImageDataUrl.startsWith('data:')){
+    roomImageRef = await externalizeSceneImage(editRoomImageDataUrl);
+  }
+
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -8109,6 +8200,7 @@ setInterval(()=>{
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
 document.getElementById('shipBtn').addEventListener('click', ()=>{
   if (!shipZoneId){ showToast('Aucune zone n\'est désignée comme vaisseau'); return; }
+  ensureRoomSlots();
   openSceneView({ id: shipZoneId, name: 'Vaisseau' }, null, { isShip:true });
 });
 document.getElementById('baseBtn').addEventListener('click', ()=>{
@@ -9703,6 +9795,29 @@ optionsMusicMuteBtn.addEventListener('click', ()=>{
 /* ---------- Scène d'exploration : structure minimale (image + points, pas encore de comportement) ---------- */
 const zonesCol = (typeof db !== 'undefined') ? db.collection('exploration_zones') : null;
 
+/* ---------- Attribution des chambres (v227) ----------
+   Une porte du vaisseau n'est qu'un EMPLACEMENT numéroté : elle ne connaît pas son habitant.
+   C'est le recruté qui porte son numéro de chambre (`roomSlot`), attribué au premier passage
+   dans le vaisseau — le plus petit numéro encore libre, par ordre d'arrivée. Un recruté qui
+   s'en va libère donc sa chambre pour le suivant.
+   Faire l'inverse (une porte qui désigne un PNJ) obligerait à préparer une porte par personnage
+   recrutable du jeu, ce qui est impossible dès qu'il y en a plus que de chambres. */
+function ensureRoomSlots(){
+  if (!recruitsCol) return;
+  const pris = new Set(recruits.filter(r=> r.roomSlot).map(r=> r.roomSlot));
+  const sansChambre = recruits.filter(r=> !r.roomSlot).sort((a,b)=> (a.createdAt||0) - (b.createdAt||0));
+  let n = 1;
+  sansChambre.forEach(r=>{
+    while (pris.has(n)) n++;
+    pris.add(n);
+    r.roomSlot = n; // appliqué tout de suite en mémoire, l'enregistrement suit
+    recruitsCol.doc(r.id).update({ roomSlot: n }).catch(()=>{});
+  });
+}
+function recruitInRoomSlot(slot){
+  return recruits.find(r=> r.roomSlot === slot) || null;
+}
+
 /* ---------- Le vaisseau (v226) ----------
    Le vaisseau est une zone d'exploration ORDINAIRE, créée dans l'éditeur de zones comme les
    autres : l'auteur y pose son hall, ses couloirs et ses chambres avec les outils qu'il connaît
@@ -10703,31 +10818,15 @@ function renderSceneDetailTypeSpecific(pt){
   }
 
   if (pt.type === 'chambre'){
-    const otherScenes = sceneEditorScenes.filter(s=>s.id !== sceneEditorCurrentSceneId);
+    if (!pt.roomSlot) pt.roomSlot = 1;
     typeWrap.innerHTML = `
-      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une porte de chambre. Elle ne s'ouvre que si son habitant est recruté ET présent au vaisseau — sinon elle reste verrouillée, en disant pourquoi.</p>
-      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Qui habite ici</div>
-      <button type="button" class="btn-secondary" data-room-pnj-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.25) !important;">${pt.linkedPnjName ? '👤 ' + pt.linkedPnjName : 'Choisir un PNJ…'}</button>
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Sa chambre</div>
-      <select data-room-target class="field-input">
-        <option value="">Aucune scène choisie</option>
-        ${otherScenes.map(s=>`<option value="${s.id}" ${pt.targetSceneId===s.id?'selected':''}>${s.name}</option>`).join('')}
-      </select>
-      ${!otherScenes.length ? `<p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Crée d'abord une scène pour sa chambre (bouton 🎬 Scènes), avec son image.</p>` : ''}
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une porte de chambre. Elle ne désigne personne : c'est un emplacement numéroté. Les recrutés s'y installent tout seuls, dans l'ordre où tu les recrutes, et l'image affichée est celle réglée sur leur fiche de PNJ.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Numéro de la chambre</div>
+      <input type="number" data-room-slot class="field-input" min="1" max="99" value="${pt.roomSlot}">
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Donne un numéro différent à chaque porte du vaisseau : 1, 2, 3, 4…</p>
     `;
-    typeWrap.querySelector('[data-room-pnj-pick]').addEventListener('click', ()=>{
-      openPnjChooser((id, c)=>{
-        pt.linkedPnjId = id;
-        pt.linkedPnjName = c.name || 'PNJ';
-        pt.linkedPnjEmoji = c.emoji || '👤';
-        pt.linkedPnjImageUrl = c.imageUrl || '';
-        renderSceneEditorPoints();
-        renderSceneDetailAppearance(pt);
-        renderSceneDetailTypeSpecific(pt);
-      });
-    });
-    typeWrap.querySelector('[data-room-target]').addEventListener('change', (e)=>{
-      pt.targetSceneId = e.target.value || null;
+    typeWrap.querySelector('[data-room-slot]').addEventListener('input', (e)=>{
+      pt.roomSlot = Math.max(1, parseInt(e.target.value,10) || 1);
     });
     return;
   }
@@ -11222,19 +11321,21 @@ async function renderSceneViewCurrentScene(){
       /* Trois états, et un seul message par état : une porte qui refuse de s'ouvrir sans dire
          pourquoi est frustrante, alors qu'avec la raison c'est une information utile. */
       wrapPointActions[pt.id] = ()=>{
-        if (!pt.linkedPnjId){ showToast('Cette porte n\'a pas encore d\'habitant configuré'); return; }
-        const hab = recruits.find(r=> r.sourceCreatureId === pt.linkedPnjId);
+        const hab = recruitInRoomSlot(pt.roomSlot || 1);
         if (!hab){ showToast('🚪 Chambre inoccupée'); return; }
         if (recruitIsAway(hab)){ showToast('🔒 ' + hab.name + ' est parti en mission'); return; }
         if (recruitIsKo(hab)){ showToast('🔒 ' + hab.name + ' est à l\'infirmerie'); return; }
         if (recruitIsResting(hab)){ showToast('🔒 ' + hab.name + ' se repose à l\'infirmerie'); return; }
-        if (!pt.targetSceneId || !sceneViewScenes.find(s=> s.id === pt.targetSceneId)){
+        const c = creatures.find(x=> x.id === hab.sourceCreatureId);
+        if (!c || (!c.roomImagePath && !c.roomImageRef)){
           showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
           return;
         }
-        sceneViewCurrentSceneId = pt.targetSceneId;
-        renderSceneViewCurrentScene();
-        if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
+        showToast('🛏️ Chambre de ' + hab.name);
+        if (c.roomImagePath){ openSceneBigImage(resolveMediaPath(c.roomImagePath)); return; }
+        internalizeSceneImage(c.roomImageRef)
+          .then((url)=> openSceneBigImage(url))
+          .catch(()=> showToast('Image de chambre illisible'));
       };
     } else if (pt.type === 'image'){
       wrapPointActions[pt.id] = ()=>{
