@@ -313,6 +313,14 @@
     transform:translateZ(0); backface-visibility:hidden; will-change:transform;
   }
   .scene-full.show{ display:flex; }
+  /* Sac accessible pendant l'exploration : soigner sans avoir à quitter la zone */
+  #sceneViewBagBtn{
+    position:absolute; right:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index:4100; background:rgba(0,0,0,.55); color:#fff;
+    border:1px solid rgba(255,255,255,.35); border-radius:50%; width:46px; height:46px; font-size:20px;
+  }
+  /* l'inventaire doit passer AU-DESSUS de l'écran de zone (4000) */
+  #inventoryOverlay{ z-index:4600; }
   .scene-imgwrap{
     position:absolute; inset:0; overflow:hidden;
     display:flex; align-items:center; justify-content:center; background:#111;
@@ -586,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v215</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v216</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -852,11 +860,11 @@
 
     <button class="btn-secondary" id="baseAddResBtn" style="width:100%; margin-bottom:14px;">+5 de chaque ressource (test)</button>
 
-    <div style="display:flex; gap:8px; margin-bottom:14px;">
-      <button class="btn-capture" data-basetab="artisans" style="flex:1;">🛠️ Artisans</button>
-      <button class="btn-secondary" data-basetab="combattants" style="flex:1;">⚔️ Combattants</button>
-      <button class="btn-secondary" data-basetab="explorateur" style="flex:1; position:relative;">🧭 Explorateur<span id="explorerBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
-      <button class="btn-secondary" data-basetab="infirmerie" style="flex:1; position:relative;">🏥 Infirmerie<span id="infirmaryBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
+    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+      <button class="btn-capture" data-basetab="artisans" style="flex:1 1 calc(50% - 4px); font-size:13px;">🛠️ Artisans</button>
+      <button class="btn-secondary" data-basetab="combattants" style="flex:1 1 calc(50% - 4px); font-size:13px;">⚔️ Combattants</button>
+      <button class="btn-secondary" data-basetab="explorateur" style="flex:1 1 calc(50% - 4px); font-size:13px; position:relative;">🧭 Explorateur<span id="explorerBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
+      <button class="btn-secondary" data-basetab="infirmerie" style="flex:1 1 calc(50% - 4px); font-size:13px; position:relative;">🏥 Infirmerie<span id="infirmaryBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
     </div>
 
     <div id="baseTab-artisans">
@@ -2036,6 +2044,7 @@
   <div class="scene-imgwrap" id="sceneViewImgWrap">
     <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
   </div>
+  <button class="icon-btn" id="sceneViewBagBtn" title="Sac">🎒</button>
 </div>
 
 <!-- Image affichée en plein écran, déclenchée par un point de type "Image en grand" -->
@@ -5246,6 +5255,12 @@ document.getElementById('inventoryBtn').addEventListener('click', ()=>{
   renderInventory();
   document.getElementById('inventoryOverlay').classList.add('show');
 });
+document.getElementById('sceneViewBagBtn').addEventListener('click', ()=>{
+  inventoryPage = 0;
+  document.getElementById('inventorySearch').value = '';
+  renderInventory();
+  document.getElementById('inventoryOverlay').classList.add('show');
+});
 document.getElementById('inventoryAddTestBtn').addEventListener('click', ()=>{
   openRecipeItemChooser((itemId)=>{
     const it = items.find(i=>i.id===itemId);
@@ -5314,6 +5329,28 @@ function renderInventoryList(){
       <button class="btn-secondary" data-discard="${itemId}" style="flex:none; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Jeter</button>
     `;
     listEl.appendChild(row);
+    // Objet de soin ou de réanimation : utilisable directement sur un combattant, hors combat
+    if (it && isCareItem(it)){
+      const useBtn = document.createElement('button');
+      useBtn.className = 'btn-secondary';
+      useBtn.style.cssText = 'width:100%; margin:-4px 0 8px; font-size:12px;';
+      useBtn.textContent = (it.combatUse.mode === 'revive') ? '✨ Réanimer un combattant' : '🧪 Soigner un combattant';
+      const targets = document.createElement('div');
+      targets.style.cssText = 'display:none; margin:-4px 0 10px;';
+      useBtn.addEventListener('click', ()=>{
+        if (targets.style.display === 'block'){ targets.style.display = 'none'; return; }
+        targets.innerHTML = careTargetsHtml(it);
+        targets.style.display = 'block';
+        targets.querySelectorAll('[data-care-target]').forEach(tb=>{
+          tb.addEventListener('click', ()=>{
+            const r = recruits.find(x=> x.id === tb.dataset.careTarget);
+            if (r) useHealingItemOnRecruit(r, it);
+          });
+        });
+      });
+      listEl.appendChild(useBtn);
+      listEl.appendChild(targets);
+    }
   });
   listEl.querySelectorAll('button[data-discard]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -5336,6 +5373,35 @@ function renderInventoryList(){
   document.getElementById('inventoryPageLabel').textContent = `${inventoryPage+1}/${totalPages}`;
   document.getElementById('inventoryPrevBtn').disabled = inventoryPage === 0;
   document.getElementById('inventoryNextBtn').disabled = inventoryPage >= totalPages - 1;
+}
+
+/* Un objet consommable réglé en soin ou en réanimation peut servir hors combat */
+function isCareItem(it){
+  return !!(it && it.type === 'consommable' && it.combatUse && it.combatUse.enabled
+    && (it.combatUse.mode === 'heal' || it.combatUse.mode === 'revive'));
+}
+/* Liste des combattants sur qui l'objet a un effet : les K.O. pour une réanimation,
+   les blessés encore debout pour un soin. Un combattant à PV pleins n'est pas proposé. */
+function careTargetsHtml(it){
+  const revive = it.combatUse.mode === 'revive';
+  const list = recruits.filter(r=>{
+    if (r.recruitType !== 'combattant') return false;
+    const hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
+    return revive ? (hp <= 0) : (hp > 0 && hp < max);
+  });
+  if (!list.length){
+    return '<p class="meta" style="margin:0;">' + (revive
+      ? 'Aucun combattant K.O. à réanimer.'
+      : 'Aucun combattant blessé à soigner.') + '</p>';
+  }
+  return list.map(r=>{
+    const hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
+    return `<button class="btn-secondary" data-care-target="${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
+      ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:22px;height:22px;object-fit:contain;border-radius:50%;flex:none;">` : '<span style="flex:none;">⚔️</span>'}
+      <span style="flex:1; text-align:left;">${r.name}</span>
+      <span class="meta" style="font-size:11px;">${hp}/${max} PV</span>
+    </button>`;
+  }).join('');
 }
 
 /* ---------- Navigation par sections dans le panneau Objets ---------- */
@@ -6742,6 +6808,7 @@ function useHealingItemOnRecruit(r, it){
   showToast(r.name + ' : ' + hp + '/' + max + ' PV');
   renderInfirmarySection();
   renderCombattantsRoster();
+  if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventory();
   if (activeRecruitId === r.id) renderRecruitSheet();
 }
 /* Reporte les PV de fin de combat sur les fiches. En cas de défaite (toute l'équipe au tapis),
@@ -6845,12 +6912,16 @@ function renderInfirmarySection(){
     });
   });
 }
-/* Rafraîchit les comptes à rebours de l'infirmerie tant que l'écran est ouvert */
+/* Rafraîchit les comptes à rebours de l'infirmerie tant que l'écran est ouvert.
+   IMPORTANT : on ne redessine PAS si une liste d'objets est dépliée — sinon elle
+   disparaissait sous le doigt du joueur au bout de quelques secondes (signalé en v215). */
 setInterval(()=>{
   const tab = document.getElementById('baseTab-infirmerie');
-  if (tab && tab.style.display === 'block' && document.getElementById('baseOverlay').classList.contains('show')){
-    renderInfirmarySection();
-  }
+  if (!tab || tab.style.display !== 'block') return;
+  if (!document.getElementById('baseOverlay').classList.contains('show')) return;
+  const sec = document.getElementById('infirmarySection');
+  if (sec && Array.from(sec.querySelectorAll('[data-inf-items]')).some(b=> b.style.display === 'block')) return;
+  renderInfirmarySection();
 }, 5000);
 
 /* ---------- Fiche d'un PNJ recruté : craft + équipement ---------- */
