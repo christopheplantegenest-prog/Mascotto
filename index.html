@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v216</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v217</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6842,6 +6842,10 @@ function renderInfirmarySection(){
   const badge = document.getElementById('infirmaryBadge');
   if (badge) badge.style.display = blesses.length ? 'block' : 'none';
 
+  /* Jamais redessiner par-dessus une liste d'objets ouverte : elle disparaîtrait sous le doigt.
+     Le badge ci-dessus reste à jour, seule la liste est figée le temps du choix. */
+  if (Array.from(el.querySelectorAll('[data-inf-items]')).some(b=> b.style.display === 'block')) return;
+
   if (!combattants.length){ el.innerHTML = '<p class="meta">Aucun combattant recruté pour l\'instant.</p>'; return; }
   if (!blesses.length){ el.innerHTML = '<p class="meta">Tout le monde est en pleine forme.</p>'; return; }
 
@@ -6913,14 +6917,11 @@ function renderInfirmarySection(){
   });
 }
 /* Rafraîchit les comptes à rebours de l'infirmerie tant que l'écran est ouvert.
-   IMPORTANT : on ne redessine PAS si une liste d'objets est dépliée — sinon elle
-   disparaissait sous le doigt du joueur au bout de quelques secondes (signalé en v215). */
+   Le garde-fou contre l'effacement d'une liste ouverte est dans renderInfirmarySection. */
 setInterval(()=>{
   const tab = document.getElementById('baseTab-infirmerie');
   if (!tab || tab.style.display !== 'block') return;
   if (!document.getElementById('baseOverlay').classList.contains('show')) return;
-  const sec = document.getElementById('infirmarySection');
-  if (sec && Array.from(sec.querySelectorAll('[data-inf-items]')).some(b=> b.style.display === 'block')) return;
   renderInfirmarySection();
 }, 5000);
 
@@ -7213,14 +7214,16 @@ function renderRecruitCombatStatsInner(recruit, cs){
     <div class="meta">${tribeLabel}</div>
     <div style="margin:6px 0 2px;">${hpBarHtml(curHp, maxHp, 8)}</div>
     <div class="meta" style="margin-bottom:6px;">${curHp <= 0
-      ? '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft) + ' (voir 🏥 Infirmerie)'
+      ? (recruit.restingSince
+          ? '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft)
+          : '💀 K.O. — réanimation nécessaire (🎒 objet, ou 🏥 repos)')
       : (recruit.restingSince ? '🛏️ Au repos — ' : '') + curHp + '/' + maxHp + ' PV'}</div>
     <div class="meta">❤️ ${cs.hp||'?'} · ⚔️ ${cs.atk||'?'} · 🛡️ ${cs.def||'?'} · 🔮 ${cs.matk||'?'} · ✨ ${cs.mdef||'?'} · ⚡ ${cs.speed||'?'} · 🎯 ${cs.precision||'?'}% · 💨 ${cs.evasion||'?'}%</div>
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
   document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
     if (!playerDocRef) return;
-    if (!inTeam && recruitIsKo(recruit)){ showToast(recruit.name + ' est K.O. — soigne-le d\'abord (🏥 Infirmerie)'); return; }
+    // Un K.O. peut rester dans l'équipe : il part au combat allongé et peut y être réanimé.
     if (!inTeam && recruit.restingSince) recruitWakeUp(recruit); // entrer dans l'équipe met fin au repos
     let team = activeTeamIds.filter(id=> recruits.some(r=>r.id===id));
     if (inTeam){
@@ -11069,12 +11072,14 @@ function buildPlayerFighters(){
   return activeTeamIds
     .map(id=> recruits.find(r=>r.id===id))
     .filter(r=> r && r.recruitType==='combattant')
-    .filter(r=> !recruitIsKo(r)) // un K.O. ne part pas au combat
     .slice(0,3)
     .map((r,i)=>{
       const cs = r.combatStats || {};
       const maxHp = cs.hp || 1;
-      const startHp = Math.max(1, Math.min(maxHp, recruitEffectiveHp(r))); // les PV survivent d'un combat à l'autre
+      /* Les PV survivent d'un combat à l'autre. Un combattant K.O. part QUAND MÊME au combat,
+         allongé à 0 PV : c'est ce qui permet de le réanimer en plein combat avec un objet ou
+         une attaque de réanimation, au lieu d'être obligé de rentrer à l'infirmerie. */
+      const startHp = Math.max(0, Math.min(maxHp, recruitEffectiveHp(r)));
       return {
         uid:'p'+i, side:'player', sourceId:r.id, name:r.name, imageUrl:r.imageUrl||'', tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
@@ -11083,9 +11088,13 @@ function buildPlayerFighters(){
         precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
         attacksList: resolveFighterAttacks(r.learnedAttackIds),
         immunities: [], resistances: [],
-        gauge: Math.random()*30, alive:true, statuses:{},
+        gauge: Math.random()*30, alive: startHp > 0, statuses:{},
       };
     });
+}
+/* Au moins un combattant debout : sinon le combat serait perdu avant d'avoir commencé. */
+function teamHasAnyoneStanding(playerFighters){
+  return (playerFighters || []).some(f=> f.alive);
 }
 function buildEnemyFighters(monsterList){
   return monsterList.slice(0,3).map((c,i)=>{
@@ -11113,6 +11122,7 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
   const playerFighters = buildPlayerFighters();
   if (!playerFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
+  if (!teamHasAnyoneStanding(playerFighters)){ showToast('Toute ton équipe est K.O. — réanime au moins un combattant'); return; }
   const monsterPool = creatures.filter(c=> c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
   if (!monsterPool.length){ showToast('Crée d\'abord un monstre (non recrutable) dans l\'éditeur PNJ'); return; }
   const shuffled = monsterPool.slice().sort(()=> Math.random()-0.5);
@@ -11464,6 +11474,10 @@ async function launchZoneCombat(enemyCreatureList, pt){
   const playerFighters = buildPlayerFighters();
   if (!playerFighters.length){
     if (pt) showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)');
+    return;
+  }
+  if (!teamHasAnyoneStanding(playerFighters)){
+    showToast('Toute ton équipe est K.O. — réanime au moins un combattant (🎒 ou 🏥 Infirmerie)');
     return;
   }
   const enemyFighters = buildEnemyFighters(enemyCreatureList);
