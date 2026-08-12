@@ -586,7 +586,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v214</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v215</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -799,6 +799,15 @@
     </div>
     <button class="btn-secondary" id="saveExplorerDurationBtn" style="width:100%; margin-top:6px; margin-bottom:10px;">Enregistrer cette durée</button>
 
+    <div class="field-label" style="margin-top:14px;">🏥 Infirmerie</div>
+    <p class="meta" style="margin:0 0 6px;">Durée d'un K.O. (minutes), PV au réveil (% du max), récupération au repos (% du max par minute).</p>
+    <div style="display:flex; gap:6px;">
+      <input type="number" id="careKoMinutesInput" class="field-input" min="0" step="1" placeholder="5">
+      <input type="number" id="careWakePercentInput" class="field-input" min="1" max="100" step="1" placeholder="30">
+      <input type="number" id="careRestPerMinInput" class="field-input" min="0" step="1" placeholder="5">
+    </div>
+    <button class="btn-secondary" id="saveCareSettingsBtn" style="width:100%; margin-top:6px; margin-bottom:10px;">Enregistrer ces réglages</button>
+
     <div class="field-label" style="margin-top:14px;">🖼️ Adresse de base des images hébergées</div>
     <p class="meta" style="margin:0 0 6px;">Les images choisies via « 📁 Image hébergée » sont enregistrées en chemin relatif. Cette adresse les complète. Si tu changes un jour d'hébergeur, seule cette ligne est à modifier.</p>
     <input type="text" id="mediaBaseUrlInput" class="field-input" placeholder="https://…/">
@@ -847,6 +856,7 @@
       <button class="btn-capture" data-basetab="artisans" style="flex:1;">🛠️ Artisans</button>
       <button class="btn-secondary" data-basetab="combattants" style="flex:1;">⚔️ Combattants</button>
       <button class="btn-secondary" data-basetab="explorateur" style="flex:1; position:relative;">🧭 Explorateur<span id="explorerBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
+      <button class="btn-secondary" data-basetab="infirmerie" style="flex:1; position:relative;">🏥 Infirmerie<span id="infirmaryBadge" style="display:none; position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--danger);"></span></button>
     </div>
 
     <div id="baseTab-artisans">
@@ -862,6 +872,10 @@
 
     <div id="baseTab-explorateur" style="display:none;">
       <div id="explorerSection"></div>
+    </div>
+
+    <div id="baseTab-infirmerie" style="display:none;">
+      <div id="infirmarySection"></div>
     </div>
   </div>
 </div>
@@ -6592,6 +6606,7 @@ function renderBaseRoster(){
   renderCombattantsRoster();
 }
 function renderCombattantsRoster(){
+  renderInfirmarySection(); // tient le badge de l'onglet à jour
   const grid = document.getElementById('baseCombattantsRoster');
   if (!grid) return;
   const combattants = recruits.filter(r => r.recruitType === 'combattant');
@@ -6604,7 +6619,8 @@ function renderCombattantsRoster(){
         ${recruitHasAnyEquip(r) ? `<div style="position:absolute; top:4px; left:4px; font-size:12px;" title="Équipement porté">🛡️</div>` : ''}
         <div style="font-size:28px;">${r.imageUrl ? `<img src="${r.imageUrl}" style="width:40px;height:40px;object-fit:contain;border-radius:50%;">` : '⚔️'}</div>
         <div class="name" style="font-size:12px; font-weight:700;">${r.name}</div>
-        <div class="meta" style="font-size:10px;">${(r.learnedAttackIds||[]).length} attaque(s)</div>
+        <div style="margin:3px 0 2px;">${hpBarHtml(recruitEffectiveHp(r), recruitMaxHp(r), 5)}</div>
+        <div class="meta" style="font-size:10px;">${recruitIsKo(r) ? '💀 K.O.' : (r.restingSince ? '🛏️ Au repos' : recruitEffectiveHp(r) + '/' + recruitMaxHp(r) + ' PV')}</div>
       </div>
     `;
   }).join('') || '<p class="meta">Aucun combattant recruté pour l\'instant.</p>';
@@ -6619,7 +6635,9 @@ document.querySelectorAll('#baseOverlay button[data-basetab]').forEach(btn=>{
     document.getElementById('baseTab-artisans').style.display = (btn.dataset.basetab === 'artisans') ? 'block' : 'none';
     document.getElementById('baseTab-combattants').style.display = (btn.dataset.basetab === 'combattants') ? 'block' : 'none';
     document.getElementById('baseTab-explorateur').style.display = (btn.dataset.basetab === 'explorateur') ? 'block' : 'none';
+    document.getElementById('baseTab-infirmerie').style.display = (btn.dataset.basetab === 'infirmerie') ? 'block' : 'none';
     if (btn.dataset.basetab === 'explorateur') renderExplorerSection();
+    if (btn.dataset.basetab === 'infirmerie') renderInfirmarySection();
   });
 });
 document.getElementById('recruitCombattantTestBtn').addEventListener('click', ()=>{
@@ -6629,6 +6647,211 @@ document.getElementById('recruitCombattantTestBtn').addEventListener('click', ()
   const pick = combatCreatures[Math.floor(Math.random()*combatCreatures.length)];
   recruitCreature(pick, pick.metier || '');
 });
+
+/* ---------- PV persistants et infirmerie (v215) ----------
+   Avant, chaque combattant repartait à PV pleins à chaque combat. Maintenant ses PV
+   survivent d'un combat à l'autre, stockés dans `currentHp` sur sa fiche de recrue.
+   Rien ne se régénère tout seul : il faut du repos (gratuit, lent) ou une potion
+   (instantané, consomme l'objet). Un combattant à 0 PV est K.O. et ne peut pas partir.
+
+   La récupération n'est JAMAIS écrite par une minuterie : comme pour le craft, on
+   enregistre l'instant où le repos commence et on recalcule les PV à la lecture.
+   Rien à réparer si l'appli est fermée pendant ce temps. */
+let careKoMinutes = 5;      // durée d'un K.O. avant le réveil
+let careWakePercent = 30;   // PV au réveil, en % du maximum
+let careRestPerMin = 5;     // récupération au repos, en % du maximum par minute
+if (typeof db !== 'undefined' && db){
+  db.collection('app_config').doc('care').onSnapshot((doc)=>{
+    const d = doc.exists ? doc.data() : {};
+    if (d.koMinutes != null) careKoMinutes = d.koMinutes;
+    if (d.wakePercent != null) careWakePercent = d.wakePercent;
+    if (d.restPerMin != null) careRestPerMin = d.restPerMin;
+  }, ()=>{});
+}
+
+function recruitMaxHp(r){
+  return (r && r.combatStats && r.combatStats.hp) || 1;
+}
+/* PV réellement en vigueur : la valeur enregistrée, plus ce que le repos a fait remonter
+   depuis qu'il a commencé. Un K.O. ne remonte pas avant la fin de sa durée d'immobilisation. */
+function recruitEffectiveHp(r){
+  const max = recruitMaxHp(r);
+  let hp = (r.currentHp == null) ? max : r.currentHp;
+  if (r.restingSince){
+    const mins = (Date.now() - r.restingSince) / 60000;
+    if (hp <= 0){
+      if (mins < careKoMinutes) return 0;
+      const wake = Math.max(1, Math.round(max * careWakePercent / 100));
+      hp = wake + Math.round(max * (careRestPerMin / 100) * (mins - careKoMinutes));
+    } else {
+      hp = hp + Math.round(max * (careRestPerMin / 100) * mins);
+    }
+  }
+  return Math.max(0, Math.min(max, hp));
+}
+function recruitIsKo(r){ return recruitEffectiveHp(r) <= 0; }
+function recruitIsResting(r){ return !!r.restingSince && recruitEffectiveHp(r) < recruitMaxHp(r); }
+/* Temps restant avant qu'un K.O. se relève, en ms (0 si ce n'est pas le cas) */
+function recruitKoRemainingMs(r){
+  if (!r.restingSince || recruitEffectiveHp(r) > 0) return 0;
+  return Math.max(0, r.restingSince + careKoMinutes * 60000 - Date.now());
+}
+/* Fige les PV recalculés et arrête le repos. Appelé au réveil et avant tout départ en combat. */
+function recruitWakeUp(r){
+  const hp = recruitEffectiveHp(r);
+  r.currentHp = hp; r.restingSince = null;
+  if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: null })
+    .catch((err)=> showToast('Réveil non enregistré : ' + err.message));
+}
+function recruitStartRest(r){
+  const hp = recruitEffectiveHp(r);
+  r.currentHp = hp; r.restingSince = Date.now();
+  if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: r.restingSince })
+    .catch((err)=> showToast('Repos non enregistré : ' + err.message));
+  // un combattant au repos ne part pas au combat
+  if (playerDocRef && activeTeamIds.includes(r.id)){
+    const team = activeTeamIds.filter(id=> id !== r.id);
+    playerDocRef.set({ activeTeamIds: team }, { merge:true });
+    activeTeamIds = team;
+  }
+}
+/* Objets consommables capables de soigner ou réanimer, et disponibles dans le sac */
+function healingItemsInBag(forKo){
+  return items.filter(it=> it.type === 'consommable' && it.combatUse && it.combatUse.enabled
+    && (baseResources[it.id] || 0) > 0
+    && (forKo ? it.combatUse.mode === 'revive' : it.combatUse.mode === 'heal'));
+}
+function useHealingItemOnRecruit(r, it){
+  const max = recruitMaxHp(r);
+  const cu = it.combatUse;
+  let hp = recruitEffectiveHp(r);
+  if (cu.mode === 'revive'){
+    if (hp > 0){ showToast(r.name + ' n\'est pas K.O.'); return; }
+    hp = Math.max(1, Math.round(max * (cu.revivePercent || 30) / 100));
+  } else {
+    if (hp <= 0){ showToast(r.name + ' est K.O. : il faut une réanimation'); return; }
+    hp = Math.min(max, hp + (cu.healPower || 1));
+  }
+  r.currentHp = hp; r.restingSince = null;
+  if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: null })
+    .catch((err)=> showToast('Soin non enregistré : ' + err.message));
+  if (playerDocRef){
+    playerDocRef.set({ inventory: { [it.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true })
+      .catch((err)=> showToast('Objet non décompté : ' + err.message));
+  }
+  showToast(r.name + ' : ' + hp + '/' + max + ' PV');
+  renderInfirmarySection();
+  renderCombattantsRoster();
+  if (activeRecruitId === r.id) renderRecruitSheet();
+}
+/* Reporte les PV de fin de combat sur les fiches. En cas de défaite (toute l'équipe au tapis),
+   tout le monde part au repos d'office : c'est la seule pénalité automatique du naufrage. */
+function writeBackCombatHp(playerFighters, result){
+  if (!recruitsCol) return;
+  const wipe = (result === 'defeat');
+  playerFighters.forEach(f=>{
+    if (!f.sourceId) return;
+    const r = recruits.find(x=> x.id === f.sourceId);
+    const hp = Math.max(0, Math.round(f.hp));
+    const upd = { currentHp: hp, restingSince: wipe ? Date.now() : null };
+    if (r){ r.currentHp = upd.currentHp; r.restingSince = upd.restingSince; }
+    recruitsCol.doc(f.sourceId).update(upd)
+      .catch((err)=> showToast('PV non enregistrés : ' + err.message));
+  });
+}
+function hpBarHtml(hp, max, height){
+  const pct = Math.max(0, Math.min(100, Math.round((hp / max) * 100)));
+  const color = (hp <= 0) ? 'var(--danger)' : (pct < 35 ? 'var(--warn)' : 'var(--accent)');
+  return `<div style="height:${height||6}px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden;">
+    <div style="height:100%; width:${pct}%; background:${color};"></div>
+  </div>`;
+}
+
+function renderInfirmarySection(){
+  const el = document.getElementById('infirmarySection');
+  if (!el) return;
+  const combattants = recruits.filter(r=> r.recruitType === 'combattant');
+  const blesses = combattants.filter(r=> recruitEffectiveHp(r) < recruitMaxHp(r));
+  const badge = document.getElementById('infirmaryBadge');
+  if (badge) badge.style.display = blesses.length ? 'block' : 'none';
+
+  if (!combattants.length){ el.innerHTML = '<p class="meta">Aucun combattant recruté pour l\'instant.</p>'; return; }
+  if (!blesses.length){ el.innerHTML = '<p class="meta">Tout le monde est en pleine forme.</p>'; return; }
+
+  el.innerHTML = '<p class="meta" style="margin-top:0;">Le repos est gratuit mais lent. Une potion soigne tout de suite mais se consomme. Un combattant au repos quitte l\'équipe active.</p>' +
+    blesses.map(r=>{
+      const max = recruitMaxHp(r);
+      const hp = recruitEffectiveHp(r);
+      const ko = hp <= 0;
+      const resting = !!r.restingSince;
+      const koLeft = recruitKoRemainingMs(r);
+      let etat;
+      if (ko) etat = '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft);
+      else if (resting) etat = '🛏️ Au repos';
+      else etat = '🩹 Blessé';
+      return `
+        <div class="choice-row" data-inf-row="${r.id}" style="margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:34px;height:34px;object-fit:contain;border-radius:50%;">` : '<span style="font-size:22px;">⚔️</span>'}
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:700; font-size:13px;">${r.name}</div>
+              <div class="meta" style="font-size:11px;">${etat} · ${hp}/${max} PV</div>
+            </div>
+          </div>
+          <div style="margin-top:6px;">${hpBarHtml(hp, max, 8)}</div>
+          <div style="display:flex; gap:6px; margin-top:8px;">
+            <button class="btn-secondary" data-inf-rest="${r.id}" style="flex:1; font-size:12px;">${resting ? '⏹️ Sortir du repos' : '🛏️ Mettre au repos'}</button>
+            <button class="btn-secondary" data-inf-heal="${r.id}" style="flex:1; font-size:12px;">🧪 Soigner</button>
+          </div>
+          <div data-inf-items="${r.id}" style="display:none; margin-top:6px;"></div>
+        </div>`;
+    }).join('');
+
+  el.querySelectorAll('[data-inf-rest]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const r = recruits.find(x=> x.id === b.dataset.infRest);
+      if (!r) return;
+      if (r.restingSince) recruitWakeUp(r); else recruitStartRest(r);
+      renderInfirmarySection();
+      renderCombattantsRoster();
+    });
+  });
+  el.querySelectorAll('[data-inf-heal]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const r = recruits.find(x=> x.id === b.dataset.infHeal);
+      if (!r) return;
+      const box = el.querySelector('[data-inf-items="' + r.id + '"]');
+      if (!box) return;
+      if (box.style.display === 'block'){ box.style.display = 'none'; return; }
+      const usable = healingItemsInBag(recruitIsKo(r));
+      if (!usable.length){
+        box.innerHTML = '<p class="meta" style="margin:0;">' + (recruitIsKo(r)
+          ? 'Aucun objet de réanimation dans le sac.'
+          : 'Aucun objet de soin dans le sac.') + '</p>';
+      } else {
+        box.innerHTML = usable.map(it=>
+          `<button class="btn-secondary" data-inf-use="${r.id}|${it.id}" style="width:100%; margin-top:4px; font-size:12px;">${it.name} (${baseResources[it.id]||0})</button>`
+        ).join('');
+      }
+      box.style.display = 'block';
+      box.querySelectorAll('[data-inf-use]').forEach(ib=>{
+        ib.addEventListener('click', ()=>{
+          const [rid, iid] = ib.dataset.infUse.split('|');
+          const rr = recruits.find(x=> x.id === rid);
+          const it = items.find(x=> x.id === iid);
+          if (rr && it) useHealingItemOnRecruit(rr, it);
+        });
+      });
+    });
+  });
+}
+/* Rafraîchit les comptes à rebours de l'infirmerie tant que l'écran est ouvert */
+setInterval(()=>{
+  const tab = document.getElementById('baseTab-infirmerie');
+  if (tab && tab.style.display === 'block' && document.getElementById('baseOverlay').classList.contains('show')){
+    renderInfirmarySection();
+  }
+}, 5000);
 
 /* ---------- Fiche d'un PNJ recruté : craft + équipement ---------- */
 let activeRecruitId = null;
@@ -6912,13 +7135,22 @@ function renderRecruitCombatStatsInner(recruit, cs){
   if (!el) return;
   const inTeam = activeTeamIds.includes(recruit.id);
   const tribeLabel = { feu:'🔥 Feu', eau:'💧 Eau', terre:'🌿 Terre', air:'🌪️ Air', lumiere:'✨ Lumière', ombre:'🌑 Ombre' }[cs.tribe] || 'Aucune tribu';
+  const maxHp = recruitMaxHp(recruit);
+  const curHp = recruitEffectiveHp(recruit);
+  const koLeft = recruitKoRemainingMs(recruit);
   el.innerHTML = `
     <div class="meta">${tribeLabel}</div>
+    <div style="margin:6px 0 2px;">${hpBarHtml(curHp, maxHp, 8)}</div>
+    <div class="meta" style="margin-bottom:6px;">${curHp <= 0
+      ? '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft) + ' (voir 🏥 Infirmerie)'
+      : (recruit.restingSince ? '🛏️ Au repos — ' : '') + curHp + '/' + maxHp + ' PV'}</div>
     <div class="meta">❤️ ${cs.hp||'?'} · ⚔️ ${cs.atk||'?'} · 🛡️ ${cs.def||'?'} · 🔮 ${cs.matk||'?'} · ✨ ${cs.mdef||'?'} · ⚡ ${cs.speed||'?'} · 🎯 ${cs.precision||'?'}% · 💨 ${cs.evasion||'?'}%</div>
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
   document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
     if (!playerDocRef) return;
+    if (!inTeam && recruitIsKo(recruit)){ showToast(recruit.name + ' est K.O. — soigne-le d\'abord (🏥 Infirmerie)'); return; }
+    if (!inTeam && recruit.restingSince) recruitWakeUp(recruit); // entrer dans l'équipe met fin au repos
     let team = activeTeamIds.filter(id=> recruits.some(r=>r.id===id));
     if (inTeam){
       team = team.filter(id=>id!==recruit.id);
@@ -10489,6 +10721,32 @@ document.getElementById('saveMediaBaseUrlBtn').addEventListener('click', ()=>{
     .catch((err)=> showToast('Échec : ' + err.message));
 });
 
+document.getElementById('saveCareSettingsBtn').addEventListener('click', ()=>{
+  if (!db){ showToast('Firebase indisponible ici'); return; }
+  const ko = parseInt(document.getElementById('careKoMinutesInput').value, 10);
+  const wake = parseInt(document.getElementById('careWakePercentInput').value, 10);
+  const rest = parseInt(document.getElementById('careRestPerMinInput').value, 10);
+  if (isNaN(ko) || isNaN(wake) || isNaN(rest)){ showToast('Remplis les trois valeurs'); return; }
+  if (wake < 1 || wake > 100){ showToast('Les PV au réveil doivent être entre 1 et 100 %'); return; }
+  db.collection('app_config').doc('care').set({ koMinutes: ko, wakePercent: wake, restPerMin: rest }, { merge:true })
+    .then(()=>{
+      careKoMinutes = ko; careWakePercent = wake; careRestPerMin = rest;
+      showToast('Réglages d\'infirmerie enregistrés');
+    })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+if (typeof db !== 'undefined' && db){
+  db.collection('app_config').doc('care').get().then((doc)=>{
+    const d = doc.exists ? doc.data() : {};
+    const a = document.getElementById('careKoMinutesInput');
+    const b = document.getElementById('careWakePercentInput');
+    const c = document.getElementById('careRestPerMinInput');
+    if (a) a.value = (d.koMinutes != null) ? d.koMinutes : careKoMinutes;
+    if (b) b.value = (d.wakePercent != null) ? d.wakePercent : careWakePercent;
+    if (c) c.value = (d.restPerMin != null) ? d.restPerMin : careRestPerMin;
+  }).catch(()=>{});
+}
+
 function spawnParticle(uid, emoji, text, colorClass){
   combatState.particles.push({ uid, emoji, text, colorClass: colorClass||'', key: Math.random().toString(36).slice(2) });
 }
@@ -10740,13 +10998,16 @@ function buildPlayerFighters(){
   return activeTeamIds
     .map(id=> recruits.find(r=>r.id===id))
     .filter(r=> r && r.recruitType==='combattant')
+    .filter(r=> !recruitIsKo(r)) // un K.O. ne part pas au combat
     .slice(0,3)
     .map((r,i)=>{
       const cs = r.combatStats || {};
+      const maxHp = cs.hp || 1;
+      const startHp = Math.max(1, Math.min(maxHp, recruitEffectiveHp(r))); // les PV survivent d'un combat à l'autre
       return {
         uid:'p'+i, side:'player', sourceId:r.id, name:r.name, imageUrl:r.imageUrl||'', tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
-        maxHp:cs.hp||1, hp:cs.hp||1,
+        maxHp:maxHp, hp:startHp,
         atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
         precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
         attacksList: resolveFighterAttacks(r.learnedAttackIds),
@@ -12399,6 +12660,9 @@ function endCombat(result){
   combatState.result = result;
   clearInterval(combatTickTimer);
   clearSavedCombat();
+  if (!combatState.isPvp){
+    writeBackCombatHp(combatState.fighters.filter(f=> f.side === 'player'), result);
+  }
   playMusicForKey((result === 'victory' && musicConfig.combat_victory) ? 'combat_victory' : 'map');
   renderCombatWaitingPanel();
   const title = document.getElementById('combatEndTitle');
@@ -12428,7 +12692,7 @@ function endCombat(result){
     }
   } else if (result === 'defeat'){
     title.textContent = '💀 Défaite';
-    desc.textContent = 'Ton équipe a été vaincue. Pas de pénalité pour ce test.';
+    desc.textContent = 'Toute ton équipe est au tapis. Direction l\'infirmerie : ils se relèveront dans ' + careKoMinutes + ' minutes. Tu peux repartir tout de suite avec d\'autres combattants.';
   } else {
     title.textContent = '🏃 Fuite';
     desc.textContent = 'Tu as échappé au combat.';
