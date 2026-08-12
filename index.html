@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v228</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v229</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9813,6 +9813,23 @@ function ensureRoomSlots(){
 function recruitInRoomSlot(slot){
   return recruits.find(r=> r.roomSlot === slot) || null;
 }
+/* Ouvre la chambre d'un recruté. On relit sa fiche de PNJ dans la base plutôt que de chercher
+   dans la liste `creatures` : celle-ci ne contient QUE les PNJ visibles sur la carte, et un PNJ
+   recruté en est justement retiré. C'est ce qui faisait répondre « pas encore aménagée » alors
+   que l'image était bien réglée (v229). */
+function openRecruitRoom(hab){
+  const pasAmenagee = ()=> showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
+  if (!hab.sourceCreatureId || !creatureCol){ pasAmenagee(); return; }
+  creatureCol.doc(hab.sourceCreatureId).get().then((doc)=>{
+    const d = doc.exists ? doc.data() : null;
+    if (!d || (!d.roomImagePath && !d.roomImageRef)){ pasAmenagee(); return; }
+    const montrer = (url)=>{ showToast('🛏️ Chambre de ' + hab.name); openSceneBigImage(url); };
+    if (d.roomImagePath){ montrer(resolveMediaPath(d.roomImagePath)); return; }
+    internalizeSceneImage(d.roomImageRef)
+      .then(montrer)
+      .catch(()=> showToast('Image de chambre illisible'));
+  }).catch((err)=> showToast('Échec : ' + err.message));
+}
 
 /* ---------- Le vaisseau (v226) ----------
    Le vaisseau est une zone d'exploration ORDINAIRE, créée dans l'éditeur de zones comme les
@@ -11321,16 +11338,7 @@ async function renderSceneViewCurrentScene(){
         if (recruitIsAway(hab)){ showToast('🔒 ' + hab.name + ' est parti en mission'); return; }
         if (recruitIsKo(hab)){ showToast('🔒 ' + hab.name + ' est à l\'infirmerie'); return; }
         if (recruitIsResting(hab)){ showToast('🔒 ' + hab.name + ' se repose à l\'infirmerie'); return; }
-        const c = creatures.find(x=> x.id === hab.sourceCreatureId);
-        if (!c || (!c.roomImagePath && !c.roomImageRef)){
-          showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
-          return;
-        }
-        showToast('🛏️ Chambre de ' + hab.name);
-        if (c.roomImagePath){ openSceneBigImage(resolveMediaPath(c.roomImagePath)); return; }
-        internalizeSceneImage(c.roomImageRef)
-          .then((url)=> openSceneBigImage(url))
-          .catch(()=> showToast('Image de chambre illisible'));
+        openRecruitRoom(hab);
       };
     } else if (pt.type === 'image'){
       wrapPointActions[pt.id] = ()=>{
