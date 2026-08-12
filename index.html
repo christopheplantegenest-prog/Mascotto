@@ -169,6 +169,17 @@
   #recipeItemChooserOverlay{ z-index:4500; }
   #pnjChooserOverlay{ z-index:4500; }
   #githubPickerOverlay{ z-index:4500; }
+  /* Image d'un point "Image en grand" : plein écran, fond sombre, on touche n'importe où pour fermer */
+  #sceneBigImageOverlay{
+    z-index:4600; background:rgba(0,0,0,.94); align-items:center; padding:12px;
+  }
+  #sceneBigImageOverlay img{
+    max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;
+  }
+  #sceneBigImageOverlay .sheet-x{
+    position:fixed; top:14px; right:14px; background:rgba(0,0,0,.55); color:#fff; border-radius:50%;
+    width:38px; height:38px; font-size:18px; border:1px solid rgba(255,255,255,.35);
+  }
   #appConfirmOverlay{ z-index:5000; }
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
@@ -575,7 +586,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v212</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v213</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -787,6 +798,11 @@
       <input type="number" id="explorerDurSeconds" class="field-input" value="0" min="0" placeholder="s">
     </div>
     <button class="btn-secondary" id="saveExplorerDurationBtn" style="width:100%; margin-top:6px; margin-bottom:10px;">Enregistrer cette durée</button>
+
+    <div class="field-label" style="margin-top:14px;">🖼️ Adresse de base des images hébergées</div>
+    <p class="meta" style="margin:0 0 6px;">Les images choisies via « 📁 Image hébergée » sont enregistrées en chemin relatif. Cette adresse les complète. Si tu changes un jour d'hébergeur, seule cette ligne est à modifier.</p>
+    <input type="text" id="mediaBaseUrlInput" class="field-input" placeholder="https://…/">
+    <button class="btn-secondary" id="saveMediaBaseUrlBtn" style="width:100%; margin-top:6px;">Enregistrer cette adresse</button>
   </div>
 </div>
 
@@ -1885,6 +1901,7 @@
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorEncounterBtn">🎲 Rencontres</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorImageGithubBtn">📁 Image hébergée</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
     </div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
@@ -1999,6 +2016,12 @@
   <div class="scene-imgwrap" id="sceneViewImgWrap">
     <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
   </div>
+</div>
+
+<!-- Image affichée en plein écran, déclenchée par un point de type "Image en grand" -->
+<div class="overlay" id="sceneBigImageOverlay">
+  <img id="sceneBigImageImg" alt="">
+  <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
 </div>
 
 <!-- Petit dialogue simple, déclenché par un point de type "Dialogue" en scène -->
@@ -8668,6 +8691,7 @@ const SCENE_POINT_TYPES = [
   { id:'pnj', label:'👤 PNJ' },
   { id:'sortie_zone', label:'🏳️ Sortie de zone' },
   { id:'decor', label:'🖼️ Décor' },
+  { id:'image', label:'🔍 Image en grand' },
 ];
 
 /* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
@@ -8677,6 +8701,19 @@ const SCENE_POINT_TYPES = [
    la conversion se fait uniquement à la sauvegarde (externalisation) et au chargement (résolution). */
 const scImagesCol = (typeof db !== 'undefined') ? db.collection('scene_images') : null;
 let scImageCache = {}; // ref -> dataUrl
+
+/* ---------- Images hébergées hors Firestore (v213) ----------
+   Une image peut désormais être désignée par un CHEMIN RELATIF (imagePath, ex. "zones/foret/plan.jpg")
+   au lieu d'être stockée en base64. Le chemin est complété par une adresse de base réglable en UN SEUL
+   endroit (app_config/media). Changer d'hébergeur plus tard = changer ce réglage, pas rééditer les fiches.
+   Valeur écrite en dur ici volontairement : ce code s'exécute bien avant la déclaration des constantes
+   GitHub plus bas, et lire une const non encore initialisée tuerait tout le script (piège déjà vu en v205). */
+let mediaBaseUrl = 'https://raw.githubusercontent.com/christopheplantegenest-prog/Mascotto/main/';
+function resolveMediaPath(path){
+  if (!path) return '';
+  if (/^(https?:|data:)/i.test(path)) return path; // déjà une adresse complète : on n'y touche pas
+  return String(mediaBaseUrl).replace(/\/+$/, '') + '/' + String(path).replace(/^\/+/, '');
+}
 
 function hashImageString(str){
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
@@ -8715,7 +8752,10 @@ async function internalizeSceneImage(ref){
 }
 
 function resolvePointImageRefJobs(pt, jobs){
-  if (!pt.imageUrl && pt.imageRef) jobs.push(internalizeSceneImage(pt.imageRef).then(u=>{ pt.imageUrl = u; }));
+  if (pt.imagePath) pt.imageUrl = resolveMediaPath(pt.imagePath); // recalculé à chaque chargement : suit l'adresse de base
+  else if (!pt.imageUrl && pt.imageRef) jobs.push(internalizeSceneImage(pt.imageRef).then(u=>{ pt.imageUrl = u; }));
+  if (pt.bigImagePath) pt.bigImageUrl = resolveMediaPath(pt.bigImagePath);
+  else if (!pt.bigImageUrl && pt.bigImageRef) jobs.push(internalizeSceneImage(pt.bigImageRef).then(u=>{ pt.bigImageUrl = u; }));
   if (!pt.linkedPnjImageUrl && pt.linkedPnjImageRef) jobs.push(internalizeSceneImage(pt.linkedPnjImageRef).then(u=>{ pt.linkedPnjImageUrl = u; }));
 }
 
@@ -8723,10 +8763,12 @@ function resolvePointImageRefJobs(pt, jobs){
 async function resolveImageRefsInScenes(scenesArr){
   const jobs = [];
   (scenesArr||[]).forEach(sc=>{
-    if (!sc.imageUrl && sc.imageRef) jobs.push(internalizeSceneImage(sc.imageRef).then(u=>{ sc.imageUrl = u; }));
+    if (sc.imagePath) sc.imageUrl = resolveMediaPath(sc.imagePath);
+    else if (!sc.imageUrl && sc.imageRef) jobs.push(internalizeSceneImage(sc.imageRef).then(u=>{ sc.imageUrl = u; }));
     (sc.points||[]).forEach(pt=> resolvePointImageRefJobs(pt, jobs));
     (sc.variants||[]).forEach(v=>{
-      if (!v.imageUrl && v.imageRef) jobs.push(internalizeSceneImage(v.imageRef).then(u=>{ v.imageUrl = u; }));
+      if (v.imagePath) v.imageUrl = resolveMediaPath(v.imagePath);
+      else if (!v.imageUrl && v.imageRef) jobs.push(internalizeSceneImage(v.imageRef).then(u=>{ v.imageUrl = u; }));
       (v.points||[]).forEach(pt=> resolvePointImageRefJobs(pt, jobs));
     });
   });
@@ -8734,6 +8776,7 @@ async function resolveImageRefsInScenes(scenesArr){
 }
 
 async function externalizeImageField(obj){
+  if (obj.imagePath){ obj.imageUrl = ''; obj.imageRef = null; return; } // image hébergée : seul le chemin est enregistré
   if (obj.imageUrl && obj.imageUrl.startsWith('data:')){
     obj.imageRef = await externalizeSceneImage(obj.imageUrl);
     obj.imageUrl = '';
@@ -8741,6 +8784,11 @@ async function externalizeImageField(obj){
 }
 async function externalizePointImageFields(pt){
   await externalizeImageField(pt);
+  if (pt.bigImagePath){ pt.bigImageUrl = ''; pt.bigImageRef = null; }
+  else if (pt.bigImageUrl && pt.bigImageUrl.startsWith('data:')){
+    pt.bigImageRef = await externalizeSceneImage(pt.bigImageUrl);
+    pt.bigImageUrl = '';
+  }
   if (pt.linkedPnjImageUrl && pt.linkedPnjImageUrl.startsWith('data:')){
     pt.linkedPnjImageRef = await externalizeSceneImage(pt.linkedPnjImageUrl);
     pt.linkedPnjImageUrl = '';
@@ -8769,6 +8817,7 @@ let sceneEditorCurrentSceneId = null;
 let sceneEditorCurrentVariantId = null; // null = contenu par défaut de la scène, sinon id de la variante éditée
 let sceneEditorStartSceneId = null;
 let sceneEditorImageDataUrl = null; // miroir de la scène (ou variante) courante
+let sceneEditorImagePath = null;    // idem, quand l'image est hébergée (chemin relatif)
 let sceneEditorPrevImageDataUrl = null; // image juste avant le dernier changement (pour l'appui long "revenir en arrière")
 let sceneEditorPoints = [];         // miroir de la scène (ou variante) courante
 let sceneEditorSelectedPointId = null;
@@ -8794,10 +8843,11 @@ function syncCurrentVariantFromEditorState(){
   if (!sc) return;
   if (sceneEditorCurrentVariantId === null){
     sc.imageUrl = sceneEditorImageDataUrl || '';
+    sc.imagePath = sceneEditorImagePath || null;
     sc.points = sceneEditorPoints;
   } else {
     const v = (sc.variants||[]).find(x=>x.id===sceneEditorCurrentVariantId);
-    if (v){ v.imageUrl = sceneEditorImageDataUrl || ''; v.points = sceneEditorPoints; }
+    if (v){ v.imageUrl = sceneEditorImageDataUrl || ''; v.imagePath = sceneEditorImagePath || null; v.points = sceneEditorPoints; }
   }
 }
 
@@ -8818,11 +8868,13 @@ function loadVariantIntoEditorState(variantId){
   sceneEditorCurrentVariantId = variantId;
   if (variantId === null){
     sceneEditorImageDataUrl = sc.imageUrl || null;
+    sceneEditorImagePath = sc.imagePath || null;
     sceneEditorPoints = sc.points || [];
   } else {
     const v = (sc.variants||[]).find(x=>x.id===variantId);
     if (!v) return;
     sceneEditorImageDataUrl = v.imageUrl || null;
+    sceneEditorImagePath = v.imagePath || null;
     sceneEditorPoints = v.points || [];
   }
   sceneEditorPrevImageDataUrl = null;
@@ -9096,6 +9148,9 @@ function ensurePointPixelCache(url){
   const entry = { canvas:null, ctx:null, w:0, h:0, ready:false };
   pointPixelCache[url] = entry;
   const img = new Image();
+  // Image servie par un autre domaine : sans ceci le canevas serait "teinté" et la détection
+  // de transparence échouerait (on retomberait sur un simple rectangle, cf. isPointHitAt)
+  if (/^https?:/i.test(url)) img.crossOrigin = 'anonymous';
   img.onload = ()=>{
     entry.w = img.naturalWidth; entry.h = img.naturalHeight;
     entry.canvas = document.createElement('canvas');
@@ -9344,6 +9399,7 @@ function renderSceneDetailAppearance(pt){
           <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
           ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
         </div>
+        <button type="button" class="btn-secondary" data-point-img-github style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
         <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
       ` : `<p class="meta" style="margin:0 0 6px;">Utilise automatiquement l'image de l'objet sélectionné.</p>`}
     ` : `
@@ -9351,6 +9407,7 @@ function renderSceneDetailAppearance(pt){
         <button type="button" class="btn-secondary" data-point-img-pick style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">${pt.imageUrl ? '🖼️ Changer l’image' : '🖼️ Ajouter une image'}</button>
         ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
       </div>
+      <button type="button" class="btn-secondary" data-point-img-github style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
       <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
     `}
     ${effectiveUrl ? `
@@ -9398,6 +9455,7 @@ function renderSceneDetailAppearance(pt){
       const img = new Image();
       img.onload = ()=>{
         pt.imageUrl = compressPointImageDataUrl(img);
+        pt.imagePath = null; // image importée du téléphone : on repasse en base64
         renderSceneEditorPoints();
         renderSceneDetailAppearance(pt);
       };
@@ -9405,9 +9463,21 @@ function renderSceneDetailAppearance(pt){
     };
     reader.readAsDataURL(file);
   });
+  const ghBtn = appWrap.querySelector('[data-point-img-github]');
+  if (ghBtn) ghBtn.addEventListener('click', ()=>{
+    openGithubFilePicker(null, (item)=>{
+      pt.imagePath = item.path;
+      pt.imageUrl = resolveMediaPath(item.path);
+      pt.imageRef = null;
+      renderSceneEditorPoints();
+      renderSceneDetailAppearance(pt);
+    });
+  });
   const clearBtn = appWrap.querySelector('[data-point-img-clear]');
   if (clearBtn) clearBtn.addEventListener('click', ()=>{
     pt.imageUrl = null;
+    pt.imagePath = null;
+    pt.imageRef = null;
     renderSceneEditorPoints();
     renderSceneDetailAppearance(pt);
   });
@@ -9599,6 +9669,52 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'image'){
+    const big = pt.bigImageUrl || (pt.bigImagePath ? resolveMediaPath(pt.bigImagePath) : '');
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Quand le joueur touche ce point, cette image s'ouvre en plein écran. C'est une image à part : celle posée sur la scène reste réglée dans « Apparence du point ».</p>
+      ${big ? `<img src="${big}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image choisie pour l'instant.</p>`}
+      <button type="button" class="btn-secondary" data-big-img-github style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
+      <button type="button" class="btn-secondary" data-big-img-pick style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🖼️ Importer depuis le téléphone</button>
+      ${big ? `<button type="button" class="btn-secondary" data-big-img-clear style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer l'image</button>` : ''}
+      ${pt.bigImagePath ? `<p class="meta" style="margin:6px 0 0; word-break:break-all;">📁 ${pt.bigImagePath}</p>` : ''}
+      <input type="file" id="scenePointBigImgFile" accept="image/*" style="display:none;">
+    `;
+    const ghBtn = typeWrap.querySelector('[data-big-img-github]');
+    if (ghBtn) ghBtn.addEventListener('click', ()=>{
+      openGithubFilePicker(null, (item)=>{
+        pt.bigImagePath = item.path;
+        pt.bigImageUrl = resolveMediaPath(item.path);
+        pt.bigImageRef = null;
+        renderSceneDetailTypeSpecific(pt);
+      });
+    });
+    const pickBtn = typeWrap.querySelector('[data-big-img-pick]');
+    if (pickBtn) pickBtn.addEventListener('click', ()=> document.getElementById('scenePointBigImgFile').click());
+    const fileInput = typeWrap.querySelector('#scenePointBigImgFile');
+    if (fileInput) fileInput.addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        const im = new Image();
+        im.onload = ()=>{
+          pt.bigImageUrl = compressPointImageDataUrl(im);
+          pt.bigImagePath = null;
+          renderSceneDetailTypeSpecific(pt);
+        };
+        im.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    const clearBtn = typeWrap.querySelector('[data-big-img-clear]');
+    if (clearBtn) clearBtn.addEventListener('click', ()=>{
+      pt.bigImageUrl = null; pt.bigImagePath = null; pt.bigImageRef = null;
+      renderSceneDetailTypeSpecific(pt);
+    });
+    return;
+  }
+
   if (pt.type === 'decor'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Point purement décoratif : image affichée sur la scène, sans aucune interaction possible pour le joueur (un tap dessus passe à travers, comme s'il n'était pas là).</p>`;
     return;
@@ -9674,6 +9790,16 @@ document.getElementById('sceneEditorImageBtn').addEventListener('click', ()=>{
   if (sceneEditorImageLongPressFired){ sceneEditorImageLongPressFired = false; return; }
   document.getElementById('sceneEditorImageFile').click();
 });
+document.getElementById('sceneEditorImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    sceneEditorPrevImageDataUrl = sceneEditorImageDataUrl;
+    sceneEditorImagePath = item.path;
+    sceneEditorImageDataUrl = resolveMediaPath(item.path);
+    renderSceneEditorImage();
+    renderSceneEditorPoints();
+    showToast('Image de fond : ' + item.path);
+  });
+});
 document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if (!file) return;
@@ -9692,6 +9818,7 @@ document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       sceneEditorPrevImageDataUrl = sceneEditorImageDataUrl;
       sceneEditorImageDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      sceneEditorImagePath = null; // image importée du téléphone : on repasse en base64
       renderSceneEditorImage();
       renderSceneEditorPoints();
     };
@@ -9991,6 +10118,12 @@ async function renderSceneViewCurrentScene(){
         document.getElementById('sceneDialogueText').textContent = pt.text || '(pas de texte configuré)';
         document.getElementById('sceneDialogueOverlay').classList.add('show');
       };
+    } else if (pt.type === 'image'){
+      wrapPointActions[pt.id] = ()=>{
+        const url = pt.bigImageUrl || (pt.bigImagePath ? resolveMediaPath(pt.bigImagePath) : '');
+        if (!url){ showToast('Ce point n\'a pas encore d\'image à afficher'); return; }
+        openSceneBigImage(url);
+      };
     } else if (pt.type === 'action'){
       wrapPointActions[pt.id] = ()=>{
         if (!pt.reqItemId){ showToast('Ce point n\'a pas encore d\'objet demandé configuré'); return; }
@@ -10104,6 +10237,19 @@ document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=
   document.getElementById('sceneViewFull').classList.remove('show');
   if (!combatState) await clearSavedCombat(); // filet de sécurité : une suppression précédente (fin de combat) a pu être coupée par un rechargement de page juste après
 });
+function openSceneBigImage(url){
+  document.getElementById('sceneBigImageImg').src = url;
+  document.getElementById('sceneBigImageOverlay').classList.add('show');
+}
+function closeSceneBigImage(){
+  document.getElementById('sceneBigImageOverlay').classList.remove('show');
+  document.getElementById('sceneBigImageImg').src = '';
+}
+document.getElementById('sceneBigImageCloseBtn').addEventListener('click', closeSceneBigImage);
+// on ne ferme que si le doigt tombe à côté de l'image : sinon impossible de la manipuler
+document.getElementById('sceneBigImageOverlay').addEventListener('click', (e)=>{
+  if (e.target === e.currentTarget) closeSceneBigImage();
+});
 document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneDialogueOverlay').classList.remove('show');
 });
@@ -10142,8 +10288,10 @@ function sleep(ms){ return new Promise(resolve=> setTimeout(resolve, ms)); }
 const GITHUB_REPO_OWNER = 'christopheplantegenest-prog';
 const GITHUB_REPO_NAME = 'Mascotto';
 let githubPickerTargetInputId = null;
-function openGithubFilePicker(targetInputId){
+let githubPickerOnPick = null; // mode rappel : reçoit {path, url} au lieu de remplir un champ texte
+function openGithubFilePicker(targetInputId, onPick){
   githubPickerTargetInputId = targetInputId;
+  githubPickerOnPick = onPick || null;
   document.getElementById('githubPickerOverlay').classList.add('show');
   loadGithubPickerPath('');
 }
@@ -10166,7 +10314,7 @@ async function loadGithubPickerPath(path){
       if (it.type === 'dir'){
         return `<button type="button" class="btn-secondary github-picker-dir" data-path="${it.path}" style="width:100%; margin-bottom:6px; text-align:left;">📁 ${it.name}</button>`;
       }
-      return `<button type="button" class="btn-secondary github-picker-file" data-url="${it.download_url}" style="width:100%; margin-bottom:6px; text-align:left;">📄 ${it.name}</button>`;
+      return `<button type="button" class="btn-secondary github-picker-file" data-path="${it.path}" data-url="${it.download_url}" style="width:100%; margin-bottom:6px; text-align:left;">📄 ${it.name}</button>`;
     }).join('');
     listEl.innerHTML = html || '<p class="meta">Dossier vide.</p>';
     const upBtn = document.getElementById('githubPickerUpBtn');
@@ -10179,11 +10327,15 @@ async function loadGithubPickerPath(path){
     });
     listEl.querySelectorAll('.github-picker-file').forEach(btn=>{
       btn.addEventListener('click', ()=>{
-        const input = document.getElementById(githubPickerTargetInputId);
-        if (input){
-          input.value = btn.dataset.url;
-          input.dispatchEvent(new Event('change'));
-          input.dispatchEvent(new Event('input'));
+        if (githubPickerOnPick){
+          githubPickerOnPick({ path: btn.dataset.path, url: btn.dataset.url });
+        } else {
+          const input = document.getElementById(githubPickerTargetInputId);
+          if (input){
+            input.value = btn.dataset.url;
+            input.dispatchEvent(new Event('change'));
+            input.dispatchEvent(new Event('input'));
+          }
         }
         document.getElementById('githubPickerOverlay').classList.remove('show');
       });
@@ -10194,6 +10346,26 @@ async function loadGithubPickerPath(path){
 }
 document.getElementById('githubPickerCloseBtn').addEventListener('click', ()=>{
   document.getElementById('githubPickerOverlay').classList.remove('show');
+});
+
+/* Adresse de base des images hébergées : lue en direct, modifiable dans le menu Édition */
+if (typeof db !== 'undefined' && db){
+  db.collection('app_config').doc('media').onSnapshot((doc)=>{
+    const url = doc.exists && doc.data().imageBaseUrl;
+    if (url) mediaBaseUrl = url;
+    const input = document.getElementById('mediaBaseUrlInput');
+    if (input && document.activeElement !== input) input.value = mediaBaseUrl;
+  }, ()=>{});
+}
+document.getElementById('saveMediaBaseUrlBtn').addEventListener('click', ()=>{
+  const input = document.getElementById('mediaBaseUrlInput');
+  const val = (input.value || '').trim();
+  if (!val){ showToast('Indique une adresse'); return; }
+  if (!/^https?:\/\//i.test(val)){ showToast('L\'adresse doit commencer par http:// ou https://'); return; }
+  if (!db){ showToast('Firebase indisponible ici'); return; }
+  db.collection('app_config').doc('media').set({ imageBaseUrl: val }, { merge:true })
+    .then(()=>{ mediaBaseUrl = val; showToast('Adresse enregistrée'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
 });
 
 function spawnParticle(uid, emoji, text, colorClass){
