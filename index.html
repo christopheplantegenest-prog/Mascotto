@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v236</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v237</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -991,7 +991,7 @@
     <div class="field-label" id="recruitAttacksLabel">Attaques</div>
     <div id="recruitAttacksSection"></div>
 
-    <div class="field-label">Équipement</div>
+    <div class="field-label" id="recruitEquipLabel">Équipement</div>
     <div id="recruitEquipSection"></div>
 
     <button class="btn-secondary" id="recruitDismissBtn" style="width:100%; margin-top:14px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Renvoyer ce PNJ</button>
@@ -2094,7 +2094,7 @@
 <div class="overlay" id="sceneBigImageOverlay">
   <img id="sceneBigImageImg" alt="">
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
-  <button class="btn-capture" id="roomSheetBtn" style="display:none; position:fixed; left:50%; bottom:20px; transform:translateX(-50%); width:auto; padding:12px 22px; box-shadow:0 6px 18px rgba(0,0,0,.5);">👤 Sa fiche</button>
+  <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
 </div>
 
 <!-- Quartiers : la liste illustrée des chambres, ouverte depuis une porte du vaisseau -->
@@ -7644,10 +7644,30 @@ setInterval(()=>{
 
 /* ---------- Fiche d'un PNJ recruté : craft + équipement ---------- */
 let activeRecruitId = null;
-function openRecruitSheet(id){
+/* `mode` limite la fiche à une seule section, pour les icônes de chambre. Sans mode, la fiche
+   s'affiche entière comme avant, depuis la Base. */
+let recruitSheetMode = null;
+function openRecruitSheet(id, mode){
   activeRecruitId = id;
+  recruitSheetMode = mode || null;
   renderRecruitSheet();
   document.getElementById('recruitSheetOverlay').classList.add('show');
+}
+function applyRecruitSheetMode(){
+  const m = recruitSheetMode;
+  const montrer = (id, oui)=>{
+    const el = document.getElementById(id);
+    if (el) el.style.display = oui ? '' : 'none';
+  };
+  const tout = !m;
+  montrer('recruitCombatStatsSection', tout || m === 'profil');
+  montrer('recruitCraftSection',       tout || m === 'profil');
+  montrer('recruitRecipesSection',     tout || m === 'profil');
+  montrer('recruitAttacksLabel',       tout || m === 'attaques');
+  montrer('recruitAttacksSection',     tout || m === 'attaques');
+  montrer('recruitEquipLabel',         tout || m === 'equipement');
+  montrer('recruitEquipSection',       tout || m === 'equipement');
+  montrer('recruitDismissBtn',         tout);
 }
 function currentRecruit(){ return recruits.find(r=>r.id===activeRecruitId); }
 
@@ -7734,6 +7754,7 @@ function renderRecruitSheet(){
   renderRecruitCombatStatsSection(recruit);
   renderRecruitAttacksSection(recruit);
   renderRecruitRecipesSection(recruit);
+  setTimeout(applyRecruitSheetMode, 0); // après les sections, qui règlent elles-mêmes leur affichage
 
   const craftEl = document.getElementById('recruitCraftSection');
   if (recruit.recruitType === 'combattant'){
@@ -7940,22 +7961,29 @@ function renderRecruitCombatStatsInner(recruit, cs){
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
   document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
-    if (!playerDocRef) return;
-    if (!inTeam && recruitIsAway(recruit)){ showToast(recruit.name + ' est parti en mission'); return; }
-    // Un K.O. peut rester dans l'équipe : il part au combat allongé et peut y être réanimé.
-    if (!inTeam && recruit.restingSince) recruitWakeUp(recruit); // entrer dans l'équipe met fin au repos
-    let team = activeTeamIds.filter(id=> recruits.some(r=>r.id===id));
-    if (inTeam){
-      team = team.filter(id=>id!==recruit.id);
-    } else {
-      if (team.length >= 3){ showToast('L\'équipe est déjà complète (3 combattants max)'); return; }
-      team.push(recruit.id);
-    }
-    playerDocRef.set({ activeTeamIds: team }, { merge:true }).then(()=>{
-      activeTeamIds = team;
-      renderRecruitCombatStatsInner(recruit, cs);
-      renderCombattantsRoster();
-    });
+    toggleRecruitTeam(recruit, ()=> renderRecruitCombatStatsInner(recruit, cs));
+  });
+}
+/* Bascule l'appartenance à l'équipe active. Extraite de la fiche pour servir aussi aux icônes
+   de chambre : une seule règle, un seul endroit à corriger. */
+function toggleRecruitTeam(recruit, apres){
+  if (!playerDocRef) return;
+  const inTeam = activeTeamIds.includes(recruit.id);
+  if (!inTeam && recruitIsAway(recruit)){ showToast(recruit.name + ' est parti en mission'); return; }
+  // Un K.O. peut rester dans l'équipe : il part au combat allongé et peut y être réanimé.
+  if (!inTeam && recruit.restingSince) recruitWakeUp(recruit); // entrer dans l'équipe met fin au repos
+  let team = activeTeamIds.filter(id=> recruits.some(r=>r.id===id));
+  if (inTeam){
+    team = team.filter(id=>id!==recruit.id);
+  } else {
+    if (team.length >= 3){ showToast('L\'équipe est déjà complète (3 combattants max)'); return; }
+    team.push(recruit.id);
+  }
+  playerDocRef.set({ activeTeamIds: team }, { merge:true }).then(()=>{
+    activeTeamIds = team;
+    showToast(inTeam ? recruit.name + ' quitte l\'équipe' : recruit.name + ' rejoint l\'équipe');
+    if (apres) apres();
+    renderCombattantsRoster();
   });
 }
 function renderRecruitAttacksSection(recruit){
@@ -8156,8 +8184,12 @@ document.getElementById('baseLearnChooserCloseBtn').addEventListener('click', ()
   document.getElementById('baseLearnChooserOverlay').classList.remove('show');
 });
 
-document.getElementById('recruitDismissBtn').addEventListener('click', async ()=>{
+document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
   const recruit = currentRecruit();
+  if (recruit) dismissRecruit(recruit);
+});
+/* Renvoi définitif, extrait lui aussi pour servir aux icônes de chambre. */
+async function dismissRecruit(recruit, apres){
   if (!recruit) return;
   if (!(await appConfirm(`Renvoyer ${recruit.name} ? Cette action est définitive.`))) return;
   recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
@@ -8169,13 +8201,16 @@ document.getElementById('recruitDismissBtn').addEventListener('click', async ()=
   recruitsCol.doc(recruit.id).delete().then(()=>{
     document.getElementById('recruitSheetOverlay').classList.remove('show');
     activeRecruitId = null;
-  });
-});
+    showToast(recruit.name + ' a quitté le vaisseau');
+    if (apres) apres();
+  }).catch((err)=> showToast('Échec : ' + err.message));
+}
 document.getElementById('recruitSheetCloseBtn').addEventListener('click', ()=>{
   const ov = document.getElementById('recruitSheetOverlay');
   ov.classList.remove('show');
   ov.style.zIndex = ''; // rendue au plan normal après une visite en chambre
   activeRecruitId = null;
+  recruitSheetMode = null;
 });
 
 /* Vérifie régulièrement si une fabrication est terminée */
@@ -9843,8 +9878,10 @@ function renderQuartersList(){
   el.innerHTML = `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">${
     habitants.map(r=>{
       const etat = recruitStateBadge(r);
-      return `<button class="btn-secondary" data-quarters-open="${r.id}" style="display:block; padding:8px 4px; text-align:center;">
-        <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden;">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
+      /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à bord. */
+      const absent = !!etat;
+      return `<button class="btn-secondary" data-quarters-open="${r.id}" style="display:block; padding:8px 4px; text-align:center; ${absent ? 'opacity:.45;' : ''}">
+        <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden; ${absent ? 'filter:grayscale(1);' : ''}">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
         <div style="font-size:12px; font-weight:700; margin-top:5px; line-height:1.2;">${r.name}</div>
         ${etat ? `<div class="meta" style="font-size:10px; color:${etat.couleur};">${etat.texte}</div>` : ''}
       </button>`;
@@ -9867,7 +9904,10 @@ function renderQuartersList(){
     b.addEventListener('click', ()=>{
       if (isGhostTap()) return; // reste du geste qui vient d'ouvrir cet écran
       const r = recruits.find(x=> x.id === b.dataset.quartersOpen);
-      if (r) openRecruitRoom(r);
+      if (!r) return;
+      const etat = recruitStateBadge(r);
+      if (etat){ showToast(r.name + ' est ' + etat.texte.replace(/^\S+\s/, '').toLowerCase() + ' — sa chambre est fermée'); return; }
+      openRecruitRoom(r);
     });
   });
 }
@@ -9893,9 +9933,7 @@ function openRecruitRoom(hab){
       /* Depuis sa chambre, on accède à sa fiche : équipement, craft, apprentissage. C'est ce qui
          fait de la chambre un lieu utile et pas seulement un décor à regarder. */
       roomSheetRecruitId = hab.id;
-      const b = document.getElementById('roomSheetBtn');
-      b.textContent = '👤 Fiche de ' + hab.name;
-      b.style.display = 'block';
+      renderRoomActions(hab);
       armGhostTapGuard(400);
     };
     if (d.roomImagePath){ montrer(resolveMediaPath(d.roomImagePath)); return; }
@@ -11533,16 +11571,48 @@ function openSceneBigImage(url){
   document.getElementById('sceneBigImageImg').src = url;
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
+/* ---------- Ce qu'on peut faire depuis une chambre (v237) ----------
+   Une colonne de petits ronds à droite de l'image, comme la rangée d'icônes de la carte.
+   Chacun ouvre la fiche du recruté sur une seule de ses sections, sauf l'équipe qui bascule
+   tout de suite et le renvoi qui demande confirmation. La chambre reste visible derrière. */
 let roomSheetRecruitId = null;
-document.getElementById('roomSheetBtn').addEventListener('click', ()=>{
-  if (isGhostTap()) return;
-  if (!roomSheetRecruitId) return;
-  /* La chambre reste visible derrière : la fiche doit donc passer au-dessus d'elle. */
-  document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
-  openRecruitSheet(roomSheetRecruitId);
-});
+const ROOM_ACTIONS = [
+  { id:'profil',     emoji:'📊', titre:'Profil et statistiques' },
+  { id:'equipe',     emoji:'⭐', titre:'Équipe active' },
+  { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
+  { id:'equipement', emoji:'🎒', titre:'Équipement' },
+  { id:'renvoyer',   emoji:'👋', titre:'Renvoyer' },
+];
+function renderRoomActions(recruit){
+  const wrap = document.getElementById('roomActions');
+  if (!wrap) return;
+  const combattant = (recruit.recruitType === 'combattant');
+  const dispo = ROOM_ACTIONS.filter(a=> combattant || (a.id !== 'equipe' && a.id !== 'attaques'));
+  const inTeam = activeTeamIds.includes(recruit.id);
+  wrap.innerHTML = dispo.map(a=>{
+    const actif = (a.id === 'equipe' && inTeam);
+    return `<button type="button" data-room-action="${a.id}" title="${a.titre}" style="width:46px; height:46px; border-radius:50%; border:1px solid rgba(255,255,255,.35); background:${actif ? 'var(--accent)' : 'rgba(0,0,0,.55)'}; color:#fff; font-size:20px; line-height:1; box-shadow:0 4px 12px rgba(0,0,0,.45);">${a.emoji}</button>`;
+  }).join('');
+  wrap.style.display = 'flex';
+  wrap.querySelectorAll('[data-room-action]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if (isGhostTap()) return;
+      const r = recruits.find(x=> x.id === roomSheetRecruitId);
+      if (!r) return;
+      const quoi = b.dataset.roomAction;
+      if (quoi === 'equipe'){ toggleRecruitTeam(r, ()=> renderRoomActions(currentRecruitById(r.id) || r)); return; }
+      if (quoi === 'renvoyer'){ dismissRecruit(r, ()=> closeSceneBigImage()); return; }
+      /* La chambre reste visible derrière : la fiche doit donc passer au-dessus d'elle. */
+      document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+      openRecruitSheet(r.id, quoi);
+    });
+  });
+}
+function currentRecruitById(id){ return recruits.find(r=> r.id === id) || null; }
+
 function closeSceneBigImage(){
-  document.getElementById('roomSheetBtn').style.display = 'none';
+  const wrap = document.getElementById('roomActions');
+  if (wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
   roomSheetRecruitId = null;
   document.getElementById('sceneBigImageOverlay').classList.remove('show');
   document.getElementById('sceneBigImageImg').src = '';
