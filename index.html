@@ -604,7 +604,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v262</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v263</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2214,7 +2214,7 @@
 <div class="overlay" id="infPatientOverlay" style="z-index:4650;">
   <div class="sheet">
     <div class="sheet-top">
-      <h3 style="margin-top:0;">Qui installer dans la capsule ?</h3>
+      <h3 style="margin-top:0;" id="infPatientTitle">Qui installer dans la capsule ?</h3>
       <button class="sheet-x" id="infPatientCloseBtn">✕</button>
     </div>
     <div id="infPatientList"></div>
@@ -10706,8 +10706,12 @@ function infirmaryPatients(){
     .sort((a,b)=> (a.restingSince ? 0 : 1) - (b.restingSince ? 0 : 1)
                || (a.restingSince || 0) - (b.restingSince || 0));
 }
+/* Occupe une capsule celui, et seulement celui, que le joueur y a installé — c'est-à-dire dont
+   le repos a été lancé. Un combattant K.O. n'y est PAS d'office : il attend qu'on l'emmène.
+   Sans cette distinction, les K.O. apparaissaient enfermés dans les capsules sans décompte
+   (leur repos n'ayant jamais commencé), donc bloqués et impossibles à sortir. */
 function infirmaryOccupants(){
-  return infirmaryPatients().filter(r=> r.restingSince || recruitEffectiveHp(r) <= 0).slice(0, infirmaryCapacity);
+  return infirmaryPatients().filter(r=> !!r.restingSince).slice(0, infirmaryCapacity);
 }
 function infirmaryHasRoom(){
   return infirmaryOccupants().length < infirmaryCapacity;
@@ -10822,8 +10826,7 @@ function renderInfirmaryRoom(){
     if (r){
       cap.onclick = ()=>{
         if (isGhostTap()) return;
-        openRecruitSheet(r.id, 'profil');
-        document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+        ouvrirCapsuleOccupee(r);
       };
       return;
     }
@@ -10835,6 +10838,36 @@ function renderInfirmaryRoom(){
   });
 }
 
+/* Une capsule occupée s'ouvre sur ce qu'on peut en faire : regarder la fiche, ou sortir le
+   combattant. Sans cette sortie, un blessé installé serait prisonnier de sa capsule. */
+function ouvrirCapsuleOccupee(r){
+  const el = document.getElementById('infPatientList');
+  const titre = document.getElementById('infPatientTitle');
+  if (!el || !titre) return;
+  const max = recruitMaxHp(r), hp = recruitEffectiveHp(r);
+  const ko = hp <= 0;
+  const reste = ko ? recruitKoRemainingMs(r) : 0;
+  titre.textContent = r.name;
+  el.innerHTML = `
+    <p class="meta" style="margin-top:0;">${ko ? '💀 K.O. — se relève dans ' + formatRemainingDuration(reste) : '🛏️ En soin · ' + hp + '/' + max + ' PV'}</p>
+    <div style="margin-bottom:10px;">${hpBarHtml(hp, max, 8)}</div>
+    <button class="btn-secondary" id="infSeeSheet" style="width:100%; margin-bottom:6px;">📊 Voir sa fiche</button>
+    <button class="btn-secondary" id="infTakeOut" style="width:100%;">⏹️ Sortir de la capsule</button>
+    <p class="meta" style="margin:6px 0 0;">En sortant, ses points de vie sont figés là où ils en sont.</p>`;
+  document.getElementById('infSeeSheet').addEventListener('click', ()=>{
+    document.getElementById('infPatientOverlay').classList.remove('show');
+    openRecruitSheet(r.id, 'profil');
+    document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+  });
+  document.getElementById('infTakeOut').addEventListener('click', ()=>{
+    recruitWakeUp(r);
+    document.getElementById('infPatientOverlay').classList.remove('show');
+    renderInfirmaryRoom();
+    renderCombattantsRoster();
+  });
+  document.getElementById('infPatientOverlay').classList.add('show');
+}
+
 /* Choisir qui installer dans une capsule libre. Écran séparé plutôt que liste dépliée dans le
    décor : la pièce se redessine toutes les 5 s, une liste posée dessus disparaîtrait sous le
    doigt — le piège rencontré trois fois déjà. */
@@ -10842,11 +10875,13 @@ function ouvrirChoixPatient(){
   const occupants = infirmaryOccupants();
   const attente = infirmaryPatients().filter(r=> !occupants.some(o=> o.id === r.id));
   const el = document.getElementById('infPatientList');
+  const titre = document.getElementById('infPatientTitle');
   if (!el) return;
+  if (titre) titre.textContent = 'Qui installer dans la capsule ?';
   el.innerHTML = attente.map(r=>{
     const max = recruitMaxHp(r), hp = recruitEffectiveHp(r);
     return `<button class="btn-secondary" data-inf-put="${r.id}" style="width:100%; margin-bottom:6px; text-align:left; font-size:12px;">
-      <b>${r.name}</b><span class="meta" style="display:block; font-size:11px;">${hp}/${max} PV</span>
+      <b>${r.name}</b><span class="meta" style="display:block; font-size:11px;">${hp <= 0 ? '💀 K.O.' : hp + '/' + max + ' PV'}</span>
     </button>`;
   }).join('') || '<p class="meta">Personne à soigner.</p>';
   el.querySelectorAll('[data-inf-put]').forEach(b=>{
