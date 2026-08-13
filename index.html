@@ -604,7 +604,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v259</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v262</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8260,16 +8260,18 @@ function useHealingItemOnRecruit(r, it){
   if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventory();
   if (activeRecruitId === r.id) renderRecruitSheet();
 }
-/* Reporte les PV de fin de combat sur les fiches. En cas de défaite (toute l'équipe au tapis),
-   tout le monde part au repos d'office : c'est la seule pénalité automatique du naufrage. */
+/* Reporte les PV de fin de combat sur les fiches. **Aucune mise au repos automatique** : même
+   K.O., même après une défaite complète, un combattant reste où il est. C'est au joueur de
+   l'emmener à l'infirmerie et de l'installer dans une capsule — le soin est une décision, pas
+   une conséquence. Ce qui empêche de se retrouver bloqué, c'est le refus d'entrer dans une zone
+   de combat sans combattant valide (voir equipeApteAuCombat). */
 function writeBackCombatHp(playerFighters, result){
   if (!recruitsCol) return;
-  const wipe = (result === 'defeat');
   playerFighters.forEach(f=>{
     if (!f.sourceId) return;
     const r = recruits.find(x=> x.id === f.sourceId);
     const hp = Math.max(0, Math.round(f.hp));
-    const upd = { currentHp: hp, restingSince: wipe ? Date.now() : null };
+    const upd = { currentHp: hp, restingSince: null };
     if (r){ r.currentHp = upd.currentHp; r.restingSince = upd.restingSince; }
     recruitsCol.doc(f.sourceId).update(upd)
       .catch((err)=> showToast('PV non enregistrés : ' + err.message));
@@ -12413,6 +12415,19 @@ function markScenePointTaken(pt){
   }, { merge: true });
 }
 
+/* Un combattant est apte s'il est recruté, pas parti en mission, et pas à zéro point de vie.
+   Sans cette vérification, un joueur dont toute l'équipe est au tapis entrerait dans une zone,
+   déclencherait une rencontre et la perdrait aussitôt, en boucle. */
+function equipeApteAuCombat(){
+  return recruits.some(r=>
+    r.recruitType === 'combattant'
+    && activeTeamIds.includes(r.id)
+    && !recruitIsAway(r)
+    && recruitEffectiveHp(r) > 0);
+}
+function zoneComporteDesCombats(zone){
+  return (zone.scenes || []).some(s=> (s.encounterChance || 0) > 0 && (s.encounterMonsterIds || []).length);
+}
 function openSceneView(creature, resumeSceneId, opts){
   sceneViewIsShip = !!(opts && opts.isShip);
   const wrap = document.getElementById('sceneViewImgWrap');
@@ -12432,6 +12447,16 @@ function openSceneView(creature, resumeSceneId, opts){
     const hasContent = norm.scenes.some(s=>s.imageUrl);
     if (!hasContent){
       empty.style.display = 'block';
+      return;
+    }
+    /* On refuse l'entrée AVANT d'afficher quoi que ce soit, et seulement pour les zones où l'on
+       risque une rencontre : une zone purement narrative reste visitable les mains vides. */
+    if (!sceneViewIsShip && zoneComporteDesCombats(norm) && !equipeApteAuCombat()){
+      document.getElementById('sceneViewFull').classList.remove('show');
+      const aucun = !recruits.some(r=> r.recruitType === 'combattant');
+      showToast(aucun
+        ? 'Il te faut au moins un combattant pour entrer ici'
+        : 'Aucun combattant valide dans ton équipe — soigne-les à l\'infirmerie');
       return;
     }
     sceneViewCreature = creature;
@@ -14929,7 +14954,7 @@ function endCombat(result){
     }
   } else if (result === 'defeat'){
     title.textContent = '💀 Défaite';
-    desc.textContent = 'Toute ton équipe est au tapis. Direction l\'infirmerie : ils se relèveront dans ' + careKoMinutes + ' minutes. Tu peux repartir tout de suite avec d\'autres combattants.';
+    desc.textContent = 'Toute ton équipe est au tapis. Tu es ramené sur la carte. Emmène tes blessés à l\'infirmerie du vaisseau pour les soigner.';
   } else {
     title.textContent = '🏃 Fuite';
     desc.textContent = 'Tu as échappé au combat.';
