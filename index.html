@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v238</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v241</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1826,6 +1826,7 @@
           </div>
         </div>
         <div id="combatPointsIndicator" style="margin:8px 0; padding:8px; border-radius:8px; border:1px solid var(--line); font-size:13px; font-weight:600;"></div>
+        <div id="editCombatRadar" style="margin:0 0 10px;"></div>
         <div class="field-label">Attaques connues (4 maximum)</div>
         <p class="meta" style="margin:0 0 6px;">Touche ⭐ sur une attaque sélectionnée pour qu'une recrue la connaisse dès son recrutement (au moins une obligatoire si recrutable).</p>
         <div id="combatAttacksList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
@@ -2357,20 +2358,46 @@ document.getElementById('editCombatCategory').addEventListener('change', updateC
   document.getElementById(id).addEventListener('input', updateCombatPointsIndicator);
 });
 const COMBAT_POINT_BUDGETS = { recrutable: 100, monstre_commun: 80, mini_boss: 150, boss: 250 };
+
+/* Ce que coûte UN point de chaque caractéristique. Table unique, partagée par le compteur de
+   l'éditeur et par le diagramme en toile d'araignée : si un taux change ici, les deux suivent.
+   Ainsi le diagramme montre littéralement comment le budget de points a été dépensé. */
+const COMBAT_POINT_COSTS = { hp:0.2, speed:2, atk:1, def:1, matk:1, mdef:1 };
+function combatStatPointCost(cle, valeur){
+  return (valeur || 0) * (COMBAT_POINT_COSTS[cle] != null ? COMBAT_POINT_COSTS[cle] : 1);
+}
+function combatStatsPointTotal(cs){
+  return Math.round(Object.keys(COMBAT_POINT_COSTS)
+    .reduce((somme, cle)=> somme + combatStatPointCost(cle, cs[cle]), 0) * 10) / 10;
+}
+function combatPointsBudgetFor(cs){
+  if (!cs) return COMBAT_POINT_BUDGETS.recrutable;
+  if (cs.recruitable) return COMBAT_POINT_BUDGETS.recrutable;
+  return COMBAT_POINT_BUDGETS[cs.budgetCategory] || COMBAT_POINT_BUDGETS.recrutable;
+}
 function combatPointsCost(){
-  const hp = parseInt(document.getElementById('editCombatHp').value, 10) || 0;
-  const speed = parseInt(document.getElementById('editCombatSpeed').value, 10) || 0;
-  const atk = parseInt(document.getElementById('editCombatAtk').value, 10) || 0;
-  const def = parseInt(document.getElementById('editCombatDef').value, 10) || 0;
-  const matk = parseInt(document.getElementById('editCombatMatk').value, 10) || 0;
-  const mdef = parseInt(document.getElementById('editCombatMdef').value, 10) || 0;
-  return Math.round((hp*0.2 + speed*2 + atk + def + matk + mdef) * 10) / 10;
+  const lire = (id)=> parseInt(document.getElementById(id).value, 10) || 0;
+  return combatStatsPointTotal({
+    hp: lire('editCombatHp'), speed: lire('editCombatSpeed'), atk: lire('editCombatAtk'),
+    def: lire('editCombatDef'), matk: lire('editCombatMatk'), mdef: lire('editCombatMdef'),
+  });
 }
 function updateCombatPointsIndicator(){
   const el = document.getElementById('combatPointsIndicator');
   if (!el) return;
   const recruitable = document.getElementById('editCombatRecruitable').checked;
   const budget = recruitable ? COMBAT_POINT_BUDGETS.recrutable : COMBAT_POINT_BUDGETS[document.getElementById('editCombatCategory').value];
+  /* Diagramme en direct : c'est au moment de créer le personnage qu'on décide de sa silhouette,
+     donc c'est ici qu'il est le plus utile — pas seulement en jeu. */
+  const radar = document.getElementById('editCombatRadar');
+  if (radar){
+    const lire = (id)=> parseInt(document.getElementById(id).value, 10) || 0;
+    radar.innerHTML = recruitRadarSvg({
+      hp: lire('editCombatHp'), speed: lire('editCombatSpeed'), atk: lire('editCombatAtk'),
+      def: lire('editCombatDef'), matk: lire('editCombatMatk'), mdef: lire('editCombatMdef'),
+      recruitable, budgetCategory: document.getElementById('editCombatCategory').value,
+    });
+  }
   const cost = combatPointsCost();
   const over = cost > budget;
   el.textContent = `🎯 Points utilisés : ${cost} / ${budget}` + (over ? ' — dépassement (indicatif, n\'empêche pas d\'enregistrer)' : '');
@@ -7885,7 +7912,18 @@ function returnItemToStock(itemId){
   playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
 }
 
+/* Ces écrans s'ouvrent par-dessus la fiche du recruté. Quand celle-ci a été remontée au premier
+   plan pour une visite en chambre, ils doivent monter avec elle, sinon ils s'affichent DERRIÈRE
+   l'image de la chambre et deviennent inatteignables. */
+function raiseAbovePlan(id){
+  const fiche = document.getElementById('recruitSheetOverlay');
+  const el = document.getElementById(id);
+  if (!el) return;
+  const plan = parseInt(fiche.style.zIndex, 10);
+  el.style.zIndex = plan ? String(plan + 100) : '';
+}
 function openBaseEquipChooser(recruit, slotId){
+  raiseAbovePlan('baseEquipChooserOverlay');
   const slotDef = EQUIP_SLOTS.find(s=>s.id===slotId) || EQUIP_SLOTS[0];
   const titleEl = document.getElementById('baseEquipChooserTitle');
   if (titleEl) titleEl.textContent = 'Équiper — ' + slotDef.label;
@@ -7900,7 +7938,7 @@ function openBaseEquipChooser(recruit, slotId){
       <div class="meta">Stock : ${baseResources[it.id]||0} — ${itemEffectSummary(it)}</div>
       <button class="btn-capture" data-equip-item="${it.id}" style="width:100%; margin-top:6px;">Équiper</button>
     </div>
-  `).join('') : `<p class="meta">Aucun objet "${slotDef.label}" disponible pour ce métier dans le sac.</p>`;
+  `).join('') : `<p class="meta">Aucun objet "${slotDef.label}" disponible.<br><br>Vérifie que l'objet est bien de ce type dans son éditeur, qu'il est marqué équipable, qu'il en reste dans ton sac (un objet déjà équipé sur quelqu'un n'y est plus) et qu'il n'est pas réservé à un autre métier.</p>`;
   listEl.querySelectorAll('button[data-equip-item]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const itemId = btn.dataset.equipItem;
@@ -7967,7 +8005,6 @@ function recruitStatsHtml(cs){
     const v = cs[s.cle];
     return { ...s, valeur: (v == null || v === '') ? null : v };
   });
-  const maxi = Math.max(1, ...lignes.filter(l=> !l.pourcent && l.valeur != null).map(l=> l.valeur));
   return `
     <div style="margin-top:8px;">
       ${lignes.map(l=> `
@@ -7977,16 +8014,62 @@ function recruitStatsHtml(cs){
           <b style="font-size:13px;">${l.valeur == null ? '—' : l.valeur + (l.pourcent ? ' %' : '')}</b>
         </div>`).join('')}
     </div>
-    <div class="field-label" style="margin-top:12px;">Aperçu</div>
-    <div>
-      ${lignes.filter(l=> !l.pourcent && l.valeur != null).map(l=> `
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;">
-          <span style="flex:none; width:112px; font-size:11px; opacity:.8;">${l.nom}</span>
-          <div style="flex:1; height:10px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden;">
-            <div style="height:100%; width:${Math.round((l.valeur / maxi) * 100)}%; background:var(--accent);"></div>
-          </div>
-        </div>`).join('')}
-    </div>
+    <div class="field-label" style="margin-top:12px;">Profil de combat</div>
+    ${recruitRadarSvg(cs)}
+  `;
+}
+
+/* Diagramme en toile d'araignée. Les cinq axes sont les caractéristiques de même nature ; les
+   points de vie en sont exclus, car dix fois plus élevés, ils écraseraient tout le reste (ils
+   ont déjà leur jauge et leur ligne chiffrée juste au-dessus).
+   L'échelle est COMMUNE à toute la troupe : comme chaque personnage répartit le même total de
+   points, deux diagrammes se comparent directement — c'est tout l'intérêt. */
+/* Chaque axe est exprimé en POINTS DÉPENSÉS, pas en valeur brute : les taux viennent de la
+   table qui sert déjà au compteur de l'éditeur. Les points de vie ne peuvent donc plus écraser
+   les autres axes, et l'échelle est le budget du personnage — la forme montre exactement
+   comment ses 100 points ont été répartis. */
+const RADAR_AXES = [
+  { cle:'hp',    nom:'PV' },
+  { cle:'atk',   nom:'ATQ' },
+  { cle:'def',   nom:'DEF' },
+  { cle:'speed', nom:'VIT' },
+  { cle:'mdef',  nom:'DEF.M' },
+  { cle:'matk',  nom:'ATQ.M' },
+];
+function radarValue(cs, axe){
+  return combatStatPointCost(axe.cle, cs[axe.cle]);
+}
+/* L'échelle est le BUDGET du personnage : deux diagrammes de même catégorie se comparent
+   directement, et une forme qui remplit la toile signifie « tous ses points sont placés ». */
+function radarScale(cs){
+  return combatPointsBudgetFor(cs);
+}
+function recruitRadarSvg(cs){
+  const R = 62, cx = 100, cy = 92;
+  const echelle = radarScale(cs);
+  const pt = (i, ratio)=>{
+    const angle = -Math.PI/2 + (i * 2*Math.PI / RADAR_AXES.length);
+    return [cx + Math.cos(angle)*R*ratio, cy + Math.sin(angle)*R*ratio];
+  };
+  const polygone = (ratio)=> RADAR_AXES.map((_, i)=> pt(i, ratio).map(v=> v.toFixed(1)).join(',')).join(' ');
+  const forme = RADAR_AXES.map((a, i)=>{
+    const v = Math.max(0, Math.min(echelle, radarValue(cs, a)));
+    return pt(i, v / echelle).map(x=> x.toFixed(1)).join(',');
+  }).join(' ');
+  return `
+    <svg viewBox="0 0 200 190" style="width:100%; max-width:280px; display:block; margin:4px auto 0;">
+      ${[0.25, 0.5, 0.75, 1].map(r=> `<polygon points="${polygone(r)}" fill="none" stroke="rgba(0,0,0,.14)" stroke-width="1"/>`).join('')}
+      ${RADAR_AXES.map((_, i)=>{
+        const [x, y] = pt(i, 1);
+        return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(0,0,0,.14)" stroke-width="1"/>`;
+      }).join('')}
+      <polygon points="${forme}" fill="var(--accent)" fill-opacity=".28" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+      ${RADAR_AXES.map((a, i)=>{
+        const [x, y] = pt(i, 1.22);
+        return `<text x="${x.toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" opacity=".75">${a.nom}</text>`;
+      }).join('')}
+      <text x="${cx}" y="182" text-anchor="middle" font-size="9" font-family="system-ui, sans-serif" fill="currentColor" opacity=".5">${combatStatsPointTotal(cs)} / ${echelle} points répartis</text>
+    </svg>
   `;
 }
 function renderRecruitCombatStatsInner(recruit, cs){
@@ -8116,6 +8199,7 @@ function renderRecruitRecipesSection(recruit){
   document.getElementById('openLearnRecipeChooserBtn').addEventListener('click', ()=> openBaseLearnRecipeChooser(recruit));
 }
 function openBaseLearnRecipeChooser(recruit){
+  raiseAbovePlan('baseLearnRecipeChooserOverlay');
   const listEl = document.getElementById('baseLearnRecipeChooserList');
   const learned = recruit.learnedRecipeIds || [];
   const eligible = recipes.filter(r => r.requiresLearning
@@ -8198,6 +8282,7 @@ document.getElementById('forgetAttackChooserCloseBtn').addEventListener('click',
   document.getElementById('baseLearnChooserOverlay').classList.add('show');
 });
 function openBaseLearnChooser(recruit){
+  raiseAbovePlan('baseLearnChooserOverlay');
   const listEl = document.getElementById('baseLearnChooserList');
   const learnedAlready = recruit.learnedAttackIds || [];
   const eligible = attacks.filter(a =>
