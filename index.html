@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v243</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v245</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -822,6 +822,12 @@
       <input type="number" id="explorerDurSeconds" class="field-input" value="0" min="0" placeholder="s">
     </div>
     <button class="btn-secondary" id="saveExplorerDurationBtn" style="width:100%; margin-top:6px; margin-bottom:10px;">Enregistrer cette durée</button>
+
+    <div class="field-label" style="margin-top:14px;">📨 Image du terminal de missions</div>
+    <p class="meta" style="margin:0 0 6px;">Le décor de la console du vaisseau. Le courrier et les boutons viennent se poser dessus.</p>
+    <input type="file" id="missionTerminalFile" accept="image/*" class="field-input">
+    <button type="button" class="btn-secondary" id="missionTerminalGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
+    <img id="missionTerminalPreview" style="display:none; width:90px; margin-top:8px; border-radius:8px; border:2px solid var(--accent);">
 
     <div class="field-label" style="margin-top:14px;">📨 Missions reçues par jour</div>
     <div style="display:flex; gap:6px;">
@@ -2096,6 +2102,15 @@
   <img id="sceneBigImageImg" alt="">
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
+</div>
+
+<!-- Terminal de missions : le même écran que l'onglet de la Base, posé sur un décor de console -->
+<div class="overlay" id="missionTerminalOverlay" style="z-index:4550; align-items:center; background:rgba(0,0,0,.82); padding:10px;">
+  <div id="missionTerminalFrame" style="position:relative; width:100%; max-width:520px; max-height:94vh; display:flex; flex-direction:column;">
+    <img id="missionTerminalBg" alt="" style="width:100%; display:block; pointer-events:none;">
+    <div id="missionTerminalInner" style="position:absolute; inset:0; overflow-y:auto; padding:11% 9% 9%;"></div>
+    <button class="sheet-x" id="missionTerminalCloseBtn" style="position:absolute; top:2%; right:4%; background:rgba(0,0,0,.45); color:#fff; border:none;">✕</button>
+  </div>
 </div>
 
 <!-- Quartiers : la liste illustrée des chambres, ouverte depuis une porte du vaisseau -->
@@ -6919,6 +6934,7 @@ function missionDomainNeed(id){
 const missionsCol = (typeof db !== 'undefined') ? db.collection('missions') : null;
 let missionTemplates = [];
 let missionsPerDay = 3;
+let missionTerminalImage = ''; // décor de la console, réglé dans Outils de test
 let missionShowChance = false; // outil d'équilibrage : réaffiche le domaine et le % de réussite
 let playerMissionRuns = {};   // { missionId: { recruitId, startedAt, durationSec, success, reported } }
 let playerDailyMissions = { date:null, ids:[] };
@@ -6939,6 +6955,12 @@ if (typeof db !== 'undefined' && db){
     if (b) b.textContent = missionShowChance ? '👁️ Masquer domaine et % (vue joueur)' : '👁️ Afficher domaine et % (équilibrage)';
     const input = document.getElementById('missionsPerDayInput');
     if (input && document.activeElement !== input) input.value = missionsPerDay;
+    missionTerminalImage = d.terminalPath ? resolveMediaPath(d.terminalPath) : (d.terminalImage || '');
+    const p = document.getElementById('missionTerminalPreview');
+    if (p){
+      p.src = missionTerminalImage || '';
+      p.style.display = missionTerminalImage ? 'block' : 'none';
+    }
   }, ()=>{});
 }
 
@@ -7121,8 +7143,15 @@ function openMissionReport(missionId){
   renderCombattantsRoster();
 }
 
+/* Deux portes d'entrée pour le même écran : l'onglet de la Base et le terminal du vaisseau.
+   On écrit dans celui qui est ouvert, sinon les deux se marcheraient dessus. */
+function missionTrackerContainer(){
+  const terminal = document.getElementById('missionTerminalOverlay');
+  if (terminal && terminal.classList.contains('show')) return document.getElementById('missionTerminalInner');
+  return document.getElementById('missionTrackerList');
+}
 function renderMissionTracker(){
-  const el = document.getElementById('missionTrackerList');
+  const el = missionTrackerContainer();
   if (!el) return;
   ensureDailyMissions();
   /* Même précaution qu'à l'infirmerie : le profil joueur s'écrit toutes les 8 s et redessine
@@ -7358,6 +7387,41 @@ document.getElementById('toggleMissionChanceBtn').addEventListener('click', ()=>
     .then(()=>{ missionShowChance = v; renderMissionTracker(); showToast(v ? 'Domaine et % affichés' : 'Vue joueur rétablie'); })
     .catch((err)=> showToast('Échec : ' + err.message));
 });
+document.getElementById('missionTerminalFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file || !db) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 900;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h*maxSize/w); w = maxSize; }
+        else { w = Math.round(w*maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      // PNG conservé : l'image du terminal a un fond transparent, le JPEG le noircirait
+      db.collection('app_config').doc('missions')
+        .set({ terminalImage: canvas.toDataURL('image/png'), terminalPath: null }, { merge:true })
+        .then(()=> showToast('Terminal enregistré'))
+        .catch((err)=> showToast('Échec : ' + err.message));
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('missionTerminalGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    if (!db) return;
+    db.collection('app_config').doc('missions')
+      .set({ terminalPath: item.path, terminalImage: null }, { merge:true })
+      .then(()=> showToast('Terminal : ' + item.path))
+      .catch((err)=> showToast('Échec : ' + err.message));
+  });
+});
 document.getElementById('saveMissionsPerDayBtn').addEventListener('click', ()=>{
   if (!db){ showToast('Firebase indisponible ici'); return; }
   const n = parseInt(document.getElementById('missionsPerDayInput').value, 10);
@@ -7369,6 +7433,8 @@ document.getElementById('saveMissionsPerDayBtn').addEventListener('click', ()=>{
 /* Rafraîchit les comptes à rebours des missions tant que l'onglet est ouvert.
    Comme pour l'infirmerie, on ne redessine pas si une liste de combattants est dépliée. */
 setInterval(()=>{
+  const terminal = document.getElementById('missionTerminalOverlay');
+  if (terminal && terminal.classList.contains('show')){ renderMissionTracker(); return; }
   const tab = document.getElementById('baseTab-missions');
   if (!tab || tab.style.display !== 'block') return;
   if (!document.getElementById('baseOverlay').classList.contains('show')) return;
@@ -10012,6 +10078,27 @@ let ghostTapUntil = 0;
 function armGhostTapGuard(ms){ ghostTapUntil = Date.now() + (ms || 400); }
 function isGhostTap(){ return Date.now() < ghostTapUntil; }
 
+/* ---------- Terminal de missions (v244) ----------
+   Le même écran que l'onglet de la Base, réutilisé tel quel : un seul code, une seule
+   maintenance. Seule différence, il est posé sur un décor de console. C'est pour cela que
+   `renderMissionTracker` écrit dans le conteneur ACTIF plutôt que dans un identifiant fixe. */
+function missionTerminalReady(){
+  return !!missionTerminalImage;
+}
+function openMissionTerminal(){
+  if (!missionTerminalReady()){
+    showToast('Choisis l\'image du terminal dans Édition → Outils de test');
+    return;
+  }
+  document.getElementById('missionTerminalBg').src = missionTerminalImage;
+  document.getElementById('missionTerminalOverlay').classList.add('show');
+  armGhostTapGuard(400);
+  renderMissionTracker();
+}
+document.getElementById('missionTerminalCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('missionTerminalOverlay').classList.remove('show');
+  armGhostTapGuard(400);
+});
 function openQuarters(){
   renderQuartersList();
   document.getElementById('quartersOverlay').classList.add('show');
@@ -10125,6 +10212,7 @@ const SCENE_POINT_TYPES = [
   { id:'decor', label:'🖼️ Décor' },
   { id:'image', label:'🔍 Image en grand' },
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
+  { id:'missions', label:'📨 Terminal de missions' },
 ];
 
 /* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
@@ -11100,6 +11188,11 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'missions'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le terminal de missions : courrier du jour, envoi d'un combattant, rapports de retour. Rien à régler ici — l'image du terminal se choisit dans Édition → Outils de test.</p>`;
+    return;
+  }
+
   if (pt.type === 'chambre'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Cette porte ouvre la liste illustrée des chambres : le joueur y choisit qui aller voir. Rien à régler — tous les recrutés y figurent automatiquement, avec leur portrait et leur état.</p>`;
     return;
@@ -11580,6 +11673,8 @@ async function renderSceneViewCurrentScene(){
       };
     } else if (pt.type === 'chambre'){
       wrapPointActions[pt.id] = ()=> openQuarters();
+    } else if (pt.type === 'missions'){
+      wrapPointActions[pt.id] = ()=> openMissionTerminal();
     } else if (pt.type === 'image'){
       wrapPointActions[pt.id] = ()=>{
         const big = pt.bigImageUrl || (pt.bigImagePath ? resolveMediaPath(pt.bigImagePath) : '');
