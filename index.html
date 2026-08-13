@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v234</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v235</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3291,6 +3291,7 @@ function renderCreatureMarkers(){
     marker.on('click', ()=>{
       if (isMovingMarker) return;
       if (mapLongPressFired){ mapLongPressFired = false; return; }
+      if (isGhostTap()) return; // reste du geste qui vient de fermer un écran
       handleCreatureClick(c);
     });
     marker.on('add', ()=>{
@@ -9809,9 +9810,18 @@ const zonesCol = (typeof db !== 'undefined') ? db.collection('exploration_zones'
    là où il y a quelqu'un à trouver.
    La liste doit rester BELLE : de grands portraits, pas des lignes de texte — sinon le
    vaisseau redevient le menu qu'il devait remplacer. */
+/* Une même pression du doigt produit d'abord un `pointerdown`, puis un `click`. Si le premier
+   ouvre un écran, le second tombe sur ce qui se trouve alors sous le doigt et le déclenche
+   aussitôt : on se retrouvait toujours dans la même chambre sans avoir pu choisir. On ignore
+   donc les clics pendant un court instant après l'ouverture d'un écran. */
+let ghostTapUntil = 0;
+function armGhostTapGuard(ms){ ghostTapUntil = Date.now() + (ms || 400); }
+function isGhostTap(){ return Date.now() < ghostTapUntil; }
+
 function openQuarters(){
   renderQuartersList();
   document.getElementById('quartersOverlay').classList.add('show');
+  armGhostTapGuard(400);
 }
 function recruitStateBadge(r){
   if (recruitIsAway(r))    return { texte:'📨 En mission',   couleur:'#8e6b2f' };
@@ -9852,6 +9862,7 @@ function renderQuartersList(){
 
   el.querySelectorAll('[data-quarters-open]').forEach(b=>{
     b.addEventListener('click', ()=>{
+      if (isGhostTap()) return; // reste du geste qui vient d'ouvrir cet écran
       const r = recruits.find(x=> x.id === b.dataset.quartersOpen);
       if (r) openRecruitRoom(r);
     });
@@ -11323,6 +11334,7 @@ async function renderSceneViewCurrentScene(){
     if (pt.type === 'sortie_zone'){
       wrapPointActions[pt.id] = async ()=>{
         document.getElementById('sceneViewFull').classList.remove('show');
+        armGhostTapGuard(400); // sinon le même geste ouvre aussitôt une zone sur la carte
         clearCurrentZoneScene();
         if (!combatState) await clearSavedCombat();
       };
@@ -11503,6 +11515,7 @@ document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=
      parcouru, puisqu'on y revient par l'entrée. Chez soi, la question n'a pas lieu d'être. */
   if (!sceneViewIsShip && !(await appConfirm('Quitter cette zone ? Tu y reviendras par l\'entrée.'))) return;
   document.getElementById('sceneViewFull').classList.remove('show');
+  armGhostTapGuard(400);
   clearCurrentZoneScene();
   if (!combatState) await clearSavedCombat(); // filet de sécurité : une suppression précédente (fin de combat) a pu être coupée par un rechargement de page juste après
 });
