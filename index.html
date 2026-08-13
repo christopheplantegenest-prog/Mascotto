@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v237</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v238</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7653,21 +7653,28 @@ function openRecruitSheet(id, mode){
   renderRecruitSheet();
   document.getElementById('recruitSheetOverlay').classList.add('show');
 }
+/* Appliqué de façon SYNCHRONE à la fin du rendu : en le différant d'un tour de boucle, la
+   fenêtre s'affichait entière puis se réduisait aussitôt — d'où l'effet de saut signalé.
+   Sans mode (ouverture depuis la Base), on ne touche à rien : les sections ont déjà réglé
+   elles-mêmes leur affichage selon le type de recruté. */
 function applyRecruitSheetMode(){
   const m = recruitSheetMode;
+  if (!m) return;
   const montrer = (id, oui)=>{
     const el = document.getElementById(id);
     if (el) el.style.display = oui ? '' : 'none';
   };
-  const tout = !m;
-  montrer('recruitCombatStatsSection', tout || m === 'profil');
-  montrer('recruitCraftSection',       tout || m === 'profil');
-  montrer('recruitRecipesSection',     tout || m === 'profil');
-  montrer('recruitAttacksLabel',       tout || m === 'attaques');
-  montrer('recruitAttacksSection',     tout || m === 'attaques');
-  montrer('recruitEquipLabel',         tout || m === 'equipement');
-  montrer('recruitEquipSection',       tout || m === 'equipement');
-  montrer('recruitDismissBtn',         tout);
+  montrer('recruitCombatStatsSection', m === 'profil');
+  montrer('recruitCraftSection',       m === 'profil');
+  montrer('recruitRecipesSection',     m === 'profil');
+  montrer('recruitAttacksLabel',       m === 'attaques');
+  montrer('recruitAttacksSection',     m === 'attaques');
+  montrer('recruitEquipLabel',         m === 'equipement');
+  montrer('recruitEquipSection',       m === 'equipement');
+  montrer('recruitDismissBtn',         false);
+  // Le bouton d'équipe fait doublon avec l'icône ⭐ de la chambre.
+  const t = document.getElementById('toggleTeamBtn');
+  if (t) t.style.display = 'none';
 }
 function currentRecruit(){ return recruits.find(r=>r.id===activeRecruitId); }
 
@@ -7754,7 +7761,6 @@ function renderRecruitSheet(){
   renderRecruitCombatStatsSection(recruit);
   renderRecruitAttacksSection(recruit);
   renderRecruitRecipesSection(recruit);
-  setTimeout(applyRecruitSheetMode, 0); // après les sections, qui règlent elles-mêmes leur affichage
 
   const craftEl = document.getElementById('recruitCraftSection');
   if (recruit.recruitType === 'combattant'){
@@ -7835,6 +7841,8 @@ function renderRecruitSheet(){
       recruitsCol.doc(recruit.id).update({ equippedItemIds: Object.assign({}, slots, { [slotId]: null }) });
     });
   });
+
+  applyRecruitSheetMode(); // en dernier, une fois toutes les sections rendues
 }
 
 function itemEffectSummary(it){
@@ -7940,6 +7948,47 @@ function renderRecruitCombatStatsSection(recruit){
     renderRecruitCombatStatsInner(recruit, cs);
   }).catch(()=> renderRecruitCombatStatsInner(recruit, {}));
 }
+/* Statistiques nommées, une par ligne, plus un diagramme en barres. Les symboles seuls étaient
+   trop courts à déchiffrer, et un diagramme montre d'un coup d'œil le profil du combattant :
+   qui frappe fort, qui encaisse, qui va vite. Les barres sont relatives à la plus haute valeur
+   du personnage, pas à un maximum absolu — c'est sa silhouette qu'on veut lire. */
+const RECRUIT_STATS = [
+  { cle:'hp',        nom:'Points de vie',    emoji:'❤️' },
+  { cle:'atk',       nom:'Attaque',          emoji:'⚔️' },
+  { cle:'def',       nom:'Défense',          emoji:'🛡️' },
+  { cle:'matk',      nom:'Attaque magique',  emoji:'🔮' },
+  { cle:'mdef',      nom:'Défense magique',  emoji:'✨' },
+  { cle:'speed',     nom:'Vitesse',          emoji:'⚡' },
+  { cle:'precision', nom:'Précision',        emoji:'🎯', pourcent:true },
+  { cle:'evasion',   nom:'Esquive',          emoji:'💨', pourcent:true },
+];
+function recruitStatsHtml(cs){
+  const lignes = RECRUIT_STATS.map(s=>{
+    const v = cs[s.cle];
+    return { ...s, valeur: (v == null || v === '') ? null : v };
+  });
+  const maxi = Math.max(1, ...lignes.filter(l=> !l.pourcent && l.valeur != null).map(l=> l.valeur));
+  return `
+    <div style="margin-top:8px;">
+      ${lignes.map(l=> `
+        <div style="display:flex; align-items:center; gap:8px; padding:3px 0; border-bottom:1px solid var(--line);">
+          <span style="flex:none; width:20px; text-align:center;">${l.emoji}</span>
+          <span style="flex:1; font-size:13px;">${l.nom}</span>
+          <b style="font-size:13px;">${l.valeur == null ? '—' : l.valeur + (l.pourcent ? ' %' : '')}</b>
+        </div>`).join('')}
+    </div>
+    <div class="field-label" style="margin-top:12px;">Aperçu</div>
+    <div>
+      ${lignes.filter(l=> !l.pourcent && l.valeur != null).map(l=> `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;">
+          <span style="flex:none; width:112px; font-size:11px; opacity:.8;">${l.nom}</span>
+          <div style="flex:1; height:10px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden;">
+            <div style="height:100%; width:${Math.round((l.valeur / maxi) * 100)}%; background:var(--accent);"></div>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+}
 function renderRecruitCombatStatsInner(recruit, cs){
   const el = document.getElementById('recruitCombatStatsSection');
   if (!el) return;
@@ -7957,7 +8006,7 @@ function renderRecruitCombatStatsInner(recruit, cs){
           ? '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft)
           : '💀 K.O. — réanimation nécessaire (🎒 objet, ou 🏥 repos)')
       : (recruitIsResting(recruit) ? '🛏️ Au repos — ' : '') + curHp + '/' + maxHp + ' PV'}</div>
-    <div class="meta">❤️ ${cs.hp||'?'} · ⚔️ ${cs.atk||'?'} · 🛡️ ${cs.def||'?'} · 🔮 ${cs.matk||'?'} · ✨ ${cs.mdef||'?'} · ⚡ ${cs.speed||'?'} · 🎯 ${cs.precision||'?'}% · 💨 ${cs.evasion||'?'}%</div>
+    ${recruitStatsHtml(cs)}
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
   document.getElementById('toggleTeamBtn').addEventListener('click', ()=>{
@@ -11568,6 +11617,7 @@ document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=
   if (!combatState) await clearSavedCombat(); // filet de sécurité : une suppression précédente (fin de combat) a pu être coupée par un rechargement de page juste après
 });
 function openSceneBigImage(url){
+  document.getElementById('sceneBigImageCloseBtn').style.display = ''; // rétablie pour une image ordinaire
   document.getElementById('sceneBigImageImg').src = url;
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
@@ -11577,6 +11627,7 @@ function openSceneBigImage(url){
    tout de suite et le renvoi qui demande confirmation. La chambre reste visible derrière. */
 let roomSheetRecruitId = null;
 const ROOM_ACTIONS = [
+  { id:'retour',     emoji:'↩️', titre:'Retour aux quartiers' },
   { id:'profil',     emoji:'📊', titre:'Profil et statistiques' },
   { id:'equipe',     emoji:'⭐', titre:'Équipe active' },
   { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
@@ -11588,20 +11639,45 @@ function renderRoomActions(recruit){
   if (!wrap) return;
   const combattant = (recruit.recruitType === 'combattant');
   const dispo = ROOM_ACTIONS.filter(a=> combattant || (a.id !== 'equipe' && a.id !== 'attaques'));
+  document.getElementById('sceneBigImageCloseBtn').style.display = 'none'; // remplacée par la flèche
   const inTeam = activeTeamIds.includes(recruit.id);
   wrap.innerHTML = dispo.map(a=>{
     const actif = (a.id === 'equipe' && inTeam);
     return `<button type="button" data-room-action="${a.id}" title="${a.titre}" style="width:46px; height:46px; border-radius:50%; border:1px solid rgba(255,255,255,.35); background:${actif ? 'var(--accent)' : 'rgba(0,0,0,.55)'}; color:#fff; font-size:20px; line-height:1; box-shadow:0 4px 12px rgba(0,0,0,.45);">${a.emoji}</button>`;
   }).join('');
   wrap.style.display = 'flex';
+  /* Renvoyer est irréversible et n'a aucune raison d'être fait par mégarde : il faut donc
+     maintenir le doigt appuyé, en plus de la confirmation. */
+  const renvoi = wrap.querySelector('[data-room-action="renvoyer"]');
+  if (renvoi){
+    let minuteur = null;
+    const stop = ()=>{ if (minuteur){ clearTimeout(minuteur); minuteur = null; } renvoi.style.transform = ''; };
+    renvoi.addEventListener('pointerdown', ()=>{
+      renvoi.style.transform = 'scale(.88)';
+      minuteur = setTimeout(()=>{
+        minuteur = null;
+        renvoi.style.transform = '';
+        const r = recruits.find(x=> x.id === roomSheetRecruitId);
+        if (r) dismissRecruit(r, ()=> closeSceneBigImage());
+      }, 800);
+    });
+    ['pointerup','pointerleave','pointercancel'].forEach(ev=> renvoi.addEventListener(ev, stop));
+  }
   wrap.querySelectorAll('[data-room-action]').forEach(b=>{
     b.addEventListener('click', ()=>{
       if (isGhostTap()) return;
       const r = recruits.find(x=> x.id === roomSheetRecruitId);
       if (!r) return;
       const quoi = b.dataset.roomAction;
+      if (quoi === 'retour'){
+        /* Revenir à la liste plutôt que tout fermer : on passe ainsi d'une chambre à l'autre
+           sans repasser par la porte des quartiers. */
+        closeSceneBigImage();
+        openQuarters();
+        return;
+      }
+      if (quoi === 'renvoyer'){ showToast('Reste appuyé pour renvoyer'); return; }
       if (quoi === 'equipe'){ toggleRecruitTeam(r, ()=> renderRoomActions(currentRecruitById(r.id) || r)); return; }
-      if (quoi === 'renvoyer'){ dismissRecruit(r, ()=> closeSceneBigImage()); return; }
       /* La chambre reste visible derrière : la fiche doit donc passer au-dessus d'elle. */
       document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
       openRecruitSheet(r.id, quoi);
