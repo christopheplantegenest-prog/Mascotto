@@ -604,7 +604,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v257</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v258</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2208,6 +2208,17 @@
   <img id="sceneBigImageImg" alt="">
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
+</div>
+
+<!-- Choix du blessé à installer dans une capsule libre -->
+<div class="overlay" id="infPatientOverlay" style="z-index:4650;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">Qui installer dans la capsule ?</h3>
+      <button class="sheet-x" id="infPatientCloseBtn">✕</button>
+    </div>
+    <div id="infPatientList"></div>
+  </div>
 </div>
 
 <!-- Infirmerie du vaisseau : les capsules de soin, posées sur le décor de la pièce -->
@@ -10708,6 +10719,9 @@ function openInfirmaryRoom(){
   applyInfirmaryZones();
   renderInfirmaryRoom();
 }
+document.getElementById('infPatientCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('infPatientOverlay').classList.remove('show');
+});
 document.getElementById('infirmaryCloseBtn').addEventListener('click', ()=>{
   document.getElementById('infirmaryRoomOverlay').classList.remove('show');
   armGhostTapGuard(400);
@@ -10745,10 +10759,16 @@ function renderInfirmaryRoom(){
     if (i > infirmaryCapacity) return;
 
     if (!r){
-      /* Capsule libre : on ne dessine rien par-dessus, la niche ouverte du décor parle
-         d'elle-même. L'écran reste éteint. */
+      /* Capsule libre : la niche ouverte du décor parle d'elle-même, on ne dessine rien
+         par-dessus. Mais on peut la toucher pour y installer un blessé — c'est le geste
+         naturel, et sans lui la pièce ne serait qu'une vitrine. */
       cap.innerHTML = '';
-      scr.innerHTML = '';
+      cap.style.cursor = attente.length ? 'pointer' : '';
+      scr.innerHTML = attente.length
+        ? `<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;">
+             <span style="font-size:10px; font-weight:700; opacity:.55;">LIBRE</span>
+           </div>`
+        : '';
       return;
     }
     const max = recruitMaxHp(r);
@@ -10771,21 +10791,65 @@ function renderInfirmaryRoom(){
 
   const att = document.getElementById('infWaiting');
   if (att){
-    att.innerHTML = attente.length
-      ? `<span style="display:inline-block; background:rgba(0,0,0,.55); color:#fff; font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px;">Les ${infirmaryCapacity} capsules sont occupées — ${attente.length} en attente</span>`
+    /* Deux messages bien distincts : « il reste de la place » n'est pas « c'est complet ».
+       Le premier invite à agir, le second explique pourquoi on ne peut pas. */
+    const complet = occupants.length >= infirmaryCapacity;
+    let texte = '';
+    if (attente.length && complet){
+      texte = `Les ${infirmaryCapacity} capsules sont occupées — ${attente.length} en attente`;
+    } else if (attente.length){
+      texte = `${attente.length} blessé${attente.length > 1 ? 's' : ''} — touche une capsule libre`;
+    }
+    att.innerHTML = texte
+      ? `<span style="display:inline-block; background:rgba(0,0,0,.55); color:#fff; font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px;">${texte}</span>`
       : '';
   }
 
   INF_SLOTS.forEach(i=>{
     const cap = document.getElementById('infCap-' + i);
+    if (!cap) return;
     const r = occupants[i-1];
-    if (!cap || !r) return;
+    if (r){
+      cap.onclick = ()=>{
+        if (isGhostTap()) return;
+        openRecruitSheet(r.id, 'profil');
+        document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+      };
+      return;
+    }
     cap.onclick = ()=>{
       if (isGhostTap()) return;
-      openRecruitSheet(r.id, 'profil');
-      document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+      if (!attente.length){ showToast('Personne à soigner'); return; }
+      ouvrirChoixPatient();
     };
   });
+}
+
+/* Choisir qui installer dans une capsule libre. Écran séparé plutôt que liste dépliée dans le
+   décor : la pièce se redessine toutes les 5 s, une liste posée dessus disparaîtrait sous le
+   doigt — le piège rencontré trois fois déjà. */
+function ouvrirChoixPatient(){
+  const occupants = infirmaryOccupants();
+  const attente = infirmaryPatients().filter(r=> !occupants.some(o=> o.id === r.id));
+  const el = document.getElementById('infPatientList');
+  if (!el) return;
+  el.innerHTML = attente.map(r=>{
+    const max = recruitMaxHp(r), hp = recruitEffectiveHp(r);
+    return `<button class="btn-secondary" data-inf-put="${r.id}" style="width:100%; margin-bottom:6px; text-align:left; font-size:12px;">
+      <b>${r.name}</b><span class="meta" style="display:block; font-size:11px;">${hp}/${max} PV</span>
+    </button>`;
+  }).join('') || '<p class="meta">Personne à soigner.</p>';
+  el.querySelectorAll('[data-inf-put]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const r = recruits.find(x=> x.id === b.dataset.infPut);
+      if (!r) return;
+      recruitStartRest(r);
+      document.getElementById('infPatientOverlay').classList.remove('show');
+      renderInfirmaryRoom();
+      renderCombattantsRoster();
+    });
+  });
+  document.getElementById('infPatientOverlay').classList.add('show');
 }
 /* Compte à rebours des capsules, tant que la pièce est ouverte. */
 setInterval(()=>{ if (infirmaryRoomOuverte()) renderInfirmaryRoom(); }, 5000);
