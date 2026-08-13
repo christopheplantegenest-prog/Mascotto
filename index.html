@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v241</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v243</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8039,36 +8039,58 @@ const RADAR_AXES = [
 function radarValue(cs, axe){
   return combatStatPointCost(axe.cle, cs[axe.cle]);
 }
-/* L'échelle est le BUDGET du personnage : deux diagrammes de même catégorie se comparent
-   directement, et une forme qui remplit la toile signifie « tous ses points sont placés ». */
+/* Le bord de la toile vaut 60 % du budget, pas le budget entier. Mettre TOUT son budget dans un
+   seul axe est impossible en pratique (il faut bien des points de vie pour combattre), donc une
+   toile graduée sur 100 points ne se remplissait jamais et toutes les formes étaient minuscules.
+   À 60 %, une répartition ordinaire occupe une bonne moitié de la toile, et le cas extrême
+   observé — presque tout le budget dans la vitesse — dépasse d'un anneau, ce qui se voit sans
+   déformer le dessin. Au-delà de 140 %, on borne et on signale l'axe en rouge plutôt que de
+   sortir de l'image. */
+const RADAR_BORD = 0.6;
+const RADAR_DEBORDEMENT_MAX = 1.4;
+/* Le rayon suit la RACINE du rapport à l'échelle, pas le rapport lui-même. Sans cela, une
+   répartition ordinaire (un sixième du budget par axe) ne remplissait qu'un quart de la toile
+   alors qu'un axe spécialisé la débordait de trois fois : impossible de choisir un bord qui
+   convienne aux deux. Avec la racine, l'ordinaire occupe la moitié et l'extrême dépasse d'un
+   anneau. En contrepartie les anneaux ne sont plus régulièrement espacés — ils sont donc
+   tracés à leur vraie valeur en points, pour que la lecture reste honnête. */
+function radarRayon(points, echelle){
+  return Math.sqrt(Math.max(0, points) / echelle);
+}
 function radarScale(cs){
-  return combatPointsBudgetFor(cs);
+  return Math.round(combatPointsBudgetFor(cs) * RADAR_BORD);
 }
 function recruitRadarSvg(cs){
-  const R = 62, cx = 100, cy = 92;
+  const R = 48, cx = 100, cy = 88;
   const echelle = radarScale(cs);
   const pt = (i, ratio)=>{
     const angle = -Math.PI/2 + (i * 2*Math.PI / RADAR_AXES.length);
     return [cx + Math.cos(angle)*R*ratio, cy + Math.sin(angle)*R*ratio];
   };
-  const polygone = (ratio)=> RADAR_AXES.map((_, i)=> pt(i, ratio).map(v=> v.toFixed(1)).join(',')).join(' ');
+  const polygone = (rayon)=> RADAR_AXES.map((_, i)=> pt(i, rayon).map(v=> v.toFixed(1)).join(',')).join(' ');
+  /* On laisse la forme déborder de la toile : la borner ferait croire qu'un personnage hors
+     norme est simplement au maximum, ce qui serait un mensonge. */
+  const depasse = [];
   const forme = RADAR_AXES.map((a, i)=>{
-    const v = Math.max(0, Math.min(echelle, radarValue(cs, a)));
-    return pt(i, v / echelle).map(x=> x.toFixed(1)).join(',');
+    const brut = Math.max(0, radarValue(cs, a));
+    const rayon = radarRayon(brut, echelle);
+    if (rayon > RADAR_DEBORDEMENT_MAX) depasse.push(a.cle);
+    return pt(i, Math.min(RADAR_DEBORDEMENT_MAX, rayon)).map(x=> x.toFixed(1)).join(',');
   }).join(' ');
   return `
-    <svg viewBox="0 0 200 190" style="width:100%; max-width:280px; display:block; margin:4px auto 0;">
-      ${[0.25, 0.5, 0.75, 1].map(r=> `<polygon points="${polygone(r)}" fill="none" stroke="rgba(0,0,0,.14)" stroke-width="1"/>`).join('')}
+    <svg viewBox="0 0 200 190" style="width:100%; max-width:300px; display:block; margin:4px auto 0;">
+      ${[0.25, 0.5, 0.75, 1].map(part=> `<polygon points="${polygone(radarRayon(echelle*part, echelle))}" fill="none" stroke="rgba(0,0,0,.14)" stroke-width="1"/>`).join('')}
       ${RADAR_AXES.map((_, i)=>{
         const [x, y] = pt(i, 1);
         return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(0,0,0,.14)" stroke-width="1"/>`;
       }).join('')}
       <polygon points="${forme}" fill="var(--accent)" fill-opacity=".28" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
       ${RADAR_AXES.map((a, i)=>{
-        const [x, y] = pt(i, 1.22);
-        return `<text x="${x.toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" opacity=".75">${a.nom}</text>`;
+        const [x, y] = pt(i, 1.55);
+        const hors = depasse.includes(a.cle);
+        return `<text x="${x.toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" font-family="system-ui, sans-serif" fill="${hors ? 'var(--danger)' : 'currentColor'}" opacity="${hors ? '1' : '.75'}">${a.nom}${hors ? ' ' + Math.round(radarValue(cs, a)) : ''}</text>`;
       }).join('')}
-      <text x="${cx}" y="182" text-anchor="middle" font-size="9" font-family="system-ui, sans-serif" fill="currentColor" opacity=".5">${combatStatsPointTotal(cs)} / ${echelle} points répartis</text>
+      <text x="${cx}" y="182" text-anchor="middle" font-size="9" font-family="system-ui, sans-serif" fill="currentColor" opacity=".5">${combatStatsPointTotal(cs)} / ${combatPointsBudgetFor(cs)} points répartis</text>
     </svg>
   `;
 }
