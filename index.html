@@ -604,7 +604,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v256</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v257</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7797,32 +7797,51 @@ function enregistrerInfirmerie(donnees){
     .then(()=> showToast('Enregistré'))
     .catch((err)=> showToast('Échec : ' + err.message));
 }
-function lireImageInfirmerie(input, champImage, champChemin, maxSize){
+/* Un champ Firestore est plafonné à 1 Mo. Une image encodée dans le document doit donc rentrer
+   dessous, sinon l'enregistrement est refusé. On réduit tant que c'est nécessaire.
+   Le décor de la pièce n'a pas besoin de transparence : le JPEG suffit et pèse bien moins.
+   La porte, elle, est détourée — elle reste en PNG, mais elle est petite. */
+const FIRESTORE_IMG_MAX = 900 * 1024; // marge sous le plafond, le document contient autre chose
+function encoderImageSousLimite(img, maxSize, transparent){
+  let taille = maxSize;
+  let qualite = transparent ? 1 : 0.85;
+  for (let essai = 0; essai < 8; essai++){
+    let w = img.width, h = img.height;
+    if (w > taille || h > taille){
+      if (w > h){ h = Math.round(h*taille/w); w = taille; }
+      else { w = Math.round(w*taille/h); h = taille; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const url = transparent ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', qualite);
+    if (url.length <= FIRESTORE_IMG_MAX) return url;
+    if (!transparent && qualite > 0.55) qualite -= 0.1; else taille = Math.round(taille * 0.8);
+  }
+  return null;
+}
+function lireImageInfirmerie(input, champImage, champChemin, maxSize, transparent){
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = (ev)=>{
     const img = new Image();
     img.onload = ()=>{
-      let w = img.width, h = img.height;
-      if (w > maxSize || h > maxSize){
-        if (w > h){ h = Math.round(h*maxSize/w); w = maxSize; }
-        else { w = Math.round(w*maxSize/h); h = maxSize; }
+      const url = encoderImageSousLimite(img, maxSize, transparent);
+      if (!url){
+        showToast('Image trop lourde même réduite — passe par « hébergée »');
+        return;
       }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      // PNG : la porte est détourée, le JPEG lui rendrait un fond noir
-      enregistrerInfirmerie({ [champImage]: canvas.toDataURL('image/png'), [champChemin]: null });
+      enregistrerInfirmerie({ [champImage]: url, [champChemin]: null });
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
 }
 document.getElementById('infRoomFile').addEventListener('change', (e)=>
-  lireImageInfirmerie(e.target, 'roomImage', 'roomImagePath', 900));
+  lireImageInfirmerie(e.target, 'roomImage', 'roomImagePath', 900, false)); // décor : pas de transparence
 document.getElementById('infDoorFile').addEventListener('change', (e)=>
-  lireImageInfirmerie(e.target, 'doorImage', 'doorImagePath', 400));
+  lireImageInfirmerie(e.target, 'doorImage', 'doorImagePath', 400, true)); // porte détourée
 document.getElementById('infRoomGithubBtn').addEventListener('click', ()=>
   openGithubFilePicker(null, (item)=> enregistrerInfirmerie({ roomImagePath: item.path, roomImage: null })));
 document.getElementById('infDoorGithubBtn').addEventListener('click', ()=>
@@ -7934,16 +7953,10 @@ document.getElementById('shipMapFile').addEventListener('change', (e)=>{
     const img = new Image();
     img.onload = ()=>{
       const maxSize = 320; // une icône de carte : inutile de stocker plus grand
-      let w = img.width, h = img.height;
-      if (w > maxSize || h > maxSize){
-        if (w > h){ h = Math.round(h*maxSize/w); w = maxSize; }
-        else { w = Math.round(w*maxSize/h); h = maxSize; }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       // PNG : un vaisseau détouré a besoin de sa transparence
-      enregistrerImageVaisseau({ mapImage: canvas.toDataURL('image/png'), mapImagePath: null });
+      const url = encoderImageSousLimite(img, maxSize, true);
+      if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
+      enregistrerImageVaisseau({ mapImage: url, mapImagePath: null });
     };
     img.src = ev.target.result;
   };
@@ -7964,17 +7977,11 @@ document.getElementById('missionTerminalFile').addEventListener('change', (e)=>{
     const img = new Image();
     img.onload = ()=>{
       const maxSize = 900;
-      let w = img.width, h = img.height;
-      if (w > maxSize || h > maxSize){
-        if (w > h){ h = Math.round(h*maxSize/w); w = maxSize; }
-        else { w = Math.round(w*maxSize/h); h = maxSize; }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       // PNG conservé : l'image du terminal a un fond transparent, le JPEG le noircirait
+      const url = encoderImageSousLimite(img, maxSize, true);
+      if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
       db.collection('app_config').doc('missions')
-        .set({ terminalImage: canvas.toDataURL('image/png'), terminalPath: null }, { merge:true })
+        .set({ terminalImage: url, terminalPath: null }, { merge:true })
         .then(()=> showToast('Terminal enregistré'))
         .catch((err)=> showToast('Échec : ' + err.message));
     };
