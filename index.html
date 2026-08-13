@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v232</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v233</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11297,9 +11297,124 @@ async function renderSceneViewCurrentScene(){
       el.textContent = sceneTypeEmoji(pt.type);
     }
 
-    /* Enseigne de porte : le portrait de l'habitant, cadré exactement comme dans l'ordre des
-       tours en combat, vient se poser sur le point. Chambre libre = enseigne vide, ce qui rend
-       le couloir lisible d'un coup d'œil. */
+    if (pt.type === 'sortie_zone'){
+      wrapPointActions[pt.id] = async ()=>{
+        document.getElementById('sceneViewFull').classList.remove('show');
+        clearCurrentZoneScene();
+        if (!combatState) await clearSavedCombat();
+      };
+    } else if (pt.type === 'sortie'){
+      wrapPointActions[pt.id] = ()=>{
+        const proceed = async ()=>{
+          if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
+            sceneViewCurrentSceneId = pt.targetSceneId;
+            renderSceneViewCurrentScene();
+            if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
+          } else {
+            document.getElementById('sceneViewFull').classList.remove('show');
+            if (!combatState) await clearSavedCombat();
+          }
+        };
+        if (pt.lockType === 'item'){
+          if (!pt.lockItemId){ proceed(); return; }
+          if (!currentUser || !db){ proceed(); return; }
+          db.collection('players').doc(currentUser.uid).get().then((freshDoc)=>{
+            const inv = (freshDoc.exists && freshDoc.data().inventory) || {};
+            if ((inv[pt.lockItemId] || 0) > 0){
+              proceed();
+            } else {
+              const it = items.find(i=>i.id===pt.lockItemId);
+              showToast(`🔒 Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
+            }
+          });
+        } else if (pt.lockType === 'code'){
+          const entered = prompt('🔒 Cette sortie est verrouillée. Entre le code :');
+          if (entered === null) return;
+          if (entered.trim() === (pt.lockCode || '')){
+            proceed();
+          } else {
+            showToast('Code incorrect');
+          }
+        } else {
+          proceed();
+        }
+      };
+    } else if (pt.type === 'chambre'){
+      wrapPointActions[pt.id] = ()=> openQuarters();
+    } else if (pt.type === 'image'){
+      wrapPointActions[pt.id] = ()=>{
+        const big = pt.bigImageUrl || (pt.bigImagePath ? resolveMediaPath(pt.bigImagePath) : '');
+        if (big){ openSceneBigImage(big); return; }
+        if (pt.bigImageRef){
+          internalizeSceneImage(pt.bigImageRef)
+            .then((url)=> openSceneBigImage(url))
+            .catch(()=> showToast('Image illisible'));
+          return;
+        }
+        showToast('Ce point n\'a pas encore d\'image configurée');
+      };
+    } else if (pt.type === 'objet'){
+      wrapPointActions[pt.id] = ()=>{
+        if (!pt.itemId){ showToast('Ce point n\'a pas encore d\'objet configuré'); return; }
+        if (!currentUser || !db) return;
+        grantItemByIdToPlayer(pt.itemId, pt.qty || 1);
+        markScenePointTaken(pt).catch(()=>{});
+        el.remove();
+      };
+    } else if (pt.type === 'dialogue'){
+      wrapPointActions[pt.id] = ()=>{
+        document.getElementById('sceneDialogueText').textContent = pt.text || '(pas de texte configuré)';
+        document.getElementById('sceneDialogueOverlay').classList.add('show');
+      };
+    } else if (pt.type === 'action'){
+      wrapPointActions[pt.id] = ()=>{
+        if (!pt.reqItemId){ showToast('Ce point n\'a pas encore d\'objet demandé configuré'); return; }
+        if (!currentUser || !db) return;
+        db.collection('players').doc(currentUser.uid).get().then((freshDoc)=>{
+          const inv = (freshDoc.exists && freshDoc.data().inventory) || {};
+          const have = inv[pt.reqItemId] || 0;
+          const need = pt.reqQty || 1;
+          if (have < need){
+            const reqIt = items.find(i=>i.id===pt.reqItemId);
+            showToast(`Il te faut ${need} × ${reqIt ? reqIt.name : 'objet requis'}`);
+            return;
+          }
+          const inc = { [pt.reqItemId]: firebase.firestore.FieldValue.increment(-need) };
+          if (pt.resultType === 'give' && pt.resultItemId){
+            inc[pt.resultItemId] = firebase.firestore.FieldValue.increment(pt.resultQty || 1);
+          }
+          db.collection('players').doc(currentUser.uid).set({ inventory: inc }, { merge: true }).then(()=>{
+            if (pt.resultType === 'give' && pt.resultItemId){
+              const resIt = items.find(i=>i.id===pt.resultItemId);
+              showToast(resIt ? `+${pt.resultQty||1} ${resIt.emoji||''} ${resIt.name}` : 'Fait');
+            } else {
+              showToast(pt.resultMessage || 'Ça a fonctionné.');
+            }
+            const mode = pt.resetMode || 'perPlayer';
+            if (mode !== 'unlimited'){
+              markScenePointTaken(pt).catch(()=>{});
+              el.remove();
+            }
+          }).catch((err)=> showToast('Échec : ' + err.message));
+        });
+      };
+    } else if (pt.type === 'pnj'){
+      wrapPointActions[pt.id] = ()=>{
+        if (!pt.linkedPnjId){ showToast('Ce point n\'a pas encore de PNJ configuré'); return; }
+        if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+        creatureCol.doc(pt.linkedPnjId).get().then((doc)=>{
+          if (!doc.exists){ showToast('Ce PNJ n\'existe plus'); return; }
+          const data = doc.data();
+          if (data.interactionType === 'combat' && data.combatStats && !data.combatStats.recruitable){
+            startZoneBossCombat({ id: doc.id, ...data }, pt);
+            return;
+          }
+          document.getElementById('overlay').style.zIndex = '4200';
+          openSheet({ id: doc.id, ...data });
+        }).catch((err)=> showToast('Échec : ' + err.message));
+      };
+    }
+
     wrap.appendChild(el);
   });
 
