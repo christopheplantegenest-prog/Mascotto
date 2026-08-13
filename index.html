@@ -594,7 +594,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v249</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v250</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -828,11 +828,12 @@
     <input type="file" id="missionTerminalFile" accept="image/*" class="field-input">
     <button type="button" class="btn-secondary" id="missionTerminalGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
     <img id="missionTerminalPreview" style="display:none; width:90px; margin-top:8px; border-radius:8px; border:2px solid var(--accent);">
-    <div class="field-label" style="margin-top:10px;">Zone de contenu</div>
-    <p class="meta" style="margin:0 0 6px;">Dessine le rectangle où viendra le courrier : touche l'image pour poser un coin, touche un second endroit pour l'autre coin. Les flèches ajustent ensuite au détail près.</p>
+    <div class="field-label" style="margin-top:10px;">Zones du terminal</div>
+    <p class="meta" style="margin:0 0 6px;">Choisis une zone, puis dessine son rectangle : touche l'image pour poser un coin, touche un second endroit pour l'autre coin. Les flèches ajustent ensuite au détail près.</p>
+    <select id="terminalZoneSelect" class="field-input" style="margin-bottom:6px;"></select>
     <div id="terminalZoneWrap" style="position:relative; max-width:230px; margin:0 auto; display:none; touch-action:manipulation;">
       <img id="terminalZoneImg" alt="" style="width:100%; display:block; border-radius:6px;">
-      <div id="terminalZoneBox" style="position:absolute; border:2px solid var(--danger); background:rgba(192,57,43,.16); pointer-events:none;"></div>
+      <div id="terminalZoneBoxes" style="position:absolute; inset:0; pointer-events:none;"></div>
     </div>
     <div id="terminalZonePad" style="display:none; margin-top:8px;">
       <div style="display:flex; gap:6px; justify-content:center;">
@@ -2129,13 +2130,18 @@
 </div>
 
 <!-- Terminal de missions : le même écran que l'onglet de la Base, posé sur un décor de console -->
-<div class="overlay" id="missionTerminalOverlay" style="z-index:4550; align-items:center; background:rgba(0,0,0,.82); padding:10px;">
+<div class="overlay" id="missionTerminalOverlay" style="z-index:4550; align-items:center; background:rgba(0,0,0,.82); padding:4px;">
   <!-- Le décor est découpé en trois : un haut et un bas de proportions fixes, et un milieu qui
        s'étire pour contenir le courrier. C'est ce qui donne le même rendu sur tous les écrans :
        les proportions ne bougent pas, seule la hauteur du milieu s'adapte au texte. -->
-  <div id="missionTerminalFrame" style="position:relative; width:100%; max-width:520px;">
-    <img id="missionTerminalBg" alt="" style="width:100%; display:block; pointer-events:none;">
-    <div id="missionTerminalInner" style="position:absolute; overflow:auto;"></div>
+  <!-- Le cadre épouse l'image : c'est elle qui décide de la taille, limitée par la hauteur
+       disponible plutôt que par une largeur arbitraire. Le terminal occupe ainsi tout l'écran. -->
+  <div id="missionTerminalFrame" style="position:relative; display:inline-block; max-width:100%;">
+    <img id="missionTerminalBg" alt="" style="max-width:100%; max-height:96vh; width:auto; height:auto; display:block; pointer-events:none;">
+    <div id="mtZone-titre" style="position:absolute; overflow:hidden; display:flex; align-items:center; justify-content:center;"></div>
+    <div id="mtZone-liste" style="position:absolute; overflow-y:auto;"></div>
+    <div id="mtZone-lecture" style="position:absolute; overflow-y:auto;"></div>
+    <div id="mtZone-pied" style="position:absolute; overflow:hidden; display:flex; align-items:center; gap:6px;"></div>
     <button class="sheet-x" id="missionTerminalCloseBtn" style="position:absolute; top:1%; right:2%; background:rgba(0,0,0,.45); color:#fff; border:none;">✕</button>
   </div>
 </div>
@@ -6962,10 +6968,20 @@ const missionsCol = (typeof db !== 'undefined') ? db.collection('missions') : nu
 let missionTemplates = [];
 let missionsPerDay = 3;
 let missionTerminalImage = ''; // décor de la console, réglé dans Outils de test
-/* La zone de contenu est DESSINÉE sur l'image, en pourcentages de celle-ci. Les glissières
-   d'avant réglaient des grandeurs abstraites ; ici l'auteur voit directement où le courrier
-   tombera. Le décor reste une image entière, donc jamais de raccord visible. */
-let missionTerminalZone = { x:10, y:12, w:80, h:76 };
+/* Les zones sont DESSINÉES sur l'image, en pourcentages de celle-ci. Quatre rôles, pour que le
+   décor serve à ce pour quoi il a été dessiné : la bande d'en-tête reçoit le titre, les cases
+   du haut la liste des missions, la grande surface le courrier ouvert, la barre du bas le
+   bouton d'action. */
+const MT_ZONES = [
+  { id:'titre',   nom:'Bande de titre',   defaut:{ x:12, y:4,  w:76, h:6  } },
+  { id:'liste',   nom:'Liste des missions', defaut:{ x:12, y:13, w:76, h:30 } },
+  { id:'lecture', nom:'Courrier ouvert',  defaut:{ x:12, y:46, w:76, h:38 } },
+  { id:'pied',    nom:'Barre du bas',     defaut:{ x:12, y:88, w:76, h:7  } },
+];
+let missionTerminalZones = {};
+MT_ZONES.forEach(z=> missionTerminalZones[z.id] = Object.assign({}, z.defaut));
+let mtZoneEnCours = 'liste';       // zone que l'auteur est en train de dessiner
+let missionTerminalSelectedId = null; // mission ouverte dans le terminal
 let missionShowChance = false; // outil d'équilibrage : réaffiche le domaine et le % de réussite
 let playerMissionRuns = {};   // { missionId: { recruitId, startedAt, durationSec, success, reported } }
 let playerDailyMissions = { date:null, ids:[] };
@@ -6987,7 +7003,11 @@ if (typeof db !== 'undefined' && db){
     const input = document.getElementById('missionsPerDayInput');
     if (input && document.activeElement !== input) input.value = missionsPerDay;
     missionTerminalImage = d.terminalPath ? resolveMediaPath(d.terminalPath) : (d.terminalImage || '');
-    if (d.terminalZone) missionTerminalZone = Object.assign({ x:10, y:12, w:80, h:76 }, d.terminalZone);
+    if (d.terminalZones){
+      MT_ZONES.forEach(def=>{
+        if (d.terminalZones[def.id]) missionTerminalZones[def.id] = Object.assign({}, def.defaut, d.terminalZones[def.id]);
+      });
+    }
     const p = document.getElementById('missionTerminalPreview');
     if (p){
       p.src = missionTerminalImage || '';
@@ -7176,15 +7196,110 @@ function openMissionReport(missionId){
   renderCombattantsRoster();
 }
 
-/* Deux portes d'entrée pour le même écran : l'onglet de la Base et le terminal du vaisseau.
-   On écrit dans celui qui est ouvert, sinon les deux se marcheraient dessus. */
-function missionTrackerContainer(){
-  const terminal = document.getElementById('missionTerminalOverlay');
-  if (terminal && terminal.classList.contains('show')) return document.getElementById('missionTerminalInner');
-  return document.getElementById('missionTrackerList');
+/* Le terminal a sa propre mise en page, répartie dans les quatre zones du décor ; l'onglet de
+   la Base garde la liste simple. Les deux s'appuient sur les mêmes données et les mêmes actions. */
+function terminalEstOuvert(){
+  const t = document.getElementById('missionTerminalOverlay');
+  return !!(t && t.classList.contains('show'));
+}
+function renderMissionTerminal(){
+  ensureDailyMissions();
+  const zTitre = document.getElementById('mtZone-titre');
+  const zListe = document.getElementById('mtZone-liste');
+  const zLecture = document.getElementById('mtZone-lecture');
+  const zPied = document.getElementById('mtZone-pied');
+  if (!zTitre || !zListe || !zLecture || !zPied) return;
+
+  const enCours = Object.keys(playerMissionRuns)
+    .map(id=> ({ id, run: playerMissionRuns[id], m: missionTemplates.find(x=> x.id === id) }))
+    .filter(x=> x.m);
+  const dejaFaites = playerDailyMissions.done || [];
+  const dispo = (playerDailyMissions.ids || [])
+    .map(id=> missionTemplates.find(x=> x.id === id))
+    .filter(m=> m && !playerMissionRuns[m.id] && !dejaFaites.includes(m.id));
+
+  const rentres = enCours.filter(x=> missionIsBack(x.run));
+  const badge = document.getElementById('missionBadge');
+  if (badge) badge.style.display = rentres.length ? 'block' : 'none';
+
+  /* Une entrée de liste par mission : d'abord ceux qui sont rentrés, puis le courrier du jour,
+     puis les missions en cours. C'est l'ordre dans lequel le joueur a quelque chose à faire. */
+  const entrees = [
+    ...rentres.map(x=> ({ id:x.id, m:x.m, etat:'📬 Rapport', run:x.run })),
+    ...dispo.map(m=> ({ id:m.id, m, etat:'✉️ Nouveau' })),
+    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, etat:'⏳ ' + formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
+  ];
+  if (!entrees.some(e=> e.id === missionTerminalSelectedId)) {
+    missionTerminalSelectedId = entrees.length ? entrees[0].id : null;
+  }
+  const choisie = entrees.find(e=> e.id === missionTerminalSelectedId) || null;
+
+  zTitre.innerHTML = `<span style="font-size:12px; font-weight:800; letter-spacing:.06em; opacity:.75;">COURRIER DU VAISSEAU</span>`;
+
+  zListe.innerHTML = entrees.length
+    ? entrees.map(e=> `<button type="button" data-mt-pick="${e.id}" style="display:block; width:100%; text-align:left; background:${e.id === missionTerminalSelectedId ? 'rgba(0,0,0,.10)' : 'transparent'}; border:none; border-radius:6px; padding:5px 8px; margin-bottom:2px; font:inherit;">
+        <span style="display:block; font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${e.m.name || '(sans nom)'}</span>
+        <span style="display:block; font-size:10px; opacity:.65;">${e.etat}</span>
+      </button>`).join('')
+    : `<p class="meta" style="margin:0; font-size:11px;">Aucun courrier. De nouvelles missions arriveront demain.</p>`;
+
+  if (!choisie){
+    zLecture.innerHTML = '';
+    zPied.innerHTML = '';
+  } else {
+    const m = choisie.m;
+    const it = items.find(i=> i.id === m.rewardItemId);
+    const recompense = [it ? `${it.name} × ${m.rewardQty || 1}` : null, m.rewardCoins ? `🪙 ${m.rewardCoins}` : null].filter(Boolean).join(' · ');
+    zLecture.innerHTML = `
+      <div style="font-size:13px; font-weight:800; margin-bottom:4px;">${m.name || '(sans nom)'}</div>
+      <div style="font-size:12px; line-height:1.45; white-space:pre-wrap;">${m.description || ''}</div>
+      <div class="meta" style="font-size:11px; margin-top:6px;">
+        ${missionShowChance ? missionDomainLabel(m.domain) + ' · ' : ''}Durée : ${formatRemainingDuration((m.durationSec || 600) * 1000)}${recompense ? ' · ' + recompense : ''}
+      </div>
+      <div data-mt-team style="margin-top:6px;"></div>`;
+
+    if (choisie.run && missionIsBack(choisie.run)){
+      zPied.innerHTML = `<button class="btn-capture" data-mt-report="${choisie.id}" style="flex:1; padding:8px; font-size:13px;">📬 Lire le rapport</button>`;
+    } else if (choisie.run){
+      zPied.innerHTML = `<button class="btn-secondary" data-mt-cancel="${choisie.id}" style="flex:1; padding:8px; font-size:13px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Rappeler</button>`;
+    } else {
+      zPied.innerHTML = `<button class="btn-capture" data-mt-send="${choisie.id}" style="flex:1; padding:8px; font-size:13px;">Envoyer un combattant</button>`;
+    }
+  }
+
+  zListe.querySelectorAll('[data-mt-pick]').forEach(b=>
+    b.addEventListener('click', ()=>{
+      if (isGhostTap()) return;
+      missionTerminalSelectedId = b.dataset.mtPick;
+      renderMissionTerminal();
+    }));
+  zPied.querySelectorAll('[data-mt-report]').forEach(b=>
+    b.addEventListener('click', ()=> openMissionReport(b.dataset.mtReport)));
+  zPied.querySelectorAll('[data-mt-cancel]').forEach(b=>
+    b.addEventListener('click', ()=> cancelMission(b.dataset.mtCancel)));
+  zPied.querySelectorAll('[data-mt-send]').forEach(b=>
+    b.addEventListener('click', ()=>{
+      const m = missionTemplates.find(x=> x.id === b.dataset.mtSend);
+      const box = zLecture.querySelector('[data-mt-team]');
+      if (!m || !box) return;
+      const cands = missionCandidates();
+      box.innerHTML = cands.length
+        ? cands.map(r=> `<button class="btn-secondary" data-mt-choose="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:11px; text-align:left; padding:5px 8px;">
+            <b>${r.name}</b><span class="meta" style="display:block; font-size:10px;">${recruitSpecialtyLabel(r)}${missionShowChance ? ' · ' + missionSuccessChance(m, r) + '%' : ''}</span>
+          </button>`).join('')
+        : '<p class="meta" style="margin:0; font-size:11px;">Aucun combattant disponible : ils sont dans ton équipe, K.O., ou déjà partis.</p>';
+      box.querySelectorAll('[data-mt-choose]').forEach(cb=>
+        cb.addEventListener('click', ()=>{
+          const [mid, rid] = cb.dataset.mtChoose.split('|');
+          const mm = missionTemplates.find(x=> x.id === mid);
+          const rr = recruits.find(x=> x.id === rid);
+          if (mm && rr){ sendRecruitOnMission(mm, rr); renderMissionTerminal(); }
+        }));
+    }));
 }
 function renderMissionTracker(){
-  const el = missionTrackerContainer();
+  if (terminalEstOuvert()){ renderMissionTerminal(); return; }
+  const el = document.getElementById('missionTrackerList');
   if (!el) return;
   ensureDailyMissions();
   /* Même précaution qu'à l'infirmerie : le profil joueur s'écrit toutes les 8 s et redessine
@@ -7428,27 +7543,41 @@ let terminalZonePremierCoin = null;
 function renderTerminalGuide(){
   const wrap = document.getElementById('terminalZoneWrap');
   const pad = document.getElementById('terminalZonePad');
-  if (!wrap || !pad) return;
+  const sel = document.getElementById('terminalZoneSelect');
+  if (!wrap || !pad || !sel) return;
+  if (sel.options.length !== MT_ZONES.length){
+    sel.innerHTML = MT_ZONES.map(z=> `<option value="${z.id}">${z.nom}</option>`).join('');
+  }
+  sel.value = mtZoneEnCours;
   if (!missionTerminalImage){ wrap.style.display = 'none'; pad.style.display = 'none'; return; }
   document.getElementById('terminalZoneImg').src = missionTerminalImage;
   wrap.style.display = 'block';
   pad.style.display = 'block';
-  const z = missionTerminalZone;
-  const box = document.getElementById('terminalZoneBox');
-  box.style.left = z.x + '%';
-  box.style.top = z.y + '%';
-  box.style.width = z.w + '%';
-  box.style.height = z.h + '%';
+  /* Toutes les zones sont dessinées, celle qu'on règle en plein trait : on voit ainsi
+     immédiatement si deux zones se chevauchent. */
+  document.getElementById('terminalZoneBoxes').innerHTML = MT_ZONES.map(def=>{
+    const z = missionTerminalZones[def.id] || def.defaut;
+    const active = (def.id === mtZoneEnCours);
+    return `<div style="position:absolute; left:${z.x}%; top:${z.y}%; width:${z.w}%; height:${z.h}%;
+      border:2px ${active ? 'solid var(--danger)' : 'dashed rgba(0,0,0,.35)'};
+      background:${active ? 'rgba(192,57,43,.16)' : 'transparent'};"></div>`;
+  }).join('');
+  const z = missionTerminalZones[mtZoneEnCours];
   document.getElementById('terminalZoneInfo').textContent =
-    `Zone : ${Math.round(z.x)} % · ${Math.round(z.y)} % · ${Math.round(z.w)} × ${Math.round(z.h)} %`
+    `${MT_ZONES.find(d=> d.id === mtZoneEnCours).nom} : ${Math.round(z.x)} % · ${Math.round(z.y)} % · ${Math.round(z.w)} × ${Math.round(z.h)} %`
     + (terminalZonePremierCoin ? ' — touche le second coin' : '');
 }
 function saveTerminalZone(){
   if (!db) return;
   db.collection('app_config').doc('missions')
-    .set({ terminalZone: missionTerminalZone }, { merge:true })
+    .set({ terminalZones: missionTerminalZones }, { merge:true })
     .catch((err)=> showToast('Échec : ' + err.message));
 }
+document.getElementById('terminalZoneSelect').addEventListener('change', (e)=>{
+  mtZoneEnCours = e.target.value;
+  terminalZonePremierCoin = null;
+  renderTerminalGuide();
+});
 function refreshTerminalLive(){
   renderTerminalGuide();
   const ov = document.getElementById('missionTerminalOverlay');
@@ -7467,16 +7596,16 @@ document.getElementById('terminalZoneWrap').addEventListener('click', (ev)=>{
   }
   const a = terminalZonePremierCoin;
   terminalZonePremierCoin = null;
-  missionTerminalZone = {
+  missionTerminalZones[mtZoneEnCours] = {
     x: Math.round(Math.min(a.x, x)), y: Math.round(Math.min(a.y, y)),
-    w: Math.max(5, Math.round(Math.abs(x - a.x))), h: Math.max(5, Math.round(Math.abs(y - a.y))),
+    w: Math.max(3, Math.round(Math.abs(x - a.x))), h: Math.max(3, Math.round(Math.abs(y - a.y))),
   };
   refreshTerminalLive();
   saveTerminalZone();
 });
 document.querySelectorAll('#terminalZonePad [data-tzmove]').forEach(b=>{
   b.addEventListener('click', ()=>{
-    const z = missionTerminalZone;
+    const z = missionTerminalZones[mtZoneEnCours];
     const pas = 1;
     if (b.dataset.tzmove === 'up') z.y = Math.max(0, z.y - pas);
     if (b.dataset.tzmove === 'down') z.y = Math.min(100 - z.h, z.y + pas);
@@ -7488,12 +7617,12 @@ document.querySelectorAll('#terminalZonePad [data-tzmove]').forEach(b=>{
 });
 document.querySelectorAll('#terminalZonePad [data-tzsize]').forEach(b=>{
   b.addEventListener('click', ()=>{
-    const z = missionTerminalZone;
+    const z = missionTerminalZones[mtZoneEnCours];
     const pas = 1;
     if (b.dataset.tzsize === 'wider') z.w = Math.min(100 - z.x, z.w + pas);
-    if (b.dataset.tzsize === 'narrower') z.w = Math.max(5, z.w - pas);
+    if (b.dataset.tzsize === 'narrower') z.w = Math.max(3, z.w - pas);
     if (b.dataset.tzsize === 'taller') z.h = Math.min(100 - z.y, z.h + pas);
-    if (b.dataset.tzsize === 'shorter') z.h = Math.max(5, z.h - pas);
+    if (b.dataset.tzsize === 'shorter') z.h = Math.max(3, z.h - pas);
     refreshTerminalLive();
     saveTerminalZone();
   });
@@ -7549,8 +7678,7 @@ document.getElementById('saveMissionsPerDayBtn').addEventListener('click', ()=>{
 /* Rafraîchit les comptes à rebours des missions tant que l'onglet est ouvert.
    Comme pour l'infirmerie, on ne redessine pas si une liste de combattants est dépliée. */
 setInterval(()=>{
-  const terminal = document.getElementById('missionTerminalOverlay');
-  if (terminal && terminal.classList.contains('show')){ renderMissionTracker(); return; }
+  if (terminalEstOuvert()){ renderMissionTracker(); return; }
   const tab = document.getElementById('baseTab-missions');
   if (!tab || tab.style.display !== 'block') return;
   if (!document.getElementById('baseOverlay').classList.contains('show')) return;
@@ -10201,16 +10329,18 @@ function isGhostTap(){ return Date.now() < ghostTapUntil; }
 function missionTerminalReady(){
   return !!missionTerminalImage;
 }
-/* Le contenu occupe exactement le rectangle dessiné par l'auteur, en pourcentages de l'image.
-   Aucun pixel en dur : le rendu est donc identique sur tous les téléphones. */
+/* Chaque zone occupe exactement le rectangle dessiné, en pourcentages de l'image. Aucun pixel
+   en dur : le rendu est identique sur tous les téléphones. */
 function applyMissionTerminalFrame(){
-  const dedans = document.getElementById('missionTerminalInner');
-  if (!dedans) return;
-  const z = missionTerminalZone;
-  dedans.style.left = z.x + '%';
-  dedans.style.top = z.y + '%';
-  dedans.style.width = z.w + '%';
-  dedans.style.height = z.h + '%';
+  MT_ZONES.forEach(def=>{
+    const el = document.getElementById('mtZone-' + def.id);
+    if (!el) return;
+    const z = missionTerminalZones[def.id] || def.defaut;
+    el.style.left = z.x + '%';
+    el.style.top = z.y + '%';
+    el.style.width = z.w + '%';
+    el.style.height = z.h + '%';
+  });
 }
 function openMissionTerminal(){
   if (!missionTerminalReady()){
