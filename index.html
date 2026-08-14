@@ -15650,8 +15650,13 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal){
       return snap.docs[0].id;
     }
     if (choix === 'ecraser'){
-      await col.doc(snap.docs[0].id).set({ ...data, updatedAt: Date.now() }, { merge:true });
-      journal.push('♻️ ' + typeLabel + ' « ' + nom + ' » écrasé');
+      /* Une fiche déjà en jeu porte une image posée à la main : l'import n'en apporte pas,
+         donc il ne doit surtout pas écrire de champ d'image par-dessus (le merge ne protège
+         que les champs ABSENTS, pas ceux qu'on met explicitement à vide). */
+      const fusion = { ...data, updatedAt: Date.now() };
+      delete fusion.imageUrl; delete fusion.imagePath;
+      await col.doc(snap.docs[0].id).set(fusion, { merge:true });
+      journal.push('♻️ ' + typeLabel + ' « ' + nom + ' » écrasé (image conservée)');
       return snap.docs[0].id;
     }
   }
@@ -15682,6 +15687,9 @@ async function importerScenario(sc){
   const journal = [];
   scenarioImportChoixPourTous = null;
   const cles = { objets:{}, recettes:{}, attaques:{}, quetes:{}, missions:{}, pnj:{}, zones:{} };
+  /* On indexe chaque élément par sa clé ET par son nom : le fichier peut donc écrire
+     « ferraille-saine » ou « Ferraille saine », les deux marchent. */
+  const noter = (table, el, id)=>{ if (el.cle) table[el.cle] = id; if (el.name) table[el.name] = id; return id; };
 
   /* --- 1. Objets --- */
   for (const o of (sc.objets||[])){
@@ -15694,7 +15702,7 @@ async function importerScenario(sc){
       effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false,
       basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
     };
-    cles.objets[o.cle || o.name] = await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal);
+    noter(cles.objets, o, await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal));
   }
 
   /* --- 2. Recettes (renvoient aux objets) --- */
@@ -15709,7 +15717,7 @@ async function importerScenario(sc){
       requiresLearning: !!r.requiresLearning,
       learnDuration: parseInt(r.learnDuration,10) || 0,
     };
-    cles.recettes[r.cle || r.name] = await importEcrireDoc(recipesCol, r.name, data, 'Recette', journal);
+    noter(cles.recettes, r, await importEcrireDoc(recipesCol, r.name, data, 'Recette', journal));
   }
 
   /* --- 3. Attaques --- */
@@ -15723,7 +15731,7 @@ async function importerScenario(sc){
       statusEffect: a.statusEffect || null,
       fx: a.fx || null, fxSelf: a.fxSelf || null,
     };
-    cles.attaques[a.cle || a.name] = await importEcrireDoc(attacksCol, a.name, data, 'Attaque', journal);
+    noter(cles.attaques, a, await importEcrireDoc(attacksCol, a.name, data, 'Attaque', journal));
   }
 
   /* --- 4. Quêtes (l'enchaînement se recolle après, une quête peut renvoyer à la suivante) --- */
@@ -15736,7 +15744,7 @@ async function importerScenario(sc){
       nextQuestId: null,
       showInJournal: q.showInJournal !== false,
     };
-    cles.quetes[q.cle || q.name] = await importEcrireDoc(questsCol, q.name, data, 'Quête', journal);
+    noter(cles.quetes, q, await importEcrireDoc(questsCol, q.name, data, 'Quête', journal));
   }
   for (const q of (sc.quetes||[])){
     if (!q.next) continue;
@@ -15764,8 +15772,41 @@ async function importerScenario(sc){
       failMode: m.failMode || 'nothing',
       failHpPercent: parseInt(m.failHpPercent,10) || 40,
     };
-    cles.missions[m.cle || m.name] = await importEcrireDoc(missionsCol, m.name, data, 'Mission', journal);
+    noter(cles.missions, m, await importEcrireDoc(missionsCol, m.name, data, 'Mission', journal));
   }
+
+  /* Les dialogues du fichier nomment les quêtes et les métiers en clair ; le jeu, lui,
+     attend des identifiants. La conversion se fait ici, une fois les quêtes créées.
+     `next` reste un numéro d'étape : c'est déjà ce que le jeu enregistre. */
+  const resoudreDialogue = (steps, ctx)=>{
+    (steps||[]).forEach(st=>{
+      (st.choices||[]).forEach(ch=>{
+        if (!ch.id) ch.id = 'ch_' + Math.random().toString(36).slice(2,9);
+        if (typeof ch.questGive === 'string'){
+          const id = importResoudre(cles.quetes, ch.questGive, quests, journal, ctx);
+          ch.questGive = id ? { questId:id } : null;
+        }
+        if (typeof ch.questValidate === 'string'){
+          const id = importResoudre(cles.quetes, ch.questValidate, quests, journal, ctx);
+          ch.questValidate = id ? { questId:id } : null;
+        }
+        if (ch.showIf && ch.showIf.questName){
+          const id = importResoudre(cles.quetes, ch.showIf.questName, quests, journal, ctx);
+          ch.showIf = id ? { kind:'quest', questId:id, state: ch.showIf.state || 'completed' } : null;
+        }
+        if (ch.recruit === true || typeof ch.recruit === 'string'){
+          const nomMetier = (typeof ch.recruit === 'string') ? ch.recruit : 'Combattant';
+          const m = (typeof metiers !== 'undefined' ? metiers : []).find(x=> x.name === nomMetier || x.id === nomMetier);
+          if (m){ ch.recruit = { metierId: m.id }; }
+          else {
+            ch.recruit = null;
+            journal.push('⚠️ ' + ctx + ' : métier « ' + nomMetier + ' » introuvable — règle le recrutement à la main sur ce choix');
+          }
+        }
+      });
+    });
+    return steps || [];
+  };
 
   /* --- 6. PNJ et monstres ---
      Un monstre est un PNJ comme un autre : ce qui le distingue, c'est combatStats.
@@ -15796,7 +15837,7 @@ async function importerScenario(sc){
       visibilityCondition:p.visibilityCondition || null,
       hideOnExitRadius: !!p.hideOnExitRadius,
       dupeGroup:p.dupeGroup || null,
-      dialogueSteps:p.dialogueSteps || [],
+      dialogueSteps: resoudreDialogue(p.dialogueSteps, 'Dialogue de ' + p.name),
       interactionType:p.interactionType || 'dialogue',
       recruitScope:p.recruitScope || null,
       shopItems:(p.shopItems||[]).map(n=> cles.objets[n]).filter(Boolean),
@@ -15813,7 +15854,21 @@ async function importerScenario(sc){
     };
   };
   for (const p of (sc.pnj||[])){
-    cles.pnj[p.cle || p.name] = await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal);
+    /* « dialogueSeul » sert aux personnages qui existent DÉJÀ dans le jeu (les quatre
+       combattants, le métallier) : le scénario leur apporte des répliques, pas une fiche.
+       On ne touche alors qu'au dialogue et on laisse statistiques, métier et image tranquilles. */
+    if (p.dialogueSeul){
+      const snap = await creatureCol.where('name','==',p.name).limit(1).get();
+      if (!snap.empty){
+        await creatureCol.doc(snap.docs[0].id).set(
+          { dialogueSteps: resoudreDialogue(p.dialogueSteps, 'Dialogue de ' + p.name), updatedAt: Date.now() }, { merge:true });
+        noter(cles.pnj, p, snap.docs[0].id);
+        journal.push('💬 PNJ « ' + p.name + ' » : dialogue mis à jour, fiche inchangée');
+        continue;
+      }
+      journal.push('⚠️ PNJ « ' + p.name + ' » attendu en jeu mais introuvable : fiche créée');
+    }
+    noter(cles.pnj, p, await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal));
   }
 
   /* --- 7. Zones d'exploration ---
@@ -15823,7 +15878,7 @@ async function importerScenario(sc){
   for (const z of (sc.zones||[])){
     const fiche = fabriquerFichePnj({ ...z, interactionType:'zone' });
     const zoneId = await importEcrireDoc(creatureCol, z.name, fiche, 'Zone', journal);
-    cles.zones[z.cle || z.name] = zoneId;
+    noter(cles.zones, z, zoneId);
 
     const idScene = {};
     (z.scenes||[]).forEach(s=>{ idScene[s.cle || s.name] = genSceneId(); });
@@ -15846,6 +15901,10 @@ async function importerScenario(sc){
           if (pt.resetMinutes) base.resetMinutes = parseInt(pt.resetMinutes,10) || 0;
           if (pt.objet) base.itemId = importResoudre(cles.objets, pt.objet, items, journal, 'Zone « ' + z.name + ' »');
           if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
+          if (pt.lockItem){
+            base.lockType = 'item';
+            base.lockItemId = importResoudre(cles.objets, pt.lockItem, items, journal, 'Zone « ' + z.name + ' »');
+          } else if (pt.type === 'sortie'){ base.lockType = 'none'; }
           if (pt.pnj) base.linkedPnjId = cles.pnj[pt.pnj] || null;
           return base;
         }),
