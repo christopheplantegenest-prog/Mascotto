@@ -194,6 +194,15 @@
   #sceneBigImageOverlay img{
     max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;
   }
+  /* Les chambres et ateliers sont dessinés à des formats différents selon la génération :
+     l'un tient toute la hauteur, l'autre laisse deux bandes noires, et l'on a l'impression de
+     changer de jeu en passant d'une porte à l'autre. On les affiche donc tous dans le MÊME
+     cadre, aux proportions d'un téléphone, en rognant ce qui dépasse plutôt qu'en déformant.
+     Le décor perd quelques centimètres sur les bords ; la cohérence, elle, est visible partout. */
+  #sceneBigImageOverlay img.room-standard{
+    width:100%; height:auto; aspect-ratio:47 / 100; max-height:100%;
+    object-fit:cover; object-position:center;
+  }
   #sceneBigImageOverlay .sheet-x{
     position:fixed; top:14px; right:14px; background:rgba(0,0,0,.55); color:#fff; border-radius:50%;
     width:38px; height:38px; font-size:18px; border:1px solid rgba(255,255,255,.35);
@@ -612,7 +621,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v269</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v273</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2218,6 +2227,18 @@
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
 </div>
 
+<!-- Rapports de mission en attente, proposés en montant à bord -->
+<div class="overlay" id="missionWelcomeOverlay" style="z-index:4650;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">📬 De retour à bord</h3>
+      <button class="sheet-x" id="missionWelcomeCloseBtn">✕</button>
+    </div>
+    <p class="meta" style="margin-top:0;">Ils t'attendaient pour raconter.</p>
+    <div id="missionWelcomeList"></div>
+  </div>
+</div>
+
 <!-- Choix du blessé à installer dans une capsule libre -->
 <div class="overlay" id="infPatientOverlay" style="z-index:4650;">
   <div class="sheet">
@@ -2276,6 +2297,10 @@
     <div class="sheet-top">
       <h3 style="margin-top:0;">🛏️ Quartiers</h3>
       <button class="sheet-x" id="quartersCloseBtn">✕</button>
+    </div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="btn-secondary" data-qtab="combattant" style="flex:1; height:42px;">⚔️ Combattants</button>
+      <button class="btn-secondary" data-qtab="artisan" style="flex:1; height:42px;">🛠️ Artisans</button>
     </div>
     <button class="btn-secondary" id="quartersReorderBtn" style="width:100%; margin-bottom:10px; display:none;">⇅ Réorganiser</button>
     <div id="quartersList"></div>
@@ -7205,10 +7230,26 @@ function recruitSpecialtyLabel(r){
   return out.join(' · ');
 }
 function missionRunOf(recruitId){
-  const mid = Object.keys(playerMissionRuns).find(k=> playerMissionRuns[k] && playerMissionRuns[k].recruitId === recruitId);
-  return mid ? { missionId: mid, run: playerMissionRuns[mid] } : null;
+  const siennes = Object.keys(playerMissionRuns)
+    .filter(k=> playerMissionRuns[k] && playerMissionRuns[k].recruitId === recruitId);
+  if (!siennes.length) return null;
+  /* Priorité : ce qui est en cours, puis un rapport non lu, puis le reste. Sans cet ordre, une
+     vieille course déjà débriefée masquait le retour tout frais du même combattant. */
+  const enCours = siennes.find(k=> !missionIsBack(playerMissionRuns[k]));
+  const aLire = siennes.find(k=> !playerMissionRuns[k].reported);
+  const mid = enCours || aLire || siennes[0];
+  return { missionId: mid, run: playerMissionRuns[mid] };
 }
-function recruitIsAway(r){ return !!missionRunOf(r.id); }
+/* Absent = PARTI, pas « rapport non lu ». Dès que sa mission est finie il est de retour à
+   bord : sa chambre s'ouvre, il redevient disponible. Le rapport se lit quand on veut. */
+function recruitIsAway(r){
+  const mr = missionRunOf(r.id);
+  return !!mr && !missionIsBack(mr.run);
+}
+function recruitJustBack(r){
+  const mr = missionRunOf(r.id);
+  return !!mr && missionIsBack(mr.run) && !mr.run.reported;
+}
 function missionRemainingMs(run){
   return Math.max(0, run.startedAt + (run.durationSec||0)*1000 - Date.now());
 }
@@ -7237,6 +7278,10 @@ function ensureDailyMissions(){
 function missionCandidates(){
   return recruits.filter(r=>{
     if (recruitIsAway(r)) return false;
+    /* On ne renvoie pas quelqu'un sans l'avoir écouté : tant que son rapport n'est pas lu, il
+       reste à bord. Sa chambre est ouverte, il peut rejoindre l'équipe — seul le départ est
+       suspendu. C'est ce qui empêche les rapports de devenir de vieux messages jamais ouverts. */
+    if (recruitJustBack(r)) return false;
     if (r.recruitType === 'combattant'){
       return !activeTeamIds.includes(r.id)   // ceux de l'équipe restent disponibles pour se battre
         && !recruitIsKo(r);
@@ -7462,7 +7507,7 @@ function renderMissionTerminal(){
         ? cands.map(r=> `<button class="btn-secondary" data-mt-choose="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:11px; text-align:left; padding:5px 8px;">
             <b>${r.recruitType === 'artisan' ? '🛠️ ' : ''}${r.name}</b><span class="meta" style="display:block; font-size:10px;">${recruitSpecialtyLabel(r)}${missionShowChance ? ' · ' + missionSuccessChance(m, r) + '%' : ''}</span>
           </button>`).join('')
-        : '<p class="meta" style="margin:0; font-size:11px;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage ou déjà partis.</p>';
+        : '<p class="meta" style="margin:0; font-size:11px;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage, déjà partis, ou attendent que tu lises leur rapport.</p>';
       box.querySelectorAll('[data-mt-choose]').forEach(cb=>
         cb.addEventListener('click', ()=>{
           if (isGhostTap()) return;
@@ -7544,7 +7589,7 @@ function renderMissionTracker(){
       if (box.style.display === 'block'){ box.style.display = 'none'; return; }
       const cands = missionCandidates();
       if (!cands.length){
-        box.innerHTML = '<p class="meta" style="margin:0;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage ou déjà partis.</p>';
+        box.innerHTML = '<p class="meta" style="margin:0;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage, déjà partis, ou attendent que tu lises leur rapport.</p>';
       } else {
         box.innerHTML = cands.map(r=>{
           return `<button class="btn-secondary" data-mission-pick="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; text-align:left;">
@@ -10717,6 +10762,52 @@ let ghostTapUntil = 0;
 function armGhostTapGuard(ms){ ghostTapUntil = Date.now() + (ms || 400); }
 function isGhostTap(){ return Date.now() < ghostTapUntil; }
 
+/* ---------- Accueil à bord : les rapports qui attendent (v271) ----------
+   Sans cela, un joueur qui rentrait de promenade devait penser à ouvrir le terminal pour
+   découvrir que ses combattants étaient revenus. Le vaisseau vient au-devant de lui.
+   On ne propose qu'UNE fois par retour : reproposer à chaque entrée deviendrait un obstacle
+   entre le joueur et sa base. */
+let missionWelcomeShownFor = '';
+function rapportsEnAttente(){
+  return Object.keys(playerMissionRuns)
+    .map(id=> ({ id, run: playerMissionRuns[id], m: missionTemplates.find(x=> x.id === id) }))
+    .filter(x=> x.m && x.run && !x.run.reported && missionIsBack(x.run));
+}
+function proposerRapports(){
+  const dus = rapportsEnAttente();
+  if (!dus.length) return;
+  /* Une signature de ce qui attend : si un nouveau rentre, on repropose ; sinon on se tait. */
+  const signature = dus.map(x=> x.id).sort().join(',');
+  if (signature === missionWelcomeShownFor) return;
+  missionWelcomeShownFor = signature;
+
+  const el = document.getElementById('missionWelcomeList');
+  if (!el) return;
+  el.innerHTML = dus.map(x=>{
+    const r = recruits.find(y=> y.id === x.run.recruitId);
+    return `<button class="btn-secondary" data-welcome-report="${x.id}" style="width:100%; min-height:54px; margin-bottom:8px; text-align:left; display:flex; align-items:center; gap:10px;">
+      <span style="font-size:20px; flex:none;">📨</span>
+      <span style="flex:1; min-width:0;">
+        <b style="display:block;">${r ? r.name : 'Quelqu\'un'}</b>
+        <span class="meta" style="display:block; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">est rentré de « ${x.m.name || 'sa mission'} »</span>
+      </span>
+      <span style="flex:none; color:var(--accent); font-weight:800;">Lire ▸</span>
+    </button>`;
+  }).join('');
+  el.querySelectorAll('[data-welcome-report]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if (isGhostTap()) return;
+      document.getElementById('missionWelcomeOverlay').classList.remove('show');
+      openMissionReport(b.dataset.welcomeReport);
+    });
+  });
+  document.getElementById('missionWelcomeOverlay').classList.add('show');
+  armGhostTapGuard(400);
+}
+document.getElementById('missionWelcomeCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('missionWelcomeOverlay').classList.remove('show');
+});
+
 /* ---------- L'infirmerie du vaisseau (v256) ----------
    Trois capsules dessinées sur le décor. Libre : on voit la niche ouverte. Occupée : la porte
    se ferme dessus et l'écran mural au-dessus annonce qui s'y soigne et le temps restant.
@@ -11007,6 +11098,9 @@ function openQuarters(){
    Les libellés sont courts pour tenir sur une seule ligne dans les vignettes. */
 function recruitStateBadge(r){
   if (recruitIsAway(r))    return { texte:'📨 En mission',    couleur:'#8e6b2f' };
+  /* Rentré mais pas encore débriefé : il est là, sa porte s'ouvre, et l'étiquette invite à
+     aller le voir plutôt que d'annoncer une absence. */
+  if (recruitJustBack(r))  return { texte:'📬 À débriefer',   couleur:'var(--accent)', ouvert:true };
   const enCapsule = !!r.restingSince;
   if (recruitIsKo(r))      return enCapsule
     ? { texte:'🏥 Infirmerie', couleur:'#8e6b2f' }
@@ -11019,6 +11113,7 @@ function recruitStateBadge(r){
    combattants. Ceux qu'il n'a jamais déplacés viennent ensuite, par ordre de recrutement. */
 let quartersOrder = { combattant: [], artisan: [] };
 let quartersReordering = false;
+let quartersTab = 'combattant';
 function quartersSorted(type){
   const rang = quartersOrder[type] || [];
   return recruits
@@ -11052,27 +11147,35 @@ function renderQuartersList(){
   const bouton = document.getElementById('quartersReorderBtn');
   if (bouton){
     bouton.textContent = quartersReordering ? '✓ Terminer' : '⇅ Réorganiser';
-    bouton.style.display = recruits.length > 1 ? 'block' : 'none';
+    bouton.style.display = quartersSorted(quartersTab).length > 1 ? 'block' : 'none';
   }
   if (!recruits.length){
     el.innerHTML = '<p class="meta">Personne n\'habite encore à bord. Recrute quelqu\'un et sa chambre apparaîtra ici.</p>';
     return;
   }
+  /* Un onglet plutôt que deux listes à la suite : avec douze combattants, il fallait traverser
+     toute la grille pour atteindre les artisans. */
+  document.querySelectorAll('[data-qtab]').forEach(b=>{
+    const actif = (b.dataset.qtab === quartersTab);
+    b.style.background = actif ? 'var(--accent)' : '';
+    b.style.color = actif ? '#fff' : '';
+    b.style.fontWeight = actif ? '800' : '';
+  });
   const sections = [
     { type:'combattant', titre:'⚔️ Combattants' },
     { type:'artisan',    titre:'🛠️ Artisans' },
-  ];
+  ].filter(s=> s.type === quartersTab);
   const habitants = [];
   el.innerHTML = sections.map(sec=>{
     const gens = quartersSorted(sec.type);
-    if (!gens.length) return '';
+    if (!gens.length) return `<p class="meta">Personne dans cette catégorie pour l'instant.</p>`;
     gens.forEach(r=> habitants.push(r));
-    return `<div class="field-label" style="margin-top:2px;">${sec.titre}</div>
-      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px;">${
+    return `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px;">${
       gens.map((r, i)=>{
         const etat = recruitStateBadge(r);
-        /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à bord. */
-        const absent = !!etat;
+        /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à
+           bord. Celui qui rentre de mission n'est PAS grisé : il est là, on peut aller le voir. */
+        const absent = !!etat && !etat.ouvert;
         /* En mode réorganisation, les flèches remplacent l'ouverture de la chambre : deux gestes
            différents ne partagent pas la même vignette. Elles sont volontairement hautes et
            pleine largeur — sur un téléphone, une petite flèche se rate une fois sur trois. */
@@ -11121,11 +11224,19 @@ function renderQuartersList(){
       const r = recruits.find(x=> x.id === b.dataset.quartersOpen);
       if (!r) return;
       const etat = recruitStateBadge(r);
-      if (etat){ showToast(r.name + ' est ' + etat.texte.replace(/^\S+\s/, '').toLowerCase() + ' — sa chambre est fermée'); return; }
+      if (etat && !etat.ouvert){ showToast(r.name + ' est ' + etat.texte.replace(/^\S+\s/, '').toLowerCase() + ' — sa chambre est fermée'); return; }
       openRecruitRoom(r);
     });
   });
 }
+document.querySelectorAll('[data-qtab]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    if (isGhostTap()) return;
+    quartersTab = b.dataset.qtab;
+    quartersReordering = false; // on ne reste pas en réorganisation en changeant de liste
+    renderQuartersList();
+  });
+});
 document.getElementById('quartersReorderBtn').addEventListener('click', ()=>{
   quartersReordering = !quartersReordering;
   renderQuartersList();
@@ -11147,8 +11258,8 @@ function openRecruitRoom(hab){
     if (!d || (!d.roomImagePath && !d.roomImageRef)){ pasAmenagee(); return; }
     const montrer = (url)=>{
       document.getElementById('quartersOverlay').classList.remove('show');
-      showToast('🛏️ Chambre de ' + hab.name);
-      openSceneBigImage(url);
+      showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name);
+      openSceneBigImage(url, true);
       /* Depuis sa chambre, on accède à sa fiche : équipement, craft, apprentissage. C'est ce qui
          fait de la chambre un lieu utile et pas seulement un décor à regarder. */
       roomSheetRecruitId = hab.id;
@@ -12605,6 +12716,9 @@ function zoneComporteDesCombats(zone){
 }
 function openSceneView(creature, resumeSceneId, opts){
   sceneViewIsShip = !!(opts && opts.isShip);
+  /* En montant à bord, on annonce les rapports qui attendent. Différé d'un instant : la scène
+     doit être là derrière, sinon la fenêtre s'ouvre sur du vide. */
+  if (sceneViewIsShip && !resumeSceneId) setTimeout(proposerRapports, 700);
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
@@ -12898,9 +13012,13 @@ document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=
   clearCurrentZoneScene();
   if (!combatState) await clearSavedCombat(); // filet de sécurité : une suppression précédente (fin de combat) a pu être coupée par un rechargement de page juste après
 });
-function openSceneBigImage(url){
+/* `chambre` distingue un quartier d'habitant, qui suit le cadre commun, d'une image de scène
+   ordinaire (un plan, une note) qu'il ne faut surtout pas rogner. */
+function openSceneBigImage(url, chambre){
   document.getElementById('sceneBigImageCloseBtn').style.display = ''; // rétablie pour une image ordinaire
-  document.getElementById('sceneBigImageImg').src = url;
+  const img = document.getElementById('sceneBigImageImg');
+  img.classList.toggle('room-standard', !!chambre);
+  img.src = url;
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
 /* ---------- Ce qu'on peut faire depuis une chambre (v237) ----------
