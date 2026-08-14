@@ -563,6 +563,17 @@
     </div>
   </div>
 
+  <!-- Nom de l'agence : demandé une fois, juste après le pseudo. C'est le premier geste du
+       joueur, et le lieu devient le sien avant même de commencer. -->
+  <div class="overlay" id="agencyOverlay">
+    <div class="sheet">
+      <h3 style="margin-top:0;">Nomme ton agence</h3>
+      <p class="meta" style="margin-top:0;">C'est le nom que porteront ton vaisseau et ton équipe. Tu pourras le changer plus tard dans les Options.</p>
+      <input type="text" id="agencyInput" class="field-input" placeholder="Nom de l'agence" maxlength="28">
+      <button class="btn-capture" id="agencySaveBtn" style="width:100%; margin-top:14px; height:46px;">Valider</button>
+    </div>
+  </div>
+
   <div class="overlay" id="pseudoOverlay">
     <div class="sheet">
       <h3 style="margin-top:0;">Choisis ton pseudo</h3>
@@ -583,6 +594,12 @@
       <div style="display:flex; gap:8px;">
         <input type="text" id="optionsPseudoInput" class="field-input" maxlength="20" style="flex:1;">
         <button class="btn-secondary" id="optionsPseudoSaveBtn">Valider</button>
+      </div>
+
+      <div class="field-label" style="margin-top:16px;">Nom de l'agence</div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="optionsAgencyInput" class="field-input" maxlength="28" style="flex:1;">
+        <button class="btn-secondary" id="optionsAgencySaveBtn">Valider</button>
       </div>
 
       <div class="field-label" style="margin-top:16px;">🤖 Mon apparence</div>
@@ -621,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v280</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v281</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2380,6 +2397,17 @@ guestContinueBtn.addEventListener('click', ()=>{
   });
 });
 
+document.getElementById('agencySaveBtn').addEventListener('click', ()=>{
+  const nom = document.getElementById('agencyInput').value.trim();
+  if (!nom){ showToast('Donne un nom à ton agence'); return; }
+  db.collection('players').doc(currentUser.uid).set({ agencyName: nom }, { merge: true })
+    .then(()=>{
+      currentAgency = nom;
+      document.getElementById('agencyOverlay').classList.remove('show');
+    })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+
 document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
   const pseudo = document.getElementById('pseudoInput').value.trim();
   if (!pseudo){ showToast('Choisis un pseudo'); return; }
@@ -2388,6 +2416,7 @@ document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
       currentPseudo = pseudo;
       document.getElementById('pseudoOverlay').classList.remove('show');
       startMultiplayerSync();
+      if (!currentAgency) document.getElementById('agencyOverlay').classList.add('show');
     })
     .catch((err)=> showToast('Échec : ' + err.message));
 });
@@ -2405,10 +2434,14 @@ function onSignedIn(user){
     if (typeof renderBaseRoster === 'function') renderBaseRoster();
   }
   db.collection('players').doc(user.uid).get().then((doc)=>{
+    currentAgency = (doc.exists && doc.data().agencyName) || null;
     if (doc.exists && doc.data().pseudo){
       currentPseudo = doc.data().pseudo;
       hideAuthScreen();
       startMultiplayerSync();
+      /* Les joueurs d'avant la v281 n'ont pas de nom d'agence : on le leur demande à leur
+         prochaine venue, sans les renvoyer au choix du pseudo. */
+      if (!currentAgency) document.getElementById('agencyOverlay').classList.add('show');
     } else {
       hideAuthScreen();
       pseudoOverlay.classList.add('show');
@@ -3787,22 +3820,41 @@ function markChoiceUsed(key){
     .set({ usedChoices: { [key]: true } }, { merge:true })
     .catch((err)=> showToast('Choix non mémorisé : ' + err.message));
 }
+let currentAgency = null;
+
+/* Les textes écrits d'avance ne peuvent pas connaître le nom de l'agence : ils portent un
+   marqueur, remplacé au moment de l'affichage. Un seul endroit à traiter, et cela vaut pour
+   tous les dialogues, rapports et descriptions. Écrire le nom en dur obligerait à réécrire
+   tout le contenu le jour où un joueur choisit le sien.
+     {agence}   le nom choisi par le joueur
+     {joueur}   son pseudo
+     {vaisseau} le vaisseau (pour l'instant identique à l'agence) */
+function resoudreMarqueurs(texte){
+  if (!texte || texte.indexOf('{') === -1) return texte || '';
+  const valeurs = {
+    agence: currentAgency || 'l\'agence',
+    joueur: currentPseudo || 'toi',
+    vaisseau: currentAgency || 'le vaisseau',
+  };
+  return String(texte).replace(/\{(agence|joueur|vaisseau)\}/g, (tout, cle)=> valeurs[cle]);
+}
+
 function resolveStepText(step, creatureId){
   const variants = step.textVariants || [];
   for (const v of variants){
     if (v.kind === 'choice'){
       if (!v.choiceId) continue;
       const taken = !!playerUsedChoices[choiceUsedKey(creatureId, v.choiceId)];
-      if (v.taken === 'no'){ if (!taken) return v.text; }
-      else if (taken) return v.text;
+      if (v.taken === 'no'){ if (!taken) return resoudreMarqueurs(v.text); }
+      else if (taken) return resoudreMarqueurs(v.text);
       continue;
     }
     const state = playerQuestsState[v.questId] || 'none';
-    if (v.state === 'active' && state === 'active') return v.text;
-    if (v.state === 'completed' && state === 'completed') return v.text;
-    if (v.state === 'not_active' && state !== 'active') return v.text;
+    if (v.state === 'active' && state === 'active') return resoudreMarqueurs(v.text);
+    if (v.state === 'completed' && state === 'completed') return resoudreMarqueurs(v.text);
+    if (v.state === 'not_active' && state !== 'active') return resoudreMarqueurs(v.text);
   }
-  return step.text;
+  return resoudreMarqueurs(step.text);
 }
 function renderSheet(){
   const c = activeCreature;
@@ -4748,6 +4800,7 @@ function renderOptionsAccountStatus(){
 }
 document.getElementById('optionsBtn').addEventListener('click', ()=>{
   document.getElementById('optionsPseudoInput').value = currentPseudo || '';
+  document.getElementById('optionsAgencyInput').value = currentAgency || '';
   if (typeof renderRobotPicker === 'function') renderRobotPicker();
   renderOptionsAccountStatus();
   document.getElementById('optionsOverlay').classList.add('show');
@@ -4764,6 +4817,14 @@ document.getElementById('optionsPseudoSaveBtn').addEventListener('click', ()=>{
   }).catch((err)=> showToast('Échec : ' + err.message));
 });
 document.getElementById('optionsLinkGoogleBtn').addEventListener('click', linkGoogleAccount);
+document.getElementById('optionsAgencySaveBtn').addEventListener('click', ()=>{
+  const nom = document.getElementById('optionsAgencyInput').value.trim();
+  if (!nom){ showToast('Donne un nom à ton agence'); return; }
+  if (!playerDocRef){ showToast('Firebase indisponible ici'); return; }
+  playerDocRef.set({ agencyName: nom }, { merge:true })
+    .then(()=>{ currentAgency = nom; showToast('Agence renommée'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
 document.getElementById('optionsUnlinkGoogleBtn').addEventListener('click', async ()=>{
   if (!(await appConfirm('Délier ce compte Google ? Sans compte Google lié, tu risques de perdre l\'accès à ce profil si tu changes d\'appareil ou effaces les données du site. Continuer ?'))) return;
   currentUser.unlink('google.com').then((updatedUser)=>{
@@ -7391,7 +7452,7 @@ function openMissionReport(missionId){
   document.getElementById('missionReportTitle').textContent = (run.success ? '✅ ' : '❌ ') + (m.name || 'Mission');
   document.getElementById('missionReportBody').innerHTML = `
     <p class="meta" style="margin-top:0;">${nom} est rentré${run.success ? '' : ''}.</p>
-    <p style="font-size:14px;">${(run.success ? (m.successText || 'La mission est un succès.') : (m.failText || 'La mission a échoué.'))}</p>
+    <p style="font-size:14px;">${resoudreMarqueurs(run.success ? (m.successText || 'La mission est un succès.') : (m.failText || 'La mission a échoué.'))}</p>
     ${lecon ? `<p class="meta">${lecon}</p>` : ''}
     ${extra ? `<p class="meta">${extra}</p>` : ''}
     ${(recompense > 0 && it) || coins > 0 ? `<div class="field-label">Rapporté</div>${(recompense > 0 && it) ? `<div class="pos-status">${itemThumbHtml(it, 18)} ${it.name} × ${recompense}</div>` : ''}${coins > 0 ? `<div class="pos-status">🪙 ${coins} pièce(s)</div>` : ''}` : '<p class="meta">Aucune récompense.</p>'}
@@ -13806,7 +13867,7 @@ function updateExplorerBadge(){
   if (badge) badge.style.display = playerExplorerPendingReport ? 'block' : 'none';
 }
 function openExplorerReport(report){
-  document.getElementById('explorerReportText').textContent = (report && report.text) || DEFAULT_EXPLORER_REPORT;
+  document.getElementById('explorerReportText').textContent = resoudreMarqueurs((report && report.text) || DEFAULT_EXPLORER_REPORT);
   /* Ouvert depuis le vaisseau, le rapport doit passer AU-DESSUS du poste de l'explorateur,
      sinon il s'affiche derrière et paraît ne pas s'être ouvert. */
   document.getElementById('explorerReportOverlay').style.zIndex = explorerEstOuvert() ? '4700' : '';
