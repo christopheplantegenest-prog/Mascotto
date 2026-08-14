@@ -621,7 +621,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v273</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v276</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -838,6 +838,12 @@
     <button class="btn-secondary" id="testCombatBtn" style="width:100%; margin-bottom:10px;">⚔️ Tester un combat</button>
     <button class="btn-secondary" id="createStarterRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Créer les robots de départ</button>
     </div>
+    <button type="button" class="btn-secondary tt-cat" data-ttcat="menage" style="width:100%; margin-bottom:6px; text-align:left;">🧹 Habitants sans fiche</button>
+    <div class="tt-panel" id="ttPanel-menage" style="display:none; padding:0 0 10px;">
+      <p class="meta" style="margin:0 0 6px;">Habitants dont le PNJ d'origine n'existe plus, ou n'a jamais existé. Ils n'ont pas de chambre, donc aucun moyen de les renvoyer normalement.</p>
+      <div id="orphanList"></div>
+      <button type="button" class="btn-secondary" id="refreshOrphansBtn" style="width:100%; margin-top:6px; height:42px;">🔄 Rechercher</button>
+    </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="missions" style="width:100%; margin-bottom:6px; text-align:left;">📨 Missions</button>
     <div class="tt-panel" id="ttPanel-missions" style="display:none; padding:0 0 10px;">
     <button class="btn-secondary" id="createTestMissionsBtn" style="width:100%; margin-bottom:10px;">📨 Créer 20 missions de test</button>
@@ -1023,7 +1029,6 @@
 
     <div id="baseTab-artisans">
       <div id="baseRoster" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;"></div>
-      <button class="btn-capture" id="recruitTestBtn" style="width:100%;">➕ Recruter un artisan (test)</button>
     </div>
 
     <div id="baseTab-combattants" style="display:none;">
@@ -1212,9 +1217,12 @@
 
     <!-- Section : Missions (même écran que les quêtes : mécanique différente, mais même famille) -->
     <div class="quests-section" id="questsection-missions" style="display:none;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+        <button class="btn-capture" id="missionNewBtn" style="flex:1 1 45%; height:44px;">➕ Nouvelle mission</button>
+        <button class="btn-secondary" id="missionListBtn" style="flex:1 1 45%; height:44px;">📋 Liste des missions</button>
+      </div>
       <div id="missionEditorList"></div>
-      <button class="btn-capture" id="missionNewBtn" style="width:100%; margin-top:10px;">➕ Nouvelle mission</button>
-      <div id="missionEditorForm" style="display:none; margin-top:14px;"></div>
+      <div id="missionEditorForm" style="display:none;"></div>
     </div>
 
     <!-- Section : Nouvelle quête -->
@@ -4159,16 +4167,15 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
   reader.onload = (ev)=>{
     const img = new Image();
     img.onload = ()=>{
-      const maxSize = 400; // revenu à 400 après test à 600 : aucun gain visible tant que l'affichage reste limité à 96px
-      let w = img.width, h = img.height;
-      if (w > maxSize || h > maxSize){
-        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
-        else { w = Math.round(w * maxSize/h); h = maxSize; }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      uploadedImageDataUrl = canvas.toDataURL('image/png');
+      /* 400 suffisait quand un PNJ ne s'affichait qu'en pastille de 96 px. Depuis, il apparaît
+         en grand dans les scènes et les chambres, et un personnage de plein pied — grand et
+         étroit — voyait sa largeur tomber à une centaine de pixels : d'où le flou.
+         On garde donc le plus grand côté sous 900, en repassant par la réduction qui respecte
+         le plafond d'un mégaoctet par champ Firestore. */
+      const maxSize = 900;
+      const url = encoderImageSousLimite(img, maxSize, true);
+      if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
+      uploadedImageDataUrl = url;
       uploadedImagePath = null; // photo du téléphone : on repasse en base64
       document.getElementById('imagePreview').src = uploadedImageDataUrl;
       document.getElementById('imagePreviewWrap').style.display = 'block';
@@ -7009,14 +7016,6 @@ if (recruitsCol){
 }
 
 const TEST_FIRST_NAMES = ['Marc','Julie','Sam','Aïcha','Karim','Léo','Nadia','Théo','Inès','Paul'];
-document.getElementById('recruitTestBtn').addEventListener('click', ()=>{
-  if (!recruitsCol){ showToast('Firebase indisponible ici'); return; }
-  if (!metiers.length){ showToast('Crée d\'abord un métier depuis l\'éditeur de recettes'); return; }
-  const name = TEST_FIRST_NAMES[Math.floor(Math.random()*TEST_FIRST_NAMES.length)];
-  const metier = metiers[Math.floor(Math.random()*metiers.length)];
-  recruitsCol.add({ name, metierId: metier.id, ownerUid: (currentUser ? currentUser.uid : null), equippedItemIds: { arme:null, armure:null, accessoire:null }, craftingRecipeId: null, craftingStartedAt: null, learnedAttackIds: [], learnedRecipeIds: [], trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null, recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null, createdAt: Date.now() })
-    .then(()=> showToast(name + ' recruté(e) comme ' + metier.name));
-});
 
 let activeTeamIds = [];
 function renderBaseRoster(){
@@ -7117,6 +7116,12 @@ const MISSION_DOMAINS = [
 function missionDomainLabel(id){
   const d = MISSION_DOMAINS.find(x=> x.id === id);
   return d ? d.label : '—';
+}
+/* Ce qu'un métier apporte quand la mission n'exige aucune aptitude de combat : sans lui, une
+   mission d'artisan n'aurait aucun bonus possible et se jouerait à la chance de base. */
+function missionMetierLabel(id){
+  const m = metiers.find(x=> x.id === id);
+  return m ? ('🛠️ ' + m.name) : '';
 }
 function missionDomainNeed(id){
   const d = MISSION_DOMAINS.find(x=> x.id === id);
@@ -7617,16 +7622,52 @@ function renderMissionTracker(){
 
 /* ---------- Éditeur de missions ---------- */
 let editingMissionId = null;
+/* Même schéma que les quêtes : la liste porte ses propres boutons Modifier et Supprimer, au
+   lieu d'obliger à ouvrir la fiche pour découvrir comment s'en débarrasser. */
 function renderMissionEditorList(){
   const el = document.getElementById('missionEditorList');
   if (!el) return;
   if (!missionTemplates.length){ el.innerHTML = '<p class="meta">Aucune mission pour l\'instant.</p>'; return; }
-  el.innerHTML = missionTemplates.map(m=>
-    `<div class="editor-list-item" data-mission-edit="${m.id}">
-      <div class="name">${m.name || '(sans nom)'}<span class="meta" style="display:block;">${missionDomainLabel(m.domain)} · ${formatRemainingDuration((m.durationSec||600)*1000)}</span></div>
-    </div>`).join('');
+  el.innerHTML = missionTemplates.map(m=>{
+    const exigence = [
+      m.domain ? missionDomainLabel(m.domain) : null,
+      m.requiredMetierId ? ('🛠️ ' + ((metiers.find(x=> x.id === m.requiredMetierId)||{}).name || 'métier')) : null,
+    ].filter(Boolean).join(' · ') || 'sans exigence';
+    return `<div class="editor-list-item" style="display:block;">
+      <div class="name" style="margin-bottom:6px;">${m.name || '(sans nom)'}<span class="meta" style="display:block;">${exigence} · ${formatRemainingDuration((m.durationSec||600)*1000)}</span></div>
+      <div style="display:flex; gap:6px;">
+        <button type="button" class="btn-secondary" data-mission-edit="${m.id}" style="flex:1; height:40px;">✏️ Modifier</button>
+        <button type="button" class="btn-secondary" data-mission-del="${m.id}" style="flex:1; height:40px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">🗑️ Supprimer</button>
+      </div>
+    </div>`;
+  }).join('');
   el.querySelectorAll('[data-mission-edit]').forEach(b=>
     b.addEventListener('click', ()=> openMissionForm(b.dataset.missionEdit)));
+  el.querySelectorAll('[data-mission-del]').forEach(b=>
+    b.addEventListener('click', ()=>{
+      const m = missionTemplates.find(x=> x.id === b.dataset.missionDel);
+      if (!m) return;
+      appConfirm('Supprimer la mission « ' + (m.name || 'sans nom') + ' » ?').then((ok)=>{
+        if (!ok) return;
+        if (!missionsCol){ showToast('Firebase indisponible ici'); return; }
+        missionsCol.doc(m.id).delete()
+          .then(()=> showToast('Mission supprimée'))
+          .catch((err)=> showToast('Échec : ' + err.message));
+      });
+    }));
+}
+/* Une seule des deux vues à la fois, comme pour les quêtes. */
+function showMissionEditorSection(quoi){
+  const liste = document.getElementById('missionEditorList');
+  const form = document.getElementById('missionEditorForm');
+  const bNew = document.getElementById('missionNewBtn');
+  const bList = document.getElementById('missionListBtn');
+  const surLaListe = (quoi === 'list');
+  liste.style.display = surLaListe ? 'block' : 'none';
+  form.style.display = surLaListe ? 'none' : 'block';
+  bNew.className = surLaListe ? 'btn-secondary' : 'btn-capture';
+  bList.className = surLaListe ? 'btn-capture' : 'btn-secondary';
+  if (surLaListe) renderMissionEditorList();
 }
 function openMissionForm(id){
   editingMissionId = id || null;
@@ -7640,8 +7681,10 @@ function openMissionForm(id){
     <div class="field-label">Le courrier (ce que le joueur lit)</div>
     <textarea id="missionDesc" class="field-input" style="min-height:60px;" placeholder="Décris ce qu'on demande, en laissant deviner quel profil convient.">${m.description||''}</textarea>
 
-    <div class="field-label">Domaine demandé</div>
+    <div class="field-label">Domaine demandé (facultatif)</div>
+    <p class="meta" style="margin:0 0 6px;">Les domaines décrivent des aptitudes de combat. Pour une mission d'artisan, laisse « Aucun » et sers-toi du métier demandé, plus bas.</p>
     <select id="missionDomain" class="field-input">
+      <option value="" ${!m.domain?'selected':''}>Aucun — l'exigence porte sur le métier</option>
       ${MISSION_DOMAINS.map(d=> `<option value="${d.id}" ${m.domain===d.id?'selected':''}>${d.label} — ${d.hint}</option>`).join('')}
     </select>
 
@@ -7702,7 +7745,7 @@ function openMissionForm(id){
     <button class="btn-capture" id="missionSaveBtn" style="width:100%; margin-top:12px;">Enregistrer</button>
     ${id ? '<button class="btn-secondary" id="missionDeleteBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Supprimer cette mission</button>' : ''}
   `;
-  form.style.display = 'block';
+  showMissionEditorSection('form');
   document.getElementById('missionFailMode').addEventListener('change', (e)=>{
     document.getElementById('missionFailHpWrap').style.display = (e.target.value === 'blesse') ? 'block' : 'none';
   });
@@ -7711,7 +7754,7 @@ function openMissionForm(id){
   if (del) del.addEventListener('click', async ()=>{
     if (!(await appConfirm('Supprimer cette mission ?'))) return;
     missionsCol.doc(id).delete()
-      .then(()=>{ form.style.display = 'none'; editingMissionId = null; showToast('Mission supprimée'); })
+      .then(()=>{ editingMissionId = null; showMissionEditorSection('list'); showToast('Mission supprimée'); })
       .catch((err)=> showToast('Échec : ' + err.message));
   });
 }
@@ -7723,7 +7766,7 @@ function saveMissionForm(){
   const data = {
     name,
     description: document.getElementById('missionDesc').value.trim(),
-    domain: document.getElementById('missionDomain').value,
+    domain: document.getElementById('missionDomain').value || null, // « Aucun » = exigence de métier seule
     durationSec: Math.max(1, parseInt(document.getElementById('missionMinutes').value,10) || 10) * 60,
     baseChance: parseInt(document.getElementById('missionBase').value,10) || 0,
     domainBonus: parseInt(document.getElementById('missionDomainBonus').value,10) || 0,
@@ -7743,12 +7786,13 @@ function saveMissionForm(){
   const p = editingMissionId ? missionsCol.doc(editingMissionId).set(data, { merge:true }) : missionsCol.add(data);
   p.then(()=>{
     showToast('Mission enregistrée');
-    document.getElementById('missionEditorForm').style.display = 'none';
     editingMissionId = null;
+    showMissionEditorSection('list'); // on revient à la liste, comme pour une quête
   }).catch((err)=> showToast('Échec : ' + err.message));
 }
 
 document.getElementById('missionNewBtn').addEventListener('click', ()=> openMissionForm(null));
+document.getElementById('missionListBtn').addEventListener('click', ()=> showMissionEditorSection('list'));
 document.getElementById('missionReportCloseBtn').addEventListener('click', ()=>{
   document.getElementById('missionReportOverlay').classList.remove('show');
 });
@@ -7869,10 +7913,40 @@ document.querySelectorAll('.tt-cat').forEach(btn=>{
       btn.style.fontWeight = '800';
       if (btn.dataset.ttcat === 'terminal') renderTerminalGuide();
       if (btn.dataset.ttcat === 'soins') renderInfZoneGuide();
+      if (btn.dataset.ttcat === 'menage') renderOrphans();
     }
   });
 });
 /* ---------- Réglages de l'infirmerie ---------- */
+/* Un habitant orphelin : sa fiche de PNJ a disparu, ou il a été créé sans en avoir. Il n'a donc
+   ni chambre ni image, et le renvoi — qui passe par la chambre — lui est inaccessible.
+   Cet outil est le seul moyen de le faire partir. */
+function renderOrphans(){
+  const el = document.getElementById('orphanList');
+  if (!el) return;
+  const orphelins = recruits.filter(r=> !r.sourceCreatureId || !creatures.some(c=> c.id === r.sourceCreatureId));
+  if (!orphelins.length){
+    el.innerHTML = '<p class="meta" style="margin:0;">Aucun habitant orphelin. Tout le monde a sa fiche.</p>';
+    return;
+  }
+  el.innerHTML = orphelins.map(r=> `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+    <span style="flex:1; min-width:0; font-size:13px; font-weight:700;">${r.name || '(sans nom)'}<span class="meta" style="display:block; font-size:11px;">${r.recruitType === 'artisan' ? 'artisan' : 'combattant'}${r.sourceCreatureId ? ' · fiche introuvable' : ' · sans fiche d\'origine'}</span></span>
+    <button type="button" class="btn-secondary" data-orphan-del="${r.id}" style="flex:none; height:42px; padding:0 14px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Renvoyer</button>
+  </div>`).join('');
+  el.querySelectorAll('[data-orphan-del]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const r = recruits.find(x=> x.id === b.dataset.orphanDel);
+      if (!r) return;
+      if (!confirm('Renvoyer définitivement ' + (r.name || 'cet habitant') + ' ?')) return;
+      if (!recruitsCol){ showToast('Firebase indisponible ici'); return; }
+      recruitsCol.doc(r.id).delete()
+        .then(()=>{ showToast('Renvoyé'); renderOrphans(); })
+        .catch((err)=> showToast('Échec : ' + err.message));
+    });
+  });
+}
+document.getElementById('refreshOrphansBtn').addEventListener('click', renderOrphans);
+
 function enregistrerInfirmerie(donnees){
   if (!db){ showToast('Firebase indisponible ici'); return; }
   db.collection('app_config').doc('care').set(donnees, { merge:true })
@@ -10423,6 +10497,8 @@ function showQuestsSection(name){
 document.querySelectorAll('#questsNav button[data-questsection]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     if (btn.dataset.questsection === 'new') resetQuestForm();
+    // En entrant dans l'onglet Missions, on arrive sur la liste, jamais sur un formulaire vide.
+    if (btn.dataset.questsection === 'missions') showMissionEditorSection('list');
     showQuestsSection(btn.dataset.questsection);
   });
 });
