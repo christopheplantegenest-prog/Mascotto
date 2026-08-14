@@ -149,6 +149,14 @@
 
   /* Le vaisseau posé sur la carte. Il flotte légèrement pour se distinguer du décor fixe et
      signaler qu'on peut le toucher. */
+  /* Sur un décor, le texte n'est pas là pour être copié : une pression un peu longue
+     déclenchait la sélection du navigateur et sa barre « rechercher / traduire », qui recouvre
+     l'écran. On la désactive dans les pièces, sans toucher au reste du jeu. */
+  #infirmaryFrame, #missionTerminalFrame{
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+  }
+  #infirmaryFrame *, #missionTerminalFrame *{ -webkit-tap-highlight-color:transparent; }
+
   .ship-marker{ position:relative; width:100%; height:100%; animation:shipFloat 3.4s ease-in-out infinite; }
   .ship-marker img{ width:100%; height:100%; object-fit:contain; display:block; filter:drop-shadow(0 6px 8px rgba(0,0,0,.35)); }
   .ship-marker .shipfallback{
@@ -604,7 +612,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v264</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v269</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2269,6 +2277,7 @@
       <h3 style="margin-top:0;">🛏️ Quartiers</h3>
       <button class="sheet-x" id="quartersCloseBtn">✕</button>
     </div>
+    <button class="btn-secondary" id="quartersReorderBtn" style="width:100%; margin-bottom:10px; display:none;">⇅ Réorganiser</button>
     <div id="quartersList"></div>
   </div>
 </div>
@@ -6918,6 +6927,12 @@ function watchPlayerInventoryForBase(){
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
     playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
+    const ordre = (doc.exists && doc.data().quartersOrder) || null;
+    quartersOrder = { combattant: (ordre && ordre.combattant) || [], artisan: (ordre && ordre.artisan) || [] };
+    /* Les quartiers ne se redessinent que s'ils sont ouverts ET qu'on n'est pas en train de
+       réorganiser : sinon le profil, réécrit toutes les 8 s, effacerait le geste en cours. */
+    const q = document.getElementById('quartersOverlay');
+    if (q && q.classList.contains('show') && !quartersReordering) renderQuartersList();
     renderMissionTracker();
     renderBaseResources();
     renderCombattantsRoster();
@@ -7214,11 +7229,20 @@ function ensureDailyMissions(){
   playerDocRef.set({ dailyMissions: playerDailyMissions }, { merge:true })
     .catch((err)=> showToast('Courrier non enregistré : ' + err.message));
 }
+/* Les ARTISANS partent aussi en mission : les courriers portent déjà un métier requis
+   (`requiredMetierId`) que personne ne pouvait satisfaire tant qu'ils étaient exclus.
+   Un artisan occupé à fabriquer reste à son établi — on ne l'arrache pas à son ouvrage.
+   Le K.O. ne concerne que les combattants : un artisan n'a pas de statistiques de combat,
+   et le test des points de vie le déclarerait à terre par accident. */
 function missionCandidates(){
-  return recruits.filter(r=> r.recruitType === 'combattant'
-    && !activeTeamIds.includes(r.id)   // ceux de l'équipe restent disponibles pour se battre
-    && !recruitIsKo(r)
-    && !recruitIsAway(r));
+  return recruits.filter(r=>{
+    if (recruitIsAway(r)) return false;
+    if (r.recruitType === 'combattant'){
+      return !activeTeamIds.includes(r.id)   // ceux de l'équipe restent disponibles pour se battre
+        && !recruitIsKo(r);
+    }
+    return !r.craftingRecipeId;
+  });
 }
 function sendRecruitOnMission(m, r){
   const chance = missionSuccessChance(m, r);
@@ -7436,9 +7460,9 @@ function renderMissionTerminal(){
       const cands = missionCandidates();
       box.innerHTML = cands.length
         ? cands.map(r=> `<button class="btn-secondary" data-mt-choose="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:11px; text-align:left; padding:5px 8px;">
-            <b>${r.name}</b><span class="meta" style="display:block; font-size:10px;">${recruitSpecialtyLabel(r)}${missionShowChance ? ' · ' + missionSuccessChance(m, r) + '%' : ''}</span>
+            <b>${r.recruitType === 'artisan' ? '🛠️ ' : ''}${r.name}</b><span class="meta" style="display:block; font-size:10px;">${recruitSpecialtyLabel(r)}${missionShowChance ? ' · ' + missionSuccessChance(m, r) + '%' : ''}</span>
           </button>`).join('')
-        : '<p class="meta" style="margin:0; font-size:11px;">Aucun combattant disponible : ils sont dans ton équipe, K.O., ou déjà partis.</p>';
+        : '<p class="meta" style="margin:0; font-size:11px;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage ou déjà partis.</p>';
       box.querySelectorAll('[data-mt-choose]').forEach(cb=>
         cb.addEventListener('click', ()=>{
           if (isGhostTap()) return;
@@ -7520,7 +7544,7 @@ function renderMissionTracker(){
       if (box.style.display === 'block'){ box.style.display = 'none'; return; }
       const cands = missionCandidates();
       if (!cands.length){
-        box.innerHTML = '<p class="meta" style="margin:0;">Aucun combattant disponible : ils sont dans ton équipe, K.O., ou déjà partis.</p>';
+        box.innerHTML = '<p class="meta" style="margin:0;">Personne de disponible : ils sont dans ton équipe, à terre, à l\'ouvrage ou déjà partis.</p>';
       } else {
         box.innerHTML = cands.map(r=>{
           return `<button class="btn-secondary" data-mission-pick="${m.id}|${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; text-align:left;">
@@ -8222,12 +8246,17 @@ function recruitWakeUp(r){
   if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: null })
     .catch((err)=> showToast('Réveil non enregistré : ' + err.message));
 }
-function recruitStartRest(r){
+function recruitStartRest(r, capsule){
   // L'affichage ne suffit pas comme sécurité : on refuse aussi ici, quel que soit l'appelant.
   if (recruitIsAway(r)){ showToast(r.name + ' est parti en mission'); return; }
   const hp = recruitEffectiveHp(r);
   r.currentHp = hp; r.restingSince = Date.now();
-  if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: hp, restingSince: r.restingSince })
+  /* On retient DANS QUELLE capsule il a été installé : sans ce numéro, sortir quelqu'un faisait
+     glisser tous les autres d'un cran, comme si on les avait déplacés. */
+  if (capsule) r.careSlot = capsule;
+  const upd = { currentHp: hp, restingSince: r.restingSince };
+  if (capsule) upd.careSlot = capsule;
+  if (recruitsCol) recruitsCol.doc(r.id).update(upd)
     .catch((err)=> showToast('Repos non enregistré : ' + err.message));
   // un combattant au repos ne part pas au combat
   if (playerDocRef && activeTeamIds.includes(r.id)){
@@ -8326,7 +8355,13 @@ function renderInfirmarySection(){
     b.addEventListener('click', ()=>{
       const r = recruits.find(x=> x.id === b.dataset.infRest);
       if (!r) return;
-      if (r.restingSince) recruitWakeUp(r); else recruitStartRest(r);
+      if (r.restingSince){
+        r.careSlot = null;
+        if (recruitsCol) recruitsCol.doc(r.id).update({ careSlot: null }).catch(()=>{});
+        recruitWakeUp(r);
+      } else {
+        recruitStartRest(r, capsuleLibre());
+      }
       renderInfirmarySection();
       renderCombattantsRoster();
     });
@@ -8364,8 +8399,10 @@ function applyRecruitSheetMode(){
     if (el) el.style.display = oui ? '' : 'none';
   };
   montrer('recruitCombatStatsSection', m === 'profil');
-  montrer('recruitCraftSection',       m === 'profil');
-  montrer('recruitRecipesSection',     m === 'profil');
+  /* Depuis le quartier d'un artisan, l'atelier a son écran à lui : la fabrication et les
+     recettes ne sont plus noyées dans la fiche de profil. */
+  montrer('recruitCraftSection',       m === 'profil' || m === 'artisanat');
+  montrer('recruitRecipesSection',     m === 'profil' || m === 'artisanat');
   montrer('recruitAttacksLabel',       m === 'attaques');
   montrer('recruitAttacksSection',     m === 'attaques');
   montrer('recruitEquipLabel',         m === 'equipement');
@@ -10713,6 +10750,26 @@ function infirmaryPatients(){
 function infirmaryOccupants(){
   return infirmaryPatients().filter(r=> !!r.restingSince).slice(0, infirmaryCapacity);
 }
+/* Répartit les occupants par NUMÉRO de capsule, pour que chacun reste où le joueur l'a mis.
+   Les fiches d'avant la v265 n'ont pas de numéro : on les place dans les capsules restées
+   libres, sans jamais déloger quelqu'un. */
+function infirmaryParCapsule(){
+  const places = {};
+  const sansPlace = [];
+  infirmaryOccupants().forEach(r=>{
+    const n = r.careSlot;
+    if (n && n <= infirmaryCapacity && !places[n]) places[n] = r;
+    else sansPlace.push(r);
+  });
+  INF_SLOTS.forEach(i=>{
+    if (i <= infirmaryCapacity && !places[i] && sansPlace.length) places[i] = sansPlace.shift();
+  });
+  return places;
+}
+function capsuleLibre(){
+  const places = infirmaryParCapsule();
+  return INF_SLOTS.find(i=> i <= infirmaryCapacity && !places[i]) || null;
+}
 function infirmaryHasRoom(){
   return infirmaryOccupants().length < infirmaryCapacity;
 }
@@ -10754,6 +10811,7 @@ function infirmaryRoomOuverte(){
 function renderInfirmaryRoom(){
   if (!infirmaryRoomOuverte()) return;
   const occupants = infirmaryOccupants();
+  const places = infirmaryParCapsule();
   const patients = infirmaryPatients();
   const attente = patients.filter(r=> !occupants.some(o=> o.id === r.id));
 
@@ -10761,7 +10819,7 @@ function renderInfirmaryRoom(){
     const cap = document.getElementById('infCap-' + i);
     const scr = document.getElementById('infScr-' + i);
     if (!cap || !scr) return;
-    const r = occupants[i-1] || null;
+    const r = places[i] || null;
     cap.style.display = (i <= infirmaryCapacity) ? 'block' : 'none';
     scr.style.display = (i <= infirmaryCapacity) ? 'block' : 'none';
     if (i > infirmaryCapacity) return;
@@ -10822,7 +10880,7 @@ function renderInfirmaryRoom(){
   INF_SLOTS.forEach(i=>{
     const cap = document.getElementById('infCap-' + i);
     if (!cap) return;
-    const r = occupants[i-1];
+    const r = places[i];
     if (r){
       cap.onclick = ()=>{
         if (isGhostTap()) return;
@@ -10833,7 +10891,7 @@ function renderInfirmaryRoom(){
     cap.onclick = ()=>{
       if (isGhostTap()) return;
       if (!attente.length){ showToast('Personne à soigner'); return; }
-      ouvrirChoixPatient();
+      ouvrirChoixPatient(i); // on installe dans CETTE capsule, celle qu'on a touchée
     };
   });
 }
@@ -10860,6 +10918,8 @@ function ouvrirCapsuleOccupee(r){
     document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
   });
   document.getElementById('infTakeOut').addEventListener('click', ()=>{
+    r.careSlot = null;
+    if (recruitsCol) recruitsCol.doc(r.id).update({ careSlot: null }).catch(()=>{});
     recruitWakeUp(r);
     document.getElementById('infPatientOverlay').classList.remove('show');
     renderInfirmaryRoom();
@@ -10871,7 +10931,7 @@ function ouvrirCapsuleOccupee(r){
 /* Choisir qui installer dans une capsule libre. Écran séparé plutôt que liste dépliée dans le
    décor : la pièce se redessine toutes les 5 s, une liste posée dessus disparaîtrait sous le
    doigt — le piège rencontré trois fois déjà. */
-function ouvrirChoixPatient(){
+function ouvrirChoixPatient(capsule){
   const occupants = infirmaryOccupants();
   const attente = infirmaryPatients().filter(r=> !occupants.some(o=> o.id === r.id));
   const el = document.getElementById('infPatientList');
@@ -10888,7 +10948,7 @@ function ouvrirChoixPatient(){
     b.addEventListener('click', ()=>{
       const r = recruits.find(x=> x.id === b.dataset.infPut);
       if (!r) return;
-      recruitStartRest(r);
+      recruitStartRest(r, capsule || capsuleLibre());
       document.getElementById('infPatientOverlay').classList.remove('show');
       renderInfirmaryRoom();
       renderCombattantsRoster();
@@ -10954,26 +11014,94 @@ function recruitStateBadge(r){
   if (recruitIsResting(r)) return { texte:'🏥 Infirmerie',    couleur:'#8e6b2f' };
   return null;
 }
+/* L'ordre des quartiers appartient au joueur : il place devant ceux dont il se sert le plus.
+   Il est enregistré dans son profil, section par section — un artisan ne passe jamais chez les
+   combattants. Ceux qu'il n'a jamais déplacés viennent ensuite, par ordre de recrutement. */
+let quartersOrder = { combattant: [], artisan: [] };
+let quartersReordering = false;
+function quartersSorted(type){
+  const rang = quartersOrder[type] || [];
+  return recruits
+    .filter(r=> (r.recruitType === 'artisan' ? 'artisan' : 'combattant') === type)
+    .sort((a,b)=>{
+      const ia = rang.indexOf(a.id), ib = rang.indexOf(b.id);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;          // les rangés passent devant les non rangés
+      if (ib !== -1) return 1;
+      return (a.createdAt||0) - (b.createdAt||0);
+    });
+}
+function saveQuartersOrder(){
+  if (!playerDocRef) return;
+  playerDocRef.set({ quartersOrder }, { merge:true })
+    .catch((err)=> showToast('Ordre non enregistré : ' + err.message));
+}
+function deplacerDansQuartiers(type, id, sens){
+  const liste = quartersSorted(type).map(r=> r.id);
+  const i = liste.indexOf(id);
+  const j = i + sens;
+  if (i === -1 || j < 0 || j >= liste.length) return;
+  liste.splice(j, 0, liste.splice(i, 1)[0]);
+  quartersOrder[type] = liste;
+  saveQuartersOrder();
+  renderQuartersList();
+}
 function renderQuartersList(){
   const el = document.getElementById('quartersList');
   if (!el) return;
-  const habitants = recruits.slice().sort((a,b)=> (a.createdAt||0) - (b.createdAt||0));
-  if (!habitants.length){
+  const bouton = document.getElementById('quartersReorderBtn');
+  if (bouton){
+    bouton.textContent = quartersReordering ? '✓ Terminer' : '⇅ Réorganiser';
+    bouton.style.display = recruits.length > 1 ? 'block' : 'none';
+  }
+  if (!recruits.length){
     el.innerHTML = '<p class="meta">Personne n\'habite encore à bord. Recrute quelqu\'un et sa chambre apparaîtra ici.</p>';
     return;
   }
-  el.innerHTML = `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">${
-    habitants.map(r=>{
-      const etat = recruitStateBadge(r);
-      /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à bord. */
-      const absent = !!etat;
-      return `<button class="btn-secondary" data-quarters-open="${r.id}" style="display:block; padding:8px 4px; text-align:center; ${absent ? 'opacity:.45;' : ''}">
-        <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden; ${absent ? 'filter:grayscale(1);' : ''}">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
-        <div style="font-size:12px; font-weight:700; margin-top:5px; line-height:1.2;">${r.name}</div>
-        ${etat ? `<div class="meta" style="font-size:9px; color:${etat.couleur}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${etat.texte}</div>` : ''}
-      </button>`;
-    }).join('')
-  }</div>`;
+  const sections = [
+    { type:'combattant', titre:'⚔️ Combattants' },
+    { type:'artisan',    titre:'🛠️ Artisans' },
+  ];
+  const habitants = [];
+  el.innerHTML = sections.map(sec=>{
+    const gens = quartersSorted(sec.type);
+    if (!gens.length) return '';
+    gens.forEach(r=> habitants.push(r));
+    return `<div class="field-label" style="margin-top:2px;">${sec.titre}</div>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px;">${
+      gens.map((r, i)=>{
+        const etat = recruitStateBadge(r);
+        /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à bord. */
+        const absent = !!etat;
+        /* En mode réorganisation, les flèches remplacent l'ouverture de la chambre : deux gestes
+           différents ne partagent pas la même vignette. Elles sont volontairement hautes et
+           pleine largeur — sur un téléphone, une petite flèche se rate une fois sur trois. */
+        const premier = (i === 0), dernier = (i === gens.length - 1);
+        const fleches = quartersReordering
+          ? `<div style="display:flex; gap:5px; margin-top:7px;">
+               <button type="button" data-qmove="${sec.type}|${r.id}|-1" ${premier ? 'disabled' : ''}
+                 style="flex:1; height:42px; font-size:18px; border-radius:9px; border:1px solid var(--line); background:var(--bg); ${premier ? 'opacity:.28;' : ''}">◀</button>
+               <button type="button" data-qmove="${sec.type}|${r.id}|1" ${dernier ? 'disabled' : ''}
+                 style="flex:1; height:42px; font-size:18px; border-radius:9px; border:1px solid var(--line); background:var(--bg); ${dernier ? 'opacity:.28;' : ''}">▶</button>
+             </div>`
+          : '';
+        return `<div class="btn-secondary" ${quartersReordering ? '' : `data-quarters-open="${r.id}"`} style="display:block; padding:8px 4px; text-align:center; ${absent && !quartersReordering ? 'opacity:.45;' : ''}">
+          <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden; ${absent ? 'filter:grayscale(1);' : ''}">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
+          <div style="font-size:12px; font-weight:700; margin-top:5px; line-height:1.2;">${r.name}</div>
+          ${etat && !quartersReordering ? `<div class="meta" style="font-size:9px; color:${etat.couleur}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${etat.texte}</div>` : ''}
+          ${fleches}
+        </div>`;
+      }).join('')
+    }</div>`;
+  }).join('');
+
+  el.querySelectorAll('[data-qmove]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if (isGhostTap()) return;
+      const [type, id, sens] = b.dataset.qmove.split('|');
+      deplacerDansQuartiers(type, id, parseInt(sens, 10));
+    });
+  });
 
   /* Les vignettes sont celles de l'ordre des tours en combat : même cadrage manuel, même cache. */
   habitants.forEach(r=>{
@@ -10998,6 +11126,10 @@ function renderQuartersList(){
     });
   });
 }
+document.getElementById('quartersReorderBtn').addEventListener('click', ()=>{
+  quartersReordering = !quartersReordering;
+  renderQuartersList();
+});
 document.getElementById('quartersCloseBtn').addEventListener('click', ()=>{
   document.getElementById('quartersOverlay').classList.remove('show');
 });
@@ -12776,11 +12908,16 @@ function openSceneBigImage(url){
    Chacun ouvre la fiche du recruté sur une seule de ses sections, sauf l'équipe qui bascule
    tout de suite et le renvoi qui demande confirmation. La chambre reste visible derrière. */
 let roomSheetRecruitId = null;
+/* Les artisans n'ont ni équipe ni attaques, mais ils ont un atelier : on entre chez le forgeron
+   pour forger. Leur quartier EST leur atelier — c'est pourquoi il n'y a pas de pièce commune
+   d'artisanat : les métiers sont trop différents pour tenir dans une seule salle, et le système
+   de quartiers résout déjà exactement ce problème. */
 const ROOM_ACTIONS = [
   { id:'retour',     emoji:'↩️', titre:'Retour aux quartiers' },
   { id:'profil',     emoji:'📊', titre:'Profil et statistiques' },
   { id:'equipe',     emoji:'⭐', titre:'Équipe active' },
   { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
+  { id:'artisanat',  emoji:'🔨', titre:'Atelier' },
   { id:'equipement', emoji:'🎒', titre:'Équipement' },
   { id:'renvoyer',   emoji:'👋', titre:'Renvoyer' },
 ];
@@ -12788,7 +12925,9 @@ function renderRoomActions(recruit){
   const wrap = document.getElementById('roomActions');
   if (!wrap) return;
   const combattant = (recruit.recruitType === 'combattant');
-  const dispo = ROOM_ACTIONS.filter(a=> combattant || (a.id !== 'equipe' && a.id !== 'attaques'));
+  const dispo = ROOM_ACTIONS.filter(a=> combattant
+    ? (a.id !== 'artisanat')
+    : (a.id !== 'equipe' && a.id !== 'attaques'));
   document.getElementById('sceneBigImageCloseBtn').style.display = 'none'; // remplacée par la flèche
   const inTeam = activeTeamIds.includes(recruit.id);
   wrap.innerHTML = dispo.map(a=>{
