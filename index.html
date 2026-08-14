@@ -621,7 +621,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v277</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v280</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1209,18 +1209,17 @@
     </div>
     <div class="meta" id="questsStatus">Connexion…</div>
 
+    <!-- Quatre entrées de même forme : les quêtes sur la première ligne, les missions sur la
+         seconde. Chacune mène directement à sa vue, sans étape intermédiaire. -->
     <div id="questsNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
-      <button class="btn-capture" data-questsection="new" style="flex:1 1 45%;">Nouvelle quête</button>
-      <button class="btn-secondary" data-questsection="list" style="flex:1 1 45%;">Liste des quêtes</button>
-      <button class="btn-secondary" data-questsection="missions" style="flex:1 1 100%;">📨 Missions</button>
+      <button class="btn-capture"   data-questsection="new"  style="flex:1 1 45%; height:46px;">📜 Nouvelle quête</button>
+      <button class="btn-secondary" data-questsection="list" style="flex:1 1 45%; height:46px;">📋 Liste des quêtes</button>
+      <button class="btn-secondary" data-qmission="form"     style="flex:1 1 45%; height:46px;">📨 Nouvelle mission</button>
+      <button class="btn-secondary" data-qmission="list"     style="flex:1 1 45%; height:46px;">📋 Liste des missions</button>
     </div>
 
     <!-- Section : Missions (même écran que les quêtes : mécanique différente, mais même famille) -->
     <div class="quests-section" id="questsection-missions" style="display:none;">
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-        <button class="btn-capture" id="missionNewBtn" style="flex:1 1 45%; height:44px;">➕ Nouvelle mission</button>
-        <button class="btn-secondary" id="missionListBtn" style="flex:1 1 45%; height:44px;">📋 Liste des missions</button>
-      </div>
       <div id="missionEditorList"></div>
       <div id="missionEditorForm" style="display:none;"></div>
     </div>
@@ -2233,6 +2232,17 @@
   <img id="sceneBigImageImg" alt="">
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
+</div>
+
+<!-- Poste de l'explorateur, dans le vaisseau -->
+<div class="overlay" id="explorerRoomOverlay" style="z-index:4640;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">🧭 Poste de l'explorateur</h3>
+      <button class="sheet-x" id="explorerRoomCloseBtn">✕</button>
+    </div>
+    <div id="explorerSectionShip"></div>
+  </div>
 </div>
 
 <!-- Rapports de mission en attente, proposés en montant à bord -->
@@ -3959,7 +3969,8 @@ function watchPlayerQuests(uid){
     playerExplorerMissionZoneId = (doc.exists && doc.data().explorerMissionZoneId) || null;
     playerExplorerPendingReport = (doc.exists && doc.data().explorerPendingReport) || null;
     updateExplorerBadge();
-    if (document.getElementById('baseTab-explorateur').style.display !== 'none' && document.getElementById('baseOverlay').classList.contains('show')) renderExplorerSection();
+    if (explorerEstOuvert()) renderExplorerSection();
+    else if (document.getElementById('baseTab-explorateur').style.display !== 'none' && document.getElementById('baseOverlay').classList.contains('show')) renderExplorerSection();
     if (doc.exists && typeof doc.data().coins !== 'number' && !coinsBackfillDone){
       // Compte créé avant l'ajout de la monnaie : on lui donne les 500 de départ une seule fois
       coinsBackfillDone = true;
@@ -7656,17 +7667,21 @@ function renderMissionEditorList(){
       });
     }));
 }
-/* Une seule des deux vues à la fois, comme pour les quêtes. */
+/* Une seule des deux vues à la fois, et un seul bouton mis en avant parmi les quatre. */
+function surlignerNav(actif){
+  document.querySelectorAll('#questsNav button').forEach(b=>{
+    const cle = b.dataset.questsection ? ('q:' + b.dataset.questsection) : ('m:' + b.dataset.qmission);
+    b.className = (cle === actif) ? 'btn-capture' : 'btn-secondary';
+  });
+}
 function showMissionEditorSection(quoi){
   const liste = document.getElementById('missionEditorList');
   const form = document.getElementById('missionEditorForm');
-  const bNew = document.getElementById('missionNewBtn');
-  const bList = document.getElementById('missionListBtn');
+  if (!liste || !form) return;
   const surLaListe = (quoi === 'list');
   liste.style.display = surLaListe ? 'block' : 'none';
   form.style.display = surLaListe ? 'none' : 'block';
-  bNew.className = surLaListe ? 'btn-secondary' : 'btn-capture';
-  bList.className = surLaListe ? 'btn-capture' : 'btn-secondary';
+  surlignerNav(surLaListe ? 'm:list' : 'm:form');
   if (surLaListe) renderMissionEditorList();
 }
 function openMissionForm(id){
@@ -7791,8 +7806,13 @@ function saveMissionForm(){
   }).catch((err)=> showToast('Échec : ' + err.message));
 }
 
-document.getElementById('missionNewBtn').addEventListener('click', ()=> openMissionForm(null));
-document.getElementById('missionListBtn').addEventListener('click', ()=> showMissionEditorSection('list'));
+document.querySelectorAll('#questsNav button[data-qmission]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    showQuestsSection('missions');
+    if (btn.dataset.qmission === 'form') openMissionForm(null);
+    else showMissionEditorSection('list');
+  });
+});
 document.getElementById('missionReportCloseBtn').addEventListener('click', ()=>{
   document.getElementById('missionReportOverlay').classList.remove('show');
 });
@@ -7924,7 +7944,18 @@ document.querySelectorAll('.tt-cat').forEach(btn=>{
 function renderOrphans(){
   const el = document.getElementById('orphanList');
   if (!el) return;
-  const orphelins = recruits.filter(r=> !r.sourceCreatureId || !creatures.some(c=> c.id === r.sourceCreatureId));
+  /* `creatures` est la liste d'AFFICHAGE de la carte : elle EXCLUT justement les PNJ déjà
+     recrutés. S'en servir déclarait tout le monde orphelin et proposait de tout supprimer.
+     On relit donc les fiches dans Firestore avant de juger. */
+  el.innerHTML = '<p class="meta" style="margin:0;">Recherche…</p>';
+  if (!creatureCol){ el.innerHTML = '<p class="meta" style="margin:0;">Firebase indisponible ici.</p>'; return; }
+  creatureCol.get().then((snap)=>{
+    const existantes = new Set();
+    snap.forEach(d=> existantes.add(d.id));
+    afficherOrphelins(el, recruits.filter(r=> !r.sourceCreatureId || !existantes.has(r.sourceCreatureId)));
+  }).catch((err)=> { el.innerHTML = '<p class="meta" style="margin:0;">Échec de la recherche : ' + err.message + '</p>'; });
+}
+function afficherOrphelins(el, orphelins){
   if (!orphelins.length){
     el.innerHTML = '<p class="meta" style="margin:0;">Aucun habitant orphelin. Tout le monde a sa fiche.</p>';
     return;
@@ -10488,18 +10519,14 @@ function showQuestsSection(name){
   const target = document.getElementById('questsection-' + name);
   if (target) target.style.display = 'block';
   if (name === 'list') renderQuestsListView();
-  if (name === 'missions'){
-    document.getElementById('missionEditorForm').style.display = 'none';
-    editingMissionId = null;
-    renderMissionEditorList();
-  }
+  /* L'entrée dans la section Missions ne décide plus de la vue : ce sont les deux boutons de
+     navigation qui le font, juste après. Sans quoi « Nouvelle mission » affichait la liste. */
 }
 document.querySelectorAll('#questsNav button[data-questsection]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     if (btn.dataset.questsection === 'new') resetQuestForm();
-    // En entrant dans l'onglet Missions, on arrive sur la liste, jamais sur un formulaire vide.
-    if (btn.dataset.questsection === 'missions') showMissionEditorSection('list');
     showQuestsSection(btn.dataset.questsection);
+    surlignerNav('q:' + btn.dataset.questsection);
   });
 });
 document.getElementById('questsEditorCloseBtn').addEventListener('click', ()=>{
@@ -10880,6 +10907,9 @@ function proposerRapports(){
   document.getElementById('missionWelcomeOverlay').classList.add('show');
   armGhostTapGuard(400);
 }
+document.getElementById('explorerRoomCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('explorerRoomOverlay').classList.remove('show');
+});
 document.getElementById('missionWelcomeCloseBtn').addEventListener('click', ()=>{
   document.getElementById('missionWelcomeOverlay').classList.remove('show');
 });
@@ -11190,6 +11220,17 @@ function recruitStateBadge(r){
 let quartersOrder = { combattant: [], artisan: [] };
 let quartersReordering = false;
 let quartersTab = 'combattant';
+/* Le métier vaut pour tout le monde, pas seulement les artisans : un combattant peut en avoir
+   un. Selon la façon dont il a été recruté, `metierId` porte un identifiant ou directement un
+   nom — on accepte les deux plutôt que de n'afficher rien. */
+function metierNom(r){
+  if (!r.metierId) return '';
+  const m = metiers.find(x=> x.id === r.metierId);
+  if (m) return m.name;
+  const parNom = metiers.find(x=> x.name === r.metierId);
+  if (parNom) return parNom.name;
+  return String(r.metierId).length > 24 ? '' : String(r.metierId); // un identifiant brut ne s'affiche pas
+}
 function quartersSorted(type){
   const rang = quartersOrder[type] || [];
   return recruits
@@ -11267,6 +11308,7 @@ function renderQuartersList(){
         return `<div class="btn-secondary" ${quartersReordering ? '' : `data-quarters-open="${r.id}"`} style="display:block; padding:8px 4px; text-align:center; ${absent && !quartersReordering ? 'opacity:.45;' : ''}">
           <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden; ${absent ? 'filter:grayscale(1);' : ''}">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
           <div style="font-size:12px; font-weight:700; margin-top:5px; line-height:1.2;">${r.name}</div>
+          ${(!etat || quartersReordering) && metierNom(r) ? `<div class="meta" style="font-size:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${metierNom(r)}</div>` : ''}
           ${etat && !quartersReordering ? `<div class="meta" style="font-size:9px; color:${etat.couleur}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${etat.texte}</div>` : ''}
           ${fleches}
         </div>`;
@@ -11450,6 +11492,7 @@ const SCENE_POINT_TYPES = [
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
   { id:'missions', label:'📨 Terminal de missions' },
   { id:'infirmerie', label:'🏥 Infirmerie (capsules de soin)' },
+  { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
 /* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
@@ -12430,6 +12473,11 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'explorateur'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le poste de l'explorateur : envoyer l'explorateur chercher de nouvelles zones, suivre son retour, lire son rapport. Rien à régler ici.</p>`;
+    return;
+  }
+
   if (pt.type === 'missions'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le terminal de missions : courrier du jour, envoi d'un combattant, rapports de retour. Rien à régler ici — l'image du terminal se choisit dans Édition → Outils de test.</p>`;
     return;
@@ -12945,6 +12993,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openMissionTerminal();
     } else if (pt.type === 'infirmerie'){
       wrapPointActions[pt.id] = ()=> openInfirmaryRoom();
+    } else if (pt.type === 'explorateur'){
+      wrapPointActions[pt.id] = ()=> openExplorerRoom();
     } else if (pt.type === 'image'){
       wrapPointActions[pt.id] = ()=>{
         const big = pt.bigImageUrl || (pt.bigImagePath ? resolveMediaPath(pt.bigImagePath) : '');
@@ -13119,9 +13169,11 @@ function renderRoomActions(recruit){
   const wrap = document.getElementById('roomActions');
   if (!wrap) return;
   const combattant = (recruit.recruitType === 'combattant');
+  /* Chez un artisan, 📊 Profil n'affichait que la fabrication et les recettes — exactement ce
+     que montre 🔨 Atelier. Deux icônes pour le même écran : on garde l'atelier. */
   const dispo = ROOM_ACTIONS.filter(a=> combattant
     ? (a.id !== 'artisanat')
-    : (a.id !== 'equipe' && a.id !== 'attaques'));
+    : (a.id !== 'equipe' && a.id !== 'attaques' && a.id !== 'profil'));
   document.getElementById('sceneBigImageCloseBtn').style.display = 'none'; // remplacée par la flèche
   const inTeam = activeTeamIds.includes(recruit.id);
   wrap.innerHTML = dispo.map(a=>{
@@ -13755,6 +13807,9 @@ function updateExplorerBadge(){
 }
 function openExplorerReport(report){
   document.getElementById('explorerReportText').textContent = (report && report.text) || DEFAULT_EXPLORER_REPORT;
+  /* Ouvert depuis le vaisseau, le rapport doit passer AU-DESSUS du poste de l'explorateur,
+     sinon il s'affiche derrière et paraît ne pas s'être ouvert. */
+  document.getElementById('explorerReportOverlay').style.zIndex = explorerEstOuvert() ? '4700' : '';
   document.getElementById('explorerReportOverlay').classList.add('show');
 }
 document.getElementById('explorerReportCloseBtn').addEventListener('click', ()=>{
@@ -13766,8 +13821,23 @@ document.getElementById('explorerReportOkBtn').addEventListener('click', ()=>{
   renderExplorerSection();
 });
 
+/* Deux portes, un seul code — comme le terminal de missions et l'infirmerie : l'onglet de
+   l'ancienne Base et le poste du vaisseau affichent la même chose, chacun dans son cadre.
+   Le poste du vaisseau l'emporte quand il est ouvert, puisqu'il est alors au premier plan. */
+function explorerEstOuvert(){
+  const o = document.getElementById('explorerRoomOverlay');
+  return !!o && o.classList.contains('show');
+}
+function explorerContainer(){
+  return document.getElementById(explorerEstOuvert() ? 'explorerSectionShip' : 'explorerSection');
+}
+function openExplorerRoom(){
+  document.getElementById('explorerRoomOverlay').classList.add('show');
+  armGhostTapGuard(400);
+  renderExplorerSection();
+}
 function renderExplorerSection(){
-  const el = document.getElementById('explorerSection');
+  const el = explorerContainer();
   if (!el) return;
   if (!currentUser || !playerDocRef){ el.innerHTML = '<p class="meta">Firebase indisponible ici.</p>'; return; }
   if (playerExplorerPendingReport){
@@ -13775,7 +13845,7 @@ function renderExplorerSection(){
       <p class="meta">Ton explorateur est de retour ! Ouvre le rapport pour découvrir ce qu'il a trouvé.</p>
       <button class="btn-capture" id="explorerOpenReportBtn" style="width:100%; margin-top:8px;">📜 Voir le rapport</button>
     `;
-    document.getElementById('explorerOpenReportBtn').addEventListener('click', ()=> openExplorerReport(playerExplorerPendingReport));
+    el.querySelector('#explorerOpenReportBtn').addEventListener('click', ()=> openExplorerReport(playerExplorerPendingReport));
     return;
   }
   if (playerExplorerMissionStartedAt){
@@ -13790,7 +13860,7 @@ function renderExplorerSection(){
       </div>
       <button class="btn-secondary" id="explorerCancelBtn" style="width:100%; margin-top:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">Rappeler l'explorateur (annuler)</button>
     `;
-    document.getElementById('explorerCancelBtn').addEventListener('click', async ()=>{
+    el.querySelector('#explorerCancelBtn').addEventListener('click', async ()=>{
       if (!(await appConfirm('Rappeler ton explorateur ? La mission en cours sera annulée, sans découverte.'))) return;
       playerDocRef.set({ explorerMissionStartedAt: null, explorerMissionDuration: null, explorerMissionZoneId: null }, { merge:true }).then(()=>{
         showToast('Explorateur rappelé.');
@@ -13807,7 +13877,7 @@ function renderExplorerSection(){
     <p class="meta">Envoie ton explorateur à la recherche de nouvelles zones d'exploration.</p>
     <button class="btn-capture" id="explorerStartBtn" style="width:100%; margin-top:8px;">🧭 Partir en exploration</button>
   `;
-  document.getElementById('explorerStartBtn').addEventListener('click', ()=>{
+  el.querySelector('#explorerStartBtn').addEventListener('click', ()=>{
     const zone = pickNearestExplorableZone();
     playerDocRef.set({ explorerMissionStartedAt: Date.now(), explorerMissionDuration: explorerMissionDurationMs, explorerMissionZoneId: zone ? zone.id : null }, { merge:true }).then(()=>{
       showToast('Ton explorateur est parti en exploration.');
