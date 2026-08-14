@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v281</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v282</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -860,6 +860,14 @@
       <p class="meta" style="margin:0 0 6px;">Habitants dont le PNJ d'origine n'existe plus, ou n'a jamais existé. Ils n'ont pas de chambre, donc aucun moyen de les renvoyer normalement.</p>
       <div id="orphanList"></div>
       <button type="button" class="btn-secondary" id="refreshOrphansBtn" style="width:100%; margin-top:6px; height:42px;">🔄 Rechercher</button>
+    </div>
+    <button type="button" class="btn-secondary tt-cat" data-ttcat="import" style="width:100%; margin-bottom:6px; text-align:left;">📥 Importer un scénario</button>
+    <div class="tt-panel" id="ttPanel-import" style="display:none; padding:0 0 10px;">
+      <p class="meta" style="margin:0 0 6px;">Charge un fichier de scénario (.json) et écrit son contenu dans le jeu : objets, recettes, attaques, quêtes, missions, PNJ, monstres et zones. Les images ne sont pas importées — tu les ajoutes ensuite fiche par fiche.</p>
+      <p class="meta" style="margin:0 0 6px; opacity:.8;">Le sélecteur de fichiers peut faire recharger l'appli : ce n'est pas grave ici, rien n'est perdu tant que l'import n'a pas commencé. Reviens simplement dans cet onglet.</p>
+      <input type="file" id="scenarioImportFile" accept="application/json,.json" class="field-input" style="margin-bottom:8px;">
+      <button type="button" class="btn-capture" id="scenarioImportBtn" style="width:100%; height:42px;">📥 Importer le fichier choisi</button>
+      <div id="scenarioImportReport" style="margin-top:8px; font-size:12px; line-height:1.5;"></div>
     </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="missions" style="width:100%; margin-bottom:6px; text-align:left;">📨 Missions</button>
     <div class="tt-panel" id="ttPanel-missions" style="display:none; padding:0 0 10px;">
@@ -1088,6 +1096,20 @@
       <button class="btn-secondary" id="appConfirmCancelBtn" style="flex:1;">Annuler</button>
       <button class="btn-capture" id="appConfirmOkBtn" style="flex:1;">Confirmer</button>
     </div>
+  </div>
+</div>
+
+<!-- Import de scénario : que faire quand un élément du même nom existe déjà -->
+<div class="overlay" id="importConflictOverlay">
+  <div class="sheet">
+    <p id="importConflictMessage" style="margin:0 0 14px; line-height:1.5;"></p>
+    <button class="btn-secondary" id="importConflictSkipBtn" style="width:100%; height:42px; margin-bottom:8px;">⏭️ Garder l'existant</button>
+    <button class="btn-capture" id="importConflictOverwriteBtn" style="width:100%; height:42px; margin-bottom:8px;">♻️ Écraser avec l'import</button>
+    <button class="btn-secondary" id="importConflictDupBtn" style="width:100%; height:42px; margin-bottom:10px;">➕ Créer un second exemplaire</button>
+    <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+      <input type="checkbox" id="importConflictAll" style="width:20px; height:20px;">
+      Faire pareil pour tous les suivants
+    </label>
   </div>
 </div>
 
@@ -15575,6 +15597,303 @@ function renderCombat(){
   });
   document.getElementById('combatLogEntries').innerHTML = combatState.log.slice(0, 20).map(l=>`<div>${l}</div>`).join('');
 }
+
+
+/* ================= IMPORT D'UN SCÉNARIO (v282) =================
+   Lit un fichier .json écrit à l'avance et recopie son contenu dans Firestore.
+   Aucune génération ici : c'est de la recopie contrôlée, donc pas de dépendance à une IA
+   et pas de copier-coller tronqué — c'était tout l'intérêt de passer par un fichier.
+
+   Le fichier référence ses propres éléments par une CLÉ locale (ex. "ferraille-grise"),
+   jamais par un identifiant Firestore qui n'existe pas encore. L'import résout les clés
+   au fur et à mesure, dans l'ordre des dépendances :
+     objets → recettes → attaques → quêtes → missions → PNJ/monstres → zones
+   Les images ne sont jamais importées : elles se posent à la main sur les fiches ensuite. */
+
+let scenarioImportChoixPourTous = null; // mémorise « faire pareil pour tous »
+
+function importConflitDemande(typeLabel, nom){
+  return new Promise((resolve)=>{
+    if (scenarioImportChoixPourTous){ resolve(scenarioImportChoixPourTous); return; }
+    const ov = document.getElementById('importConflictOverlay');
+    document.getElementById('importConflictMessage').textContent =
+      typeLabel + ' « ' + nom + ' » existe déjà dans le jeu. Que faire ?';
+    document.getElementById('importConflictAll').checked = false;
+    ov.classList.add('show');
+    const paires = [];
+    const fin = (choix)=>{
+      ov.classList.remove('show');
+      paires.forEach(([b,f])=> b.removeEventListener('click', f));
+      if (document.getElementById('importConflictAll').checked) scenarioImportChoixPourTous = choix;
+      resolve(choix);
+    };
+    [['importConflictSkipBtn','ignorer'],['importConflictOverwriteBtn','ecraser'],['importConflictDupBtn','doublon']]
+      .forEach(([id,choix])=>{
+        const b = document.getElementById(id);
+        const f = ()=> fin(choix);
+        paires.push([b,f]);
+        b.addEventListener('click', f);
+      });
+  });
+}
+
+/* Écrit un document, en demandant quoi faire si un homonyme existe.
+   Renvoie TOUJOURS un identifiant utilisable : même en cas de « garder l'existant »,
+   c'est celui de l'existant, pour que les renvois du scénario pointent sur quelque chose. */
+async function importEcrireDoc(col, nom, data, typeLabel, journal){
+  if (!col) throw new Error('Firebase indisponible');
+  const snap = await col.where('name','==',nom).limit(1).get();
+  if (!snap.empty){
+    const choix = await importConflitDemande(typeLabel, nom);
+    if (choix === 'ignorer'){
+      journal.push('⏭️ ' + typeLabel + ' « ' + nom + ' » : existant conservé');
+      return snap.docs[0].id;
+    }
+    if (choix === 'ecraser'){
+      await col.doc(snap.docs[0].id).set({ ...data, updatedAt: Date.now() }, { merge:true });
+      journal.push('♻️ ' + typeLabel + ' « ' + nom + ' » écrasé');
+      return snap.docs[0].id;
+    }
+  }
+  const ref = await col.add({ ...data, createdAt: Date.now(), updatedAt: Date.now() });
+  journal.push('✅ ' + typeLabel + ' « ' + nom + ' » ajouté');
+  return ref.id;
+}
+
+/* Résolution d'une référence : d'abord les clés du fichier en cours, sinon un élément
+   déjà présent dans le jeu retrouvé par son nom. Sans quoi on renvoie null et on le dit. */
+function importResoudre(table, ref, listeExistante, journal, contexte){
+  if (!ref) return null;
+  if (table[ref]) return table[ref];
+  const trouve = (listeExistante||[]).find(x=> x.name === ref);
+  if (trouve) return trouve.id;
+  journal.push('⚠️ ' + contexte + ' : référence introuvable « ' + ref +' »');
+  return null;
+}
+
+function importListeQtes(liste, table, journal, contexte){
+  return (liste||[]).map(l=>({
+    itemId: importResoudre(table, l.objet || l.itemName || l.cle, items, journal, contexte),
+    qty: parseInt(l.qty,10) || 1,
+  })).filter(l=> l.itemId);
+}
+
+async function importerScenario(sc){
+  const journal = [];
+  scenarioImportChoixPourTous = null;
+  const cles = { objets:{}, recettes:{}, attaques:{}, quetes:{}, missions:{}, pnj:{}, zones:{} };
+
+  /* --- 1. Objets --- */
+  for (const o of (sc.objets||[])){
+    const data = {
+      name:o.name, emoji:o.emoji || '📦', imageUrl:'', imagePath:null,
+      type:o.type || 'ressource', description:o.description || '',
+      equippable: !!o.equippable, equipCategory:o.equipCategory || null,
+      effectType:o.effectType || null, effectValue:o.effectValue || 0,
+      effectDuration:o.effectDuration || 'permanent', effectSeconds:o.effectSeconds || 0,
+      effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false,
+      basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
+    };
+    cles.objets[o.cle || o.name] = await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal);
+  }
+
+  /* --- 2. Recettes (renvoient aux objets) --- */
+  for (const r of (sc.recettes||[])){
+    const data = {
+      name:r.name, emoji:r.emoji || '🛠️', imageUrl:'', imagePath:null,
+      inputs: importListeQtes(r.inputs, cles.objets, journal, 'Recette « ' + r.name + ' »'),
+      outputItemId: importResoudre(cles.objets, r.output, items, journal, 'Recette « ' + r.name + ' »'),
+      outputQty: parseInt(r.outputQty,10) || 1,
+      duration: parseInt(r.duration,10) || 600,
+      allowedMetiers: r.allowedMetiers || [],
+      requiresLearning: !!r.requiresLearning,
+      learnDuration: parseInt(r.learnDuration,10) || 0,
+    };
+    cles.recettes[r.cle || r.name] = await importEcrireDoc(recipesCol, r.name, data, 'Recette', journal);
+  }
+
+  /* --- 3. Attaques --- */
+  for (const a of (sc.attaques||[])){
+    const data = {
+      name:a.name, emoji:a.emoji || '⚔️', description:a.description || '',
+      kind:a.kind || 'damage_single', school:a.school || 'physical', tribe:a.tribe || '',
+      power: parseInt(a.power,10) || 10,
+      learnDuration: parseInt(a.learnDuration,10) || 0,
+      allowedMetiers: a.allowedMetiers || [],
+      statusEffect: a.statusEffect || null,
+      fx: a.fx || null, fxSelf: a.fxSelf || null,
+    };
+    cles.attaques[a.cle || a.name] = await importEcrireDoc(attacksCol, a.name, data, 'Attaque', journal);
+  }
+
+  /* --- 4. Quêtes (l'enchaînement se recolle après, une quête peut renvoyer à la suivante) --- */
+  for (const q of (sc.quetes||[])){
+    const data = {
+      name:q.name, description:q.description || '',
+      objectives: importListeQtes(q.objectives, cles.objets, journal, 'Quête « ' + q.name + ' »'),
+      objectiveMode: q.objectiveMode || 'all',
+      rewards: importListeQtes(q.rewards, cles.objets, journal, 'Quête « ' + q.name + ' »'),
+      nextQuestId: null,
+      showInJournal: q.showInJournal !== false,
+    };
+    cles.quetes[q.cle || q.name] = await importEcrireDoc(questsCol, q.name, data, 'Quête', journal);
+  }
+  for (const q of (sc.quetes||[])){
+    if (!q.next) continue;
+    const id = cles.quetes[q.cle || q.name];
+    const suite = importResoudre(cles.quetes, q.next, quests, journal, 'Quête « ' + q.name + ' »');
+    if (id && suite) await questsCol.doc(id).set({ nextQuestId: suite }, { merge:true });
+  }
+
+  /* --- 5. Missions --- */
+  for (const m of (sc.missions||[])){
+    const data = {
+      name:m.name, description:m.description || '',
+      domain: m.domain || null,
+      durationSec: parseInt(m.durationSec,10) || 600,
+      baseChance: parseInt(m.baseChance,10) || 40,
+      domainBonus: parseInt(m.domainBonus,10) || 0,
+      requiredTribe: m.requiredTribe || null,
+      tribeBonus: parseInt(m.tribeBonus,10) || 0,
+      requiredMetierId: m.requiredMetierId || null,
+      metierBonus: parseInt(m.metierBonus,10) || 0,
+      rewardItemId: importResoudre(cles.objets, m.reward, items, journal, 'Mission « ' + m.name + ' »'),
+      rewardQty: parseInt(m.rewardQty,10) || 1,
+      rewardCoins: parseInt(m.rewardCoins,10) || 0,
+      successText: m.successText || '', failText: m.failText || '',
+      failMode: m.failMode || 'nothing',
+      failHpPercent: parseInt(m.failHpPercent,10) || 40,
+    };
+    cles.missions[m.cle || m.name] = await importEcrireDoc(missionsCol, m.name, data, 'Mission', journal);
+  }
+
+  /* --- 6. PNJ et monstres ---
+     Un monstre est un PNJ comme un autre : ce qui le distingue, c'est combatStats.
+     Les attaques qu'il connaît sont résolues depuis les clés du fichier. */
+  const fabriquerFichePnj = (p)=>{
+    const stats = p.combatStats ? {
+      tribe:p.combatStats.tribe || 'terre',
+      hp:p.combatStats.hp || 30, speed:p.combatStats.speed || 10,
+      atk:p.combatStats.atk || 10, def:p.combatStats.def || 10,
+      matk:p.combatStats.matk || 10, mdef:p.combatStats.mdef || 10,
+      precision:p.combatStats.precision || 90, evasion:p.combatStats.evasion || 10,
+      recruitable: !!p.combatStats.recruitable,
+      budgetCategory:p.combatStats.budgetCategory || 'common',
+      rarity:p.combatStats.rarity || 'common',
+      fleeChance:p.combatStats.fleeChance || 30,
+      aiPersonality:p.combatStats.aiPersonality || 'equilibre',
+      canFlee: !!p.combatStats.canFlee,
+      fleeHpThreshold:p.combatStats.fleeHpThreshold || 25,
+      fleeSelfChance:p.combatStats.fleeSelfChance || 15,
+      attackIds: (p.combatStats.attaques||[]).map(a=> cles.attaques[a]).filter(Boolean),
+      startingAttackIds: (p.combatStats.attaquesDepart||[]).map(a=> cles.attaques[a]).filter(Boolean),
+      immunities:p.combatStats.immunities || [],
+      resistances:p.combatStats.resistances || [],
+    } : null;
+    return {
+      name:p.name, metier:p.metier || '', emoji:p.emoji || '👤',
+      imageUrl:'', imagePath:null,
+      visibilityCondition:p.visibilityCondition || null,
+      hideOnExitRadius: !!p.hideOnExitRadius,
+      dupeGroup:p.dupeGroup || null,
+      dialogueSteps:p.dialogueSteps || [],
+      interactionType:p.interactionType || 'dialogue',
+      recruitScope:p.recruitScope || null,
+      shopItems:(p.shopItems||[]).map(n=> cles.objets[n]).filter(Boolean),
+      shopPhrase:p.shopPhrase || '',
+      combatStats: stats,
+      zoneShowName: p.zoneShowName !== false,
+      explorable: !!p.explorable, explorerReport:p.explorerReport || '',
+      combatPortraitCrop:null,
+      lat: (typeof p.lat === 'number') ? p.lat : null,
+      lng: (typeof p.lng === 'number') ? p.lng : null,
+      assignedZoneId:null,
+      startDate:'', endDate:'', startTime:'', endTime:'', daysOfWeek:[],
+      mapIconScale:1, mapIconRotation:0,
+    };
+  };
+  for (const p of (sc.pnj||[])){
+    cles.pnj[p.cle || p.name] = await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal);
+  }
+
+  /* --- 7. Zones d'exploration ---
+     Une zone, c'est une fiche PNJ (le marqueur sur la carte) PLUS un document de scènes
+     portant le MÊME identifiant. Les identifiants de scènes et de points sont fabriqués ici :
+     le fichier ne les connaît pas, il ne manipule que des clés lisibles. */
+  for (const z of (sc.zones||[])){
+    const fiche = fabriquerFichePnj({ ...z, interactionType:'zone' });
+    const zoneId = await importEcrireDoc(creatureCol, z.name, fiche, 'Zone', journal);
+    cles.zones[z.cle || z.name] = zoneId;
+
+    const idScene = {};
+    (z.scenes||[]).forEach(s=>{ idScene[s.cle || s.name] = genSceneId(); });
+
+    const scenes = (z.scenes||[]).map(s=>({
+      id: idScene[s.cle || s.name],
+      name: s.name || 'Scène',
+      imageUrl:'', points:
+        (s.points||[]).map((pt,i)=>{
+          const base = {
+            id: 'pt_' + Date.now() + '_' + i + '_' + Math.floor(Math.random()*1000),
+            type: pt.type || 'decor',
+            x: (typeof pt.x === 'number') ? pt.x : 50,
+            y: (typeof pt.y === 'number') ? pt.y : 50,
+            w: pt.w || 18, h: pt.h || 18, rotation:0, flipped:false,
+          };
+          if (pt.text) base.text = pt.text;
+          if (pt.qty) base.qty = parseInt(pt.qty,10) || 1;
+          if (pt.resetMode) base.resetMode = pt.resetMode;
+          if (pt.resetMinutes) base.resetMinutes = parseInt(pt.resetMinutes,10) || 0;
+          if (pt.objet) base.itemId = importResoudre(cles.objets, pt.objet, items, journal, 'Zone « ' + z.name + ' »');
+          if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
+          if (pt.pnj) base.linkedPnjId = cles.pnj[pt.pnj] || null;
+          return base;
+        }),
+      encounterChance: parseInt(s.encounterChance,10) || 0,
+      encounterMonsterIds: (s.monstres||[]).map(m=> cles.pnj[m]).filter(Boolean),
+    }));
+
+    if (scenes.length){
+      await zonesCol.doc(zoneId).set({
+        scenes,
+        startSceneId: idScene[z.sceneDepart] || scenes[0].id,
+        updatedAt: Date.now(),
+      }, { merge:true });
+      journal.push('🗺️ Zone « ' + z.name + ' » : ' + scenes.length + ' scène(s) écrite(s)');
+    }
+  }
+
+  journal.push('— Les images ne sont pas importées : ajoute-les sur chaque fiche.');
+  return journal;
+}
+
+document.getElementById('scenarioImportBtn').addEventListener('click', async ()=>{
+  const champ = document.getElementById('scenarioImportFile');
+  const rapport = document.getElementById('scenarioImportReport');
+  const f = champ.files && champ.files[0];
+  if (!f){ showToast('Choisis d\'abord un fichier .json'); return; }
+  if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+  let sc;
+  try {
+    sc = JSON.parse(await f.text());
+  } catch(err){
+    rapport.innerHTML = '<span style="color:#e66;">Fichier illisible : ' + err.message + '</span>';
+    return;
+  }
+  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones']
+    .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + k) : null).filter(Boolean).join(' · ');
+  if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
+  const ok = await appConfirm('Importer « ' + (sc.titre || f.name) + ' » ?\n\n' + compte);
+  if (!ok) return;
+  rapport.textContent = 'Import en cours…';
+  try {
+    const journal = await importerScenario(sc);
+    rapport.innerHTML = journal.map(l=> '<div>' + l.replace(/</g,'&lt;') + '</div>').join('');
+    showToast('Import terminé');
+  } catch(err){
+    rapport.innerHTML += '<div style="color:#e66;">Interrompu : ' + err.message + '</div>';
+  }
+});
 
 </script>
 </body>
