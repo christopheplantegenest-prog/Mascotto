@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v284</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v285</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15976,6 +15976,38 @@ async function importerScenario(sc){
     }));
 
     if (scenes.length){
+      /* Le tableau `scenes` est remplacé EN ENTIER (le merge ne protège que les champs
+         du premier niveau) : sans précaution, un ré-import effacerait toutes les images
+         de scène posées à la main, qui sont le plus gros du travail de l'utilisateur.
+         On récupère donc les images de l'ancienne version, appariées par NOM de scène. */
+      try {
+        const ancien = await zonesCol.doc(zoneId).get();
+        if (ancien.exists){
+          const ancScenes = (ancien.data().scenes || []);
+          let reprises = 0;
+          scenes.forEach(s=>{
+            const a = ancScenes.find(x=> x.name === s.name);
+            if (!a) return;
+            ['imageUrl','imagePath','imageRef'].forEach(champ=>{
+              if (a[champ]){ s[champ] = a[champ]; }
+            });
+            if (a.imageUrl || a.imagePath || a.imageRef) reprises++;
+            /* Une image de point (« image en grand ») est rattachée au point, pas à la
+               scène : on la retrouve par le texte du point, seul repère stable ici. */
+            (s.points||[]).forEach(pt=>{
+              if (pt.type !== 'image') return;
+              const ap = (a.points||[]).find(x=> x.type === 'image' && (x.text||'') === (pt.text||''));
+              if (!ap) return;
+              ['bigImageUrl','bigImagePath','bigImageRef'].forEach(champ=>{
+                if (ap[champ]) pt[champ] = ap[champ];
+              });
+            });
+          });
+          if (reprises) journal.push('🖼️ Zone « ' + z.name + ' » : ' + reprises + ' image(s) de scène conservée(s)');
+        }
+      } catch(e){
+        journal.push('⚠️ Zone « ' + z.name + ' » : impossible de relire les images existantes — vérifie-les après l\'import');
+      }
       await zonesCol.doc(zoneId).set({
         scenes,
         startSceneId: idScene[z.sceneDepart] || scenes[0].id,
