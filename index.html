@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v282</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v284</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3469,6 +3469,22 @@ function creatureConditionMet(d){
   const state = playerQuestsState[d.visibilityCondition.questId] || 'none';
   if (d.visibilityCondition.state === 'completed') return state === 'completed';
   return state !== 'completed'; // 'not_completed' par défaut
+}
+
+/* Tous les monstres du jeu, y compris ceux qui ne sont posés nulle part sur la carte.
+   ATTENTION : ne jamais utiliser `creatures` pour ça — c'est la liste des marqueurs
+   AFFICHÉS, qui écarte toute fiche sans coordonnées. Or un monstre de rencontre
+   aléatoire n'a précisément aucune raison d'avoir une position. */
+function tousLesMonstres(){
+  const out = [];
+  if (!latestSnap) return out;
+  latestSnap.forEach(doc=>{
+    const d = doc.data();
+    if (d.interactionType === 'combat' && d.combatStats && !d.combatStats.recruitable){
+      out.push({ id: doc.id, ...d });
+    }
+  });
+  return out;
 }
 
 function renderAllCreatures(snap){
@@ -11950,7 +11966,7 @@ function renderSceneEncounterOverlay(){
   if (!sc) return;
   document.getElementById('sceneEncChance').value = sc.encounterChance || 0;
   if (!sc.encounterMonsterIds) sc.encounterMonsterIds = [];
-  const monsterPool = creatures.filter(c=> c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+  const monsterPool = tousLesMonstres();
   const wrap = document.getElementById('sceneEncMonstersPick');
   wrap.innerHTML = monsterPool.length ? monsterPool.map(m=>`
     <button type="button" class="btn-secondary scene-enc-monster-btn" data-mid="${m.id}" style="margin:2px; ${sc.encounterMonsterIds.includes(m.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${m.emoji||'👾'} ${m.name}</button>
@@ -13810,7 +13826,7 @@ document.getElementById('testCombatBtn').addEventListener('click', ()=>{
   const playerFighters = buildPlayerFighters();
   if (!playerFighters.length){ showToast('Ajoute au moins un combattant à ton équipe (Base > Combattants > ⭐)'); return; }
   if (!teamHasAnyoneStanding(playerFighters)){ showToast('Toute ton équipe est K.O. — réanime au moins un combattant'); return; }
-  const monsterPool = creatures.filter(c=> c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+  const monsterPool = tousLesMonstres();
   if (!monsterPool.length){ showToast('Crée d\'abord un monstre (non recrutable) dans l\'éditeur PNJ'); return; }
   const shuffled = monsterPool.slice().sort(()=> Math.random()-0.5);
   const enemyFighters = buildEnemyFighters(shuffled.slice(0, Math.min(3, shuffled.length)));
@@ -15830,6 +15846,10 @@ async function importerScenario(sc){
       startingAttackIds: (p.combatStats.attaquesDepart||[]).map(a=> cles.attaques[a]).filter(Boolean),
       immunities:p.combatStats.immunities || [],
       resistances:p.combatStats.resistances || [],
+      /* Butin lâché à la défaite et objets volables : le fichier les nomme, on résout ici. */
+      rewardItemIds: (p.combatStats.butin||[]).map(o=> importResoudre(cles.objets, o, items, journal, 'Butin de ' + p.name)).filter(Boolean),
+      stealEasyItemId: p.combatStats.volFacile ? importResoudre(cles.objets, p.combatStats.volFacile, items, journal, 'Vol sur ' + p.name) : null,
+      stealHardItemId: p.combatStats.volDifficile ? importResoudre(cles.objets, p.combatStats.volDifficile, items, journal, 'Vol sur ' + p.name) : null,
     } : null;
     return {
       name:p.name, metier:p.metier || '', emoji:p.emoji || '👤',
@@ -15840,7 +15860,28 @@ async function importerScenario(sc){
       dialogueSteps: resoudreDialogue(p.dialogueSteps, 'Dialogue de ' + p.name),
       interactionType:p.interactionType || 'dialogue',
       recruitScope:p.recruitScope || null,
-      shopItems:(p.shopItems||[]).map(n=> cles.objets[n]).filter(Boolean),
+      /* Une ligne de boutique, c'est un objet ET un prix. Le fichier peut écrire
+         soit {objet:"baume", prix:40}, soit juste "baume" — dans ce dernier cas on
+         retombe sur le prix de base de l'objet, et on le dit dans le journal. */
+      shopItems:(p.shopItems||[]).map(l=>{
+        const ref = (typeof l === 'string') ? l : (l.objet || l.cle || l.itemName);
+        const itemId = importResoudre(cles.objets, ref, items, journal, 'Boutique de ' + p.name);
+        if (!itemId) return null;
+        let prix = (typeof l === 'object') ? parseInt(l.prix != null ? l.prix : l.price, 10) : NaN;
+        if (!prix || prix <= 0){
+          /* Un objet créé par ce même fichier n'est pas encore dans `items` :
+             on va chercher son prix de base dans le fichier avant de renoncer. */
+          const objDuFichier = (sc.objets||[]).find(o=> o.cle === ref || o.name === ref);
+          const objDejaLa = items.find(x=> x.id === itemId);
+          prix = (objDuFichier && objDuFichier.basePrice) || (objDejaLa && objDejaLa.basePrice) || 0;
+          if (!prix){
+            journal.push('⚠️ Boutique de ' + p.name + ' : « ' + ref + ' » sans prix — ligne écartée');
+            return null;
+          }
+          journal.push('ℹ️ Boutique de ' + p.name + ' : « ' + ref + ' » au prix de base (' + prix + ')');
+        }
+        return { itemId, price: prix };
+      }).filter(Boolean),
       shopPhrase:p.shopPhrase || '',
       combatStats: stats,
       zoneShowName: p.zoneShowName !== false,
@@ -15848,7 +15889,10 @@ async function importerScenario(sc){
       combatPortraitCrop:null,
       lat: (typeof p.lat === 'number') ? p.lat : null,
       lng: (typeof p.lng === 'number') ? p.lng : null,
-      assignedZoneId:null,
+      /* PAS de assignedZoneId ici : les zones n'existent pas encore à cette étape,
+         et l'écrire à null ferait perdre le rattachement d'une fiche déjà en jeu
+         au moindre ré-import (un fichier complémentaire, par exemple). Il est posé
+         plus bas, une fois les zones créées. */
       startDate:'', endDate:'', startTime:'', endTime:'', daysOfWeek:[],
       mapIconScale:1, mapIconRotation:0,
     };
@@ -15900,6 +15944,25 @@ async function importerScenario(sc){
           if (pt.resetMode) base.resetMode = pt.resetMode;
           if (pt.resetMinutes) base.resetMinutes = parseInt(pt.resetMinutes,10) || 0;
           if (pt.objet) base.itemId = importResoudre(cles.objets, pt.objet, items, journal, 'Zone « ' + z.name + ' »');
+          /* Un point « action », c'est un ÉCHANGE : il consomme un objet et rend
+             soit un autre objet, soit un simple message. Sans ces champs, le point
+             répond « pas encore configuré » en jeu. */
+          if (pt.type === 'action'){
+            base.reqItemId = importResoudre(cles.objets, pt.objetDemande, items, journal, 'Action « ' + (pt.text||'') + ' » de la zone « ' + z.name + ' »');
+            base.reqQty = parseInt(pt.qtyDemandee,10) || 1;
+            if (pt.objetRendu){
+              base.resultType = 'give';
+              base.resultItemId = importResoudre(cles.objets, pt.objetRendu, items, journal, 'Action « ' + (pt.text||'') + ' » de la zone « ' + z.name + ' »');
+              base.resultQty = parseInt(pt.qtyRendue,10) || 1;
+            } else {
+              base.resultType = 'message';
+              base.resultMessage = pt.message || '';
+            }
+            if (!base.reqItemId) journal.push('⚠️ Zone « ' + z.name + ' » : un point « action » sans objet demandé — il ne fera rien');
+          }
+          /* Un point « image en grand » ouvre une image plein écran : l'import
+             n'en apporte aucune, il faut la poser à la main dans l'éditeur. */
+          if (pt.type === 'image') journal.push('⚠️ Zone « ' + z.name + ' » : point « image en grand » — pense à y poser l\'image dans l\'éditeur');
           if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
           if (pt.lockItem){
             base.lockType = 'item';
@@ -15920,6 +15983,24 @@ async function importerScenario(sc){
       }, { merge:true });
       journal.push('🗺️ Zone « ' + z.name + ' » : ' + scenes.length + ' scène(s) écrite(s)');
     }
+  }
+
+  /* --- 8. Rattachement des PNJ et monstres à une zone ---
+     Une fiche sans coordonnées ET sans zone est inaccessible : l'éditeur refuse de
+     l'enregistrer. Les zones n'existant qu'à l'étape précédente, on recolle ici.
+     Un monstre de rencontre aléatoire n'a pas à être posé sur la carte : c'est
+     précisément le cas que ce champ sert à couvrir. */
+  for (const p of (sc.pnj||[])){
+    if (!p.zone || p.dialogueSeul) continue;
+    const id = cles.pnj[p.cle || p.name];
+    const zoneId = cles.zones[p.zone];
+    if (!id) continue;
+    if (!zoneId){
+      journal.push('⚠️ PNJ « ' + p.name + ' » : zone introuvable « ' + p.zone +' » — fiche laissée sans rattachement');
+      continue;
+    }
+    await creatureCol.doc(id).set({ assignedZoneId: zoneId, updatedAt: Date.now() }, { merge:true });
+    journal.push('📍 « ' + p.name + ' » rattaché à la zone « ' + p.zone + ' »');
   }
 
   journal.push('— Les images ne sont pas importées : ajoute-les sur chaque fiche.');
