@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v285</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v288</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2143,7 +2143,6 @@
   </div>
   <div class="scene-imgwrap" id="sceneEditorImgWrap">
     <div class="scene-empty" id="sceneEditorEmpty">Ajoute une image de fond, puis appuie sur "➕ Point" pour en placer un.</div>
-    <div id="sceneEditorDpad" style="position:absolute; inset:0; pointer-events:none;"></div>
   </div>
   <div class="scene-bottombar">
     <div class="scene-actionrow-scroll">
@@ -2155,6 +2154,7 @@
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
     </div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
+    <div id="sceneEditorDpad" style="margin:6px 0 0;"></div>
     <div id="sceneEditorDetails" style="display:none;"></div>
     <div class="scene-actionrow">
       <button id="sceneEditorDeleteBtn" style="background:var(--danger); color:#fff; display:none;">🗑️ Supprimer le point</button>
@@ -2453,8 +2453,12 @@ function onSignedIn(user){
   if (typeof attachNegotiationListeners === 'function') attachNegotiationListeners();
   if (typeof allRecruitsRaw !== 'undefined' && allRecruitsRaw.length){
     recruits = allRecruitsRaw.filter(r=> r.ownerUid === user.uid);
+    /* Sans ça, la liste des déjà-recrutés restait celle d'avant la connexion (vide),
+       et les PNJ recrutés réapparaissaient sur la carte. */
+    recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
     if (typeof renderBaseRoster === 'function') renderBaseRoster();
   }
+  if (typeof majRecruesPretes === 'function') majRecruesPretes();
   db.collection('players').doc(user.uid).get().then((doc)=>{
     currentAgency = (doc.exists && doc.data().agencyName) || null;
     if (doc.exists && doc.data().pseudo){
@@ -3451,10 +3455,29 @@ const creatureCol = (typeof db !== 'undefined') ? db.collection('creature_types'
 let latestSnap = null;
 let recruitedSourceIds = new Set(); // sourceCreatureId des PNJ déjà recrutés par CE joueur (recrutement "par joueur")
 
+/* Au rechargement, l'instantané des PNJ arrive presque toujours AVANT celui des recrues.
+   À cet instant `recruitedSourceIds` est encore vide : les PNJ déjà recrutés sont donc
+   dessinés sur la carte, puis retirés une fraction de seconde plus tard quand les recrues
+   arrivent — d'où l'apparition fugace au rechargement. On attend donc de savoir qui est
+   déjà recruté avant le tout premier dessin.
+   Le minuteur de secours évite une carte vide si Firestore tarde (hors ligne, réseau lent) :
+   au pire on retombe sur l'ancien comportement, jamais sur une carte muette. */
+let recruitsSnapshotRecu = false; // au moins un instantané de la collection `recruits` reçu
+let recruitsPrets = false;        // instantané reçu ET joueur connu : on sait qui est recruté
+function marquerRecruesPretes(){
+  if (recruitsPrets) return;
+  recruitsPrets = true;
+  if (latestSnap && !movingMarker) renderAllCreatures(latestSnap);
+}
+function majRecruesPretes(){
+  if (recruitsSnapshotRecu && currentUser) marquerRecruesPretes();
+}
+setTimeout(marquerRecruesPretes, 4000);
+
 if (creatureCol){
   creatureCol.onSnapshot((snap)=>{
     latestSnap = snap;
-    if (!movingMarker) renderAllCreatures(snap);
+    if (!movingMarker && recruitsPrets) renderAllCreatures(snap);
     renderEditorList(snap);
     tryResumeSession();
   }, (err)=>{
@@ -5256,6 +5279,14 @@ if (itemsCol){
     renderPickupItemSelect();
     if (document.getElementById('recipeOutputPickBtn')) renderRecipeOutputSelect();
     if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
+    /* Les lignes de boutique affichent le nom de l'objet en le cherchant dans `items`.
+       Si cette liste arrive APRÈS l'ouverture de la fiche, elles restent bloquées sur
+       « — choisir — » alors que le prix, lui, s'affiche : la boutique paraît vidée alors
+       que rien n'est perdu. On les redessine donc ici, comme les autres rendus.
+       Exception : si le curseur est dans un champ de la boutique, l'utilisateur est en
+       train de taper un prix — redessiner recréerait les champs et lui volerait le focus. */
+    const boutiqueWrap = document.getElementById('shopItemsList');
+    if (boutiqueWrap && !boutiqueWrap.contains(document.activeElement)) renderShopItemsBuilder();
   }, (err)=>{
     document.getElementById('itemsStatus').textContent = 'Erreur : ' + err.message;
   });
@@ -7118,7 +7149,9 @@ if (recruitsCol){
     }
     recruits = currentUser ? allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid) : [];
     recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
-    if (typeof latestSnap !== 'undefined' && latestSnap && !movingMarker) renderAllCreatures(latestSnap);
+    recruitsSnapshotRecu = true;
+    if (!recruitsPrets) majRecruesPretes(); // premier instantané : c'est lui qui déclenche le dessin
+    else if (typeof latestSnap !== 'undefined' && latestSnap && !movingMarker) renderAllCreatures(latestSnap);
     document.getElementById('baseStatus').textContent = recruits.length ? recruits.length + ' PNJ recruté(s)' : 'Aucun PNJ recruté pour le moment.';
     renderBaseRoster();
     if (activeRecruitId) renderRecruitSheet();
@@ -11594,6 +11627,20 @@ const SCENE_POINT_TYPES = [
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
+/* Flèche de sortie fournie par le jeu : une image SVG légère, embarquée dans le code.
+   But : ne plus avoir à parcourir les fichiers du téléphone à chaque sortie posée, et
+   donner enfin au joueur un repère discret là où l'icône par défaut était mise invisible.
+   Elle est appliquée d'office aux nouvelles sorties, et reste remplaçable comme n'importe
+   quelle autre image. Elle pointe vers le haut : le curseur « Rotation » du point suffit
+   à l'orienter dans les quatre directions. */
+const FLECHE_SORTIE_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
+  '<path d="M50 12 L84 52 L65 52 L65 86 L35 86 L35 52 L16 52 Z" ' +
+  'fill="#ffffff" fill-opacity="0.82" stroke="#12181f" stroke-opacity="0.6" ' +
+  'stroke-width="5" stroke-linejoin="round"/>' +
+  '</svg>'
+);
+
 /* ---------- Stockage externalisé des images de scène (évite de dépasser la taille max d'un document Firestore) ----------
    Chaque image (fond de scène ou point) est stockée dans son propre document de la collection scene_images,
    référencée depuis la zone par un simple id (imageRef). Dédupliquée par contenu : la même image ne créera
@@ -12194,13 +12241,17 @@ function renderSceneEditorDpad(){
   const dpad = document.getElementById('sceneEditorDpad');
   const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
   if (!pt){ dpad.innerHTML = ''; return; }
-  const btn = 'pointer-events:auto; width:42px; height:42px; border-radius:50%; border:none; background:rgba(0,0,0,.6); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,.4);';
+  /* Barre posée SOUS l'image, plus dessus : les boutons ne masquent plus la scène et
+     peuvent être plus grands. Ils sont rectangulaires et tiennent sur une seule ligne,
+     ce qui donne une surface de touche large sans manger de la hauteur. */
+  const btn = 'height:44px; flex:1; border-radius:8px; border:1px solid rgba(255,255,255,.25); background:rgba(255,255,255,.12); color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center;';
   dpad.innerHTML = `
-    <button type="button" id="scDpadUp" style="${btn} position:absolute; left:50%; top:10px; transform:translateX(-50%);">▲</button>
-    <button type="button" id="scDpadDown" style="${btn} position:absolute; left:50%; bottom:10px; transform:translateX(-50%);">▼</button>
-    <button type="button" id="scDpadLeft" style="${btn} position:absolute; left:10px; top:50%; transform:translateY(-50%);">◀</button>
-    <button type="button" id="scDpadRight" style="${btn} position:absolute; right:10px; top:50%; transform:translateY(-50%);">▶</button>
-    <div style="position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:8px;">
+    <div style="display:flex; gap:6px; align-items:center;">
+      <button type="button" id="scDpadLeft" style="${btn}">◀</button>
+      <button type="button" id="scDpadUp" style="${btn}">▲</button>
+      <button type="button" id="scDpadDown" style="${btn}">▼</button>
+      <button type="button" id="scDpadRight" style="${btn}">▶</button>
+      <div style="width:10px; flex:none;"></div>
       <button type="button" id="scDpadSizeUp" style="${btn}">＋</button>
       <button type="button" id="scDpadSizeDown" style="${btn}">－</button>
     </div>
@@ -12244,6 +12295,10 @@ function addNewScenePoint(typeId){
     x: 50, y: 50, w: 18, h: 18, rotation: 0, flipped: false,
   });
   const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
+  /* Une sortie arrive déjà habillée de la flèche du jeu : plus besoin d'aller chercher
+     une image dans le téléphone à chaque fois. On n'ajoute la clé que dans ce cas —
+     écrire `imageUrl: undefined` ferait refuser l'enregistrement par Firestore. */
+  if (typeId === 'sortie' || typeId === 'sortie_zone') newPt.imageUrl = FLECHE_SORTIE_URL;
   renderSceneEditorPoints();
   selectScenePoint(newPt.id);
 }
@@ -12302,7 +12357,7 @@ function renderSceneDetailAppearance(pt){
   const planeIdx = sceneEditorPoints.findIndex(p=>p.id===pt.id);
   appWrap.innerHTML = `
     <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Apparence du point</div>
-    <p class="meta" style="margin:0 0 6px;">Position et taille se règlent avec les flèches et les boutons ＋/－ qui apparaissent sur l'image une fois le point sélectionné.</p>
+    <p class="meta" style="margin:0 0 6px;">Position et taille se règlent avec les flèches et les boutons ＋/－ de la barre située sous l'image.</p>
     <div class="field-label" style="color:rgba(255,255,255,.75);">Plan (pour les points qui se chevauchent)</div>
     <div class="field-row" style="align-items:center; gap:8px; margin-bottom:6px;">
       <button type="button" class="btn-secondary" data-plane-back ${planeIdx<=0?'disabled':''} style="flex:1;">－ Reculer d'un plan</button>
@@ -12326,6 +12381,7 @@ function renderSceneDetailAppearance(pt){
         ${pt.imageUrl ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
       </div>
       <button type="button" class="btn-secondary" data-point-img-github style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
+      ${(pt.type === 'sortie' || pt.type === 'sortie_zone') ? `<button type="button" class="btn-secondary" data-point-img-arrow style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">⬆️ Flèche de sortie du jeu</button>` : ''}
       <input type="file" id="scenePointImgFile" accept="image/*" style="display:none;">
     `}
     ${effectiveUrl ? `
@@ -12390,6 +12446,15 @@ function renderSceneDetailAppearance(pt){
       renderSceneEditorPoints();
       renderSceneDetailAppearance(pt);
     });
+  });
+  const arrowBtn = appWrap.querySelector('[data-point-img-arrow]');
+  if (arrowBtn) arrowBtn.addEventListener('click', ()=>{
+    pt.imageUrl = FLECHE_SORTIE_URL;
+    pt.imagePath = null;
+    pt.imageRef = null;
+    pt.hideIcon = false;
+    renderSceneEditorPoints();
+    renderSceneDetailAppearance(pt);
   });
   const clearBtn = appWrap.querySelector('[data-point-img-clear]');
   if (clearBtn) clearBtn.addEventListener('click', ()=>{
