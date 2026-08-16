@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v292</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v294</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12267,6 +12267,8 @@ function pointEffectiveImageUrl(pt){
 function isPointHitAt(pt, div, clientX, clientY){
   const rect = div.getBoundingClientRect();
   if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
+  /* Point masqué : plus d'image affichée, donc plus de pixels à tester — tout le rectangle répond. */
+  if (pt.hideIcon) return true;
   const url = pointEffectiveImageUrl(pt);
   if (!url || pt.rotation) return true;
   const cache = pointPixelCache[url];
@@ -12522,9 +12524,11 @@ function renderSceneDetailAppearance(pt){
     `}
     ${effectiveUrl ? `
       <p class="meta" style="margin:6px 0 0;">Rotation et miroir se règlent sur la barre placée juste sous l'image, pour voir le point tourner en direct.</p>
-    ` : `
-      <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Icône invisible pour le joueur (le point reste actif, juste sans rien à afficher dessus)</label>
-    `}
+    ` : ''}
+    <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Invisible pour le joueur (le point reste actif et touchable, il n'affiche simplement rien)</label>
+    ${(effectiveUrl && pt.hideIcon) ? `
+      <p class="meta" style="margin:4px 0 0; color:var(--accent);">L'image reste affichée ici pour que tu puisses placer et dimensionner le point ; le joueur, lui, ne verra rien. À poser sur un élément déjà dessiné dans le décor.</p>
+    ` : ''}
   `;
   const backBtn = appWrap.querySelector('[data-plane-back]');
   if (backBtn) backBtn.addEventListener('click', ()=>{
@@ -12616,6 +12620,7 @@ function renderSceneDetailAppearance(pt){
   if (hideInput) hideInput.addEventListener('change', (e)=>{
     pt.hideIcon = e.target.checked;
     renderSceneEditorPoints();
+    renderSceneDetailAppearance(pt); // pour faire apparaître ou disparaître l'explication
   });
   /* Poser ou retirer une image fait apparaître ou disparaître la barre de rotation. */
   renderSceneEditorRotateBar();
@@ -13219,7 +13224,8 @@ async function renderSceneViewCurrentScene(){
     im.onerror = ()=> resolve(im);
     im.src = sc.imageUrl;
   });
-  const [img, hiddenPnjIds] = await Promise.all([imgReady, getHiddenPnjIds(sc)]);
+  const [img, infoPnj] = await Promise.all([imgReady, getScenePnjInfo(sc)]);
+  sceneViewPnjFiches = infoPnj.fiches;
   if (sceneViewCurrentSceneId !== scRaw.id) return; // scène changée entretemps, ce rendu est obsolète
 
   wrap.insertBefore(img, wrap.firstChild);
@@ -13228,7 +13234,7 @@ async function renderSceneViewCurrentScene(){
   sceneViewPointActions = wrapPointActions;
   (sc.points || []).forEach(pt=>{
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
-    if (pt.type === 'pnj' && pt.linkedPnjId && hiddenPnjIds.has(pt.linkedPnjId)) return;
+    if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
     if (pt.type === 'pnj' && !isScenePointAvailable(pt)) return;
 
     const el = document.createElement('div');
@@ -13236,7 +13242,8 @@ async function renderSceneViewCurrentScene(){
     el.dataset.ptid = pt.id;
     el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w||8; el.dataset.pth = pt.h||8;
     if (pt.type === 'pnj' && pt.linkedPnjId) el.dataset.pnjid = pt.linkedPnjId;
-    const url = pointEffectiveImageUrl(pt);
+    /* hideIcon l'emporte sur l'image : le point est posé sur un élément déjà dessiné dans le décor. */
+    const url = pt.hideIcon ? null : pointEffectiveImageUrl(pt);
     if (url){
       ensurePointPixelCache(url);
       el.style.cssText = `position:absolute; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
@@ -13373,6 +13380,13 @@ async function renderSceneViewCurrentScene(){
       };
     }
 
+    /* Hors de son créneau, le PNJ est créé mais masqué : c'est ce qui permet à
+       majPnjHorairesScene() de le faire réapparaître sans redessiner toute la pièce. */
+    if (pt.type === 'pnj' && pt.linkedPnjId){
+      const fiche = infoPnj.fiches[pt.linkedPnjId];
+      if (fiche && !isActiveNow(fiche)) el.style.display = 'none';
+    }
+
     wrap.appendChild(el);
   });
 
@@ -13388,6 +13402,7 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
   const pointEls = Array.from(wrap.querySelectorAll('.scene-point'));
   for (let i = pointEls.length - 1; i >= 0; i--){
     const div = pointEls[i];
+    if (div.style.display === 'none') continue; // point masqué (PNJ hors créneau) : intouchable
     const ptId = div.dataset.ptid;
     const scRaw = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
     const sc = scRaw ? resolveSceneContent(scRaw) : null;
@@ -13421,24 +13436,45 @@ function positionSceneViewPoints(){
    Le créneau n'était vérifié que pour les marqueurs de la CARTE — un PNJ posé dans une
    scène s'affichait à toute heure, si bien que deux versions d'un même personnage aux
    horaires différents apparaissaient en même temps. */
-async function getHiddenPnjIds(sc){
+async function getScenePnjInfo(sc){
   const pnjIds = Array.from(new Set((sc.points || []).filter(pt=> pt.type==='pnj' && pt.linkedPnjId).map(pt=> pt.linkedPnjId)));
-  const hiddenIds = new Set();
-  if (!pnjIds.length || !creatureCol) return hiddenIds;
+  const partis = new Set(); // recrutés ou supprimés : ils ne reviendront pas, on ne les dessine pas
+  const fiches = {};        // gardées pour pouvoir réévaluer les horaires sans relire Firestore
+  if (!pnjIds.length || !creatureCol) return { partis, fiches };
   const docs = await Promise.all(pnjIds.map(id=> creatureCol.doc(id).get().catch(()=> null)));
   docs.forEach((doc)=>{
     if (!doc) return;
-    if (!doc.exists){ hiddenIds.add(doc.id); return; }
+    if (!doc.exists){ partis.add(doc.id); return; }
     const d = doc.data();
-    if (!isActiveNow(d)){ hiddenIds.add(doc.id); return; } // hors de son créneau : pas là
+    fiches[doc.id] = d;
     if (d.recruitScope === 'shared'){
-      if (d.recruited) hiddenIds.add(doc.id); // partagé : recruté par n'importe qui
+      if (d.recruited) partis.add(doc.id); // partagé : recruté par n'importe qui
     } else if (recruitedSourceIds.has(doc.id)){
-      hiddenIds.add(doc.id); // par joueur : recruté par toi
+      partis.add(doc.id); // par joueur : recruté par toi
     }
   });
-  return hiddenIds;
+  return { partis, fiches };
 }
+
+/* Les PNJ hors de leur créneau sont DESSINÉS mais masqués, et ce petit rendez-vous
+   régulier les fait apparaître et disparaître pendant que le joueur est dans la pièce.
+   Sans lui, un joueur présent à l'instant de la bascule verrait les deux versions d'un
+   même personnage, ou aucune, jusqu'à ce qu'il ressorte. */
+let sceneViewPnjFiches = {};
+function majPnjHorairesScene(){
+  const plein = document.getElementById('sceneViewFull');
+  if (!plein || !plein.classList.contains('show')) return;
+  const wrap = document.getElementById('sceneViewImgWrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.scene-point[data-pnjid]').forEach(el=>{
+    const fiche = sceneViewPnjFiches[el.dataset.pnjid];
+    if (!fiche) return;
+    const doitEtreLa = isActiveNow(fiche);
+    const affiche = el.style.display !== 'none';
+    if (doitEtreLa !== affiche) el.style.display = doitEtreLa ? '' : 'none';
+  });
+}
+setInterval(majPnjHorairesScene, 15000);
 document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=>{
   /* Confirmation demandée hors du vaisseau : quitter une zone en cours fait perdre le chemin
      parcouru, puisqu'on y revient par l'entrée. Chez soi, la question n'a pas lieu d'être. */
