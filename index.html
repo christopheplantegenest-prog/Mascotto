@@ -187,6 +187,27 @@
   #recipeItemChooserOverlay{ z-index:4500; }
   #pnjChooserOverlay{ z-index:4500; }
   #githubPickerOverlay{ z-index:4500; }
+  /* Pavé numérique du jeu : remplace la boîte de dialogue du navigateur, qui s'affichait
+     tout en haut de l'écran, hors du décor, et cassait l'immersion au moment précis où
+     le joueur est devant une porte. */
+  #codePadOverlay{ z-index:4700; background:rgba(0,0,0,.82); align-items:center; padding:16px; }
+  #codePadOverlay .sheet{ border-radius:20px; max-width:320px; }
+  .codepad-display{
+    background:var(--bg); border:1px solid var(--line); border-radius:12px;
+    padding:14px; text-align:center; font-family:var(--mono); font-size:26px;
+    letter-spacing:.35em; color:var(--text); min-height:56px; margin:10px 0 4px;
+  }
+  .codepad-display.vide{ color:var(--muted); letter-spacing:.15em; font-size:15px; }
+  .codepad-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+  .codepad-key{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    border-radius:12px; padding:16px 0; font-size:20px; font-weight:700; font-family:var(--mono);
+  }
+  .codepad-key:active{ background:var(--accent); color:#fff; }
+  .codepad-key.action{ font-size:14px; font-family:inherit; color:var(--muted); }
+  .codepad-key.valider{ background:var(--accent); color:#fff; border-color:var(--accent); font-size:14px; font-family:inherit; }
+  .codepad-erreur{ color:var(--danger); font-size:13px; text-align:center; min-height:18px; margin-top:8px; font-weight:700; }
+
   /* Image d'un point "Image en grand" : plein écran, fond sombre, on touche n'importe où pour fermer */
   #sceneBigImageOverlay{
     z-index:4600; background:rgba(0,0,0,.94); align-items:center; padding:12px;
@@ -638,7 +659,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v296</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v297</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -683,6 +704,30 @@
 </div>
 
 <!-- Fenêtre boutique (PNJ marchand) -->
+<div class="overlay" id="codePadOverlay">
+  <div class="sheet">
+    <h3 style="margin-top:0;" id="codePadTitle">🔒 Porte verrouillée</h3>
+    <p class="meta" id="codePadHint">Entre le code</p>
+    <div class="codepad-display vide" id="codePadDisplay">— — — —</div>
+    <div class="codepad-erreur" id="codePadError"></div>
+    <div class="codepad-grid">
+      <button class="codepad-key" data-key="1">1</button>
+      <button class="codepad-key" data-key="2">2</button>
+      <button class="codepad-key" data-key="3">3</button>
+      <button class="codepad-key" data-key="4">4</button>
+      <button class="codepad-key" data-key="5">5</button>
+      <button class="codepad-key" data-key="6">6</button>
+      <button class="codepad-key" data-key="7">7</button>
+      <button class="codepad-key" data-key="8">8</button>
+      <button class="codepad-key" data-key="9">9</button>
+      <button class="codepad-key action" data-key="effacer">⌫</button>
+      <button class="codepad-key" data-key="0">0</button>
+      <button class="codepad-key valider" data-key="ok">Entrer</button>
+    </div>
+    <button class="btn-secondary" id="codePadCancel" style="width:100%; margin-top:10px;">Repartir</button>
+  </div>
+</div>
+
 <div class="overlay" id="shopOverlay">
   <div class="sheet" style="max-height:80vh; overflow-y:auto;">
     <div class="sheet-top">
@@ -2582,24 +2627,88 @@ function isActiveNow(d){
     const end = new Date(d.endDate + 'T' + (d.endTime || '23:59'));
     if (now > end) return false;
   }
-  const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
-  /* Plusieurs créneaux possibles : la fiche est active si l'heure tombe dans L'UN d'eux.
-     Un créneau dont la fin est avant le début passe minuit (23:00 -> 08:00). */
-  /* Avec une date de début ou de fin, les heures servent de bornes à ce moment précis
+  /* Plusieurs créneaux possibles : la fiche est active si l'heure tombe dans L'UN d'eux
+     (voir heureDansCreneaux, qui gère aussi le passage de minuit).
+     Avec une date de début ou de fin, les heures servent de bornes à ce moment précis
      (comportement d'origine, conservé). Les créneaux, eux, sont toujours quotidiens. */
   const creneaux = (Array.isArray(d.timeRanges) && d.timeRanges.length)
     ? d.timeRanges.filter(c=> c && (c.start || c.end))
     : ((!d.startDate && !d.endDate) ? normaliserCreneaux(d) : []);
-  if (creneaux.length){
-    const dedans = creneaux.some(c=>{
-      const deb = c.start || '00:00', fin = c.end || '23:59';
-      return (deb <= fin) ? (nowT >= deb && nowT <= fin) : (nowT >= deb || nowT <= fin);
-    });
-    if (!dedans) return false;
-  }
+  if (creneaux.length && !heureDansCreneaux(creneaux)) return false;
   return true;
 }
 
+/* Vrai pour l'instant présent si l'heure tombe dans l'un des créneaux.
+   Partagé par les fiches (zones, PNJ, monstres, boutiques) et par les portes d'une scène :
+   une seule règle d'horaire dans tout le jeu, passage de minuit compris. */
+function heureDansCreneaux(creneaux){
+  if (!creneaux || !creneaux.length) return true;
+  const now = new Date();
+  const pad = n=> String(n).padStart(2,'0');
+  const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
+  return creneaux.some(c=>{
+    const deb = (c && c.start) || '00:00', fin = (c && c.end) || '23:59';
+    return (deb <= fin) ? (nowT >= deb && nowT <= fin) : (nowT >= deb || nowT <= fin);
+  });
+}
+
+/* Lignes de créneaux d'une porte, dans l'éditeur de scène. */
+function sortieHorairesHtml(pt){
+  const r = Array.isArray(pt.openRanges) ? pt.openRanges : [];
+  if (!r.length) return `<p class="meta" style="color:rgba(255,255,255,.6); margin:0;">Aucun créneau : la porte est ouverte à toute heure.</p>`;
+  return r.map((c,i)=>`
+    <div class="field-row" style="align-items:center; gap:8px; margin-bottom:6px;">
+      <input type="time" class="field-input" data-sortie-h-debut="${i}" value="${c.start||''}" style="margin:0;">
+      <span class="meta" style="flex:0 0 auto; color:rgba(255,255,255,.6);">→</span>
+      <input type="time" class="field-input" data-sortie-h-fin="${i}" value="${c.end||''}" style="margin:0;">
+      <button type="button" class="btn-secondary" data-sortie-h-suppr="${i}" style="flex:0 0 auto; padding:8px 12px; color:var(--danger); border-color:rgba(192,57,43,.5) !important;">✕</button>
+    </div>`).join('');
+}
+
+/* ---------- Pavé numérique du jeu ---------- */
+let codePadResolve = null;
+function demanderCode(titre, indice, verifier){
+  return new Promise((resolve)=>{
+    codePadResolve = resolve;
+    let saisie = '';
+    const ov = document.getElementById('codePadOverlay');
+    const disp = document.getElementById('codePadDisplay');
+    const err = document.getElementById('codePadError');
+    document.getElementById('codePadTitle').textContent = titre || '🔒 Porte verrouillée';
+    document.getElementById('codePadHint').textContent = indice || 'Entre le code';
+    err.textContent = '';
+    const afficher = ()=>{
+      disp.textContent = saisie ? saisie.replace(/./g,'●') : '— — — —';
+      disp.classList.toggle('vide', !saisie);
+    };
+    afficher();
+    const fermer = (valeur)=>{
+      ov.classList.remove('show');
+      ov.querySelectorAll('[data-key]').forEach(b=> b.onclick = null);
+      document.getElementById('codePadCancel').onclick = null;
+      if (codePadResolve){ const r = codePadResolve; codePadResolve = null; r(valeur); }
+    };
+    ov.querySelectorAll('[data-key]').forEach(b=>{
+      b.onclick = ()=>{
+        const k = b.dataset.key;
+        err.textContent = '';
+        if (k === 'effacer'){ saisie = saisie.slice(0,-1); afficher(); return; }
+        if (k === 'ok'){
+          if (typeof verifier === 'function' && !verifier(saisie)){
+            err.textContent = 'Code incorrect';
+            saisie = ''; afficher();
+            return;
+          }
+          fermer(saisie);
+          return;
+        }
+        if (saisie.length < 12){ saisie += k; afficher(); }
+      };
+    });
+    document.getElementById('codePadCancel').onclick = ()=> fermer(null);
+    ov.classList.add('show');
+  });
+}
 /* ---------- Liste de créneaux horaires de l'éditeur ---------- */
 let editTimeRanges = [];
 
@@ -12707,6 +12816,7 @@ function renderSceneDetailTypeSpecific(pt){
 
   if (pt.type === 'sortie'){
     if (!pt.lockType) pt.lockType = 'none';
+    if (!Array.isArray(pt.openRanges)) pt.openRanges = [];
     const otherScenes = sceneEditorScenes.filter(s=>s.id !== sceneEditorCurrentSceneId);
     const lockIt = items.find(i=>i.id===pt.lockItemId);
     typeWrap.innerHTML = `
@@ -12728,6 +12838,14 @@ function renderSceneDetailTypeSpecific(pt){
       <div data-sortie-lock-code-wrap style="display:${pt.lockType==='code'?'block':'none'}; margin-top:6px;">
         <input type="text" inputmode="numeric" data-sortie-lock-code class="field-input" placeholder="Ex. 1234" value="${pt.lockCode||''}">
       </div>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Horaires d'ouverture de la porte</div>
+      <div data-sortie-horaires>${sortieHorairesHtml(pt)}</div>
+      <button type="button" class="btn-secondary" data-sortie-horaire-add style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">＋ Ajouter un créneau</button>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Aucun créneau = la porte est ouverte à toute heure. Une fin plus tôt que le début passe minuit.</p>
+      <div data-sortie-closedmsg-wrap style="display:${(pt.openRanges&&pt.openRanges.length)?'block':'none'};">
+        <div class="field-label" style="color:rgba(255,255,255,.75);">Message quand c'est fermé</div>
+        <input type="text" data-sortie-closedmsg class="field-input" placeholder="Ex. La porte est fermée à cette heure-ci." value="${(pt.closedMessage||'').replace(/"/g,'&quot;')}">
+      </div>
     `;
     typeWrap.querySelector('[data-sortie-target]').addEventListener('change', (e)=>{
       pt.targetSceneId = e.target.value || null;
@@ -12740,6 +12858,23 @@ function renderSceneDetailTypeSpecific(pt){
     if (lockItemBtn) lockItemBtn.addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneEditorDetails(); });
     });
+    const addH = typeWrap.querySelector('[data-sortie-horaire-add]');
+    if (addH) addH.addEventListener('click', ()=>{
+      if (!Array.isArray(pt.openRanges)) pt.openRanges = [];
+      pt.openRanges.push({ start:'', end:'' });
+      renderSceneEditorDetails();
+    });
+    typeWrap.querySelectorAll('[data-sortie-h-debut]').forEach(el=>{
+      el.addEventListener('change', ()=>{ pt.openRanges[+el.dataset.sortieHDebut].start = el.value; });
+    });
+    typeWrap.querySelectorAll('[data-sortie-h-fin]').forEach(el=>{
+      el.addEventListener('change', ()=>{ pt.openRanges[+el.dataset.sortieHFin].end = el.value; });
+    });
+    typeWrap.querySelectorAll('[data-sortie-h-suppr]').forEach(el=>{
+      el.addEventListener('click', ()=>{ pt.openRanges.splice(+el.dataset.sortieHSuppr, 1); renderSceneEditorDetails(); });
+    });
+    const closedMsgInput = typeWrap.querySelector('[data-sortie-closedmsg]');
+    if (closedMsgInput) closedMsgInput.addEventListener('input', (e)=>{ pt.closedMessage = e.target.value; });
     const lockCodeInput = typeWrap.querySelector('[data-sortie-lock-code]');
     if (lockCodeInput) lockCodeInput.addEventListener('input', (e)=>{
       pt.lockCode = e.target.value.replace(/[^0-9]/g, '');
@@ -13346,6 +13481,13 @@ async function renderSceneViewCurrentScene(){
             if (!combatState) await clearSavedCombat();
           }
         };
+        /* L'heure passe avant le verrou : une porte fermée le reste même si le joueur
+           a la clé, exactement comme une zone hors de ses horaires. */
+        const creneauxPorte = (pt.openRanges || []).filter(c=> c && (c.start || c.end));
+        if (creneauxPorte.length && !heureDansCreneaux(creneauxPorte)){
+          showToast(pt.closedMessage || 'C\'est fermé pour le moment.');
+          return;
+        }
         if (pt.lockType === 'item'){
           if (!pt.lockItemId){ proceed(); return; }
           if (!currentUser || !db){ proceed(); return; }
@@ -13359,13 +13501,10 @@ async function renderSceneViewCurrentScene(){
             }
           });
         } else if (pt.lockType === 'code'){
-          const entered = prompt('🔒 Cette sortie est verrouillée. Entre le code :');
-          if (entered === null) return;
-          if (entered.trim() === (pt.lockCode || '')){
-            proceed();
-          } else {
-            showToast('Code incorrect');
-          }
+          /* Le pavé vérifie lui-même et reste ouvert tant que le code est faux :
+             le joueur réessaie sur place au lieu de retoucher la porte à chaque tentative. */
+          demanderCode('🔒 Porte verrouillée', 'Entre le code', (saisi)=> saisi === (pt.lockCode || ''))
+            .then((saisi)=>{ if (saisi !== null) proceed(); });
         } else {
           proceed();
         }
