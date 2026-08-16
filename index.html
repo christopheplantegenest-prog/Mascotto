@@ -638,7 +638,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v294</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v295</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2072,16 +2072,10 @@
           <input type="date" id="editEndDate" class="field-input">
         </div>
       </div>
-      <div class="field-row">
-        <div>
-          <div class="field-label" style="margin-top:0;">Heure début</div>
-          <input type="time" id="editStartTime" class="field-input">
-        </div>
-        <div>
-          <div class="field-label" style="margin-top:0;">Heure fin</div>
-          <input type="time" id="editEndTime" class="field-input">
-        </div>
-      </div>
+      <div class="field-label">Créneaux horaires (laisser vide = à toute heure)</div>
+      <div id="editTimeRanges"></div>
+      <button type="button" class="btn-secondary" id="addTimeRange" style="width:100%; margin-top:6px;">＋ Ajouter un créneau</button>
+      <p class="meta" style="margin:6px 0 0;">Plusieurs créneaux possibles : la fiche est visible si l'heure tombe dans l'un d'eux. Une fin plus tôt que le début passe minuit (23:00 → 08:00).</p>
 
       <div class="field-label">Condition d'apparition (déplacement de PNJ)</div>
       <select id="editVisibilityQuest" class="field-input">
@@ -2588,12 +2582,78 @@ function isActiveNow(d){
     const end = new Date(d.endDate + 'T' + (d.endTime || '23:59'));
     if (now > end) return false;
   }
-  if (!d.startDate && !d.endDate && (d.startTime || d.endTime)){
-    const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
-    if (d.startTime && nowT < d.startTime) return false;
-    if (d.endTime && nowT > d.endTime) return false;
+  const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
+  /* Plusieurs créneaux possibles : la fiche est active si l'heure tombe dans L'UN d'eux.
+     Un créneau dont la fin est avant le début passe minuit (23:00 -> 08:00). */
+  /* Avec une date de début ou de fin, les heures servent de bornes à ce moment précis
+     (comportement d'origine, conservé). Les créneaux, eux, sont toujours quotidiens. */
+  const creneaux = (Array.isArray(d.timeRanges) && d.timeRanges.length)
+    ? d.timeRanges.filter(c=> c && (c.start || c.end))
+    : ((!d.startDate && !d.endDate) ? normaliserCreneaux(d) : []);
+  if (creneaux.length){
+    const dedans = creneaux.some(c=>{
+      const deb = c.start || '00:00', fin = c.end || '23:59';
+      return (deb <= fin) ? (nowT >= deb && nowT <= fin) : (nowT >= deb || nowT <= fin);
+    });
+    if (!dedans) return false;
   }
   return true;
+}
+
+/* ---------- Liste de créneaux horaires de l'éditeur ---------- */
+let editTimeRanges = [];
+
+function renderEditTimeRanges(){
+  const wrap = document.getElementById('editTimeRanges');
+  if (!wrap) return;
+  if (!editTimeRanges.length){
+    wrap.innerHTML = `<p class="meta" style="margin:0;">Aucun créneau : la fiche est visible à toute heure.</p>`;
+    return;
+  }
+  wrap.innerHTML = editTimeRanges.map((c, i)=> `
+    <div class="field-row" style="align-items:center; gap:8px; margin-bottom:6px;">
+      <input type="time" class="field-input" data-creneau-debut="${i}" value="${c.start || ''}" style="margin:0;">
+      <span class="meta" style="flex:0 0 auto;">→</span>
+      <input type="time" class="field-input" data-creneau-fin="${i}" value="${c.end || ''}" style="margin:0;">
+      <button type="button" class="btn-secondary" data-creneau-suppr="${i}" style="flex:0 0 auto; padding:8px 12px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-creneau-debut]').forEach(el=>{
+    el.addEventListener('change', ()=> { editTimeRanges[+el.dataset.creneauDebut].start = el.value; });
+  });
+  wrap.querySelectorAll('[data-creneau-fin]').forEach(el=>{
+    el.addEventListener('change', ()=> { editTimeRanges[+el.dataset.creneauFin].end = el.value; });
+  });
+  wrap.querySelectorAll('[data-creneau-suppr]').forEach(el=>{
+    el.addEventListener('click', ()=> { editTimeRanges.splice(+el.dataset.creneauSuppr, 1); renderEditTimeRanges(); });
+  });
+}
+
+function setEditTimeRanges(d){
+  editTimeRanges = normaliserCreneaux(d || {}).map(c=> ({ start: c.start || '', end: c.end || '' }));
+  renderEditTimeRanges();
+}
+
+/* Le bouton peut exister avant ou après l'exécution de ce script selon l'ordre du document. */
+function brancherAjoutCreneau(){
+  const b = document.getElementById('addTimeRange');
+  if (!b || b.dataset.branche) return;
+  b.dataset.branche = '1';
+  b.addEventListener('click', ()=>{
+    editTimeRanges.push({ start: '', end: '' });
+    renderEditTimeRanges();
+  });
+}
+brancherAjoutCreneau();
+document.addEventListener('DOMContentLoaded', brancherAjoutCreneau);
+
+/* Renvoie les créneaux horaires d'une fiche, quel que soit son âge :
+   les fiches d'avant la v295 n'ont qu'un couple startTime/endTime. */
+function normaliserCreneaux(d){
+  if (Array.isArray(d.timeRanges) && d.timeRanges.length){
+    return d.timeRanges.filter(c=> c && (c.start || c.end));
+  }
+  if (d.startTime || d.endTime) return [{ start: d.startTime || '', end: d.endTime || '' }];
+  return [];
 }
 
 /* ---------- Dialogue à choix multiples (mini-syntaxe) ---------- */
@@ -4705,8 +4765,7 @@ function loadForEdit(id){
   document.getElementById('editCombatStealHard').value = cs.stealHardItemId || '';
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
-  document.getElementById('editStartTime').value = d.startTime || '';
-  document.getElementById('editEndTime').value = d.endTime || '';
+  setEditTimeRanges(d);
   setSelectedDays(d.daysOfWeek);
 
   uploadedImagePath = d.imagePath || null;
@@ -4811,8 +4870,7 @@ function resetForm(){
   document.getElementById('editCombatStealHard').value = '';
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
-  document.getElementById('editStartTime').value = '';
-  document.getElementById('editEndTime').value = '';
+  setEditTimeRanges({});
   setSelectedDays([]);
   refreshPosStatusDisplay();
   document.getElementById('editSaveBtn').textContent = 'Enregistrer le PNJ';
@@ -5036,8 +5094,11 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   };
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
-  const startTime = document.getElementById('editStartTime').value;
-  const endTime = document.getElementById('editEndTime').value;
+  const timeRanges = editTimeRanges.filter(c=> c.start || c.end).map(c=> ({ start: c.start || '', end: c.end || '' }));
+  /* Le premier créneau reste recopié dans startTime/endTime : ces champs servent encore
+     de bornes quand une date de début ou de fin est renseignée. */
+  const startTime = timeRanges.length ? timeRanges[0].start : '';
+  const endTime = timeRanges.length ? timeRanges[0].end : '';
   const daysOfWeek = Array.from(selectedDays);
 
   if (!name){ showToast('Donne un nom au PNJ'); return; }
@@ -5060,7 +5121,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -16179,7 +16240,7 @@ async function importerScenario(sc){
          et l'écrire à null ferait perdre le rattachement d'une fiche déjà en jeu
          au moindre ré-import (un fichier complémentaire, par exemple). Il est posé
          plus bas, une fois les zones créées. */
-      startDate:'', endDate:'', startTime:'', endTime:'', daysOfWeek:[],
+      startDate:'', endDate:'', startTime:'', endTime:'', timeRanges:[], daysOfWeek:[],
       mapIconScale:1, mapIconRotation:0,
     };
   };
