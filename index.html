@@ -659,7 +659,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v297</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v299</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6437,7 +6437,7 @@ function renderPnjChooserList(){
   listEl.innerHTML = pool.length ? pool.map(c=>`
     <div class="editor-list-item" data-choosepnj="${c.id}" style="cursor:pointer;">
       <div class="thumb">${c.imageUrl ? `<img src="${c.imageUrl}" style="width:100%; height:100%; object-fit:contain;">` : (c.emoji || '👤')}</div>
-      <div class="name">${c.name || '(sans nom)'}</div>
+      <div class="name">${c.name || '(sans nom)'}${resumeConditionsPnj(c)}</div>
     </div>
   `).join('') : '<p class="meta">Aucun PNJ ne correspond.</p>';
   listEl.querySelectorAll('[data-choosepnj]').forEach(row=>{
@@ -6448,6 +6448,25 @@ function renderPnjChooserList(){
     });
   });
 }
+/* Résumé des conditions d'un PNJ, affiché sous son nom dans la liste de choix.
+   Sans ça, plusieurs doublons (même nom, même image) sont impossibles à distinguer :
+   c'est le cas d'un robot qui change de pièce selon l'heure. */
+function resumeConditionsPnj(c){
+  const parts = [];
+  const creneaux = normaliserCreneaux(c || {});
+  if (creneaux.length){
+    parts.push(creneaux.map(t=> `${t.start || '00:00'}-${t.end || '23:59'}`).join(', '));
+  }
+  if (Array.isArray(c.daysOfWeek) && c.daysOfWeek.length && c.daysOfWeek.length < 7){
+    const noms = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+    parts.push(c.daysOfWeek.map(d=> noms[d]).filter(Boolean).join('/'));
+  }
+  if (c.startDate || c.endDate) parts.push(`${c.startDate || '…'} → ${c.endDate || '…'}`);
+  if (c.assignedZoneName) parts.push(c.assignedZoneName);
+  if (!parts.length) return '';
+  return `<div class="meta" style="font-size:11px; opacity:.75; margin-top:2px;">${parts.join(' · ')}</div>`;
+}
+
 function openPnjChooser(onPick, filterFn){
   pnjChooserCallback = onPick;
   pnjChooserFilter = filterFn || null;
@@ -16390,7 +16409,21 @@ async function importerScenario(sc){
          et l'écrire à null ferait perdre le rattachement d'une fiche déjà en jeu
          au moindre ré-import (un fichier complémentaire, par exemple). Il est posé
          plus bas, une fois les zones créées. */
-      startDate:'', endDate:'', startTime:'', endTime:'', timeRanges:[], daysOfWeek:[],
+      /* Horaires et jours : on lit ce que le fichier apporte. Écrire du vide en dur
+         faisait deux dégâts — les créneaux d'un scénario étaient ignorés, et un
+         ré-import EFFAÇAIT ceux réglés à la main sur une fiche déjà en jeu.
+         `timeRanges` accepte soit une liste [{start,end}], soit le couple
+         startTime/endTime, qui est alors recopié dedans (même forme qu'une fiche
+         enregistrée par l'éditeur depuis la v295). Jours : 1 = dimanche. */
+      startDate: p.startDate || '', endDate: p.endDate || '',
+      startTime: p.startTime || '', endTime: p.endTime || '',
+      timeRanges: normaliserCreneaux({
+        timeRanges: Array.isArray(p.timeRanges) ? p.timeRanges : [],
+        startTime: p.startTime || '', endTime: p.endTime || '',
+      }),
+      daysOfWeek: Array.isArray(p.daysOfWeek)
+        ? p.daysOfWeek.map(n=> parseInt(n,10)).filter(n=> n>=0 && n<=6)
+        : [],
       mapIconScale:1, mapIconRotation:0,
     };
   };
