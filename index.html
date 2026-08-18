@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v305</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v306</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2112,6 +2112,10 @@
       <div class="pos-actions" style="margin-top:6px;">
         <button class="btn-secondary" id="assignZoneBtn" style="width:100%;">🗺️ Placer dans une zone d'exploration</button>
       </div>
+      <div class="pos-actions" style="margin-top:6px;">
+        <button class="btn-secondary" id="reserveBtn" style="width:100%;">📦 Aucun lieu — garder en réserve</button>
+      </div>
+      <p class="meta">Pour les fiches qui n'ont pas à être quelque part : monstres de rencontre aléatoire, habitants du vaisseau, personnages préparés à l'avance. Elles s'enregistrent sans emplacement et se retrouvent dans la liste sous « 📦 En réserve ».</p>
       <p class="meta" id="assignZoneHint" style="display:none; margin-top:4px;">Ce PNJ est assigné à une zone d'exploration plutôt qu'à un point sur la carte. <span id="assignZoneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
 
       <div class="field-label">Jours d'apparition (aucun coché = tous les jours)</div>
@@ -4704,6 +4708,7 @@ let pendingLat = null, pendingLng = null;
 let pendingMapIconScale = 1, pendingMapIconRotation = 0;
 let pendingCombatPortraitCrop = null;
 let pendingAssignedZoneId = null;
+let pendingReserve = false;      // fiche volontairement sans lieu
 let uploadedImageDataUrl = null;
 let uploadedImagePath = null; // chemin relatif si l'image est hébergée (voir resolveMediaPath)
 
@@ -4947,16 +4952,22 @@ function renderEditorList(snap){
       }
       const groupes = {};
       dedans.forEach(doc=>{
-        const zid = doc.data().assignedZoneId || '';
+        /* Trois cas, pas deux : rattaché à une zone · posé sur la carte · en réserve (aucun des deux). */
+        const d0 = doc.data();
+        const zid = d0.assignedZoneId
+          || ((typeof d0.lat === 'number' && typeof d0.lng === 'number') ? '' : 'reserve');
         (groupes[zid] = groupes[zid] || []).push(doc);
       });
       const cles = Object.keys(groupes).sort((a,b)=>{
         if (!a) return -1;            // « Sur la carte » en premier
         if (!b) return 1;
+        if (a === 'reserve') return 1;   // la réserve en dernier
+        if (b === 'reserve') return -1;
         return (nomsDeZone[a] || a).localeCompare(nomsDeZone[b] || b, 'fr');
       });
       cles.forEach(zid=>{
-        const nom = zid ? ('📍 ' + (nomsDeZone[zid] || 'Zone supprimée')) : '🌍 Sur la carte';
+        const nom = !zid ? '🌍 Sur la carte'
+          : (zid === 'reserve' ? '📦 En réserve (aucun lieu)' : '📍 ' + (nomsDeZone[zid] || 'Zone supprimée'));
         conteneur.appendChild(titre(nom + '  (' + groupes[zid].length + ')', 2));
         groupes[zid].sort(parNom).forEach(doc=> conteneur.appendChild(ligne(doc)));
       });
@@ -5119,13 +5130,14 @@ function loadForEdit(id){
 
   if (d.assignedZoneId){
     pendingLat = null; pendingLng = null;
-    pendingAssignedZoneId = d.assignedZoneId;
+    pendingAssignedZoneId = d.assignedZoneId; pendingReserve = false;
   } else if (typeof d.lat === 'number' && typeof d.lng === 'number'){
     pendingLat = d.lat; pendingLng = d.lng;
-    pendingAssignedZoneId = null;
+    pendingAssignedZoneId = null; pendingReserve = false;
   } else {
+    /* Ni point ni zone : la fiche existe pourtant, donc elle est en réserve. */
     pendingLat = null; pendingLng = null;
-    pendingAssignedZoneId = null;
+    pendingAssignedZoneId = null; pendingReserve = true;
   }
   refreshPosStatusDisplay();
   document.getElementById('editSaveBtn').textContent = 'Mettre à jour le PNJ';
@@ -5139,6 +5151,7 @@ function resetForm(){
   pendingLat = null; pendingLng = null;
   pendingMapIconScale = 1; pendingMapIconRotation = 0;
   pendingAssignedZoneId = null;
+  pendingReserve = false;
   uploadedImageDataUrl = null;
   uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
@@ -5442,7 +5455,10 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const daysOfWeek = Array.from(selectedDays);
 
   if (!name){ showToast('Donne un nom au PNJ'); return; }
-  if (pendingLat === null && !pendingAssignedZoneId){ showToast('Choisis un emplacement sur la carte ou une zone d\'exploration'); return; }
+  /* Une fiche « en réserve » est volontairement sans lieu : on ne la refuse plus.
+     La règle d'origine protégeait des fiches oubliées, mais elle obligeait surtout à inventer
+     un emplacement bidon pour tout ce qui n'a pas à être quelque part. */
+  if (pendingLat === null && !pendingAssignedZoneId && !pendingReserve){ showToast('Choisis un emplacement, une zone d\'exploration, ou mets la fiche en réserve'); return; }
   if (interactionType === 'combat' && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
@@ -5484,6 +5500,9 @@ function refreshPosStatusDisplay(){
   } else if (pendingLat !== null){
     el.textContent = `${pendingLat.toFixed(5)}, ${pendingLng.toFixed(5)}`;
     hint.style.display = 'none';
+  } else if (pendingReserve){
+    el.textContent = '📦 En réserve (aucun lieu)';
+    hint.style.display = 'none';
   } else {
     el.textContent = 'Non définie';
     hint.style.display = 'none';
@@ -5500,6 +5519,7 @@ document.getElementById('assignZoneBtn').addEventListener('click', ()=>{
     pnjChooserCallback = (id, c)=>{
       pendingAssignedZoneId = id;
       pendingLat = null; pendingLng = null;
+      pendingReserve = false;
       refreshPosStatusDisplay();
     };
     document.getElementById('pnjChooserSearch').value = '';
@@ -5509,6 +5529,12 @@ document.getElementById('assignZoneBtn').addEventListener('click', ()=>{
 });
 document.getElementById('assignZoneClear').addEventListener('click', ()=>{
   pendingAssignedZoneId = null;
+  refreshPosStatusDisplay();
+});
+document.getElementById('reserveBtn').addEventListener('click', ()=>{
+  pendingReserve = true;
+  pendingAssignedZoneId = null;
+  pendingLat = null; pendingLng = null;
   refreshPosStatusDisplay();
 });
 document.getElementById('placeNewBtn').addEventListener('click', ()=>{
@@ -5538,6 +5564,7 @@ document.getElementById('placeConfirmBtn').addEventListener('click', ()=>{
   } else {
     pendingLat = center.lat; pendingLng = center.lng;
     pendingAssignedZoneId = null;
+    pendingReserve = false;
     refreshPosStatusDisplay();
     document.getElementById('editorOverlay').classList.add('show');
   }
@@ -6654,15 +6681,35 @@ function renderPnjChooserList(){
   const search = (document.getElementById('pnjChooserSearch').value || '').trim().toLowerCase();
   let pool = pnjChooserFilter ? pnjChooserAll.filter(pnjChooserFilter) : pnjChooserAll;
   if (search) pool = pool.filter(c=> (c.name||'').toLowerCase().includes(search));
-  listEl.innerHTML = pool.length ? pool.map(c=>`
+
+  const ligne = (c, ailleurs)=>`
     <div class="editor-list-item" data-choosepnj="${c.id}" style="cursor:pointer;">
-      <div class="thumb">${c.imageUrl ? `<img src="${c.imageUrl}" style="width:100%; height:100%; object-fit:contain;">` : (c.emoji || '👤')}</div>
-      <div class="name">${c.name || '(sans nom)'}${resumeConditionsPnj(c)}</div>
-    </div>
-  `).join('') : '<p class="meta">Aucun PNJ ne correspond.</p>';
+      <div class="thumb">${c.imageUrl ? `<img src="${c.imageUrl}" style="width:100%; height:100%; object-fit:cover; object-position:top center;">` : (c.emoji || '👤')}</div>
+      <div class="name">${c.name || '(sans nom)'}${resumeConditionsPnj(c)}${ailleurs ? '<div class="meta" style="font-size:11px; opacity:.75; margin-top:2px;">sera rattaché à cette zone</div>' : ''}</div>
+    </div>`;
+
+  if (pnjChooserZonePrioritaire){
+    const dedans = pool.filter(c=> c.assignedZoneId === pnjChooserZonePrioritaire && (c.interactionType || 'dialogue') !== 'zone');
+    const dehors = pool.filter(c=> c.assignedZoneId !== pnjChooserZonePrioritaire && (c.interactionType || 'dialogue') !== 'zone');
+    const titre = (t)=> `<div class="field-label" style="margin:10px 0 4px;">${t}</div>`;
+    listEl.innerHTML = (dedans.length || dehors.length)
+      ? (dedans.length ? titre('Déjà dans cette zone  (' + dedans.length + ')') + dedans.map(c=> ligne(c, false)).join('') : '')
+        + (dehors.length ? titre('Ailleurs ou en réserve  (' + dehors.length + ')') + dehors.map(c=> ligne(c, true)).join('') : '')
+      : '<p class="meta">Aucun PNJ ne correspond.</p>';
+  } else {
+    listEl.innerHTML = pool.length ? pool.map(c=> ligne(c, false)).join('') : '<p class="meta">Aucun PNJ ne correspond.</p>';
+  }
   listEl.querySelectorAll('[data-choosepnj]').forEach(row=>{
     row.addEventListener('click', ()=>{
       const c = pnjChooserAll.find(x=>x.id === row.dataset.choosepnj);
+      /* Rattachement automatique : choisir un PNJ pour une scène de cette zone, c'est dire
+         qu'il y habite. On l'écrit tout de suite pour éviter l'aller-retour par sa fiche. */
+      if (c && pnjChooserZonePrioritaire && c.assignedZoneId !== pnjChooserZonePrioritaire && creatureCol){
+        c.assignedZoneId = pnjChooserZonePrioritaire;
+        creatureCol.doc(c.id).set({ assignedZoneId: pnjChooserZonePrioritaire, lat: null, lng: null }, { merge:true })
+          .then(()=> showToast((c.name || 'PNJ') + ' rattaché à cette zone'))
+          .catch((err)=> showToast('Rattachement impossible : ' + err.message));
+      }
       if (pnjChooserCallback && c) pnjChooserCallback(c.id, c);
       document.getElementById('pnjChooserOverlay').classList.remove('show');
     });
@@ -6687,9 +6734,15 @@ function resumeConditionsPnj(c){
   return `<div class="meta" style="font-size:11px; opacity:.75; margin-top:2px;">${parts.join(' · ')}</div>`;
 }
 
-function openPnjChooser(onPick, filterFn){
+/* `zonePrioritaire` : identifiant de la zone qu'on est en train de monter. Les PNJ qui y sont
+   déjà rattachés remontent en tête, les autres restent accessibles en dessous — et celui qu'on
+   choisit est rattaché automatiquement. Avant, la liste était filtrée sur la zone : il fallait
+   sortir, ouvrir la fiche, la rattacher à la main, revenir. */
+let pnjChooserZonePrioritaire = null;
+function openPnjChooser(onPick, filterFn, zonePrioritaire){
   pnjChooserCallback = onPick;
   pnjChooserFilter = filterFn || null;
+  pnjChooserZonePrioritaire = zonePrioritaire || null;
   document.getElementById('pnjChooserSearch').value = '';
   document.getElementById('pnjChooserList').innerHTML = '<p class="meta">Chargement…</p>';
   document.getElementById('pnjChooserOverlay').classList.add('show');
@@ -13348,7 +13401,7 @@ function renderSceneDetailTypeSpecific(pt){
         renderSceneEditorPoints();
         renderSceneDetailAppearance(pt);
         renderSceneDetailTypeSpecific(pt);
-      }, (c)=> c.assignedZoneId === sceneEditorZoneId);
+      }, null, sceneEditorZoneId);
     });
     return;
   }
