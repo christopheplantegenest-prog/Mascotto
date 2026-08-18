@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v328</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v330</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3887,6 +3887,25 @@ function dlgCreerSuite(ch){
 /* « Que se passe-t-il quand le joueur dit ça ? » — les conséquences d'une réponse, écrites
    comme des phrases et réglées une par une. Même esprit que le parcours : on ne montre jamais
    qu'une décision à la fois, et chaque ligne dit son état actuel plutôt qu'un champ vide. */
+/* Toutes les réponses du jeu qui peuvent servir de condition : celles du dialogue en cours
+   et celles de tous les autres personnages. Une réponse sans identifiant n'est pas citable —
+   elle en reçoit un dès que sa fiche est rouverte et enregistrée. */
+function choixConnusPartout(exclureId){
+  const out = [];
+  currentDialogueSteps.forEach(st=> (st.choices || []).forEach(c=>{
+    if (!c.id || c.id === exclureId || !(c.label || '').trim()) return;
+    out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj:'ce personnage', creatureId:null });
+  }));
+  toutesLesFiches().forEach(f=>{
+    if (f.id === editingId) return;             // déjà couvert par le dialogue en cours
+    (f.dialogueSteps || []).forEach(st=> (st.choices || []).forEach(c=>{
+      if (!c.id || !(c.label || '').trim()) return;
+      out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj: f.name || '(sans nom)', creatureId: f.id });
+    }));
+  });
+  return out;
+}
+
 function fenetreEffetsReponse(ch){
   const fond = document.createElement('div');
   fond.className = 'overlay show';
@@ -4009,6 +4028,35 @@ function fenetreEffetsReponse(ch){
       ouvrirSelecteur({ titre:'Recruté comme…', items: metiers.map(m=> ({ id:m.id, label:m.name, emoji:m.emoji || '🤝' })),
         selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] }; dessiner(); } });
     });
+
+    /* --- condition : ce que le joueur a déjà dit, ici ou ailleurs --- */
+    const decrireCondition = ()=>{
+      if (!ch.showIf || ch.showIf.kind !== 'choice' || !ch.showIf.choiceId) return 'toujours proposée';
+      const chezQui = ch.showIf.creatureId ? ((ficheParId(ch.showIf.creatureId) || {}).name || 'quelqu\'un') : 'ce personnage';
+      const trouve = choixConnusPartout().find(o=> o.id === ch.showIf.choiceId);
+      const quoi = trouve ? ('« ' + trouve.reponse + ' »') : 'une réponse supprimée';
+      return (ch.showIf.taken === 'no' ? 'seulement si le joueur N\'A PAS dit ' : 'seulement si le joueur a dit ')
+        + quoi + ' à ' + chezQui;
+    };
+    ligne('🔒 Quand cette réponse apparaît', decrireCondition(), ()=>{
+      if (ch.showIf && ch.showIf.kind === 'choice'){ ch.showIf = null; dessiner(); return; }
+      const connus = choixConnusPartout(ch.id);
+      if (!connus.length){ showToast('Aucune autre réponse mémorisable pour l\'instant'); return; }
+      ouvrirSelecteur({
+        titre:'Apparaît si le joueur a déjà dit…',
+        items: connus.map(o=> ({ id:o.id, label:'« ' + o.reponse +' »', emoji:'💬', detail:'à ' + o.pnj })),
+        selectionnes: [], max:1,
+        onChoisir:(ids)=>{
+          const o = connus.find(x=> x.id === ids[0]);
+          if (o) ch.showIf = { kind:'choice', choiceId:o.id, creatureId:o.creatureId, taken:'yes' };
+          dessiner();
+        } });
+    });
+    if (ch.showIf && ch.showIf.kind === 'choice' && ch.showIf.choiceId){
+      bascule('Inverser : apparaît seulement s\'il ne l\'a PAS dit', ch.showIf.taken === 'no', ()=>{
+        ch.showIf.taken = (ch.showIf.taken === 'no') ? 'yes' : 'no';
+      });
+    }
 
     bascule('Ne proposer cette réponse qu\'une seule fois', !!ch.once, ()=>{ ch.once = !ch.once; });
   };
@@ -4519,6 +4567,7 @@ function ficheParId(id){
 }
 
 function renderAllCreatures(snap){
+  majChoixReferencesPartout();
   creatures.forEach(c=>{ if (c.marker) map.removeLayer(c.marker); });
   creatures = [];
   snap.forEach((doc)=>{
@@ -4901,8 +4950,19 @@ function dialogueReferencedChoiceIds(steps){
   });
   return ids;
 }
+/* Choix cités comme condition PAR N'IMPORTE QUELLE FICHE. Sans ça, la phrase de Debora
+   n'était mémorisée que si Debora elle-même s'y référait : Vicky ne pouvait pas savoir.
+   Recalculé à chaque instantané des fiches, donc toujours à jour. */
+let choixReferencesPartout = new Set();
+function majChoixReferencesPartout(){
+  const ids = new Set();
+  toutesLesFiches().forEach(f=>{
+    dialogueReferencedChoiceIds(f.dialogueSteps).forEach(id=> ids.add(id));
+  });
+  choixReferencesPartout = ids;
+}
 function shouldRememberChoice(ch){
-  return !!ch.once || !!(ch.id && activeReferencedChoiceIds.has(ch.id));
+  return !!ch.once || !!(ch.id && (activeReferencedChoiceIds.has(ch.id) || choixReferencesPartout.has(ch.id)));
 }
 function markChoiceUsed(key){
   playerUsedChoices[key] = true; // effet immédiat, sans attendre le retour du serveur
@@ -4984,7 +5044,11 @@ function renderSheet(){
     }
     if (ch.showIf && ch.showIf.kind === 'choice'){
       if (ch.showIf.choiceId){
-        const taken = !!playerUsedChoices[choiceUsedKey(c.id, ch.showIf.choiceId)];
+        /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
+           Renseigné, il désigne un autre personnage : c'est ce qui permet à Vicky de savoir
+           que Debora vous a envoyé. */
+        const chezQui = ch.showIf.creatureId || c.id;
+        const taken = !!playerUsedChoices[choiceUsedKey(chezQui, ch.showIf.choiceId)];
         if (ch.showIf.taken === 'no'){ if (taken) return false; }
         else if (!taken) return false;
       }
@@ -5409,7 +5473,7 @@ function planDeCouche(el){
 }
 function assurerAuDessus(el){
   const visibles = Array.from(document.querySelectorAll('.overlay.show, .scene-full.show'))
-    .filter(x=> x !== el && x.offsetParent !== null);
+    .filter(x=> x !== el && (x.offsetParent !== null || x.isConnected));
   if (!visibles.length) return;
   const plafond = Math.max(0, ...visibles.map(planDeCouche));
   if (planDeCouche(el) <= plafond){
@@ -5420,16 +5484,27 @@ function assurerAuDessus(el){
 function surveillerLesFenetres(){
   const observateur = new MutationObserver((mutations)=>{
     mutations.forEach(m=>{
+      /* Cas 1 : une fenêtre déjà dans la page reçoit la classe « show ». */
       const el = m.target;
-      if (!el.classList || !el.classList.contains('overlay')) return;
-      if (el.classList.contains('show')) assurerAuDessus(el);
-      else if (el.dataset.planReleve){        // refermée : on rend son plan d'origine
-        el.style.zIndex = '';
-        delete el.dataset.planReleve;
+      if (el.classList && el.classList.contains('overlay')){
+        if (el.classList.contains('show')) assurerAuDessus(el);
+        else if (el.dataset.planReleve){       // refermée : on rend son plan d'origine
+          el.style.zIndex = '';
+          delete el.dataset.planReleve;
+        }
       }
+      /* Cas 2 : une fenêtre CRÉÉE déjà ouverte (`className = 'overlay show'`). Aucun
+         changement de classe ne se produit alors — c'est ce qui laissait passer les
+         sélecteurs et la fenêtre des conséquences d'une réponse, ouverts au-dessus
+         d'une autre fenêtre mais avec un plan écrit en dur, donc derrière elle. */
+      m.addedNodes && m.addedNodes.forEach(n=>{
+        if (n.nodeType !== 1) return;
+        if (n.classList && n.classList.contains('overlay') && n.classList.contains('show')) assurerAuDessus(n);
+        if (n.querySelectorAll) n.querySelectorAll('.overlay.show').forEach(assurerAuDessus);
+      });
     });
   });
-  observateur.observe(document.body, { attributes:true, attributeFilter:['class'], subtree:true });
+  observateur.observe(document.body, { attributes:true, attributeFilter:['class'], childList:true, subtree:true });
 }
 document.addEventListener('DOMContentLoaded', surveillerLesFenetres);
 if (document.readyState !== 'loading') surveillerLesFenetres();
