@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v306</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v309</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2096,9 +2096,9 @@
           <div class="field-label">Objets remportés en cas de victoire (aucune pièce par défaut)</div>
           <div id="combatRewardsList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
           <div class="field-label">🎒 Objet volable — facile (optionnel)</div>
-          <select id="editCombatStealEasy" class="field-input"><option value="">— Aucun —</option></select>
+          <button type="button" id="editCombatStealEasy" class="btn-secondary" style="width:100%; justify-content:flex-start; display:flex; align-items:center; gap:6px;">— Aucun —</button>
           <div class="field-label">🎒 Objet volable — difficile (optionnel)</div>
-          <select id="editCombatStealHard" class="field-input"><option value="">— Aucun —</option></select>
+          <button type="button" id="editCombatStealHard" class="btn-secondary" style="width:100%; justify-content:flex-start; display:flex; align-items:center; gap:6px;">— Aucun —</button>
           <p class="meta">S'ajoute EN PLUS du butin normal, indépendamment — voler ne réduit pas ce que le monstre lâche à sa défaite. L'objet facile est toujours tenté en premier tant qu'il n'a pas déjà été volé, puis le difficile.</p>
         </div>
       </div>
@@ -3058,34 +3058,77 @@ function renderCombatAttacksPicker(){
 function renderCombatStatusPicker(listId, selectedSet){
   const wrap = document.getElementById(listId);
   if (!wrap) return;
-  wrap.innerHTML = COMBAT_STATUSES.map(s=>`
-    <button type="button" class="btn-secondary combat-status-btn" data-status="${s.id}" style="${selectedSet.has(s.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${s.label}</button>
-  `).join('');
-  wrap.querySelectorAll('.combat-status-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const id = btn.dataset.status;
-      if (selectedSet.has(id)) selectedSet.delete(id); else selectedSet.add(id);
-      renderCombatStatusPicker(listId, selectedSet);
+  const titres = { combatImmunitiesList:'Immunités', combatResistancesList:'Résistances' };
+  const pris = COMBAT_STATUSES.filter(st=> selectedSet.has(st.id));
+  wrap.innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">
+      ${pris.length ? pris.map(st=>`<button type="button" class="btn-secondary" data-status-off="${st.id}"
+          style="background:var(--accent); color:#fff; border-color:var(--accent);">${st.label} ✕</button>`).join('')
+        : '<p class="meta" style="margin:0;">Aucun état choisi.</p>'}
+    </div>
+    <button type="button" class="btn-secondary" data-status-open style="width:100%; margin-top:8px;">➕ Choisir (${pris.length})</button>`;
+  wrap.querySelectorAll('[data-status-off]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ selectedSet.delete(btn.dataset.statusOff); renderCombatStatusPicker(listId, selectedSet); });
+  });
+  wrap.querySelector('[data-status-open]').addEventListener('click', ()=>{
+    ouvrirSelecteur({
+      titre: titres[listId] || 'États',
+      items: COMBAT_STATUSES.map(st=> ({ id:st.id, label:st.label })),
+      selectionnes: Array.from(selectedSet),
+      onChoisir: (ids)=>{
+        selectedSet.clear(); ids.forEach(id=> selectedSet.add(id));
+        renderCombatStatusPicker(listId, selectedSet);
+      },
     });
   });
+}
+function itemsPourSelecteur(){
+  return items.map(it=> ({ id:it.id, label:it.name, emoji:it.emoji || '🎒',
+    detail:[it.category, it.rarity].filter(Boolean).join(' · ') }));
 }
 function renderCombatRewardsPicker(){
   const wrap = document.getElementById('combatRewardsList');
   if (!wrap) return;
-  wrap.innerHTML = items.map(it=>`
-    <button type="button" class="btn-secondary combat-reward-btn" data-item="${it.id}" style="display:inline-flex; align-items:center; gap:5px; ${selectedCombatRewards.has(it.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${itemThumbHtml(it, 18)} ${it.name}</button>
-  `).join('') || '<p class="meta">Aucun objet créé pour l\'instant (éditeur "Objets").</p>';
-  wrap.querySelectorAll('.combat-reward-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const id = btn.dataset.item;
-      if (selectedCombatRewards.has(id)) selectedCombatRewards.delete(id); else selectedCombatRewards.add(id);
-      renderCombatRewardsPicker();
+  const pris = items.filter(it=> selectedCombatRewards.has(it.id));
+  wrap.innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">
+      ${pris.length ? pris.map(it=>`<button type="button" class="btn-secondary" data-reward-off="${it.id}"
+          style="display:inline-flex; align-items:center; gap:5px; background:var(--accent); color:#fff; border-color:var(--accent);">${itemThumbHtml(it, 18)} ${it.name} ✕</button>`).join('')
+        : '<p class="meta" style="margin:0;">Aucun objet — le monstre ne lâche rien.</p>'}
+    </div>
+    <button type="button" class="btn-secondary" data-reward-open style="width:100%; margin-top:8px;">➕ Choisir des objets (${pris.length})</button>`;
+  wrap.querySelectorAll('[data-reward-off]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ selectedCombatRewards.delete(btn.dataset.rewardOff); renderCombatRewardsPicker(); });
+  });
+  wrap.querySelector('[data-reward-open]').addEventListener('click', ()=>{
+    if (!items.length){ showToast('Aucun objet créé pour l\'instant (éditeur « Objets »)'); return; }
+    ouvrirSelecteur({
+      titre: 'Objets remportés en cas de victoire',
+      items: itemsPourSelecteur(),
+      selectionnes: Array.from(selectedCombatRewards),
+      onChoisir: (ids)=>{ selectedCombatRewards = new Set(ids); renderCombatRewardsPicker(); },
     });
   });
-  // Les <option> d'une liste déroulante ne peuvent pas afficher d'image (limite HTML) : nom seul ici.
-  const itemOptionsHtml = items.map(it=> `<option value="${it.id}">${it.name}</option>`).join('');
-  document.getElementById('editCombatStealEasy').innerHTML = '<option value="">— Aucun —</option>' + itemOptionsHtml;
-  document.getElementById('editCombatStealHard').innerHTML = '<option value="">— Aucun —</option>' + itemOptionsHtml;
+  /* Les deux objets volables passent aussi par la fenêtre : une liste déroulante de cinquante
+     objets se manipule très mal, et elle ne peut même pas afficher les vignettes. */
+  ['Easy','Hard'].forEach(quoi=>{
+    const bouton = document.getElementById('editCombatSteal' + quoi);
+    if (!bouton) return;
+    const id = bouton.dataset.itemId || '';
+    const it = items.find(x=> x.id === id);
+    bouton.innerHTML = it ? (itemThumbHtml(it, 18) + ' ' + it.name + ' ✕') : '— Aucun —';
+    bouton.onclick = ()=>{
+      if (bouton.dataset.itemId){ bouton.dataset.itemId = ''; renderCombatRewardsPicker(); return; }
+      if (!items.length){ showToast('Aucun objet créé pour l\'instant'); return; }
+      ouvrirSelecteur({
+        titre: quoi === 'Easy' ? 'Objet volable — facile' : 'Objet volable — difficile',
+        items: itemsPourSelecteur(),
+        selectionnes: id ? [id] : [],
+        max: 1,
+        onChoisir: (ids)=>{ bouton.dataset.itemId = ids[0] || ''; renderCombatRewardsPicker(); },
+      });
+    };
+  });
 }
 
 /* ---------- Éditeur de dialogue : navigation par boutons + vue arbre (v211) ----------
@@ -3214,6 +3257,46 @@ function renderDialogueBuilder(){
     head.appendChild(delBtn);
   }
   card.appendChild(head);
+
+  /* Première rencontre : l'étape 0 peut ne se jouer qu'une fois. Les fois suivantes, la
+     conversation démarre ailleurs — on ne se présente pas deux fois à la même personne. */
+  if (stepIdx === 0){
+    const encLbl = document.createElement('label');
+    encLbl.style.cssText = 'display:flex; align-items:center; gap:8px; margin:6px 0;';
+    const encBox = document.createElement('input');
+    encBox.type = 'checkbox';
+    encBox.style.width = 'auto';
+    encBox.checked = !!step.firstOnly;
+    const encTxt = document.createElement('span');
+    encTxt.style.fontSize = '13px';
+    encTxt.textContent = '🤝 Ne se joue qu\'à la première rencontre';
+    encLbl.appendChild(encBox); encLbl.appendChild(encTxt);
+    card.appendChild(encLbl);
+
+    const suiteWrap = document.createElement('div');
+    suiteWrap.style.display = step.firstOnly ? 'block' : 'none';
+    const suiteLbl = document.createElement('div');
+    suiteLbl.className = 'field-label';
+    suiteLbl.textContent = 'Les fois suivantes, commencer à';
+    suiteWrap.appendChild(suiteLbl);
+    const suiteSel = document.createElement('select');
+    suiteSel.className = 'field-input';
+    let opts = '';
+    currentDialogueSteps.forEach((st, i)=>{ if (i !== 0) opts += '<option value="' + i + '">Étape ' + i + '</option>'; });
+    suiteSel.innerHTML = opts || '<option value="0">Crée d\'abord une autre étape</option>';
+    if (step.thenStep !== undefined && step.thenStep !== null) suiteSel.value = String(step.thenStep);
+    suiteSel.addEventListener('change', ()=>{ step.thenStep = parseInt(suiteSel.value, 10); });
+    suiteWrap.appendChild(suiteSel);
+    card.appendChild(suiteWrap);
+
+    encBox.addEventListener('change', ()=>{
+      step.firstOnly = encBox.checked;
+      suiteWrap.style.display = step.firstOnly ? 'block' : 'none';
+      if (step.firstOnly && (step.thenStep === undefined || step.thenStep === null)){
+        step.thenStep = parseInt(suiteSel.value, 10) || 0;
+      }
+    });
+  }
 
   /* --- textes : par défaut + variantes, un seul affiché --- */
   const vBar = document.createElement('div');
@@ -3523,6 +3606,80 @@ function renderDialogueBuilder(){
     onceHint.style.margin = '2px 0 0';
     onceHint.textContent = 'Une fois pris, ce bouton ne réapparaît plus pour ce joueur. Pas nécessaire pour conditionner un autre choix ou une variante de texte à celui-ci : ça marche même sans cocher.';
     row.appendChild(onceHint);
+
+    /* Un choix peut lancer un combat, avec ses attaques autorisées et ses deux suites. */
+    const combatLbl = document.createElement('div');
+    combatLbl.className = 'field-label';
+    combatLbl.textContent = '⚔️ Déclencher un combat';
+    row.appendChild(combatLbl);
+
+    const combatBtn = document.createElement('button');
+    combatBtn.type = 'button';
+    combatBtn.className = 'btn-secondary';
+    combatBtn.style.cssText = 'width:100%; justify-content:flex-start; display:flex; align-items:center; gap:6px;';
+    const nomAdversaire = ()=>{
+      const id = choice.combat && choice.combat.creatureId;
+      const c = id && creatures.find(x=> x.id === id);
+      return c ? ((c.emoji||'⚔️') + ' ' + c.name + '  ✕') : '— Aucun combat —';
+    };
+    combatBtn.textContent = nomAdversaire();
+    combatBtn.addEventListener('click', ()=>{
+      if (choice.combat){ choice.combat = null; renderDialogueBuilder(); return; }
+      const adversaires = creatures.filter(c=> c.interactionType === 'combat');
+      if (!adversaires.length){ showToast('Aucune fiche de combat créée pour l\'instant'); return; }
+      ouvrirSelecteur({
+        titre: 'Qui affronte-t-on ?',
+        items: adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' })),
+        selectionnes: [], max: 1,
+        onChoisir: (ids)=>{
+          if (!ids.length) return;
+          choice.combat = { creatureId: ids[0], attackIds: [], stepWin: null, stepLose: null };
+          renderDialogueBuilder();
+        },
+      });
+    });
+    row.appendChild(combatBtn);
+
+    if (choice.combat){
+      const atkLbl = document.createElement('div');
+      atkLbl.className = 'field-label';
+      atkLbl.textContent = 'Attaques autorisées (vide = toutes)';
+      row.appendChild(atkLbl);
+      const atkBtn = document.createElement('button');
+      atkBtn.type = 'button';
+      atkBtn.className = 'btn-secondary';
+      atkBtn.style.width = '100%';
+      const majAtk = ()=>{
+        const n = (choice.combat.attackIds || []).length;
+        atkBtn.textContent = n ? ('⚔️ ' + n + ' attaque' + (n>1?'s':'') + ' autorisée' + (n>1?'s':'')) : '➕ Choisir les attaques';
+      };
+      majAtk();
+      atkBtn.addEventListener('click', ()=>{
+        if (!attacks.length){ showToast('Aucune attaque créée pour l\'instant'); return; }
+        ouvrirSelecteur({
+          titre: 'Attaques autorisées dans ce combat',
+          items: attacks.map(a=> ({ id:a.id, label:a.name, emoji:a.emoji || '✨' })),
+          selectionnes: choice.combat.attackIds || [],
+          onChoisir: (ids)=>{ choice.combat.attackIds = ids; majAtk(); },
+        });
+      });
+      row.appendChild(atkBtn);
+
+      [['stepWin','Si le joueur gagne'], ['stepLose','Si le joueur perd ou fuit']].forEach(([cle, libelle])=>{
+        const lbl = document.createElement('div');
+        lbl.className = 'field-label';
+        lbl.textContent = libelle;
+        row.appendChild(lbl);
+        const sel = document.createElement('select');
+        sel.className = 'field-input';
+        let html = '<option value="fin">Fin de la conversation</option>';
+        currentDialogueSteps.forEach((st, i)=>{ html += '<option value="' + i + '">Étape ' + i + '</option>'; });
+        sel.innerHTML = html;
+        sel.value = (choice.combat[cle] === null || choice.combat[cle] === undefined) ? 'fin' : String(choice.combat[cle]);
+        sel.addEventListener('change', ()=>{ choice.combat[cle] = (sel.value === 'fin') ? null : parseInt(sel.value, 10); });
+        row.appendChild(sel);
+      });
+    }
 
     const nextLabel = document.createElement('div');
     nextLabel.className = 'field-label';
@@ -4149,11 +4306,25 @@ let activeSteps = [];
 let currentStepIdx = 0;
 let activeReferencedChoiceIds = new Set(); // choix cités par une condition du dialogue en cours
 
+/* Une rencontre ne se joue qu'une fois. La première étape peut porter « ne se joue qu'à la
+   première rencontre » : on y présente le personnage, et les fois suivantes le dialogue
+   démarre ailleurs — « vous avez changé d'avis ? » plutôt que « bonjour, je m'appelle… ».
+   La mémoire est celle des choix déjà pris, avec une clé propre au personnage. */
+function cleRencontre(creatureId){ return (creatureId || 'x') + '__rencontre'; }
+function indexDepartDialogue(c, steps){
+  const s0 = steps && steps[0];
+  if (!s0 || !s0.firstOnly) return 0;
+  if (!playerUsedChoices[cleRencontre(c.id)]) return 0;   // jamais rencontré : on joue l'étape 0
+  const suite = parseInt(s0.thenStep, 10);
+  return (!isNaN(suite) && suite >= 0 && suite < steps.length) ? suite : 0;
+}
+
 function openSheet(c){
   activeCreature = c;
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
   activeReferencedChoiceIds = dialogueReferencedChoiceIds(activeSteps);
-  currentStepIdx = 0;
+  currentStepIdx = indexDepartDialogue(c, activeSteps);
+  if (activeSteps[0] && activeSteps[0].firstOnly) markChoiceUsed(cleRencontre(c.id));
   renderSheet();
   document.getElementById('overlay').classList.add('show');
 }
@@ -4315,6 +4486,10 @@ function renderSheet(){
       if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
       if (ch.questGive) giveQuestToPlayer(ch.questGive.questId);
       if (ch.questValidate) validateQuestForPlayer(ch.questValidate.questId);
+      if (ch.combat && ch.combat.creatureId){
+        lancerCombatDepuisDialogue(activeCreature, ch.combat);
+        return;
+      }
       if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
         document.getElementById('overlay').classList.remove('show');
         document.getElementById('overlay').style.zIndex = '';
@@ -4325,6 +4500,39 @@ function renderSheet(){
     });
     choicesEl.appendChild(btn);
   });
+}
+
+/* Combat lancé depuis une réplique. On retient d'où l'on vient pour rouvrir le dialogue à la
+   bonne étape une fois le combat fini — une provocation sans conclusion ne vaut rien.
+   `attackIds` restreint les attaques utilisables : c'est ce qui permet un duel à thème
+   (un match de tennis, une joute d'artisans) avec les attaques déjà créées. */
+let retourDialogueCombat = null;
+function lancerCombatDepuisDialogue(creature, combat){
+  const adversaire = creatures.find(x=> x.id === combat.creatureId);
+  if (!adversaire){ showToast('Adversaire introuvable — la fiche a peut-être été supprimée'); return; }
+  retourDialogueCombat = {
+    creatureId: creature.id,
+    victoire: (combat.stepWin === undefined || combat.stepWin === null) ? null : parseInt(combat.stepWin, 10),
+    defaite: (combat.stepLose === undefined || combat.stepLose === null) ? null : parseInt(combat.stepLose, 10),
+  };
+  combatAttaquesAutorisees = Array.isArray(combat.attackIds) && combat.attackIds.length ? combat.attackIds.slice() : null;
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('overlay').style.zIndex = '';
+  launchZoneCombat([adversaire], null);
+}
+function reprendreDialogueApresCombat(resultat){
+  const retour = retourDialogueCombat;
+  retourDialogueCombat = null;
+  combatAttaquesAutorisees = null;
+  if (!retour) return false;
+  const c = creatures.find(x=> x.id === retour.creatureId);
+  if (!c) return false;
+  const cible = (resultat === 'victory') ? retour.victoire : retour.defaite;
+  if (cible === null || isNaN(cible)) return false;
+  openSheet(c);
+  currentStepIdx = cible;
+  renderSheet();
+  return true;
 }
 
 function grantItemToPlayer(itemName, quantity){
@@ -4678,8 +4886,21 @@ function replierUneAide(p){
   libelles.forEach(l=>{
     if (l.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING) cible = l; // l est avant p
   });
-  if (cible) cible.appendChild(bouton);
-  else p.parentNode.insertBefore(bouton, p);
+  if (cible){
+    /* Deux pièges quand un bloc est redessiné (les créneaux horaires, par exemple) :
+       — le paragraphe disparaît mais son ⓘ, posé sur le libellé, survivait → des boutons morts
+         s'accumulaient à chaque ajout de ligne ;
+       — chaque ligne réaffiche la même explication → autant de ⓘ que de lignes.
+       On nettoie donc les boutons dont le texte n'existe plus, et on n'en garde qu'un par libellé. */
+    bouton._cible = p;
+    Array.from(cible.querySelectorAll('.aide-i')).forEach(b=>{
+      if (!b._cible || !b._cible.isConnected) b.remove();
+    });
+    if (cible.querySelector('.aide-i')) return;   // ce libellé a déjà son explication
+    cible.appendChild(bouton);
+  } else {
+    p.parentNode.insertBefore(bouton, p);
+  }
 }
 
 function replierAides(racine){
@@ -4709,6 +4930,7 @@ let pendingMapIconScale = 1, pendingMapIconRotation = 0;
 let pendingCombatPortraitCrop = null;
 let pendingAssignedZoneId = null;
 let pendingReserve = false;      // fiche volontairement sans lieu
+let pnjChooserZonePrioritaire = null;   // zone en cours de montage, pour le regroupement de la liste
 let uploadedImageDataUrl = null;
 let uploadedImagePath = null; // chemin relatif si l'image est hébergée (voir resolveMediaPath)
 
@@ -5111,9 +5333,9 @@ function loadForEdit(id){
   selectedCombatResistances = new Set(cs.resistances || []);
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set(cs.rewardItemIds || []);
-  renderCombatRewardsPicker();
-  document.getElementById('editCombatStealEasy').value = cs.stealEasyItemId || '';
-  document.getElementById('editCombatStealHard').value = cs.stealHardItemId || '';
+  document.getElementById('editCombatStealEasy').dataset.itemId = cs.stealEasyItemId || '';
+  document.getElementById('editCombatStealHard').dataset.itemId = cs.stealHardItemId || '';
+  renderCombatRewardsPicker();   // après les deux objets volables : c'est lui qui redessine leurs boutons
   document.getElementById('editStartDate').value = d.startDate || '';
   document.getElementById('editEndDate').value = d.endDate || '';
   setEditTimeRanges(d);
@@ -5219,8 +5441,8 @@ function resetForm(){
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set();
   renderCombatRewardsPicker();
-  document.getElementById('editCombatStealEasy').value = '';
-  document.getElementById('editCombatStealHard').value = '';
+  document.getElementById('editCombatStealEasy').dataset.itemId = '';
+  document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
   document.getElementById('editEndDate').value = '';
   setEditTimeRanges({});
@@ -5411,7 +5633,9 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const hideOnExitRadius = document.getElementById('editHideImmediately').checked;
   const dupeGroup = currentDupeGroup;
   const dialogueSteps = currentDialogueSteps
-    .map(s=>({ text: (s.text||'').trim(), choices: (s.choices||[]).filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=> v.text && v.text.trim() && (v.kind === 'choice' ? !!v.choiceId : !!v.questId)) }))
+    .map(s=>({ text: (s.text||'').trim(), choices: (s.choices||[]).filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=> v.text && v.text.trim() && (v.kind === 'choice' ? !!v.choiceId : !!v.questId)),
+      /* réglages de première rencontre : sans eux, la case cochée serait perdue à l'enregistrement */
+      firstOnly: !!s.firstOnly, thenStep: (s.thenStep === undefined || s.thenStep === null) ? null : s.thenStep }))
     .filter(s=> s.text || s.choices.length || s.textVariants.length);
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
@@ -5442,8 +5666,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     immunities: Array.from(selectedCombatImmunities),
     resistances: Array.from(selectedCombatResistances),
     rewardItemIds: Array.from(selectedCombatRewards),
-    stealEasyItemId: document.getElementById('editCombatStealEasy').value || null,
-    stealHardItemId: document.getElementById('editCombatStealHard').value || null,
+    stealEasyItemId: document.getElementById('editCombatStealEasy').dataset.itemId || null,
+    stealHardItemId: document.getElementById('editCombatStealHard').dataset.itemId || null,
   };
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
@@ -5516,6 +5740,9 @@ document.getElementById('assignZoneBtn').addEventListener('click', ()=>{
     if (!zones.length){ showToast('Aucune zone d\'exploration créée pour l\'instant'); return; }
     pnjChooserAll = zones;
     pnjChooserFilter = null;
+    /* Sans cette remise à zéro, le regroupement « déjà dans cette zone / ailleurs » restait armé
+       d'un usage précédent — et comme il écarte les fiches de type zone, la liste sortait vide. */
+    pnjChooserZonePrioritaire = null;
     pnjChooserCallback = (id, c)=>{
       pendingAssignedZoneId = id;
       pendingLat = null; pendingLng = null;
@@ -6738,7 +6965,6 @@ function resumeConditionsPnj(c){
    déjà rattachés remontent en tête, les autres restent accessibles en dessous — et celui qu'on
    choisit est rattaché automatiquement. Avant, la liste était filtrée sur la zone : il fallait
    sortir, ouvrir la fiche, la rattacher à la main, revenir. */
-let pnjChooserZonePrioritaire = null;
 function openPnjChooser(onPick, filterFn, zonePrioritaire){
   pnjChooserCallback = onPick;
   pnjChooserFilter = filterFn || null;
@@ -13387,11 +13613,32 @@ function renderSceneDetailTypeSpecific(pt){
   }
 
   if (pt.type === 'pnj'){
+    if (!pt.resetMode) pt.resetMode = 'unlimited';   // un PNJ revient, sauf décision contraire
     typeWrap.innerHTML = `
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">PNJ affiché à ce point</div>
       <button type="button" class="btn-secondary" data-pnj-link-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${pt.linkedPnjId ? ((pt.linkedPnjEmoji||'👤')+' '+(pt.linkedPnjName||'PNJ')) : '— choisir un PNJ existant —'}</button>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Utilise le dialogue, les objets donnés, quêtes et le recrutement déjà configurés pour ce PNJ dans l'éditeur de PNJ — pas de configuration séparée ici.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition après un combat gagné</div>
+      <select id="scenePointPnjReset" class="field-input">
+        <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>Toujours là (dialogue, ou monstre qui revient tout de suite)</option>
+        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>Réapparaît après un délai</option>
+        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Une fois par joueur</option>
+        <option value="once" ${pt.resetMode==='once'?'selected':''}>Une seule fois, pour tout le monde</option>
+      </select>
+      <div id="scenePointPnjResetMinutesWrap" style="display:${pt.resetMode==='timed'?'block':'none'};">
+        <div class="field-label" style="color:rgba(255,255,255,.75);">Délai avant retour (minutes)</div>
+        <input type="number" id="scenePointPnjResetMinutes" class="field-input" min="1" value="${pt.resetMinutes || 60}">
+      </div>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Ne concerne que les PNJ de combat : un boss d'histoire se règle sur « une seule fois », un monstre de garde sur un délai. Un PNJ de dialogue reste toujours là, quoi qu'il arrive.</p>
     `;
+    const selReset = typeWrap.querySelector('#scenePointPnjReset');
+    if (selReset) selReset.addEventListener('change', (e)=>{
+      pt.resetMode = e.target.value;
+      typeWrap.querySelector('#scenePointPnjResetMinutesWrap').style.display = (pt.resetMode === 'timed') ? 'block' : 'none';
+    });
+    const inpReset = typeWrap.querySelector('#scenePointPnjResetMinutes');
+    if (inpReset) inpReset.addEventListener('input', (e)=>{ pt.resetMinutes = parseInt(e.target.value, 10) || 60; });
+
     typeWrap.querySelector('[data-pnj-link-pick]').addEventListener('click', ()=>{
       openPnjChooser((id, c)=>{
         pt.linkedPnjId = id;
@@ -13693,7 +13940,10 @@ let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
 let sceneViewPointState = {}; // état partagé de la zone (modes once/timed) : { [pointId]: { takenAt } }
 
 function isScenePointAvailable(pt){
-  const mode = pt.resetMode || 'perPlayer';
+  /* Un point PNJ sans réglage explicite reste disponible : il n'y a rien à « prendre » chez
+     quelqu'un à qui on parle. Sans ça, un point ayant servi à autre chose autrefois, ou un
+     combat gagné une seule fois, faisait disparaître le personnage à jamais et sans message. */
+  const mode = pt.resetMode || (pt.type === 'pnj' ? 'unlimited' : 'perPlayer');
   if (mode === 'unlimited') return true;
   if (mode === 'perPlayer') return !sceneViewTakenMap[pt.id];
   const state = sceneViewPointState[pt.id];
@@ -13707,7 +13957,7 @@ function isScenePointAvailable(pt){
 }
 
 function markScenePointTaken(pt){
-  const mode = pt.resetMode || 'perPlayer';
+  const mode = pt.resetMode || (pt.type === 'pnj' ? 'unlimited' : 'perPlayer');
   if (mode === 'unlimited') return Promise.resolve();
   if (mode === 'perPlayer'){
     sceneViewTakenMap[pt.id] = true;
@@ -14633,8 +14883,14 @@ function withTimeout(promise, ms){
   return Promise.race([promise, new Promise(resolve=> setTimeout(resolve, ms))]);
 }
 
+/* Duel à thème : quand un combat est lancé depuis un dialogue avec une liste d'attaques
+   autorisées, les autres sont retirées de la barre du joueur. C'est ce qui transforme un
+   combat ordinaire en match de tennis, en joute d'artisans ou en duel de mages. */
+let combatAttaquesAutorisees = null;
 function resolveFighterAttacks(attackIds){
-  return (attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean);
+  let liste = (attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean);
+  if (combatAttaquesAutorisees) liste = liste.filter(a=> combatAttaquesAutorisees.includes(a.id));
+  return liste;
 }
 function isHealAttack(a){ return a && (a.kind==='heal_single' || a.kind==='heal_group'); }
 
@@ -14675,7 +14931,7 @@ function buildEnemyFighters(monsterList){
       maxHp:cs.hp||1, hp:cs.hp||1,
       atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
       precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
-      attacksList: resolveFighterAttacks(cs.attackIds),
+      attacksList: (cs.attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean),  // l'adversaire n'est pas restreint
       immunities: cs.immunities||[], resistances: cs.resistances||[],
       rewardItemIds: cs.rewardItemIds||[], fleeChance: cs.fleeChance!=null?cs.fleeChance:30,
       aiPersonality: cs.aiPersonality || 'normal', canFlee: !!cs.canFlee,
@@ -16431,6 +16687,12 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   }
   combatZoneContext = null;
   combatState = null;
+  /* Retour au dialogue qui a déclenché le combat, à l'étape prévue pour ce résultat.
+     Doit passer AVANT le retour de zone : la scène reste derrière, on rouvre juste la fiche. */
+  if (retourDialogueCombat){
+    if (ctx && !sceneViewIsShip) document.getElementById('sceneViewFull').classList.add('show');
+    if (reprendreDialogueApresCombat(result)) return;
+  }
   if (ctx){
     if (result === 'victory'){
       if (ctx.pt) markScenePointTaken(ctx.pt).catch(()=>{});
