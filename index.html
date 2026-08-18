@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v330</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v332</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3010,7 +3010,11 @@ function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir }){
   const champ = fond.querySelector('[data-recherche]');
   const dessiner = ()=>{
     const q = (champ.value || '').trim().toLowerCase();
-    const vus = items.filter(it=> !q || (it.label || '').toLowerCase().includes(q));
+    /* La recherche porte aussi sur le détail : c'est ce qui permet de taper « Debora »
+       pour retrouver ses répliques, alors que son nom n'est pas dans le libellé. */
+    const vus = items.filter(it=> !q
+      || (it.label || '').toLowerCase().includes(q)
+      || (it.detail || '').toLowerCase().includes(q));
     liste.innerHTML = vus.length ? vus.map(it=>`
       <div class="editor-list-item" data-choix="${it.id}" style="cursor:pointer; ${dejaPris.has(it.id) ? 'outline:2px solid var(--accent); outline-offset:-2px;' : ''}">
         <div class="thumb">${it.emoji || '✨'}</div>
@@ -3894,15 +3898,17 @@ function choixConnusPartout(exclureId){
   const out = [];
   currentDialogueSteps.forEach(st=> (st.choices || []).forEach(c=>{
     if (!c.id || c.id === exclureId || !(c.label || '').trim()) return;
-    out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj:'ce personnage', creatureId:null });
+    out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj:'ce personnage', creatureId:null, marque: !!c.marque });
   }));
   toutesLesFiches().forEach(f=>{
     if (f.id === editingId) return;             // déjà couvert par le dialogue en cours
     (f.dialogueSteps || []).forEach(st=> (st.choices || []).forEach(c=>{
       if (!c.id || !(c.label || '').trim()) return;
-      out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj: f.name || '(sans nom)', creatureId: f.id });
+      out.push({ id:c.id, reponse: dlgShortText(c.label, 40), pnj: f.name || '(sans nom)', creatureId: f.id, marque: !!c.marque });
     }));
   });
+  /* Les réponses marquées d'abord : ce sont celles dont on sait qu'on les cherchera. */
+  out.sort((a, b)=> (b.marque ? 1 : 0) - (a.marque ? 1 : 0));
   return out;
 }
 
@@ -4044,7 +4050,8 @@ function fenetreEffetsReponse(ch){
       if (!connus.length){ showToast('Aucune autre réponse mémorisable pour l\'instant'); return; }
       ouvrirSelecteur({
         titre:'Apparaît si le joueur a déjà dit…',
-        items: connus.map(o=> ({ id:o.id, label:'« ' + o.reponse +' »', emoji:'💬', detail:'à ' + o.pnj })),
+        items: connus.map(o=> ({ id:o.id, label:(o.marque ? '⭐ ' : '') + '« ' + o.reponse +' »',
+          emoji: o.marque ? '⭐' : '💬', detail:'à ' + o.pnj })),
         selectionnes: [], max:1,
         onChoisir:(ids)=>{
           const o = connus.find(x=> x.id === ids[0]);
@@ -4113,6 +4120,56 @@ function renderDialogueParcours(wrap){
   texte.addEventListener('input', ()=>{ st.text = texte.value; });
   box.appendChild(texte);
 
+  /* Première rencontre : réglable ici, et surtout ON PEUT ALLER VOIR la suite. Sans ça, le
+     parcours restait bloqué sur la version « première fois » — la réplique des fois suivantes
+     n'étant reliée par aucune réponse, rien n'y menait. */
+  if (dlgParcoursIdx === 0){
+    const bloc1 = document.createElement('div');
+    bloc1.style.cssText = 'margin:10px 0 4px; padding:8px; border:1px dashed var(--line); border-radius:8px;';
+
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-secondary';
+    b.style.cssText = 'width:100%; text-align:left;' + (st.firstOnly ? ' background:var(--accent); color:#fff; border-color:var(--accent);' : '');
+    b.textContent = (st.firstOnly ? '☑ ' : '☐ ') + '🤝 Ne se dit qu\'à la première rencontre';
+    b.addEventListener('click', ()=>{
+      st.firstOnly = !st.firstOnly;
+      if (st.firstOnly && (st.thenStep === undefined || st.thenStep === null)){
+        currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+        st.thenStep = currentDialogueSteps.length - 1;
+      }
+      renderDialogueBuilder();
+    });
+    bloc1.appendChild(b);
+
+    if (st.firstOnly){
+      const suiteLigne = document.createElement('div');
+      suiteLigne.style.cssText = 'display:flex; gap:6px; align-items:center; margin-top:8px;';
+      const etiq = document.createElement('div');
+      etiq.className = 'meta';
+      etiq.style.cssText = 'flex:1; font-size:12px;';
+      const cible = (st.thenStep === undefined || st.thenStep === null) ? null : st.thenStep;
+      etiq.textContent = 'Les fois suivantes : « ' + (cible === null ? '(à écrire)' : extraitReplique(cible, 32)) + ' »';
+      suiteLigne.appendChild(etiq);
+      const y = document.createElement('button');
+      y.type = 'button';
+      y.className = 'btn-secondary';
+      y.style.cssText = 'flex:0 0 auto; padding:8px 12px;';
+      y.textContent = '→';
+      y.title = 'Aller écrire ce qu\'il dit les fois suivantes';
+      y.addEventListener('click', ()=>{
+        if (cible === null || cible >= currentDialogueSteps.length){
+          currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+          st.thenStep = currentDialogueSteps.length - 1;
+        }
+        dlgAllerA(st.thenStep);
+      });
+      suiteLigne.appendChild(y);
+      bloc1.appendChild(suiteLigne);
+    }
+    box.appendChild(bloc1);
+  }
+
   /* Les réponses du joueur : le texte se modifie, la flèche fait voyager. */
   const titre = document.createElement('div');
   titre.className = 'field-label';
@@ -4160,6 +4217,15 @@ function renderDialogueParcours(wrap){
     regler.addEventListener('click', ()=> fenetreEffetsReponse(ch));
     ligne.appendChild(regler);
 
+    const marquer = document.createElement('button');
+    marquer.type = 'button';
+    marquer.className = 'btn-secondary';
+    marquer.style.cssText = 'flex:0 0 auto; padding:8px 10px;' + (ch.marque ? ' background:#f1c40f; color:#000; border-color:#f1c40f;' : '');
+    marquer.textContent = '⭐';
+    marquer.title = ch.marque ? 'Réponse marquée — retirer la marque' : 'Marquer cette réponse pour la retrouver facilement';
+    marquer.addEventListener('click', ()=>{ ch.marque = !ch.marque; renderDialogueBuilder(); });
+    ligne.appendChild(marquer);
+
     const suppr = document.createElement('button');
     suppr.type = 'button';
     suppr.className = 'icon-del';
@@ -4181,6 +4247,7 @@ function renderDialogueParcours(wrap){
     if (ch.questValidate) effets.push('✅ quête validée');
     if (ch.combat) effets.push('⚔️ combat');
     if (ch.once) effets.push('1️⃣ une seule fois');
+    if (ch.marque) effets.push('⭐ marquée');
     if (effets.length){
       const e = document.createElement('div');
       e.className = 'meta';
@@ -4201,11 +4268,62 @@ function renderDialogueParcours(wrap){
   });
   box.appendChild(ajouter);
 
+  /* Toutes les répliques qu'aucune réponse n'atteint : retours de combat, suites de première
+     rencontre, brouillons oubliés. Elles étaient invisibles ici, ce qui obligeait à repasser
+     par l'onglet Édition — donc à retomber sur les numéros d'étape. */
+  const orphelines = currentDialogueSteps.map((_, i)=> i).filter(i=>{
+    if (i === dlgParcoursIdx) return false;
+    if (i === 0) return false;
+    const viseeParUneReponse = currentDialogueSteps.some(s2=> (s2.choices || []).some(c=>
+      c.next === i || (c.combat && (c.combat.stepWin === i || c.combat.stepLose === i))));
+    const viseeParLaPremiere = currentDialogueSteps[0] && currentDialogueSteps[0].thenStep === i;
+    return !viseeParUneReponse && !viseeParLaPremiere;
+  });
+  if (orphelines.length){
+    const b2 = document.createElement('button');
+    b2.type = 'button';
+    b2.className = 'btn-secondary';
+    b2.style.cssText = 'width:100%; margin-top:10px;';
+    b2.textContent = '🧭 Répliques que rien n\'atteint (' + orphelines.length + ')';
+    b2.addEventListener('click', ()=>{
+      ouvrirSelecteur({ titre:'Aller à une réplique isolée',
+        items: orphelines.map(i=> ({ id:String(i), label: extraitReplique(i, 46) || '(réplique vide)', emoji:'💬' })),
+        selectionnes: [], max:1,
+        onChoisir:(ids)=>{ if (ids[0] !== undefined) dlgAllerA(parseInt(ids[0], 10)); } });
+    });
+    box.appendChild(b2);
+  }
+
+  if (currentDialogueSteps.length > 1 && dlgParcoursIdx !== 0){
+    const suppr2 = document.createElement('button');
+    suppr2.type = 'button';
+    suppr2.className = 'btn-secondary';
+    suppr2.style.cssText = 'width:100%; margin-top:8px; color:var(--danger);';
+    suppr2.textContent = '🗑️ Supprimer cette réplique';
+    suppr2.addEventListener('click', async ()=>{
+      if (!(await appConfirm('Supprimer cette réplique et ses réponses ?'))) return;
+      const mort = dlgParcoursIdx;
+      currentDialogueSteps.splice(mort, 1);
+      const recale = (v)=> (v === null || v === undefined || isNaN(v)) ? v : (v === mort ? null : (v > mort ? v - 1 : v));
+      currentDialogueSteps.forEach(s2=>{
+        if (s2.thenStep !== undefined) s2.thenStep = recale(s2.thenStep);
+        (s2.choices || []).forEach(c=>{
+          c.next = recale(c.next);
+          if (c.combat){ c.combat.stepWin = recale(c.combat.stepWin); c.combat.stepLose = recale(c.combat.stepLose); }
+        });
+      });
+      dlgParcoursPile = [];
+      dlgParcoursIdx = 0;
+      renderDialogueBuilder();
+    });
+    box.appendChild(suppr2);
+  }
+
   const versEdition = document.createElement('button');
   versEdition.type = 'button';
   versEdition.className = 'btn-secondary';
   versEdition.style.cssText = 'width:100%; margin-top:8px;';
-  versEdition.textContent = '⚙️ Réglages détaillés de cette réplique';
+  versEdition.textContent = '⚙️ Variantes et réglages rares (ancien éditeur)';
   versEdition.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(dlgParcoursIdx); });
   box.appendChild(versEdition);
 
