@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v321</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v322</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3722,7 +3722,12 @@ function renderDialogueBuilder(){
         let html = '<option value="fin">Fin de la conversation</option>';
         currentDialogueSteps.forEach((st, i)=>{ html += '<option value="' + i + '">Étape ' + i + '</option>'; });
         sel.innerHTML = html;
-        sel.value = (choice.combat[cle] === null || choice.combat[cle] === undefined) ? 'fin' : String(choice.combat[cle]);
+        /* Un menu déroulant n'émet rien tant qu'on n'y touche pas : la valeur AFFICHÉE par défaut
+           n'était donc jamais écrite dans le choix, et le dialogue d'après-combat ne partait pas.
+           On inscrit tout de suite ce qui est montré. */
+        if (choice.combat[cle] === undefined) choice.combat[cle] = null;
+        sel.value = (choice.combat[cle] === null) ? 'fin' : String(choice.combat[cle]);
+        if (sel.value !== 'fin' && choice.combat[cle] === null) choice.combat[cle] = parseInt(sel.value, 10);
         sel.addEventListener('change', ()=>{ choice.combat[cle] = (sel.value === 'fin') ? null : parseInt(sel.value, 10); });
         row.appendChild(sel);
       });
@@ -17000,33 +17005,24 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   }
   combatZoneContext = null;
   combatState = null;
-  /* Retour au dialogue qui a déclenché le combat, à l'étape prévue pour ce résultat.
-     Doit passer AVANT le retour de zone : la scène reste derrière, on rouvre juste la fiche. */
-  if (retourDialogueCombat){
-    /* Défaite : on quitte la zone d'abord — le dialogue de conclusion se joue alors sur la
-       carte. Rouvrir la scène derrière lui aurait annulé l'expulsion annoncée au joueur. */
-    if (result === 'defeat' && ctx) clearCurrentZoneScene();
-    else if (ctx && !sceneViewIsShip){
-      document.getElementById('sceneViewFull').classList.add('show');
-      /* Redessiner avant d'ouvrir le dialogue : un monstre vaincu doit disparaître du décor,
-         sinon on retrouve la scène telle qu'elle était avant le combat. */
-      renderSceneViewCurrentScene();
-    }
-    if (reprendreDialogueApresCombat(result)) return;
-  }
+  /* Le retour de zone se fait D'ABORD, une seule fois. Le dialogue de conclusion s'ouvre
+     ensuite, par-dessus ce qui a été rétabli — carte après une défaite, scène après une
+     victoire. Faire l'inverse déclenchait DEUX rendus de la même scène en parallèle, et
+     les deux images se retrouvaient côte à côte dans le décor. */
   if (ctx){
     if (result === 'victory'){
       if (ctx.pt) markScenePointTaken(ctx.pt).catch(()=>{});
       document.getElementById('sceneViewFull').classList.add('show');
-      renderSceneViewCurrentScene();
+      await renderSceneViewCurrentScene();
     } else if (result === 'flee'){
       document.getElementById('sceneViewFull').classList.add('show');
-      renderSceneViewCurrentScene();
+      await renderSceneViewCurrentScene();
     } else if (result === 'defeat'){
       clearCurrentZoneScene();
     }
     // Défaite : la zone reste fermée, le joueur se retrouve sur la carte (retour à l'entrée).
   }
+  if (retourDialogueCombat && reprendreDialogueApresCombat(result)) return;
   playMusicForKey('map'); // reprend la musique de carte (remplace la musique de victoire si elle jouait)
   clearSavedCombat(); // pas d'attente ici : la confirmation se fait en arrière-plan, les 3 sorties de zone servent de filet de sécurité si elle est coupée par une actualisation
 });
