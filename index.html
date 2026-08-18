@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v312</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v314</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1977,6 +1977,16 @@
         <div class="field-label">Portrait de combat</div>
         <button type="button" class="btn-secondary" id="editPortraitCropBtn" style="width:100%; display:none;">🎯 Régler le cadrage visage + buste</button>
         <p class="meta" id="portraitCropHint" style="margin-top:6px;">Détermine l'aperçu affiché dans la barre d'ordre des tours en combat. Enregistre d'abord ce PNJ (avec une image) pour régler ce cadrage.</p>
+      </div>
+      <div id="backImageBlock">
+        <div class="field-label">🔄 Image de dos (optionnelle)</div>
+        <input type="file" id="editBackImageFile" accept="image/*" class="field-input">
+        <button type="button" class="btn-secondary" id="editBackImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
+        <div id="backImagePreviewWrap" style="display:none; margin-top:8px;">
+          <img id="backImagePreview" style="width:64px; height:96px; border-radius:8px; object-fit:cover; object-position:top center; border:2px solid var(--accent);">
+          <button type="button" class="btn-secondary" id="clearBackImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+        </div>
+        <p class="meta">Sert uniquement quand ce personnage combat À TES CÔTÉS : on le voit alors de dos, tourné vers l'ennemi, comme dans les jeux de combat classiques. Face à toi, en adversaire, il garde son image normale. Sans image de dos, rien ne change.</p>
       </div>
 
       <div id="zoneBlock" style="display:none;">
@@ -4610,6 +4620,9 @@ function recruitCreature(creature, metierId){
     metierId: metierId,
     ownerUid: (currentUser ? currentUser.uid : null),
     imageUrl: creature.imageUrl || '',
+    /* L'image de dos suit le personnage quand il rejoint l'équipe : c'est là qu'elle sert. */
+    backImagePath: creature.backImagePath || null,
+    backImageRef: creature.backImageRef || null,
     combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
@@ -5089,6 +5102,61 @@ document.getElementById('clearZoneArenaImageBtn').addEventListener('click', ()=>
 let editRoomImageDataUrl = null;
 let editRoomImageRef = null;
 let editRoomImagePath = null;
+/* Image de dos d'un allié. Même mécanique que l'image de chambre : fichier du téléphone,
+   image hébergée, ou rien. Elle ne sert qu'au combat, du côté du joueur — un personnage
+   vu de dos face à l'ennemi, comme dans les jeux de combat en vue arrière. */
+let editBackImageDataUrl = null;
+let editBackImageRef = null;
+let editBackImagePath = null;
+function renderBackImagePreview(){
+  const wrap = document.getElementById('backImagePreviewWrap');
+  if (editBackImageDataUrl){
+    document.getElementById('backImagePreview').src = editBackImageDataUrl;
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+document.getElementById('editBackImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 900;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      /* PNG : un personnage se pose sur le décor de combat, la transparence est indispensable. */
+      editBackImageDataUrl = canvas.toDataURL('image/png');
+      editBackImageRef = null;
+      editBackImagePath = null;
+      renderBackImagePreview();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('editBackImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    editBackImagePath = item.path;
+    editBackImageDataUrl = resolveMediaPath(item.path);
+    editBackImageRef = null;
+    renderBackImagePreview();
+  });
+});
+document.getElementById('clearBackImageBtn').addEventListener('click', ()=>{
+  editBackImageDataUrl = null; editBackImageRef = null; editBackImagePath = null;
+  document.getElementById('editBackImageFile').value = '';
+  renderBackImagePreview();
+});
+
 function renderRoomImagePreview(){
   const wrap = document.getElementById('roomImagePreviewWrap');
   if (editRoomImageDataUrl){
@@ -5331,6 +5399,14 @@ function loadForEdit(id){
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
   document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
   document.getElementById('portraitCropHint').style.display = d.imageUrl ? 'none' : 'block';
+  editBackImagePath = d.backImagePath || null;
+  editBackImageDataUrl = editBackImagePath ? resolveMediaPath(editBackImagePath) : null;
+  editBackImageRef = editBackImagePath ? null : (d.backImageRef || null);
+  document.getElementById('editBackImageFile').value = '';
+  renderBackImagePreview();
+  if (editBackImageRef){
+    internalizeSceneImage(editBackImageRef).then(url=>{ editBackImageDataUrl = url; renderBackImagePreview(); }).catch(()=>{});
+  }
   editRoomImagePath = d.roomImagePath || null;
   editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
   editRoomImageRef = editRoomImagePath ? null : (d.roomImageRef || null);
@@ -5493,11 +5569,13 @@ function resetForm(){
   selectedCombatImmunities = new Set();
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
   selectedCombatResistances = new Set();
-  document.getElementById('editCanFight').checked = !!d.canFight;
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set();
   renderCombatRewardsPicker();
   document.getElementById('editCanFight').checked = false;
+  editBackImageDataUrl = null; editBackImageRef = null; editBackImagePath = null;
+  document.getElementById('editBackImageFile').value = '';
+  renderBackImagePreview();
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
@@ -5750,6 +5828,11 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     combatArenaImageRef = await externalizeSceneImage(editZoneArenaImageDataUrl);
   }
 
+  const backImagePath = editBackImagePath || null;
+  let backImageRef = backImagePath ? null : (editBackImageRef || null);
+  if (!backImagePath && !backImageRef && editBackImageDataUrl){
+    backImageRef = await externalizeSceneImage(editBackImageDataUrl);
+  }
   const roomImagePath = editRoomImagePath || null;
   let roomImageRef = roomImagePath ? null : (editRoomImageRef || null);
   if (editRoomImageDataUrl && editRoomImageDataUrl.startsWith('data:')){
@@ -5759,7 +5842,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -14907,6 +14990,18 @@ function playFxThrust(targetUid, fx, containerEl){
    combat, pour qu'elles soient déjà là quand le tour arrive.
    Les objets gardés dans le tableau empêchent le ramasse-miettes de les jeter aussitôt. */
 let fxPreloadPool = [];
+/* Une image de dos peut être stockée en référence interne (comme les images de scène).
+   On la résout après coup : le combat démarre avec l'image de face, et le dos apparaît
+   dès qu'il est lu — plutôt que de retarder l'ouverture du combat. */
+function resoudreImagesDeDos(fighters){
+  (fighters || []).forEach(f=>{
+    if (f.side !== 'player' || !f.backImageRef) return;
+    internalizeSceneImage(f.backImageRef)
+      .then((url)=>{ if (url){ f.imageUrl = url; if (typeof renderCombat === 'function') renderCombat(); } })
+      .catch(()=>{});
+  });
+}
+
 function preloadCombatFx(fighters){
   const urls = new Set();
   (fighters || []).forEach(f=>{
@@ -14966,7 +15061,11 @@ function buildPlayerFighters(){
          une attaque de réanimation, au lieu d'être obligé de rentrer à l'infirmerie. */
       const startHp = Math.max(0, Math.min(maxHp, recruitEffectiveHp(r)));
       return {
-        uid:'p'+i, side:'player', sourceId:r.id, name:r.name, imageUrl:r.imageUrl||'', tribe:cs.tribe||'',
+        uid:'p'+i, side:'player', sourceId:r.id, name:r.name,
+        /* De dos si le personnage en a une : il fait face à l'ennemi, pas au joueur. */
+        imageUrl: (r.backImagePath ? resolveMediaPath(r.backImagePath) : '') || r.imageUrl || '',
+        backImageRef: r.backImageRef || null,
+        tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
         maxHp:maxHp, hp:startHp,
         atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
@@ -15760,6 +15859,7 @@ function playCombatEntryTransition(hasBoss){
 }
 async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   preloadVictoryMusic();
+  resoudreImagesDeDos(playerFighters);
   preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
   const hasBoss = enemyFighters.some(f=> f.budgetCategory === 'boss');
   if (opts && opts.skipTransition){
