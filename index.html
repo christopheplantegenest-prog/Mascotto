@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v309</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v311</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1947,6 +1947,11 @@
         <option value="combat">Monstre / Combattant</option>
         <option value="zone">Zone d'exploration</option>
       </select>
+      <label id="canFightWrap" style="display:none; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="editCanFight" style="width:auto;">
+        <span style="font-size:13px;">⚔️ Ce personnage peut se battre</span>
+      </label>
+      <p class="meta">Un habitant peut provoquer le joueur au détour d'une réplique sans être un monstre : coche ceci pour lui donner des caractéristiques de combat, et un choix de son dialogue pourra lancer le duel. Évite de créer une seconde fiche pour le même personnage.</p>
 
       <div id="recruitScopeBlock">
         <div class="field-label">Portée du recrutement</div>
@@ -2854,9 +2859,14 @@ document.getElementById('addShopItemBtn').addEventListener('click', ()=>{
    ni portrait de combat : ces blocs sont masqués plutôt que d'allonger le défilement. */
 function majBlocsSelonType(type){
   const estZone = (type === 'zone');
+  const caseSeBattre = document.getElementById('editCanFight');
+  const wrapSeBattre = document.getElementById('canFightWrap');
+  if (wrapSeBattre) wrapSeBattre.style.display = (type === 'dialogue') ? 'flex' : 'none';
   document.getElementById('dialogueBlock').style.display = (type === 'shop' || estZone) ? 'none' : 'block';
   document.getElementById('shopBlock').style.display = (type === 'shop') ? 'block' : 'none';
-  document.getElementById('combatBlock').style.display = (type === 'combat') ? 'block' : 'none';
+  /* Les caractéristiques de combat servent aussi à un PNJ ordinaire qui accepte un duel. */
+  const peutSeBattre = (type === 'combat') || (type === 'dialogue' && caseSeBattre && caseSeBattre.checked);
+  document.getElementById('combatBlock').style.display = peutSeBattre ? 'block' : 'none';
   document.getElementById('zoneBlock').style.display = estZone ? 'block' : 'none';
   ['metierBlock','recruitScopeBlock','roomImageBlock','portraitCropBlock'].forEach(id=>{
     const el = document.getElementById(id);
@@ -2865,6 +2875,9 @@ function majBlocsSelonType(type){
 }
 document.getElementById('editInteractionType').addEventListener('change', (e)=>{
   majBlocsSelonType(e.target.value);
+});
+document.getElementById('editCanFight').addEventListener('change', ()=>{
+  majBlocsSelonType(document.getElementById('editInteractionType').value);
 });
 document.getElementById('editCombatRecruitable').addEventListener('change', (e)=>{
   document.getElementById('combatMonsterOnlyFields').style.display = e.target.checked ? 'none' : 'block';
@@ -3617,27 +3630,22 @@ function renderDialogueBuilder(){
     combatBtn.type = 'button';
     combatBtn.className = 'btn-secondary';
     combatBtn.style.cssText = 'width:100%; justify-content:flex-start; display:flex; align-items:center; gap:6px;';
-    const nomAdversaire = ()=>{
-      const id = choice.combat && choice.combat.creatureId;
-      const c = id && creatures.find(x=> x.id === id);
-      return c ? ((c.emoji||'⚔️') + ' ' + c.name + '  ✕') : '— Aucun combat —';
+    const idsAdversaires = ()=> {
+      if (!choice.combat) return [];
+      /* Compatibilité : les choix créés avant portaient un seul `creatureId`. */
+      if (Array.isArray(choice.combat.creatureIds)) return choice.combat.creatureIds;
+      return choice.combat.creatureId ? [choice.combat.creatureId] : [];
     };
-    combatBtn.textContent = nomAdversaire();
-    combatBtn.addEventListener('click', ()=>{
-      if (choice.combat){ choice.combat = null; renderDialogueBuilder(); return; }
-      const adversaires = creatures.filter(c=> c.interactionType === 'combat');
-      if (!adversaires.length){ showToast('Aucune fiche de combat créée pour l\'instant'); return; }
-      ouvrirSelecteur({
-        titre: 'Qui affronte-t-on ?',
-        items: adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' })),
-        selectionnes: [], max: 1,
-        onChoisir: (ids)=>{
-          if (!ids.length) return;
-          choice.combat = { creatureId: ids[0], attackIds: [], stepWin: null, stepLose: null };
-          renderDialogueBuilder();
-        },
-      });
-    });
+    const nomUn = (id)=>{
+      if (id === '__self__') return '🙋 La personne à qui on parle';
+      const c = creatures.find(x=> x.id === id);
+      return c ? ((c.emoji||'⚔️') + ' ' + c.name) : '(fiche supprimée)';
+    };
+    const nomAdversaire = ()=>{
+      const ids = idsAdversaires();
+      if (!ids.length) return '— Aucun combat —';
+      return ids.map(nomUn).join(' + ') + '   ✕';
+    };
     row.appendChild(combatBtn);
 
     if (choice.combat){
@@ -4508,8 +4516,18 @@ function renderSheet(){
    (un match de tennis, une joute d'artisans) avec les attaques déjà créées. */
 let retourDialogueCombat = null;
 function lancerCombatDepuisDialogue(creature, combat){
-  const adversaire = creatures.find(x=> x.id === combat.creatureId);
-  if (!adversaire){ showToast('Adversaire introuvable — la fiche a peut-être été supprimée'); return; }
+  const ids = Array.isArray(combat.creatureIds) && combat.creatureIds.length
+    ? combat.creatureIds
+    : (combat.creatureId ? [combat.creatureId] : []);
+  const adversaires = ids.slice(0, 3)
+    .map(id=> (id === '__self__') ? creature : creatures.find(x=> x.id === id))
+    .filter(Boolean);
+  if (!adversaires.length){ showToast('Adversaire introuvable — la fiche a peut-être été supprimée'); return; }
+  const sansStats = adversaires.find(a=> !a.combatStats);
+  if (sansStats){
+    showToast((sansStats.name || 'Ce personnage') + ' n\'a pas de caractéristiques de combat — coche « ⚔️ Ce personnage peut se battre » sur sa fiche');
+    return;
+  }
   retourDialogueCombat = {
     creatureId: creature.id,
     victoire: (combat.stepWin === undefined || combat.stepWin === null) ? null : parseInt(combat.stepWin, 10),
@@ -4518,7 +4536,7 @@ function lancerCombatDepuisDialogue(creature, combat){
   combatAttaquesAutorisees = Array.isArray(combat.attackIds) && combat.attackIds.length ? combat.attackIds.slice() : null;
   document.getElementById('overlay').classList.remove('show');
   document.getElementById('overlay').style.zIndex = '';
-  launchZoneCombat([adversaire], null);
+  launchZoneCombat(adversaires, null);
 }
 function reprendreDialogueApresCombat(resultat){
   const retour = retourDialogueCombat;
@@ -5331,6 +5349,7 @@ function loadForEdit(id){
   selectedCombatImmunities = new Set(cs.immunities || []);
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
   selectedCombatResistances = new Set(cs.resistances || []);
+  document.getElementById('editCanFight').checked = !!d.canFight;
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set(cs.rewardItemIds || []);
   document.getElementById('editCombatStealEasy').dataset.itemId = cs.stealEasyItemId || '';
@@ -5438,9 +5457,11 @@ function resetForm(){
   selectedCombatImmunities = new Set();
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
   selectedCombatResistances = new Set();
+  document.getElementById('editCanFight').checked = !!d.canFight;
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set();
   renderCombatRewardsPicker();
+  document.getElementById('editCanFight').checked = false;
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
@@ -5643,6 +5664,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const zoneShowName = document.getElementById('editZoneShowName').checked;
   const explorable = document.getElementById('editZoneExplorable').checked;
   const explorerReport = document.getElementById('editZoneExplorerReport').value.trim();
+  const canFight = document.getElementById('editCanFight').checked;
   const combatStats = {
     tribe: document.getElementById('editCombatTribe').value,
     hp: parseInt(document.getElementById('editCombatHp').value,10) || 1,
@@ -5701,7 +5723,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
