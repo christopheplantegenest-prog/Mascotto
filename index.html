@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v327</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v328</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3884,6 +3884,137 @@ function dlgCreerSuite(ch){
   dlgAllerA(ch.next);
 }
 
+/* « Que se passe-t-il quand le joueur dit ça ? » — les conséquences d'une réponse, écrites
+   comme des phrases et réglées une par une. Même esprit que le parcours : on ne montre jamais
+   qu'une décision à la fois, et chaque ligne dit son état actuel plutôt qu'un champ vide. */
+function fenetreEffetsReponse(ch){
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '5300';
+  fond.innerHTML = `
+    <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+      <div class="sheet-top">
+        <h3 style="margin-top:0;">Quand le joueur dit « ${(ch.label || '…')} »</h3>
+        <button class="sheet-x" data-fermer>✕</button>
+      </div>
+      <div data-lignes></div>
+      <button class="btn-capture" data-ok style="width:100%; margin-top:14px;">Terminé</button>
+    </div>`;
+  document.body.appendChild(fond);
+  const lignes = fond.querySelector('[data-lignes]');
+
+  const fermer = ()=>{ fond.remove(); renderDialogueBuilder(); };
+  fond.querySelector('[data-fermer]').addEventListener('click', fermer);
+  fond.querySelector('[data-ok]').addEventListener('click', fermer);
+
+  const dessiner = ()=>{
+    lignes.innerHTML = '';
+    const ligne = (titre, valeur, action)=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn-secondary';
+      b.style.cssText = 'width:100%; text-align:left; margin-bottom:8px; padding:10px 12px; display:block;';
+      b.innerHTML = '<div style="font-size:13px;">' + titre + '</div>'
+        + '<div class="meta" style="font-size:11px; margin-top:2px;">' + valeur + '</div>';
+      b.addEventListener('click', action);
+      lignes.appendChild(b);
+      return b;
+    };
+    const bascule = (titre, actif, action)=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn-secondary';
+      b.style.cssText = 'width:100%; text-align:left; margin-bottom:8px; padding:10px 12px;'
+        + (actif ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : '');
+      b.textContent = (actif ? '☑ ' : '☐ ') + titre;
+      b.addEventListener('click', ()=>{ action(); dessiner(); });
+      lignes.appendChild(b);
+    };
+    const nomReplique = (v)=> (v === null || v === undefined || isNaN(v)) ? 'la conversation s\'arrête'
+      : ('« ' + extraitReplique(v, 34) + ' »');
+
+    /* --- objet donné --- */
+    const it = ch.itemGrant && items.find(x=> x.name === ch.itemGrant.itemName);
+    ligne('🎁 Donner un objet', ch.itemGrant ? ((it ? it.name : ch.itemGrant.itemName) + ' ×' + (ch.itemGrant.quantity || 1)) : 'aucun', ()=>{
+      if (ch.itemGrant){ ch.itemGrant = null; dessiner(); return; }
+      if (!items.length){ showToast('Aucun objet créé pour l\'instant'); return; }
+      ouvrirSelecteur({ titre:'Quel objet ?', items: itemsPourSelecteur(), selectionnes: [], max:1,
+        onChoisir:(ids)=>{
+          const obj = items.find(x=> x.id === ids[0]);
+          if (obj) ch.itemGrant = { itemName: obj.name, quantity: 1 };
+          dessiner();
+        } });
+    });
+
+    /* --- combat --- */
+    const idsAdv = ch.combat ? (Array.isArray(ch.combat.creatureIds) ? ch.combat.creatureIds : (ch.combat.creatureId ? [ch.combat.creatureId] : [])) : [];
+    const nomsAdv = idsAdv.map(id=> id === '__self__' ? 'la personne à qui on parle' : ((ficheParId(id) || {}).name || '?'));
+    ligne('⚔️ Déclencher un combat', nomsAdv.length ? nomsAdv.join(' + ') : 'aucun', ()=>{
+      if (ch.combat && idsAdv.length){ ch.combat = null; dessiner(); return; }
+      const adversaires = toutesLesFiches().filter(c=> c.interactionType === 'combat' || c.canFight);
+      ouvrirSelecteur({ titre:'Qui affronte-t-on ? (3 maximum)',
+        items: [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }]
+          .concat(adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' }))),
+        selectionnes: idsAdv, max:3,
+        onChoisir:(ids)=>{
+          if (!ids.length){ ch.combat = null; dessiner(); return; }
+          ch.combat = Object.assign({ attackIds:[], stepWin:null, stepLose:null }, ch.combat || {});
+          ch.combat.creatureIds = ids;
+          delete ch.combat.creatureId;
+          dessiner();
+        } });
+    });
+
+    if (ch.combat && idsAdv.length){
+      const n = (ch.combat.attackIds || []).length;
+      ligne('🎯 Attaques autorisées', n ? (n + ' choisie' + (n>1?'s':'')) : 'toutes', ()=>{
+        if (!attacks.length){ showToast('Aucune attaque créée pour l\'instant'); return; }
+        ouvrirSelecteur({ titre:'Attaques autorisées dans ce duel',
+          items: attacks.map(a=> ({ id:a.id, label:a.name, emoji:a.emoji || '✨' })),
+          selectionnes: ch.combat.attackIds || [],
+          onChoisir:(ids)=>{ ch.combat.attackIds = ids; dessiner(); } });
+      });
+      const choisirReplique = (cle)=>{
+        ouvrirSelecteur({ titre:'Et ensuite, il dit…',
+          items: [{ id:'fin', label:'La conversation s\'arrête', emoji:'🚪' }]
+            .concat(currentDialogueSteps.map((st2, i)=> ({ id:String(i), label: extraitReplique(i, 46) || '(réplique vide)', emoji:'💬' }))),
+          selectionnes: [], max:1,
+          onChoisir:(ids)=>{
+            ch.combat[cle] = (ids[0] === 'fin' || ids[0] === undefined) ? null : parseInt(ids[0], 10);
+            dessiner();
+          } });
+      };
+      ligne('🏆 S\'il gagne', nomReplique(ch.combat.stepWin), ()=> choisirReplique('stepWin'));
+      ligne('💀 S\'il perd ou s\'enfuit', nomReplique(ch.combat.stepLose), ()=> choisirReplique('stepLose'));
+    }
+
+    /* --- quêtes et recrutement --- */
+    const nomQuete = (q)=> (quests.find(x=> x.id === q) || {}).name || 'quête supprimée';
+    ligne('📜 Confier une quête', ch.questGive ? nomQuete(ch.questGive.questId) : 'aucune', ()=>{
+      if (ch.questGive){ ch.questGive = null; dessiner(); return; }
+      if (!quests.length){ showToast('Aucune quête créée pour l\'instant'); return; }
+      ouvrirSelecteur({ titre:'Quelle quête ?', items: quests.map(q=> ({ id:q.id, label:q.name, emoji:'📜' })),
+        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.questGive = { questId: ids[0] }; dessiner(); } });
+    });
+    ligne('✅ Valider une quête', ch.questValidate ? nomQuete(ch.questValidate.questId) : 'aucune', ()=>{
+      if (ch.questValidate){ ch.questValidate = null; dessiner(); return; }
+      if (!quests.length){ showToast('Aucune quête créée pour l\'instant'); return; }
+      ouvrirSelecteur({ titre:'Quelle quête valider ?', items: quests.map(q=> ({ id:q.id, label:q.name, emoji:'✅' })),
+        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.questValidate = { questId: ids[0] }; dessiner(); } });
+    });
+    const nomMetier = (m)=> (metiers.find(x=> x.id === m) || {}).name || 'métier supprimé';
+    ligne('🤝 Le recruter', ch.recruit ? nomMetier(ch.recruit.metierId) : 'non', ()=>{
+      if (ch.recruit){ ch.recruit = null; dessiner(); return; }
+      if (!metiers.length){ showToast('Aucun métier créé pour l\'instant'); return; }
+      ouvrirSelecteur({ titre:'Recruté comme…', items: metiers.map(m=> ({ id:m.id, label:m.name, emoji:m.emoji || '🤝' })),
+        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] }; dessiner(); } });
+    });
+
+    bascule('Ne proposer cette réponse qu\'une seule fois', !!ch.once, ()=>{ ch.once = !ch.once; });
+  };
+  dessiner();
+}
+
 function renderDialogueParcours(wrap){
   if (!currentDialogueSteps.length) currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
   if (dlgParcoursIdx >= currentDialogueSteps.length) dlgParcoursIdx = 0;
@@ -3977,8 +4108,8 @@ function renderDialogueParcours(wrap){
     regler.className = 'btn-secondary';
     regler.style.cssText = 'flex:0 0 auto; padding:8px 10px;';
     regler.textContent = '⚙️';
-    regler.title = 'Objet, quête, recrutement, combat…';
-    regler.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(dlgParcoursIdx); });
+    regler.title = 'Ce que cette réponse déclenche';
+    regler.addEventListener('click', ()=> fenetreEffetsReponse(ch));
     ligne.appendChild(regler);
 
     const suppr = document.createElement('button');
