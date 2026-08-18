@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v317</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v318</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1922,6 +1922,7 @@
 
     <!-- Section : Nouveau PNJ -->
     <div class="pnj-section" id="pnjsection-new" style="display:none;">
+      <div data-rubrique="identite" data-titre="🪪 Identité et images"></div>
       <div class="field-label">Nom</div>
       <input type="text" id="editName" class="field-input" placeholder="Nom du PNJ">
 
@@ -2022,11 +2023,13 @@
         <textarea id="editZoneExplorerReport" class="field-input" rows="3" placeholder="Texte par défaut utilisé si laissé vide."></textarea>
       </div>
 
+      <div data-rubrique="dialogue" data-titre="💬 Dialogue"></div>
       <div id="dialogueBlock">
         <div class="field-label">Dialogue</div>
         <div id="dialogueStepsBuilder"></div>
       </div>
 
+      <div data-rubrique="boutique" data-titre="🛒 Boutique"></div>
       <div id="shopBlock" style="display:none;">
         <div class="field-label">Phrase d'accueil du marchand (optionnel)</div>
         <textarea id="editShopPhrase" class="field-input" style="min-height:50px;" placeholder="Bienvenue chez moi, jette un œil à mes marchandises !"></textarea>
@@ -2036,6 +2039,7 @@
         <p class="meta" style="margin-top:8px;">Le rachat (onglet "Vendre") est automatique : cette boutique rachète tous les objets vendables au prix de 💰 ci-dessus ÷ 2 (ou au prix de base de l'objet ÷ 2 si elle ne le vend pas elle-même).</p>
       </div>
 
+      <div data-rubrique="combat" data-titre="⚔️ Combat"></div>
       <div id="combatBlock" style="display:none;">
         <div class="field-label">Tribu</div>
         <select id="editCombatTribe" class="field-input">
@@ -2118,6 +2122,7 @@
         </div>
       </div>
 
+      <div data-rubrique="presence" data-titre="📍 Où et quand"></div>
       <div class="field-label">Position sur la carte</div>
       <div class="pos-status" id="posStatusText">Non définie</div>
       <div class="pos-actions">
@@ -2173,6 +2178,7 @@
         <label for="editHideImmediately" style="margin:0;">Disparition immédiate dès que la condition change (sinon : reste visible tant que le joueur ne quitte pas sa zone de visibilité)</label>
       </div>
 
+      <div id="rubriquesMenu" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;"></div>
       <button class="btn-capture" id="editSaveBtn" style="width:100%; margin-top:16px;">Enregistrer le PNJ</button>
       <button class="btn-secondary" id="editDuplicateBtn" style="width:100%; margin-top:8px; display:none;">🧬 Dupliquer ce PNJ (pour le faire "se déplacer")</button>
       <button class="btn-secondary" id="editCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
@@ -2869,6 +2875,7 @@ document.getElementById('addShopItemBtn').addEventListener('click', ()=>{
    même écran. Une zone d'exploration n'a ni métier, ni recrutement, ni chambre de vaisseau,
    ni portrait de combat : ces blocs sont masqués plutôt que d'allonger le défilement. */
 function majBlocsSelonType(type){
+  if (typeof majMenuRubriques === 'function') setTimeout(majMenuRubriques, 0);
   const estZone = (type === 'zone');
   const caseSeBattre = document.getElementById('editCanFight');
   const wrapSeBattre = document.getElementById('canFightWrap');
@@ -4920,6 +4927,92 @@ function appAlert(message, libelle){
   });
 }
 
+/* ---------- La fiche PNJ en rubriques ----------
+   La fiche faisait plusieurs écrans de haut : on descendait longtemps avant d'atteindre
+   le champ qu'on venait régler. Les champs ne sont pas réécrits — ils sont DÉPLACÉS, tels
+   quels, dans des fenêtres ; ils gardent donc leurs identifiants et tout ce qui les pilote.
+   La fiche ne montre plus qu'un sommaire : on touche une rubrique, elle s'ouvre. */
+const RUBRIQUES_FENETRES = {};
+function installerRubriques(){
+  const menu = document.getElementById('rubriquesMenu');
+  const section = document.getElementById('pnjsection-new');
+  if (!menu || !section || menu.dataset.pret) return;
+
+  const marqueurs = Array.from(section.querySelectorAll('[data-rubrique]'));
+  if (!marqueurs.length) return;
+  menu.dataset.pret = '1';
+
+  marqueurs.forEach((marqueur, n)=>{
+    const cle = marqueur.dataset.rubrique;
+    const titre = marqueur.dataset.titre;
+
+    /* Tout ce qui suit ce marqueur jusqu'au suivant appartient à la rubrique. */
+    const contenu = [];
+    let el = marqueur.nextElementSibling;
+    while (el && !el.hasAttribute('data-rubrique') && el.id !== 'rubriquesMenu'
+           && el.id !== 'editSaveBtn' && el.id !== 'editDuplicateBtn' && el.id !== 'editCancelBtn'){
+      const suivant = el.nextElementSibling;
+      contenu.push(el);
+      el = suivant;
+    }
+    if (!contenu.length) return;
+
+    const fond = document.createElement('div');
+    fond.className = 'overlay';
+    fond.style.zIndex = '4600';
+    fond.innerHTML = `
+      <div class="sheet" style="max-height:88vh; overflow-y:auto;">
+        <div class="sheet-top">
+          <h3 style="margin-top:0;">${titre}</h3>
+          <button class="sheet-x" data-fermer-rubrique>✕</button>
+        </div>
+        <div data-corps></div>
+        <button class="btn-capture" data-valider-rubrique style="width:100%; margin-top:14px;">Terminé</button>
+      </div>`;
+    const corps = fond.querySelector('[data-corps]');
+    contenu.forEach(n2=> corps.appendChild(n2));   // déplacement, pas copie
+    document.body.appendChild(fond);
+    RUBRIQUES_FENETRES[cle] = fond;
+
+    const fermer = ()=> fond.classList.remove('show');
+    fond.querySelector('[data-fermer-rubrique]').addEventListener('click', fermer);
+    fond.querySelector('[data-valider-rubrique]').addEventListener('click', fermer);
+    fond.addEventListener('click', (e)=>{ if (e.target === fond) fermer(); });
+
+    const bouton = document.createElement('button');
+    bouton.type = 'button';
+    bouton.className = 'btn-secondary';
+    bouton.style.cssText = 'width:100%; justify-content:space-between; display:flex; align-items:center;';
+    bouton.innerHTML = `<span>${titre}</span><span style="opacity:.6;">›</span>`;
+    bouton.dataset.rubriqueBtn = cle;
+    bouton.addEventListener('click', ()=>{
+      fond.classList.add('show');
+      /* Les rubriques dont la visibilité dépend du type se remettent à jour à l'ouverture. */
+      majBlocsSelonType(document.getElementById('editInteractionType').value);
+    });
+    menu.appendChild(bouton);
+  });
+}
+
+/* Une rubrique sans objet pour ce personnage n'a pas à figurer au sommaire. */
+function majMenuRubriques(){
+  const type = document.getElementById('editInteractionType');
+  if (!type) return;
+  const t = type.value;
+  const seBat = document.getElementById('editCanFight');
+  const visible = {
+    identite: true,
+    presence: true,
+    dialogue: (t === 'dialogue' || t === 'shop' || t === 'combat'),
+    boutique: (t === 'shop'),
+    combat: (t === 'combat') || (t === 'dialogue' && seBat && seBat.checked),
+  };
+  Object.keys(visible).forEach(cle=>{
+    const b = document.querySelector('[data-rubrique-btn="' + cle + '"]');
+    if (b) b.style.display = visible[cle] ? 'flex' : 'none';
+  });
+}
+
 /* ---------- Aides repliées derrière un ⓘ ----------
    L'éditeur contient une centaine de textes d'explication. Ils sont tous utiles un jour, mais
    affichés en permanence ils noient les champs. On les replie donc derrière un petit ⓘ accolé
@@ -5006,8 +5099,8 @@ function installerAides(){
     });
   }).observe(document.body, { childList:true, subtree:true });
 }
-document.addEventListener('DOMContentLoaded', installerAides);
-if (document.readyState !== 'loading') installerAides();
+document.addEventListener('DOMContentLoaded', ()=>{ installerRubriques(); majMenuRubriques(); installerAides(); });
+if (document.readyState !== 'loading'){ installerRubriques(); majMenuRubriques(); installerAides(); }
 
 /* ---------- Panneau éditeur ---------- */
 let editingId = null;
