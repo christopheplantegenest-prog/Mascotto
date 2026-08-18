@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v326</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v327</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3239,8 +3239,10 @@ function renderDialogueBuilder(){
   topBar.appendChild(dlgPill('✏️ Édition', !dlgTreeMode, ()=>{ dlgTreeMode = false; renderDialogueBuilder(); }));
   topBar.appendChild(dlgPill('🌳 Arbre', dlgTreeMode === 'arbre', ()=>{ dlgTreeMode = 'arbre'; renderDialogueBuilder(); }));
   topBar.appendChild(dlgPill('📜 Script', dlgTreeMode === 'script', ()=>{ dlgTreeMode = 'script'; renderDialogueBuilder(); }));
+  topBar.appendChild(dlgPill('🚶 Parcours', dlgTreeMode === 'parcours', ()=>{ dlgTreeMode = 'parcours'; dlgParcoursIdx = 0; dlgParcoursPile = []; renderDialogueBuilder(); }));
   wrap.appendChild(topBar);
 
+  if (dlgTreeMode === 'parcours'){ renderDialogueParcours(wrap); return; }
   if (dlgTreeMode === 'script'){ renderDialogueScript(wrap); return; }
   if (dlgTreeMode){ renderDialogueTree(wrap); return; }
 
@@ -3863,6 +3865,174 @@ function renderDialogueBuilder(){
    Un dialogue peut reboucler (deux choix vers la même étape) : une étape déjà dessinée
    n'est pas redessinée, on affiche "↩ Étape N" à la place. Les étapes qu'aucun choix
    n'atteint sont listées à part : c'est une erreur fréquente et invisible autrement. */
+/* ---------- Le mode « parcours » ----------
+   On traverse le dialogue COMME LE JOUEUR LE VIT : une réplique par écran, ses réponses en
+   boutons. Toucher une réponse, c'est y aller — et se retrouver à l'endroit où l'on veut
+   écrire la suite. Ni indentation, ni arborescence, ni numéro d'étape : c'est ce qui manquait
+   aux deux autres vues, qui demandaient de tenir la structure entière dans sa tête. */
+let dlgParcoursIdx = 0;
+let dlgParcoursPile = [];
+
+function dlgAllerA(idx){
+  dlgParcoursPile.push(dlgParcoursIdx);
+  dlgParcoursIdx = idx;
+  renderDialogueBuilder();
+}
+function dlgCreerSuite(ch){
+  currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+  ch.next = currentDialogueSteps.length - 1;
+  dlgAllerA(ch.next);
+}
+
+function renderDialogueParcours(wrap){
+  if (!currentDialogueSteps.length) currentDialogueSteps.push({ text:'', choices:[], textVariants:[] });
+  if (dlgParcoursIdx >= currentDialogueSteps.length) dlgParcoursIdx = 0;
+  const st = currentDialogueSteps[dlgParcoursIdx];
+  if (!st.choices) st.choices = [];
+  const nom = (document.getElementById('editName').value || 'Le personnage').trim();
+
+  const box = document.createElement('div');
+  box.style.cssText = 'padding:2px 0 10px;';
+
+  /* Barre du haut : d'où l'on vient, et le retour au début. */
+  const barre = document.createElement('div');
+  barre.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:10px;';
+  if (dlgParcoursPile.length){
+    const retour = document.createElement('button');
+    retour.type = 'button';
+    retour.className = 'btn-secondary';
+    retour.style.cssText = 'flex:0 0 auto; padding:6px 10px;';
+    retour.textContent = '← Retour';
+    retour.addEventListener('click', ()=>{ dlgParcoursIdx = dlgParcoursPile.pop(); renderDialogueBuilder(); });
+    barre.appendChild(retour);
+  }
+  const debut = document.createElement('button');
+  debut.type = 'button';
+  debut.className = 'btn-secondary';
+  debut.style.cssText = 'flex:0 0 auto; padding:6px 10px;';
+  debut.textContent = '⏮ Début';
+  debut.addEventListener('click', ()=>{ dlgParcoursIdx = 0; dlgParcoursPile = []; renderDialogueBuilder(); });
+  barre.appendChild(debut);
+  const situe = document.createElement('span');
+  situe.className = 'meta';
+  situe.style.cssText = 'font-size:11px; margin-left:auto;';
+  situe.textContent = dlgParcoursIdx === 0 ? 'Première réplique' : 'Réplique atteinte par une réponse';
+  barre.appendChild(situe);
+  box.appendChild(barre);
+
+  /* La réplique du personnage, modifiable sur place. */
+  const qui = document.createElement('div');
+  qui.className = 'field-label';
+  qui.textContent = nom + ' dit :';
+  box.appendChild(qui);
+
+  const texte = document.createElement('textarea');
+  texte.className = 'field-input';
+  texte.rows = 3;
+  texte.placeholder = 'Ce qu\'il dit à ce moment-là…';
+  texte.value = st.text || '';
+  texte.addEventListener('input', ()=>{ st.text = texte.value; });
+  box.appendChild(texte);
+
+  /* Les réponses du joueur : le texte se modifie, la flèche fait voyager. */
+  const titre = document.createElement('div');
+  titre.className = 'field-label';
+  titre.textContent = 'Le joueur peut répondre';
+  box.appendChild(titre);
+
+  if (!st.choices.length){
+    const rien = document.createElement('p');
+    rien.className = 'meta';
+    rien.style.margin = '0 0 6px';
+    rien.textContent = 'Aucune réponse : la conversation s\'arrête après cette réplique.';
+    box.appendChild(rien);
+  }
+
+  st.choices.forEach((ch, i)=>{
+    const ligne = document.createElement('div');
+    ligne.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:6px;';
+
+    const champ = document.createElement('input');
+    champ.type = 'text';
+    champ.className = 'field-input';
+    champ.style.cssText = 'flex:1; margin:0;';
+    champ.placeholder = 'Réponse du joueur…';
+    champ.value = ch.label || '';
+    champ.addEventListener('input', ()=>{ ch.label = champ.value; });
+    ligne.appendChild(champ);
+
+    const aller = document.createElement('button');
+    aller.type = 'button';
+    aller.className = 'btn-secondary';
+    aller.style.cssText = 'flex:0 0 auto; padding:8px 10px;';
+    const suivant = ch.next;
+    const existe = suivant !== null && suivant !== undefined && !isNaN(suivant) && suivant < currentDialogueSteps.length;
+    aller.textContent = existe ? '→' : '＋';
+    aller.title = existe ? 'Aller à la suite' : 'Écrire la suite';
+    aller.addEventListener('click', ()=>{ existe ? dlgAllerA(suivant) : dlgCreerSuite(ch); });
+    ligne.appendChild(aller);
+
+    const regler = document.createElement('button');
+    regler.type = 'button';
+    regler.className = 'btn-secondary';
+    regler.style.cssText = 'flex:0 0 auto; padding:8px 10px;';
+    regler.textContent = '⚙️';
+    regler.title = 'Objet, quête, recrutement, combat…';
+    regler.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(dlgParcoursIdx); });
+    ligne.appendChild(regler);
+
+    const suppr = document.createElement('button');
+    suppr.type = 'button';
+    suppr.className = 'icon-del';
+    suppr.textContent = '🗑️';
+    suppr.addEventListener('click', async ()=>{
+      if (!(await appConfirm('Supprimer la réponse « ' + (ch.label || 'sans texte') + ' » ?'))) return;
+      st.choices.splice(i, 1);
+      renderDialogueBuilder();
+    });
+    ligne.appendChild(suppr);
+
+    box.appendChild(ligne);
+
+    /* Ce que cette réponse entraîne, en une ligne discrète. */
+    const effets = [];
+    if (ch.itemGrant && ch.itemGrant.itemName) effets.push('🎁 ' + ch.itemGrant.itemName);
+    if (ch.recruit) effets.push('🤝 recrutement');
+    if (ch.questGive) effets.push('📜 quête');
+    if (ch.questValidate) effets.push('✅ quête validée');
+    if (ch.combat) effets.push('⚔️ combat');
+    if (ch.once) effets.push('1️⃣ une seule fois');
+    if (effets.length){
+      const e = document.createElement('div');
+      e.className = 'meta';
+      e.style.cssText = 'font-size:11px; margin:-2px 0 8px 4px;';
+      e.textContent = effets.join(' · ');
+      box.appendChild(e);
+    }
+  });
+
+  const ajouter = document.createElement('button');
+  ajouter.type = 'button';
+  ajouter.className = 'btn-secondary';
+  ajouter.style.cssText = 'width:100%; margin-top:4px;';
+  ajouter.textContent = '➕ Une réponse';
+  ajouter.addEventListener('click', ()=>{
+    st.choices.push({ label:'', next:null });
+    renderDialogueBuilder();
+  });
+  box.appendChild(ajouter);
+
+  const versEdition = document.createElement('button');
+  versEdition.type = 'button';
+  versEdition.className = 'btn-secondary';
+  versEdition.style.cssText = 'width:100%; margin-top:8px;';
+  versEdition.textContent = '⚙️ Réglages détaillés de cette réplique';
+  versEdition.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(dlgParcoursIdx); });
+  box.appendChild(versEdition);
+
+  wrap.appendChild(box);
+}
+
 /* ---------- La vue « script » ----------
    Se relire, tout simplement. L'écran d'édition montre une étape à la fois et parle en
    numéros ; ici on lit la conversation d'un bout à l'autre, comme un texte de théâtre :
