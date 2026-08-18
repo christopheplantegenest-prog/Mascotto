@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v322</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v326</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3237,9 +3237,11 @@ function renderDialogueBuilder(){
   const topBar = document.createElement('div');
   topBar.className = 'dlg-topbar';
   topBar.appendChild(dlgPill('✏️ Édition', !dlgTreeMode, ()=>{ dlgTreeMode = false; renderDialogueBuilder(); }));
-  topBar.appendChild(dlgPill('🌳 Arbre', dlgTreeMode, ()=>{ dlgTreeMode = true; renderDialogueBuilder(); }));
+  topBar.appendChild(dlgPill('🌳 Arbre', dlgTreeMode === 'arbre', ()=>{ dlgTreeMode = 'arbre'; renderDialogueBuilder(); }));
+  topBar.appendChild(dlgPill('📜 Script', dlgTreeMode === 'script', ()=>{ dlgTreeMode = 'script'; renderDialogueBuilder(); }));
   wrap.appendChild(topBar);
 
+  if (dlgTreeMode === 'script'){ renderDialogueScript(wrap); return; }
   if (dlgTreeMode){ renderDialogueTree(wrap); return; }
 
   /* --- barre de navigation entre étapes --- */
@@ -3712,6 +3714,18 @@ function renderDialogueBuilder(){
       });
       row.appendChild(atkBtn);
 
+      /* Ce que le choix contient VRAIMENT, écrit noir sur blanc. Un menu peut afficher
+         « Étape 1 » alors que rien n'est enregistré — c'est ce qui a fait chercher trois
+         versions durant. Ici, ce qui est montré est ce qui partira dans la fiche. */
+      const etat = document.createElement('p');
+      etat.className = 'meta';
+      etat.style.cssText = 'margin:6px 0 0; font-size:11px;';
+      const majEtat = ()=>{
+        const dire = (v)=> (v === null || v === undefined) ? 'fin de la conversation' : ('étape ' + v);
+        etat.textContent = '📼 Enregistré : victoire → ' + dire(choice.combat.stepWin)
+          + '  ·  défaite → ' + dire(choice.combat.stepLose);
+      };
+
       [['stepWin','Si le joueur gagne'], ['stepLose','Si le joueur perd ou fuit']].forEach(([cle, libelle])=>{
         const lbl = document.createElement('div');
         lbl.className = 'field-label';
@@ -3728,9 +3742,14 @@ function renderDialogueBuilder(){
         if (choice.combat[cle] === undefined) choice.combat[cle] = null;
         sel.value = (choice.combat[cle] === null) ? 'fin' : String(choice.combat[cle]);
         if (sel.value !== 'fin' && choice.combat[cle] === null) choice.combat[cle] = parseInt(sel.value, 10);
-        sel.addEventListener('change', ()=>{ choice.combat[cle] = (sel.value === 'fin') ? null : parseInt(sel.value, 10); });
+        sel.addEventListener('change', ()=>{
+          choice.combat[cle] = (sel.value === 'fin') ? null : parseInt(sel.value, 10);
+          majEtat();
+        });
         row.appendChild(sel);
       });
+      majEtat();
+      row.appendChild(etat);
     }
 
     const nextLabel = document.createElement('div');
@@ -3844,6 +3863,133 @@ function renderDialogueBuilder(){
    Un dialogue peut reboucler (deux choix vers la même étape) : une étape déjà dessinée
    n'est pas redessinée, on affiche "↩ Étape N" à la place. Les étapes qu'aucun choix
    n'atteint sont listées à part : c'est une erreur fréquente et invisible autrement. */
+/* ---------- La vue « script » ----------
+   Se relire, tout simplement. L'écran d'édition montre une étape à la fois et parle en
+   numéros ; ici on lit la conversation d'un bout à l'autre, comme un texte de théâtre :
+   la réplique du personnage, les réponses possibles en retrait, et ce que chacune entraîne.
+   Aucun numéro d'étape n'apparaît — un renvoi cite les premiers mots de la réplique visée. */
+function extraitReplique(idx, taille){
+  const st = currentDialogueSteps[idx];
+  const t = (st && (st.text || '').trim()) || '(réplique vide)';
+  return dlgShortText(t, taille || 42);
+}
+function renderDialogueScript(wrap){
+  const box = document.createElement('div');
+  box.style.cssText = 'padding:4px 2px 10px;';
+
+  if (!currentDialogueSteps.length || currentDialogueSteps.every(st=> !(st.text||'').trim() && !(st.choices||[]).length)){
+    box.innerHTML = '<p class="meta">Ce personnage n\'a encore rien à dire.</p>';
+    wrap.appendChild(box);
+    return;
+  }
+
+  const nom = (document.getElementById('editName').value || 'Le personnage').trim();
+  const vues = new Set();
+
+  const pastilles = (ch)=>{
+    const p = [];
+    if (ch.itemGrant && ch.itemGrant.itemName) p.push('🎁 ' + ch.itemGrant.itemName);
+    if (ch.recruit) p.push('🤝 recrutement');
+    if (ch.questGive) p.push('📜 donne une quête');
+    if (ch.questValidate) p.push('✅ valide une quête');
+    if (ch.combat){
+      const ids = Array.isArray(ch.combat.creatureIds) ? ch.combat.creatureIds : (ch.combat.creatureId ? [ch.combat.creatureId] : []);
+      const noms = ids.map(id=> id === '__self__' ? nom : ((ficheParId(id) || {}).name || '?'));
+      p.push('⚔️ combat' + (noms.length ? ' — ' + noms.join(' + ') : ''));
+      const n = (ch.combat.attackIds || []).length;
+      if (n) p.push('🎯 ' + n + ' attaque' + (n>1?'s':'') + ' autorisée' + (n>1?'s':''));
+      const dire = (v)=> (v === null || v === undefined) ? 'fin' : ('→ ' + extraitReplique(v, 24));
+      p.push('🏆 ' + dire(ch.combat.stepWin));
+      p.push('💀 ' + dire(ch.combat.stepLose));
+    }
+    if (ch.once) p.push('1️⃣ une seule fois');
+    if (ch.showIf && ch.showIf.choiceId) p.push('🔒 sous condition');
+    return p;
+  };
+
+  const ligneEtape = (idx, profondeur)=>{
+    const st = currentDialogueSteps[idx];
+    if (!st) return;
+    const marge = Math.min(profondeur, 4) * 14;
+
+    const bloc = document.createElement('div');
+    bloc.style.cssText = 'margin:10px 0 0 ' + marge + 'px; padding-left:8px; border-left:2px solid rgba(0,0,0,.12);';
+
+    if (vues.has(idx)){
+      bloc.innerHTML = '<div class="meta" style="font-style:italic;">↩︎ retourne à : « ' + extraitReplique(idx) + ' »</div>';
+      wrap.querySelector('[data-script]').appendChild(bloc);
+      return;
+    }
+    vues.add(idx);
+
+    const repl = document.createElement('div');
+    repl.style.cssText = 'font-size:13px; line-height:1.45;';
+    repl.innerHTML = '<strong>' + nom + '</strong> — <em>' + ((st.text || '').trim() || '(réplique vide)') + '</em>';
+    bloc.appendChild(repl);
+
+    if (idx === 0 && st.firstOnly){
+      const note = document.createElement('div');
+      note.className = 'meta';
+      note.style.cssText = 'font-size:11px; margin-top:2px;';
+      const suite = (st.thenStep === undefined || st.thenStep === null) ? null : st.thenStep;
+      note.textContent = '🤝 première rencontre seulement' + (suite !== null ? ' · ensuite : « ' + extraitReplique(suite, 30) + ' »' : '');
+      bloc.appendChild(note);
+    }
+    (st.textVariants || []).forEach(v=>{
+      const alt = document.createElement('div');
+      alt.className = 'meta';
+      alt.style.cssText = 'font-size:11px; margin-top:2px; font-style:italic;';
+      alt.textContent = '↺ variante : « ' + dlgShortText(v.text || '', 50) + ' »';
+      bloc.appendChild(alt);
+    });
+
+    wrap.querySelector('[data-script]').appendChild(bloc);
+
+    (st.choices || []).forEach(ch=>{
+      const rep = document.createElement('div');
+      rep.style.cssText = 'margin:6px 0 0 ' + (marge + 16) + 'px; font-size:13px;';
+      const marques = pastilles(ch);
+      rep.innerHTML = '↳ <strong>« ' + (ch.label || '(réponse sans texte)') + ' »</strong>'
+        + (marques.length ? '<div class="meta" style="font-size:11px; margin:2px 0 0 14px;">' + marques.join(' · ') + '</div>' : '');
+      wrap.querySelector('[data-script]').appendChild(rep);
+
+      const suivant = ch.next;
+      if (suivant === null || suivant === undefined || isNaN(suivant) || suivant >= currentDialogueSteps.length){
+        const fin = document.createElement('div');
+        fin.className = 'meta';
+        fin.style.cssText = 'margin:2px 0 0 ' + (marge + 30) + 'px; font-size:11px;';
+        fin.textContent = ch.combat ? '(la suite dépend du combat)' : '— fin de la conversation';
+        wrap.querySelector('[data-script]').appendChild(fin);
+      } else {
+        ligneEtape(suivant, profondeur + 1);
+      }
+    });
+  };
+
+  const conteneur = document.createElement('div');
+  conteneur.dataset.script = '1';
+  wrap.appendChild(conteneur);
+  ligneEtape(0, 0);
+
+  /* Les étapes qu'aucun choix n'atteint : elles existent mais ne se jouent jamais,
+     sauf comme retour de combat. Les montrer évite de les oublier des heures. */
+  const orphelines = currentDialogueSteps.map((_, i)=> i).filter(i=> !vues.has(i));
+  if (orphelines.length){
+    const titre = document.createElement('div');
+    titre.className = 'field-label';
+    titre.style.marginTop = '16px';
+    titre.textContent = 'Répliques non reliées (' + orphelines.length + ')';
+    conteneur.appendChild(titre);
+    orphelines.forEach(i=>{
+      const l = document.createElement('div');
+      l.className = 'meta';
+      l.style.cssText = 'font-size:12px; margin:3px 0;';
+      l.textContent = '• « ' + extraitReplique(i, 60) + ' »';
+      conteneur.appendChild(l);
+    });
+  }
+}
+
 function renderDialogueTree(wrap){
   const box = document.createElement('div');
   box.className = 'dlg-tree';
@@ -4554,7 +4700,7 @@ function renderSheet(){
     const btn = document.createElement('button');
     btn.className = 'choice-btn end';
     btn.textContent = 'Fermer';
-    btn.addEventListener('click', ()=>{ document.getElementById('overlay').classList.remove('show'); document.getElementById('overlay').style.zIndex = ''; });
+    btn.addEventListener('click', fermerDialogue);
     choicesEl.appendChild(btn);
     return;
   }
@@ -4577,8 +4723,7 @@ function renderSheet(){
         return;
       }
       if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
-        document.getElementById('overlay').classList.remove('show');
-        document.getElementById('overlay').style.zIndex = '';
+        fermerDialogue();
       } else {
         currentStepIdx = ch.next;
         renderSheet();
@@ -4592,6 +4737,20 @@ function renderSheet(){
    bonne étape une fois le combat fini — une provocation sans conclusion ne vaut rien.
    `attackIds` restreint les attaques utilisables : c'est ce qui permet un duel à thème
    (un match de tennis, une joute d'artisans) avec les attaques déjà créées. */
+/* Ce qu'il reste à faire QUAND le joueur referme le dialogue : quitter la zone après une
+   défaite (le mot de la fin se lit sur place, pas une fois dehors), faire disparaître un
+   agresseur qui a dit ce qu'il avait à dire. Une action, une seule fois. */
+let apresFermetureDialogue = null;
+function fermerDialogue(){
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('overlay').style.zIndex = '';
+  const suite = apresFermetureDialogue;
+  apresFermetureDialogue = null;
+  if (typeof suite === 'function'){
+    try { suite(); } catch(e){ /* une conséquence ratée ne doit pas bloquer la fermeture */ }
+  }
+}
+
 let retourDialogueCombat = null;
 function lancerCombatDepuisDialogue(creature, combat){
   const ids = Array.isArray(combat.creatureIds) && combat.creatureIds.length
@@ -4936,6 +5095,43 @@ function appAlert(message, libelle){
     okBtn.addEventListener('click', cleanup);
   });
 }
+
+/* ---------- Garde-fou : aucune fenêtre ne doit s'ouvrir derrière une autre ----------
+   Le jeu empile beaucoup de plans (carte 0, panneaux 2000, scène 4000, combat au-dessus).
+   Chaque fois qu'une nouvelle fenêtre s'ouvre depuis un contexte déjà haut, son plan fixe
+   écrit dans la feuille de style peut la faire passer DERRIÈRE ce qui l'a ouverte : elle
+   existe, elle est active, mais invisible. Plutôt que de corriger les cas un par un, on
+   surveille l'ouverture et on relève celle qui arrive au-dessus de tout ce qui est visible. */
+function planDeCouche(el){
+  const v = parseInt((el.style && el.style.zIndex) || getComputedStyle(el).zIndex, 10);
+  return isNaN(v) ? 0 : v;
+}
+function assurerAuDessus(el){
+  const visibles = Array.from(document.querySelectorAll('.overlay.show, .scene-full.show'))
+    .filter(x=> x !== el && x.offsetParent !== null);
+  if (!visibles.length) return;
+  const plafond = Math.max(0, ...visibles.map(planDeCouche));
+  if (planDeCouche(el) <= plafond){
+    el.dataset.planReleve = '1';
+    el.style.zIndex = String(plafond + 10);
+  }
+}
+function surveillerLesFenetres(){
+  const observateur = new MutationObserver((mutations)=>{
+    mutations.forEach(m=>{
+      const el = m.target;
+      if (!el.classList || !el.classList.contains('overlay')) return;
+      if (el.classList.contains('show')) assurerAuDessus(el);
+      else if (el.dataset.planReleve){        // refermée : on rend son plan d'origine
+        el.style.zIndex = '';
+        delete el.dataset.planReleve;
+      }
+    });
+  });
+  observateur.observe(document.body, { attributes:true, attributeFilter:['class'], subtree:true });
+}
+document.addEventListener('DOMContentLoaded', surveillerLesFenetres);
+if (document.readyState !== 'loading') surveillerLesFenetres();
 
 /* ---------- La fiche PNJ en rubriques ----------
    La fiche faisait plusieurs écrans de haut : on descendait longtemps avant d'atteindre
@@ -13915,7 +14111,22 @@ function renderSceneDetailTypeSpecific(pt){
         <input type="number" id="scenePointPnjResetMinutes" class="field-input" min="1" value="${pt.resetMinutes || 60}">
       </div>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Ne concerne que les PNJ de combat : un boss d'histoire se règle sur « une seule fois », un monstre de garde sur un délai. Un PNJ de dialogue reste toujours là, quoi qu'il arrive.</p>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+        <input type="checkbox" id="scenePointPnjAuto" ${pt.autoTrigger ? 'checked' : ''} style="width:auto;">
+        <span style="font-size:13px; color:rgba(255,255,255,.9);">🗡️ Vient au joueur dès l'entrée (agression)</span>
+      </label>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Son dialogue s'ouvre tout seul quand le joueur entre dans la scène, sans qu'il ait à le toucher. Combine avec un choix « ⚔️ Déclencher un combat » pour une agression complète : deux mots, puis les coups.</p>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+        <input type="checkbox" id="scenePointPnjPartApres" ${pt.partApresDialogue ? 'checked' : ''} style="width:auto;">
+        <span style="font-size:13px; color:rgba(255,255,255,.9);">👋 Disparaît quand son dialogue se referme</span>
+      </label>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Pour un agresseur qui s'enfuit après avoir eu son compte, ou un personnage qui ne passait que pour dire une chose. Il ne revient pas tant que la réapparition réglée plus haut ne le ramène pas.</p>
     `;
+    const caseAuto = typeWrap.querySelector('#scenePointPnjAuto');
+    if (caseAuto) caseAuto.addEventListener('change', (e)=>{ pt.autoTrigger = e.target.checked; });
+    const casePart = typeWrap.querySelector('#scenePointPnjPartApres');
+    if (casePart) casePart.addEventListener('change', (e)=>{ pt.partApresDialogue = e.target.checked; });
+
     const selReset = typeWrap.querySelector('#scenePointPnjReset');
     if (selReset) selReset.addEventListener('change', (e)=>{
       pt.resetMode = e.target.value;
@@ -14508,6 +14719,15 @@ async function renderSceneViewCurrentScene(){
             return;
           }
           document.getElementById('overlay').style.zIndex = '4200';
+          /* « Disparaît quand son dialogue se referme » : la conséquence est posée ici, elle
+             se déclenchera à la fermeture — y compris après un combat mené par ce dialogue. */
+          if (pt.partApresDialogue){
+            apresFermetureDialogue = ()=>{
+              markScenePointTaken(pt).catch(()=>{});
+              sceneViewTakenMap[pt.id] = true;
+              renderSceneViewCurrentScene();
+            };
+          }
           openSheet({ id: doc.id, ...data });
         }).catch((err)=> showToast('Échec : ' + err.message));
       };
@@ -14524,6 +14744,29 @@ async function renderSceneViewCurrentScene(){
   });
 
   positionSceneViewPoints();
+  declencherAgressions(sc, wrapPointActions);
+}
+
+/* Agression : un personnage marqué « vient au joueur dès l'entrée » n'attend pas qu'on le
+   touche — il ouvre son dialogue tout seul. Le petit délai laisse le décor apparaître : une
+   fenêtre qui surgit sur un écran encore noir donne l'impression d'un bug, pas d'une embuscade. */
+let agressionEnCours = false;
+function declencherAgressions(sc, actions){
+  if (agressionEnCours) return;
+  if (document.getElementById('overlay').classList.contains('show')) return;   // déjà en train de parler
+  if (combatState) return;                                                     // ou de se battre
+  const pt = (sc.points || []).find(p=> p.type === 'pnj' && p.autoTrigger
+    && p.linkedPnjId && isScenePointAvailable(p) && typeof actions[p.id] === 'function');
+  if (!pt) return;
+  agressionEnCours = true;
+  setTimeout(()=>{
+    agressionEnCours = false;
+    /* Rien ne se déclenche si le joueur est parti entre-temps, ou s'il a ouvert autre chose. */
+    if (!document.getElementById('sceneViewFull').classList.contains('show')) return;
+    if (document.getElementById('overlay').classList.contains('show') || combatState) return;
+    const action = sceneViewPointActions[pt.id];
+    if (typeof action === 'function') action();
+  }, 600);
 }
 
 /* Un seul listener délégué : trouve le point cliqué de haut en bas (ordre du DOM = ordre des plans),
@@ -15139,15 +15382,16 @@ function playFxThrust(targetUid, fx, containerEl){
    Les objets gardés dans le tableau empêchent le ramasse-miettes de les jeter aussitôt. */
 let fxPreloadPool = [];
 /* Une image de dos peut être stockée en référence interne (comme les images de scène).
-   On la résout après coup : le combat démarre avec l'image de face, et le dos apparaît
-   dès qu'il est lu — plutôt que de retarder l'ouverture du combat. */
-function resoudreImagesDeDos(fighters){
-  (fighters || []).forEach(f=>{
+   On la résout AVANT que le combat s'affiche : sinon le combattant apparaissait d'abord de
+   face, puis basculait de dos une fois l'image lue — un clignotement visible à chaque combat. */
+async function resoudreImagesDeDos(fighters){
+  await Promise.all((fighters || []).map(async (f)=>{
     if (f.side !== 'player' || !f.backImageRef) return;
-    internalizeSceneImage(f.backImageRef)
-      .then((url)=>{ if (url){ f.imageUrl = url; if (typeof renderCombat === 'function') renderCombat(); } })
-      .catch(()=>{});
-  });
+    try {
+      const url = await internalizeSceneImage(f.backImageRef);
+      if (url) f.imageUrl = url;
+    } catch(e){ /* l'image de face fait un repli acceptable */ }
+  }));
 }
 
 function preloadCombatFx(fighters){
@@ -15223,6 +15467,7 @@ function buildPlayerFighters(){
            Les recrues d'avant la v314 n'ont rien copié : on va alors chercher l'image de dos
            sur leur fiche d'origine, pour ne pas avoir à les recruter une seconde fois. */
         imageUrl: (dosDeLaRecrue(r).path ? resolveMediaPath(dosDeLaRecrue(r).path) : '') || r.imageUrl || '',
+        faceImageUrl: r.imageUrl || '',      // pour la barre d'ordre des tours
         backImageRef: dosDeLaRecrue(r).ref,
         tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
@@ -15243,7 +15488,8 @@ function buildEnemyFighters(monsterList){
   return monsterList.slice(0,3).map((c,i)=>{
     const cs = c.combatStats || {};
     return {
-      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name, imageUrl:c.imageUrl||'', tribe:cs.tribe||'',
+      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name, imageUrl:c.imageUrl||'',
+      faceImageUrl: c.imageUrl||'', tribe:cs.tribe||'',
       combatPortraitCrop: c.combatPortraitCrop || null,
       maxHp:cs.hp||1, hp:cs.hp||1,
       atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
@@ -15968,8 +16214,11 @@ function buildManualThumb(imageUrl, crop){
   });
 }
 function generateThumbFor(f){
-  if (!f.imageUrl) return Promise.resolve();
-  const p = f.combatPortraitCrop ? buildManualThumb(f.imageUrl, f.combatPortraitCrop) : buildFaceThumb(f.imageUrl);
+  /* Toujours le visage : le combattant peut être dessiné de dos dans l'arène, mais la barre
+     d'ordre des tours doit rester lisible — on y reconnaît quelqu'un à sa figure. */
+  const source = f.faceImageUrl || f.imageUrl;
+  if (!source) return Promise.resolve();
+  const p = f.combatPortraitCrop ? buildManualThumb(source, f.combatPortraitCrop) : buildFaceThumb(source);
   return p.then(url=>{ f.thumbUrl = url; });
 }
 
@@ -16018,7 +16267,7 @@ function playCombatEntryTransition(hasBoss){
 }
 async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   preloadVictoryMusic();
-  resoudreImagesDeDos(playerFighters);
+  await resoudreImagesDeDos(playerFighters);   // avant l'affichage : pas de bascule face → dos
   preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
   const hasBoss = enemyFighters.some(f=> f.budgetCategory === 'boss');
   if (opts && opts.skipTransition){
@@ -17009,6 +17258,13 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
      ensuite, par-dessus ce qui a été rétabli — carte après une défaite, scène après une
      victoire. Faire l'inverse déclenchait DEUX rendus de la même scène en parallèle, et
      les deux images se retrouvaient côte à côte dans le décor. */
+  /* Défaite : s'il y a un mot de la fin à lire, on le lit SUR PLACE, dans le décor où l'on
+     vient de tomber — c'est plus juste que de se réveiller dehors. L'expulsion attend la
+     fermeture du dialogue. Sans dialogue prévu, la zone se referme tout de suite comme avant. */
+  const motDeLaFin = retourDialogueCombat
+    && ((result === 'victory') ? retourDialogueCombat.victoire : retourDialogueCombat.defaite);
+  const auraUnMotDeLaFin = motDeLaFin !== null && motDeLaFin !== undefined && !isNaN(motDeLaFin);
+
   if (ctx){
     if (result === 'victory'){
       if (ctx.pt) markScenePointTaken(ctx.pt).catch(()=>{});
@@ -17018,11 +17274,17 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
       document.getElementById('sceneViewFull').classList.add('show');
       await renderSceneViewCurrentScene();
     } else if (result === 'defeat'){
-      clearCurrentZoneScene();
+      if (auraUnMotDeLaFin && !sceneViewIsShip){
+        document.getElementById('sceneViewFull').classList.add('show');
+        await renderSceneViewCurrentScene();
+        apresFermetureDialogue = ()=> clearCurrentZoneScene();   // expulsé en refermant
+      } else {
+        clearCurrentZoneScene();
+      }
     }
-    // Défaite : la zone reste fermée, le joueur se retrouve sur la carte (retour à l'entrée).
   }
   if (retourDialogueCombat && reprendreDialogueApresCombat(result)) return;
+  apresFermetureDialogue = null;   // le dialogue n'a pas pu s'ouvrir : rien à traîner
   playMusicForKey('map'); // reprend la musique de carte (remplace la musique de victoire si elle jouait)
   clearSavedCombat(); // pas d'attente ici : la confirmation se fait en arrière-plan, les 3 sorties de zone servent de filet de sécurité si elle est coupée par une actualisation
 });
