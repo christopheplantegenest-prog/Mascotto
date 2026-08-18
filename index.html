@@ -254,8 +254,10 @@
   }
   .aide-i.ouvert{ opacity:1; background:currentColor; }
   .aide-i.ouvert::after{ content:''; }
-  .aide-txt{ display:none; }
-  .aide-txt.ouvert{ display:block; }
+  /* !important : certains de ces paragraphes sont affichés par le code (`style.display`),
+     et un style en ligne l'emporte sur une classe — l'aide restait alors ouverte pour toujours. */
+  .aide-txt{ display:none !important; }
+  .aide-txt.ouvert{ display:block !important; }
   .sheet .dist{ color:var(--muted); font-size:11px; font-family:var(--mono); margin-bottom:14px; }
   .choice-btn{
     display:block; width:100%; text-align:left; padding:13px 14px; border-radius:10px;
@@ -273,7 +275,8 @@
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
 
-  .field-label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 4px; }
+  .field-label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 4px;
+    display:flex; align-items:center; gap:2px; flex-wrap:wrap; }
   .field-input{
     width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text);
     border-radius:10px; padding:10px; font-size:14px;
@@ -343,7 +346,10 @@
     display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line);
   }
   .editor-list-item .thumb{ font-size:22px; width:34px; text-align:center; }
-  .editor-list-item .thumb img{ width:30px; height:30px; border-radius:50%; object-fit:cover; }
+  /* Cadrage sur le HAUT de l'image : les personnages sont dessinés en pied, un cadrage centré
+     coupait sur le ventre et toutes les vignettes se ressemblaient. C'est la tête qu'on cherche. */
+  .editor-list-item .thumb img{ width:30px; height:30px; border-radius:50%; object-fit:cover; object-position:top center; }
+  figure.ref img, .pnj-chooser-thumb img{ object-position:top center; }
   .editor-list-item .name{ flex:1; font-size:14px; }
   .editor-list-item .tag{ font-size:9px; padding:2px 6px; border-radius:6px; font-weight:700; text-transform:uppercase; }
   .editor-list-item .tag.on{ background:rgba(15,138,82,.15); color:var(--accent); }
@@ -673,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v302</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v305</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1912,7 +1918,6 @@
     <div id="pnjNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
       <button class="btn-capture" data-pnjsection="new" style="flex:1 1 45%;">Nouveau PNJ</button>
       <button class="btn-secondary" data-pnjsection="list" style="flex:1 1 45%;">PNJ existants</button>
-      <button class="btn-secondary" data-pnjsection="inactive" style="flex:1 1 100%;">PNJ inactifs</button>
     </div>
 
     <!-- Section : Nouveau PNJ -->
@@ -2154,14 +2159,18 @@
       <button class="btn-secondary" id="editCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
     </div>
 
-    <!-- Section : PNJ existants (actifs) -->
+    <!-- Section : toutes les fiches, une seule liste, l'état dit par la couleur du nom -->
     <div class="pnj-section" id="pnjsection-list" style="display:none;">
+      <p class="meta" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span>⬤ <span style="opacity:.8;">en jeu maintenant</span></span>
+        <span style="color:#C9A227;">⬤ hors horaire</span>
+        <span style="color:var(--danger);">⬤ ne reviendra plus</span>
+      </p>
       <div id="editorListActive"></div>
     </div>
 
-    <!-- Section : PNJ inactifs -->
+    <!-- Conservée vide : plusieurs fonctions écrivent encore dedans, mais elle n'est plus proposée -->
     <div class="pnj-section" id="pnjsection-inactive" style="display:none;">
-      <p class="meta">PNJ actuellement hors de leur créneau (date, heure ou jour configuré).</p>
       <div id="editorListInactive"></div>
     </div>
   </div>
@@ -2654,6 +2663,20 @@ function isActiveNow(d){
   return true;
 }
 
+/* Trois états, pas deux. « Inactif » mélangeait deux situations très différentes :
+   un personnage qui reviendra lundi prochain, et un personnage dont la date de fin est
+   passée et qui ne reparaîtra JAMAIS. Le premier est normal, le second est une erreur à
+   corriger — les confondre noie les vraies pannes au milieu du fonctionnement ordinaire.
+   Retourne 'actif', 'horsHoraire' ou 'obsolete'. */
+function statutFiche(d){
+  const now = new Date();
+  if (d.endDate){
+    const fin = new Date(d.endDate + 'T' + (d.endTime || '23:59'));
+    if (now > fin) return 'obsolete';               // la date de fin est passée : plus jamais
+  }
+  return isActiveNow(d) ? 'actif' : 'horsHoraire';  // sinon il revient tout seul le moment venu
+}
+
 /* Vrai pour l'instant présent si l'heure tombe dans l'un des créneaux.
    Partagé par les fiches (zones, PNJ, monstres, boutiques) et par les portes d'une scène :
    une seule règle d'horaire dans tout le jeu, passage de minuit compris. */
@@ -2926,38 +2949,105 @@ const STATUS_META = {}; STATUS_CATALOG.forEach(s=> STATUS_META[s.id] = s);
 let selectedCombatImmunities = new Set();
 let selectedCombatResistances = new Set();
 let selectedCombatRewards = new Set();
+/* ---------- Sélecteur en fenêtre, avec recherche ----------
+   Les listes affichées à la suite dans la fiche (attaques, états, objets) deviennent
+   inutilisables passé une vingtaine d'entrées : on fait défiler des écrans entiers pour
+   trouver une ligne. On ouvre donc une fenêtre dédiée, avec un champ de recherche, et on
+   ne garde dans la fiche que ce qui est choisi. La fenêtre est construite à la volée :
+   rien à ajouter au corps du document, et elle sert à n'importe quelle liste. */
+function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir }){
+  const dejaPris = new Set(selectionnes || []);
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '5200';
+  fond.innerHTML = `
+    <div class="sheet" style="max-height:82vh; display:flex; flex-direction:column;">
+      <div class="sheet-top">
+        <h3 style="margin-top:0;">${titre}</h3>
+        <button class="sheet-x" data-fermer>✕</button>
+      </div>
+      <input type="search" class="field-input" data-recherche placeholder="Rechercher…" style="margin-bottom:8px;">
+      <div data-liste style="overflow-y:auto; flex:1;"></div>
+    </div>`;
+  document.body.appendChild(fond);
+
+  const liste = fond.querySelector('[data-liste]');
+  const champ = fond.querySelector('[data-recherche]');
+  const dessiner = ()=>{
+    const q = (champ.value || '').trim().toLowerCase();
+    const vus = items.filter(it=> !q || (it.label || '').toLowerCase().includes(q));
+    liste.innerHTML = vus.length ? vus.map(it=>`
+      <div class="editor-list-item" data-choix="${it.id}" style="cursor:pointer; ${dejaPris.has(it.id) ? 'outline:2px solid var(--accent); outline-offset:-2px;' : ''}">
+        <div class="thumb">${it.emoji || '✨'}</div>
+        <div class="name">${it.label}${it.detail ? `<div class="meta" style="font-size:11px; opacity:.75; margin-top:2px;">${it.detail}</div>` : ''}</div>
+        ${dejaPris.has(it.id) ? '<span class="tag on">choisi</span>' : ''}
+      </div>`).join('') : '<p class="meta">Rien ne correspond.</p>';
+    liste.querySelectorAll('[data-choix]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const id = el.dataset.choix;
+        if (dejaPris.has(id)) dejaPris.delete(id);
+        else {
+          if (max && dejaPris.size >= max){ showToast(max + ' maximum'); return; }
+          dejaPris.add(id);
+        }
+        onChoisir(Array.from(dejaPris));
+        dessiner();
+      });
+    });
+  };
+  champ.addEventListener('input', dessiner);
+  fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  fond.addEventListener('click', (e)=>{ if (e.target === fond) fond.remove(); });
+  dessiner();
+  setTimeout(()=> champ.focus(), 50);
+}
+
 function renderCombatAttacksPicker(){
   const wrap = document.getElementById('combatAttacksList');
   if (!wrap) return;
-  wrap.innerHTML = attacks.map(a=>{
-    const selected = selectedCombatAttacks.has(a.id);
-    const starting = selectedStartingAttacks.has(a.id);
-    return `
-    <span style="display:inline-flex; align-items:center; gap:2px; margin:2px;">
-      <button type="button" class="btn-secondary combat-attack-btn" data-attack="${a.id}" style="${selected ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${a.emoji||'✨'} ${a.name}</button>
-      ${selected ? `<button type="button" class="btn-secondary combat-attack-start-btn" data-attack-start="${a.id}" title="Attaque de départ à la recrue" style="padding:4px 8px; ${starting ? 'background:#f1c40f; color:#000; border-color:#f1c40f;' : ''}">⭐</button>` : ''}
-    </span>
-  `;
-  }).join('') || '<p class="meta">Aucune attaque créée pour l\'instant (éditeur "Attaques").</p>';
-  wrap.querySelectorAll('.combat-attack-btn').forEach(btn=>{
+  const choisies = attacks.filter(a=> selectedCombatAttacks.has(a.id));
+  wrap.innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">
+      ${choisies.length ? choisies.map(a=>`
+        <span style="display:inline-flex; align-items:center; gap:2px;">
+          <button type="button" class="btn-secondary" data-attack-star="${a.id}" title="Attaque connue dès le recrutement"
+            style="padding:4px 8px; ${selectedStartingAttacks.has(a.id) ? 'background:#f1c40f; color:#000; border-color:#f1c40f;' : ''}">⭐</button>
+          <button type="button" class="btn-secondary" data-attack-off="${a.id}" title="Retirer"
+            style="background:var(--accent); color:#fff; border-color:var(--accent);">${a.emoji||'✨'} ${a.name} ✕</button>
+        </span>`).join('')
+        : '<p class="meta" style="margin:0;">Aucune attaque choisie.</p>'}
+    </div>
+    <button type="button" class="btn-secondary" data-attack-open style="width:100%; margin-top:8px;">➕ Choisir des attaques (${selectedCombatAttacks.size}/4)</button>`;
+
+  wrap.querySelectorAll('[data-attack-off]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const id = btn.dataset.attack;
-      if (selectedCombatAttacks.has(id)){
-        selectedCombatAttacks.delete(id);
-        selectedStartingAttacks.delete(id);
-      } else {
-        if (selectedCombatAttacks.size >= 4){ showToast('4 attaques maximum'); return; }
-        selectedCombatAttacks.add(id);
-      }
+      const id = btn.dataset.attackOff;
+      selectedCombatAttacks.delete(id);
+      selectedStartingAttacks.delete(id);
       renderCombatAttacksPicker();
     });
   });
-  wrap.querySelectorAll('.combat-attack-start-btn').forEach(btn=>{
+  wrap.querySelectorAll('[data-attack-star]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const id = btn.dataset.attackStart;
+      const id = btn.dataset.attackStar;
       if (selectedStartingAttacks.has(id)) selectedStartingAttacks.delete(id);
       else selectedStartingAttacks.add(id);
       renderCombatAttacksPicker();
+    });
+  });
+  wrap.querySelector('[data-attack-open]').addEventListener('click', ()=>{
+    if (!attacks.length){ showToast('Aucune attaque créée pour l\'instant (éditeur « Attaques »)'); return; }
+    ouvrirSelecteur({
+      titre: 'Attaques connues — 4 maximum',
+      items: attacks.map(a=> ({ id:a.id, label:a.name, emoji:a.emoji || '✨',
+        detail: [a.element, a.power ? ('puissance ' + a.power) : ''].filter(Boolean).join(' · ') })),
+      selectionnes: Array.from(selectedCombatAttacks),
+      max: 4,
+      onChoisir: (ids)=>{
+        selectedCombatAttacks = new Set(ids);
+        Array.from(selectedStartingAttacks).forEach(id=>{ if (!selectedCombatAttacks.has(id)) selectedStartingAttacks.delete(id); });
+        renderCombatAttacksPicker();
+      },
     });
   });
 }
@@ -4574,15 +4664,16 @@ function replierUneAide(p){
     bouton.classList.toggle('ouvert', ouvert);
   });
 
-  /* On accroche le ⓘ au libellé qui précède ; à défaut au titre de la rubrique ; à défaut
-     on le laisse seul sur place, ce qui prend une ligne au lieu de trois. */
+  /* Le ⓘ doit tomber SUR LA LIGNE du libellé de la rubrique, jamais seul en dessous.
+     Chercher seulement le frère précédent ne suffisait pas : entre le libellé et son
+     explication il y a souvent un menu, un bouton ou un champ. On prend donc le DERNIER
+     libellé qui précède ce paragraphe dans l'ordre du document, à l'intérieur du même panneau. */
+  const panneau = p.closest('.sheet') || p.closest('.overlay') || document.body;
+  const libelles = panneau.querySelectorAll('.field-label, h1, h2, h3, h4, h5, h6');
   let cible = null;
-  let frere = p.previousElementSibling;
-  while (frere){
-    if (frere.classList && (frere.classList.contains('field-label') || /^H[1-6]$/.test(frere.tagName))){ cible = frere; break; }
-    if (frere.classList && frere.classList.contains('aide-txt')){ frere = frere.previousElementSibling; continue; }
-    break;
-  }
+  libelles.forEach(l=>{
+    if (l.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING) cible = l; // l est avant p
+  });
   if (cible) cible.appendChild(bouton);
   else p.parentNode.insertBefore(bouton, p);
 }
@@ -4808,11 +4899,27 @@ function renderEditorList(snap){
     const groupTag = d.dupeGroup ? ' <span class="meta" style="font-size:10px;">🧬 lié à d\'autres versions</span>' : '';
     row.innerHTML = `
       <div class="thumb">${thumb}</div>
-      <div class="name">${d.name || '(sans nom)'}${groupTag}</div>
+      <div class="name" style="${statutStyle(d)}">${d.name || '(sans nom)'}${statutSuffixe(d)}${groupTag}</div>
       <button class="btn-secondary" data-edit="${doc.id}">Modifier</button>
       <button class="btn-secondary" data-del="${doc.id}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
     `;
     return row;
+  };
+
+  const statutStyle = (d)=>{
+    const st = statutFiche(d);
+    if (st === 'obsolete') return 'color:var(--danger); font-weight:700;';
+    if (st === 'horsHoraire') return 'color:#C9A227;';
+    return '';
+  };
+  const statutSuffixe = (d)=>{
+    const st = statutFiche(d);
+    if (st === 'obsolete') return ' <span style="font-size:10px; opacity:.9;">— ne reviendra plus</span>';
+    if (st === 'horsHoraire'){
+      const quand = resumeConditionsPnj(d).replace(/<[^>]+>/g, '').trim();
+      return quand ? ` <span style="font-size:10px; opacity:.8;">— ${quand}</span>` : '';
+    }
+    return '';
   };
 
   const titre = (texte, niveau)=>{
@@ -4856,8 +4963,8 @@ function renderEditorList(snap){
     });
   };
 
-  remplir(activeEl, allDocs.filter(doc=> isActiveNow(doc.data())));
-  remplir(inactiveEl, allDocs.filter(doc=> !isActiveNow(doc.data())));
+  remplir(activeEl, allDocs);      // une seule liste : l'état se lit à la couleur du nom
+  inactiveEl.innerHTML = '';
 
   [activeEl, inactiveEl].forEach(el=>{
     el.querySelectorAll('button[data-del]').forEach(btn=>{
