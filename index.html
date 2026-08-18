@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v311</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v312</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2549,6 +2549,7 @@ function onSignedIn(user){
     /* Sans ça, la liste des déjà-recrutés restait celle d'avant la connexion (vide),
        et les PNJ recrutés réapparaissaient sur la carte. */
     recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
+    ecrireRecrutesLocal(recruitedSourceIds);
     if (typeof renderBaseRoster === 'function') renderBaseRoster();
   }
   if (typeof majRecruesPretes === 'function') majRecruesPretes();
@@ -3646,6 +3647,27 @@ function renderDialogueBuilder(){
       if (!ids.length) return '— Aucun combat —';
       return ids.map(nomUn).join(' + ') + '   ✕';
     };
+    combatBtn.textContent = nomAdversaire();
+    combatBtn.addEventListener('click', ()=>{
+      /* Le bouton sert aussi à effacer : s'il y a déjà des adversaires, on remet à zéro. */
+      if (choice.combat && idsAdversaires().length){ choice.combat = null; renderDialogueBuilder(); return; }
+      const adversaires = creatures.filter(c=> c.interactionType === 'combat' || c.canFight);
+      ouvrirSelecteur({
+        titre: 'Qui affronte-t-on ? (3 maximum)',
+        /* Le plus souvent on affronte celui qui parle : inutile de lui faire une seconde fiche.
+           Mais un adversaire peut arriver accompagné — le moteur gère trois ennemis. */
+        items: [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }]
+          .concat(adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' }))),
+        selectionnes: idsAdversaires(), max: 3,
+        onChoisir: (ids)=>{
+          if (!ids.length){ choice.combat = null; renderDialogueBuilder(); return; }
+          choice.combat = Object.assign({ attackIds: [], stepWin: null, stepLose: null }, choice.combat || {});
+          choice.combat.creatureIds = ids;
+          delete choice.combat.creatureId;
+          combatBtn.textContent = nomAdversaire();
+        },
+      });
+    });
     row.appendChild(combatBtn);
 
     if (choice.combat){
@@ -3928,7 +3950,21 @@ function parseDialogueScript(script){
 let creatures = [];
 const creatureCol = (typeof db !== 'undefined') ? db.collection('creature_types') : null;
 let latestSnap = null;
-let recruitedSourceIds = new Set(); // sourceCreatureId des PNJ déjà recrutés par CE joueur (recrutement "par joueur")
+/* Mémoire locale des recrutés. Le garde `recruitsPrets` retarde le premier dessin jusqu'à
+   l'arrivée des recrues, mais il a un filet de sécurité minuté : si Firestore tarde, la carte
+   se dessine quand même — et les recrutés réapparaissent une seconde. On garde donc la liste
+   dans le navigateur : au rechargement suivant, ils sont exclus dès le tout premier dessin,
+   sans attendre le réseau. La liste est corrigée dès l'arrivée du vrai instantané. */
+const CLE_RECRUTES_LOCAL = 'mascotto_recrutes';
+function lireRecrutesLocal(){
+  try { return new Set(JSON.parse(localStorage.getItem(CLE_RECRUTES_LOCAL) || '[]')); }
+  catch(e){ return new Set(); }
+}
+function ecrireRecrutesLocal(ensemble){
+  try { localStorage.setItem(CLE_RECRUTES_LOCAL, JSON.stringify(Array.from(ensemble))); }
+  catch(e){ /* stockage refusé : on perd juste le confort, pas le jeu */ }
+}
+let recruitedSourceIds = lireRecrutesLocal(); // sourceCreatureId des PNJ déjà recrutés par CE joueur (recrutement "par joueur")
 
 /* Au rechargement, l'instantané des PNJ arrive presque toujours AVANT celui des recrues.
    À cet instant `recruitedSourceIds` est encore vide : les PNJ déjà recrutés sont donc
@@ -3958,7 +3994,7 @@ function redessinerCarte(){
 function majRecruesPretes(){
   if (recruitsSnapshotRecu && currentUser) marquerRecruesPretes();
 }
-setTimeout(marquerRecruesPretes, 4000);
+setTimeout(marquerRecruesPretes, 8000);   // filet de sécurité : mieux vaut attendre que clignoter
 
 if (creatureCol){
   creatureCol.onSnapshot((snap)=>{
@@ -7960,6 +7996,7 @@ if (recruitsCol){
     }
     recruits = currentUser ? allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid) : [];
     recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
+    ecrireRecrutesLocal(recruitedSourceIds);
     recruitsSnapshotRecu = true;
     if (!recruitsPrets) majRecruesPretes(); // premier instantané : c'est lui qui déclenche le dessin
     else redessinerCarte();
