@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v318</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v320</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4620,6 +4620,11 @@ function reprendreDialogueApresCombat(resultat){
   if (!c) return false;
   const cible = (resultat === 'victory') ? retour.victoire : retour.defaite;
   if (cible === null || isNaN(cible)) return false;
+  /* Si l'on revient dans une zone d'exploration, la scène est au plan 4000 : sans ce
+     relèvement, la fenêtre de dialogue s'ouvrait DERRIÈRE le décor — invisible, alors
+     qu'elle avait bien été ouverte. Même valeur que pour un dialogue lancé d'un point. */
+  const dansUneScene = document.getElementById('sceneViewFull').classList.contains('show');
+  document.getElementById('overlay').style.zIndex = dansUneScene ? '4200' : '';
   openSheet(c);
   currentStepIdx = cible;
   renderSheet();
@@ -4991,6 +4996,22 @@ function installerRubriques(){
       majBlocsSelonType(document.getElementById('editInteractionType').value);
     });
     menu.appendChild(bouton);
+  });
+}
+
+/* Aller sur la carte suppose de la VOIR. Depuis que les réglages sont dans des fenêtres,
+   « Placer » et « Déplacer » se déclenchent depuis une fenêtre qui recouvre la carte :
+   il fallait la fermer à la main pour attraper le bâtiment. On referme donc tout ce qui
+   pourrait masquer la carte avant de passer en mode placement. */
+function fermerFenetresParDessusLaCarte(){
+  Object.keys(RUBRIQUES_FENETRES).forEach(cle=>{
+    const f = RUBRIQUES_FENETRES[cle];
+    if (f) f.classList.remove('show');
+  });
+  document.querySelectorAll('.overlay.show').forEach(o=>{
+    if (o.id === 'editorOverlay') return;   // déjà géré par les appelants
+    if (o.closest('#map')) return;
+    o.classList.remove('show');
   });
 }
 
@@ -6019,6 +6040,7 @@ document.getElementById('reserveBtn').addEventListener('click', ()=>{
   refreshPosStatusDisplay();
 });
 document.getElementById('placeNewBtn').addEventListener('click', ()=>{
+  fermerFenetresParDessusLaCarte();
   placementTarget = 'creature';
   document.getElementById('editorOverlay').classList.remove('show');
   document.getElementById('crosshair').style.display = 'block';
@@ -6056,6 +6078,7 @@ let isMovingMarker = false;
 let movingMarker = null;
 let movingMarkerTarget = 'creature';
 document.getElementById('moveExistingBtn').addEventListener('click', ()=>{
+  fermerFenetresParDessusLaCarte();
   if (!editingId){ showToast('Sélectionne d\'abord un PNJ existant'); return; }
   const c = creatures.find(cr=>cr.id===editingId);
   if (!c || !c.marker){ showToast('Pas de point existant à déplacer — utilise "Nouvel emplacement"'); return; }
@@ -6732,6 +6755,7 @@ document.getElementById('pickupSaveBtn').addEventListener('click', ()=>{
 });
 
 document.getElementById('pickupPlaceNewBtn').addEventListener('click', ()=>{
+  fermerFenetresParDessusLaCarte();
   document.getElementById('itemsEditorOverlay').classList.remove('show');
   document.getElementById('crosshair').style.display = 'block';
   document.getElementById('placementHint').style.display = 'block';
@@ -6740,6 +6764,7 @@ document.getElementById('pickupPlaceNewBtn').addEventListener('click', ()=>{
   if (playerPos) map.setView([playerPos.lat, playerPos.lng], map.getZoom());
 });
 document.getElementById('pickupMoveBtn').addEventListener('click', ()=>{
+  fermerFenetresParDessusLaCarte();
   if (!editingPickupId){ showToast('Sélectionne d\'abord un point existant'); return; }
   const marker = pickupMarkers[editingPickupId];
   if (!marker){ showToast('Ce point n\'est pas affiché actuellement'); return; }
@@ -16978,7 +17003,10 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   /* Retour au dialogue qui a déclenché le combat, à l'étape prévue pour ce résultat.
      Doit passer AVANT le retour de zone : la scène reste derrière, on rouvre juste la fiche. */
   if (retourDialogueCombat){
-    if (ctx && !sceneViewIsShip) document.getElementById('sceneViewFull').classList.add('show');
+    /* Défaite : on quitte la zone d'abord — le dialogue de conclusion se joue alors sur la
+       carte. Rouvrir la scène derrière lui aurait annulé l'expulsion annoncée au joueur. */
+    if (result === 'defeat' && ctx) clearCurrentZoneScene();
+    else if (ctx && !sceneViewIsShip) document.getElementById('sceneViewFull').classList.add('show');
     if (reprendreDialogueApresCombat(result)) return;
   }
   if (ctx){
