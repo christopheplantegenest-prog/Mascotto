@@ -242,6 +242,20 @@
   }
   .sheet h3{ margin:8px 0 2px; font-size:18px; }
   .sheet .meta{ color:var(--muted); font-size:13px; font-family:var(--mono); margin-bottom:6px; }
+  /* Aide repliée : un ⓘ discret contre le libellé, le texte n'apparaît que si on le demande.
+     Sur un téléphone, cent explications affichées en permanence, c'est cent lignes à faire défiler
+     avant d'atteindre le champ qu'on venait régler. */
+  .aide-i{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:17px; height:17px; margin-left:6px; padding:0; flex:0 0 auto;
+    border-radius:50%; border:1px solid currentColor; background:transparent;
+    color:inherit; opacity:.55; font-size:11px; font-weight:700; line-height:1;
+    font-family:var(--mono); cursor:pointer; vertical-align:middle;
+  }
+  .aide-i.ouvert{ opacity:1; background:currentColor; }
+  .aide-i.ouvert::after{ content:''; }
+  .aide-txt{ display:none; }
+  .aide-txt.ouvert{ display:block; }
   .sheet .dist{ color:var(--muted); font-size:11px; font-family:var(--mono); margin-bottom:14px; }
   .choice-btn{
     display:block; width:100%; text-align:left; padding:13px 14px; border-radius:10px;
@@ -659,7 +673,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v299</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v302</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2243,6 +2257,8 @@
     </div>
     <div id="sceneListItems"></div>
     <button class="btn-capture" id="sceneListAddBtn" style="width:100%; margin-top:10px;">➕ Nouvelle scène</button>
+    <button class="btn-secondary" id="sceneListCheckBtn" style="width:100%; margin-top:8px;">🔎 Vérifier cette zone</button>
+    <div id="sceneListCheckReport" style="margin-top:8px;"></div>
   </div>
 </div>
 
@@ -4492,6 +4508,103 @@ function appConfirm(message){
     cancelBtn.addEventListener('click', onCancel);
   });
 }
+
+/* Même fenêtre que appConfirm, mais pour une simple information : un seul bouton,
+   et on ne peut pas « annuler » un fait accompli comme une fermeture. */
+function appAlert(message, libelle){
+  return new Promise((resolve)=>{
+    document.getElementById('appConfirmMessage').textContent = message;
+    const okBtn = document.getElementById('appConfirmOkBtn');
+    const cancelBtn = document.getElementById('appConfirmCancelBtn');
+    const libelleOrigine = okBtn.textContent;
+    okBtn.textContent = libelle || 'J\'ai compris';
+    cancelBtn.style.display = 'none';
+    document.getElementById('appConfirmOverlay').classList.add('show');
+    const cleanup = ()=>{
+      document.getElementById('appConfirmOverlay').classList.remove('show');
+      okBtn.textContent = libelleOrigine;
+      cancelBtn.style.display = '';
+      okBtn.removeEventListener('click', cleanup);
+      resolve(true);
+    };
+    okBtn.addEventListener('click', cleanup);
+  });
+}
+
+/* ---------- Aides repliées derrière un ⓘ ----------
+   L'éditeur contient une centaine de textes d'explication. Ils sont tous utiles un jour, mais
+   affichés en permanence ils noient les champs. On les replie donc derrière un petit ⓘ accolé
+   au libellé de la rubrique — rien n'est supprimé, tout reste à un doigt.
+   Le balayage est fait au vol par un observateur : les panneaux de l'éditeur sont largement
+   reconstruits en JavaScript, donc traiter une seule fois au démarrage ne suffirait pas. */
+const AIDE_SELECTEUR = ['#editorOverlay','#sceneListOverlay','#sceneVariantOverlay',
+  '#sceneVariantCondOverlay','#sceneEncounterOverlay','#scenePointTypeOverlay','#itemsEditorOverlay',
+  '#attacksEditorOverlay','#questsEditorOverlay','#recipesEditorOverlay','#robotEditorOverlay',
+  '#musicEditorOverlay','#musicTrackEditorOverlay','#editHubOverlay'].join(',');
+
+/* Un paragraphe n'est une aide d'éditeur que s'il est dans un panneau d'édition, ou posé au
+   milieu de champs réglables (les feuilles de réglage d'un point de scène sont fabriquées en
+   JavaScript et n'ont pas d'identifiant propre : on les reconnaît à leurs libellés de champ). */
+function estAideEditeur(p){
+  if (p.closest(AIDE_SELECTEUR)) return true;
+  const parent = p.parentElement;
+  if (parent && parent.querySelector('.field-label, .field-input')) return true;
+  return false;
+}
+
+function replierUneAide(p){
+  if (p.dataset.aide === 'fait') return;
+  if (p.id) { /* les textes que le code réécrit gardent leur identifiant : on les replie quand même,
+                 le contenu continuera de se mettre à jour derrière le ⓘ */ }
+  const texte = (p.textContent || '').trim();
+  if (texte.length < 40) return;              // une phrase courte tient déjà sur une ligne
+  if (p.querySelector('input,select,button')) return;
+  if (!estAideEditeur(p)) return;
+  p.dataset.aide = 'fait';
+  p.classList.add('aide-txt');
+
+  const bouton = document.createElement('button');
+  bouton.type = 'button';
+  bouton.className = 'aide-i';
+  bouton.textContent = 'i';
+  bouton.title = 'Afficher l\'explication';
+  bouton.addEventListener('click', (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    const ouvert = p.classList.toggle('ouvert');
+    bouton.classList.toggle('ouvert', ouvert);
+  });
+
+  /* On accroche le ⓘ au libellé qui précède ; à défaut au titre de la rubrique ; à défaut
+     on le laisse seul sur place, ce qui prend une ligne au lieu de trois. */
+  let cible = null;
+  let frere = p.previousElementSibling;
+  while (frere){
+    if (frere.classList && (frere.classList.contains('field-label') || /^H[1-6]$/.test(frere.tagName))){ cible = frere; break; }
+    if (frere.classList && frere.classList.contains('aide-txt')){ frere = frere.previousElementSibling; continue; }
+    break;
+  }
+  if (cible) cible.appendChild(bouton);
+  else p.parentNode.insertBefore(bouton, p);
+}
+
+function replierAides(racine){
+  try {
+    const el = racine || document;
+    if (el.nodeType === 1 && el.tagName === 'P' && el.classList.contains('meta')) replierUneAide(el);
+    el.querySelectorAll && el.querySelectorAll('p.meta').forEach(replierUneAide);
+  } catch(e){ /* jamais bloquant : au pire l'aide reste affichée comme avant */ }
+}
+
+function installerAides(){
+  replierAides(document);
+  new MutationObserver((mutations)=>{
+    mutations.forEach(m=>{
+      m.addedNodes.forEach(n=>{ if (n.nodeType === 1) replierAides(n); });
+    });
+  }).observe(document.body, { childList:true, subtree:true });
+}
+document.addEventListener('DOMContentLoaded', installerAides);
+if (document.readyState !== 'loading') installerAides();
 
 /* ---------- Panneau éditeur ---------- */
 let editingId = null;
@@ -12082,6 +12195,67 @@ async function externalizeScenesForSave(scenesArr){
   return clone;
 }
 
+/* ---------- Contrôle des liens d'une zone ----------
+   Un point qui renvoie à une fiche supprimée est SAUTÉ SILENCIEUSEMENT en jeu
+   (getScenePnjInfo range la fiche absente parmi les « partis »), alors que l'éditeur
+   continue d'afficher le nom mémorisé au moment du choix : tout a l'air normal et le
+   personnage n'apparaît jamais. À dix PNJ on finit par s'en apercevoir, à cent non.
+   Ce contrôle parcourt toutes les scènes et toutes les variantes d'un coup. */
+let sceneEditorLiensCasses = new Set();   // ids des points cassés de la scène ouverte
+
+async function verifierLiensZone(scenes){
+  const soucis = [];
+  const idsPnj = new Set();
+  const parcourir = (liste, sc, oùName)=>{
+    (liste || []).forEach(pt=>{
+      if (pt.type === 'pnj'){
+        if (!pt.linkedPnjId) soucis.push({ pointId: pt.id, où: oùName, quoi: 'PNJ non choisi' });
+        else idsPnj.add(pt.linkedPnjId);
+      }
+      if (pt.type === 'sortie' && !pt.targetSceneId) soucis.push({ pointId: pt.id, où: oùName, quoi: 'Sortie sans destination' });
+      if (pt.type === 'sortie' && pt.targetSceneId && !scenes.some(x=> x.id === pt.targetSceneId)){
+        soucis.push({ pointId: pt.id, où: oùName, quoi: 'Sortie vers une scène supprimée' });
+      }
+    });
+  };
+  scenes.forEach(sc=>{
+    parcourir(sc.points, sc, sc.name || 'Scène');
+    (sc.variants || []).forEach((v, i)=> parcourir(v.points, sc, (sc.name || 'Scène') + ' · variante ' + (i+1)));
+  });
+
+  /* Une seule lecture par fiche, même si dix points la partagent. */
+  const existe = {};
+  if (creatureCol && idsPnj.size){
+    const docs = await Promise.all(Array.from(idsPnj).map(id=> creatureCol.doc(id).get().catch(()=> null)));
+    docs.forEach((doc, i)=>{ existe[Array.from(idsPnj)[i]] = !!(doc && doc.exists); });
+  }
+  const revoir = (liste, oùName)=>{
+    (liste || []).forEach(pt=>{
+      if (pt.type === 'pnj' && pt.linkedPnjId && existe[pt.linkedPnjId] === false){
+        soucis.push({ pointId: pt.id, où: oùName, quoi: 'Fiche introuvable : ' + (pt.linkedPnjName || 'PNJ') });
+      }
+    });
+  };
+  scenes.forEach(sc=>{
+    revoir(sc.points, sc.name || 'Scène');
+    (sc.variants || []).forEach((v, i)=> revoir(v.points, (sc.name || 'Scène') + ' · variante ' + (i+1)));
+  });
+  return soucis;
+}
+
+async function majLiensCassesSceneCourante(){
+  const sc = sceneEditorScenes.find(x=> x.id === sceneEditorCurrentSceneId);
+  sceneEditorLiensCasses = new Set();
+  if (!sc) return;
+  const soucis = await verifierLiensZone(sceneEditorScenes);
+  soucis.forEach(x=>{
+    const dansCetteScene = (sc.points || []).some(p=> p.id === x.pointId)
+      || (sc.variants || []).some(v=> (v.points || []).some(p=> p.id === x.pointId));
+    if (dansCetteScene) sceneEditorLiensCasses.add(x.pointId);
+  });
+  renderSceneEditorPoints();
+}
+
 let sceneEditorZoneId = null;
 let sceneEditorScenes = [];        // [{id, name, imageUrl, points, variants}]
 let sceneEditorCurrentSceneId = null;
@@ -12401,6 +12575,24 @@ document.getElementById('sceneEditorScenesBtn').addEventListener('click', ()=>{
 document.getElementById('sceneListCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneListOverlay').classList.remove('show');
 });
+document.getElementById('sceneListCheckBtn').addEventListener('click', async ()=>{
+  const rapport = document.getElementById('sceneListCheckReport');
+  rapport.innerHTML = '<p class="meta">Vérification…</p>';
+  try {
+    const soucis = await verifierLiensZone(sceneEditorScenes);
+    if (!soucis.length){
+      rapport.innerHTML = '<p class="meta" style="color:#5B9E5B; font-weight:700;">✔ Aucun lien cassé dans cette zone.</p>';
+    } else {
+      rapport.innerHTML = '<p class="meta" style="color:var(--danger); font-weight:700;">'
+        + soucis.length + (soucis.length > 1 ? ' problèmes trouvés :' : ' problème trouvé :') + '</p>'
+        + soucis.map(x=> `<div class="meta" style="margin:2px 0;">• <strong>${x.où}</strong> — ${x.quoi}</div>`).join('');
+    }
+    await majLiensCassesSceneCourante();
+  } catch(err){
+    rapport.innerHTML = '<p class="meta" style="color:var(--danger);">Échec : ' + err.message + '</p>';
+  }
+});
+
 document.getElementById('sceneListAddBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
   const newScene = { id: genSceneId(), name: 'Scène ' + (sceneEditorScenes.length + 1), imageUrl: '', points: [], encounterChance:0, encounterMonsterIds:[] };
@@ -12533,6 +12725,17 @@ function renderSceneEditorPoints(){
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:26px; min-height:26px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
       el.innerHTML = `<div style="width:100%; height:100%; border-radius:50%; background:rgba(255,255,255,.92); border:2px solid ${selected?'var(--danger)':'var(--accent)'}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 2px 6px rgba(0,0,0,.4);">${sceneTypeEmoji(pt.type)}</div>`;
     }
+    /* Lien mort : le point renvoie à une fiche qui n'existe plus. En jeu il serait sauté
+       sans un mot, alors qu'ici il affiche encore le nom mémorisé — d'où le liseré rouge. */
+    if (sceneEditorLiensCasses.has(pt.id)){
+      el.style.outline = '3px solid #C0392B';
+      el.style.outlineOffset = '3px';
+      const alerte = document.createElement('div');
+      alerte.textContent = '⚠︎ fiche introuvable';
+      alerte.style.cssText = 'position:absolute; left:50%; top:100%; transform:translateX(-50%); margin-top:4px; white-space:nowrap; font-size:10px; font-weight:700; color:#fff; background:#C0392B; padding:2px 6px; border-radius:4px; pointer-events:none;';
+      el.appendChild(alerte);
+    }
+
     /* Repère de portrait : l'éditeur ne sait pas qui habitera là, mais il faut bien pouvoir
        viser. On dessine donc un cercle gris à l'emplacement exact qu'occupera le portrait. */
     wrap.appendChild(el);
@@ -13705,6 +13908,26 @@ function majPnjHorairesScene(){
   });
 }
 setInterval(majPnjHorairesScene, 15000);
+
+/* Fermeture d'une zone pendant qu'on y est.
+   Jusqu'ici, franchir l'heure de fermeture faisait disparaître les habitants mais laissait
+   le joueur seul dans les murs — un lieu fermé qu'on continue de visiter. On le raccompagne
+   donc dehors, avec un mot qui dit pourquoi. Le vaisseau ne ferme jamais : c'est chez soi. */
+let fermetureEnCours = false;
+async function verifierFermetureZone(){
+  const plein = document.getElementById('sceneViewFull');
+  if (!plein || !plein.classList.contains('show')) return;
+  if (sceneViewIsShip || fermetureEnCours || !sceneViewCreature) return;
+  if (isActiveNow(sceneViewCreature)) return;
+  fermetureEnCours = true;
+  try {
+    plein.classList.remove('show');
+    await appAlert('Vous avez atteint les horaires de fermeture. Vous devez quitter la zone.');
+  } finally {
+    fermetureEnCours = false;
+  }
+}
+setInterval(verifierFermetureZone, 15000);
 document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=>{
   /* Confirmation demandée hors du vaisseau : quitter une zone en cours fait perdre le chemin
      parcouru, puisqu'on y revient par l'entrée. Chez soi, la question n'a pas lieu d'être. */
@@ -13716,7 +13939,13 @@ document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=
 });
 /* `chambre` distingue un quartier d'habitant, qui suit le cadre commun, d'une image de scène
    ordinaire (un plan, une note) qu'il ne faut surtout pas rogner. */
+/* Le point de scène s'ouvre sur `pointerdown`, mais le même appui produit ensuite un `click`
+   qui remonte jusqu'à la fenêtre qu'on vient d'ouvrir — et le clic « à côté de l'image » la
+   referme aussitôt. D'où une image qui apparaît puis disparaît dans le même geste.
+   On note donc l'instant d'ouverture et on ignore la fermeture au clic pendant un court délai. */
+let sceneBigImageOpenedAt = 0;
 function openSceneBigImage(url, chambre){
+  sceneBigImageOpenedAt = Date.now();
   document.getElementById('sceneBigImageCloseBtn').style.display = ''; // rétablie pour une image ordinaire
   const img = document.getElementById('sceneBigImageImg');
   img.classList.toggle('room-standard', !!chambre);
@@ -13807,6 +14036,7 @@ function closeSceneBigImage(){
 document.getElementById('sceneBigImageCloseBtn').addEventListener('click', closeSceneBigImage);
 // on ne ferme que si le doigt tombe à côté de l'image : sinon impossible de la manipuler
 document.getElementById('sceneBigImageOverlay').addEventListener('click', (e)=>{
+  if (Date.now() - sceneBigImageOpenedAt < 400) return; // clic résiduel de l'appui qui vient d'ouvrir
   if (e.target === e.currentTarget) closeSceneBigImage();
 });
 document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
