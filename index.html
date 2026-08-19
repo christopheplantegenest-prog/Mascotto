@@ -683,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v351</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v353</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3012,7 +3012,7 @@ let selectedCombatRewards = new Set();
    trouver une ligne. On ouvre donc une fenêtre dédiée, avec un champ de recherche, et on
    ne garde dans la fiche que ce qui est choisi. La fenêtre est construite à la volée :
    rien à ajouter au corps du document, et elle sert à n'importe quelle liste. */
-function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir }){
+function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir, fermerApresChoix }){
   const dejaPris = new Set(selectionnes || []);
   const fond = document.createElement('div');
   fond.className = 'overlay show';
@@ -3052,6 +3052,9 @@ function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir }){
           dejaPris.add(id);
         }
         onChoisir(Array.from(dejaPris));
+        /* Quand la fenêtre ne sert qu'à remplir UN emplacement, la laisser ouverte donnerait
+           l'impression qu'il reste quelque chose à valider. Elle se referme donc d'elle-même. */
+        if (fermerApresChoix){ fond.remove(); return; }
         dessiner();
       });
     });
@@ -3061,6 +3064,76 @@ function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir }){
   fond.addEventListener('click', (e)=>{ if (e.target === fond) fond.remove(); });
   dessiner();
   setTimeout(()=> champ.focus(), 50);
+}
+
+/* Trois emplacements côte à côte plutôt qu'une liste à cocher : on voit d'un coup d'œil qui
+   compose le groupe, on ajoute et on retire un adversaire à la fois, et **un seul adversaire
+   est un réglage parfaitement valable**. L'ancienne liste obligeait à refaire toute la
+   sélection et donnait l'impression qu'il fallait remplir les trois places pour valider. */
+function rendreEmplacementsAdversaires(hote, lireIds, ecrireIds){
+  hote.innerHTML = '';
+  const ids = (lireIds() || []).slice(0, 3);
+  const grille = document.createElement('div');
+  grille.style.cssText = 'display:flex; gap:6px; width:100%; align-items:stretch;';
+  for (let i = 0; i < 3; i++){
+    const id = ids[i];
+    const emplacement = document.createElement('div');
+    emplacement.style.cssText = 'flex:1 1 0; min-width:0; border:1px ' + (id ? 'solid rgba(255,255,255,.35)' : 'dashed rgba(255,255,255,.22)') +
+      '; border-radius:10px; padding:6px; display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center;';
+    if (id){
+      const c = (id === '__self__') ? null : ficheParId(id);
+      const vignette = document.createElement('div');
+      vignette.style.cssText = 'width:100%; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:rgba(255,255,255,.06); display:flex; align-items:center; justify-content:center; font-size:22px;';
+      const url = c ? (c.imageUrl || '') : '';
+      /* Vignette cadrée sur le HAUT de l'image : les personnages sont dessinés en pied. */
+      vignette.innerHTML = url
+        ? '<img src="' + url + '" style="width:100%; height:100%; object-fit:cover; object-position:top center;">'
+        : (id === '__self__' ? '🙋' : ((c && c.emoji) || '⚔️'));
+      const nom = document.createElement('div');
+      nom.className = 'meta';
+      nom.style.cssText = 'font-size:11px; line-height:1.2; word-break:break-word;';
+      nom.textContent = (id === '__self__') ? 'La personne à qui on parle'
+        : (c ? (c.name || '(sans nom)') : '(fiche supprimée)');
+      const retirer = document.createElement('button');
+      retirer.type = 'button';
+      retirer.className = 'btn-secondary';
+      retirer.style.cssText = 'padding:2px 10px; font-size:12px;';
+      retirer.textContent = '✕';
+      retirer.title = 'Retirer cet adversaire';
+      retirer.addEventListener('click', ()=>{
+        const liste = (lireIds() || []).slice();
+        liste.splice(i, 1);
+        ecrireIds(liste);
+      });
+      emplacement.appendChild(vignette);
+      emplacement.appendChild(nom);
+      emplacement.appendChild(retirer);
+    } else {
+      const ajouter = document.createElement('button');
+      ajouter.type = 'button';
+      ajouter.className = 'btn-secondary';
+      ajouter.style.cssText = 'width:100%; aspect-ratio:1/1; font-size:22px; padding:0;';
+      ajouter.textContent = '＋';
+      ajouter.title = 'Ajouter un adversaire';
+      ajouter.addEventListener('click', ()=>{
+        const deja = lireIds() || [];
+        const advs = toutesLesFiches().filter(c=> (c.interactionType === 'combat' || c.canFight) && !deja.includes(c.id));
+        const items = (deja.includes('__self__') ? [] : [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }])
+          .concat(advs.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' })));
+        if (!items.length){ showToast('Aucun autre adversaire disponible — coche « ⚔️ peut se battre » sur une fiche'); return; }
+        ouvrirSelecteur({ titre:'Ajouter un adversaire', items, selectionnes:[], max:1, fermerApresChoix:true,
+          onChoisir:(choisis)=>{ if (choisis.length) ecrireIds((lireIds() || []).concat([choisis[0]])); } });
+      });
+      const vide = document.createElement('div');
+      vide.className = 'meta';
+      vide.style.cssText = 'font-size:11px; opacity:.6;';
+      vide.textContent = 'libre';
+      emplacement.appendChild(ajouter);
+      emplacement.appendChild(vide);
+    }
+    grille.appendChild(emplacement);
+  }
+  hote.appendChild(grille);
 }
 
 function renderCombatAttacksPicker(){
@@ -3823,51 +3896,27 @@ function renderDialogueBuilder(){
     /* Un choix peut lancer un combat, avec ses attaques autorisées et ses deux suites. */
     const combatLbl = document.createElement('div');
     combatLbl.className = 'field-label';
-    combatLbl.textContent = '⚔️ Déclencher un combat';
+    combatLbl.textContent = '⚔️ Déclencher un combat (jusqu\'à 3 adversaires)';
     row.appendChild(combatLbl);
 
-    const combatBtn = document.createElement('button');
-    combatBtn.type = 'button';
-    combatBtn.className = 'btn-secondary';
-    combatBtn.style.cssText = 'width:100%; justify-content:flex-start; display:flex; align-items:center; gap:6px;';
     const idsAdversaires = ()=> {
       if (!choice.combat) return [];
       /* Compatibilité : les choix créés avant portaient un seul `creatureId`. */
       if (Array.isArray(choice.combat.creatureIds)) return choice.combat.creatureIds;
       return choice.combat.creatureId ? [choice.combat.creatureId] : [];
     };
-    const nomUn = (id)=>{
-      if (id === '__self__') return '🙋 La personne à qui on parle';
-      const c = ficheParId(id);
-      return c ? ((c.emoji||'⚔️') + ' ' + c.name) : '(fiche supprimée)';
+    const hoteAdversaires = document.createElement('div');
+    row.appendChild(hoteAdversaires);
+    const majAdversaires = (liste)=>{
+      if (!liste.length){ choice.combat = null; }
+      else {
+        choice.combat = Object.assign({ attackIds: [], stepWin: null, stepLose: null }, choice.combat || {});
+        choice.combat.creatureIds = liste;
+        delete choice.combat.creatureId;
+      }
+      renderDialogueBuilder();
     };
-    const nomAdversaire = ()=>{
-      const ids = idsAdversaires();
-      if (!ids.length) return '— Aucun combat —';
-      return ids.map(nomUn).join(' + ') + '   ✕';
-    };
-    combatBtn.textContent = nomAdversaire();
-    combatBtn.addEventListener('click', ()=>{
-      /* Le bouton sert aussi à effacer : s'il y a déjà des adversaires, on remet à zéro. */
-      if (choice.combat && idsAdversaires().length){ choice.combat = null; renderDialogueBuilder(); return; }
-      const adversaires = toutesLesFiches().filter(c=> c.interactionType === 'combat' || c.canFight);
-      ouvrirSelecteur({
-        titre: 'Qui affronte-t-on ? (3 maximum)',
-        /* Le plus souvent on affronte celui qui parle : inutile de lui faire une seconde fiche.
-           Mais un adversaire peut arriver accompagné — le moteur gère trois ennemis. */
-        items: [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }]
-          .concat(adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' }))),
-        selectionnes: idsAdversaires(), max: 3,
-        onChoisir: (ids)=>{
-          if (!ids.length){ choice.combat = null; renderDialogueBuilder(); return; }
-          choice.combat = Object.assign({ attackIds: [], stepWin: null, stepLose: null }, choice.combat || {});
-          choice.combat.creatureIds = ids;
-          delete choice.combat.creatureId;
-          combatBtn.textContent = nomAdversaire();
-        },
-      });
-    });
-    row.appendChild(combatBtn);
+    rendreEmplacementsAdversaires(hoteAdversaires, idsAdversaires, majAdversaires);
 
     if (choice.combat){
       const atkLbl = document.createElement('div');
@@ -4148,22 +4197,24 @@ function fenetreEffetsReponse(ch){
 
     /* --- combat --- */
     const idsAdv = ch.combat ? (Array.isArray(ch.combat.creatureIds) ? ch.combat.creatureIds : (ch.combat.creatureId ? [ch.combat.creatureId] : [])) : [];
-    const nomsAdv = idsAdv.map(id=> id === '__self__' ? 'la personne à qui on parle' : ((ficheParId(id) || {}).name || '?'));
-    ligne('⚔️ Déclencher un combat', nomsAdv.length ? nomsAdv.join(' + ') : 'aucun', ()=>{
-      if (ch.combat && idsAdv.length){ ch.combat = null; dessiner(); return; }
-      const adversaires = toutesLesFiches().filter(c=> c.interactionType === 'combat' || c.canFight);
-      ouvrirSelecteur({ titre:'Qui affronte-t-on ? (3 maximum)',
-        items: [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }]
-          .concat(adversaires.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' }))),
-        selectionnes: idsAdv, max:3,
-        onChoisir:(ids)=>{
-          if (!ids.length){ ch.combat = null; dessiner(); return; }
+    const titreCombat = document.createElement('div');
+    titreCombat.className = 'field-label';
+    titreCombat.textContent = '⚔️ Déclencher un combat (jusqu\'à 3 adversaires)';
+    lignes.appendChild(titreCombat);
+    const hoteAdv = document.createElement('div');
+    hoteAdv.style.marginBottom = '10px';
+    lignes.appendChild(hoteAdv);
+    rendreEmplacementsAdversaires(hoteAdv,
+      ()=> (ch.combat ? (Array.isArray(ch.combat.creatureIds) ? ch.combat.creatureIds : (ch.combat.creatureId ? [ch.combat.creatureId] : [])) : []),
+      (liste)=>{
+        if (!liste.length){ ch.combat = null; }
+        else {
           ch.combat = Object.assign({ attackIds:[], stepWin:null, stepLose:null }, ch.combat || {});
-          ch.combat.creatureIds = ids;
+          ch.combat.creatureIds = liste;
           delete ch.combat.creatureId;
-          dessiner();
-        } });
-    });
+        }
+        dessiner();
+      });
 
     if (ch.combat && idsAdv.length){
       const n = (ch.combat.attackIds || []).length;
@@ -17019,6 +17070,7 @@ function serializeFighterForSave(f){
 function deserializeFighterFromSave(sf){
   return { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
 }
+let sauvegardeCombatSignalee = false;   // un seul avertissement par combat, sinon il reviendrait à chaque tour
 function saveCombatSnapshot(releaseTurn){
   if (!currentUser || !db || !combatState || combatState.finished) return;
   if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(releaseTurn); return; }
@@ -17028,9 +17080,21 @@ function saveCombatSnapshot(releaseTurn){
     zoneId: (sceneViewCreature && sceneViewCreature.id) || null,
     sceneId: sceneViewCurrentSceneId || null,
     pointId: (combatZoneContext && combatZoneContext.pt && combatZoneContext.pt.id) || null,
+    /* Un combat parti d'une réplique doit RETOURNER à cette réplique. Ces deux réglages ne
+       vivaient qu'en mémoire : après un rechargement, le combat pouvait reprendre mais sa
+       conclusion était perdue, et un duel à thème rendait au joueur tout son arsenal. */
+    retourDialogue: retourDialogueCombat || null,
+    attaquesAutorisees: combatAttaquesAutorisees || null,
     savedAt: Date.now(),
   };
-  db.collection('players').doc(currentUser.uid).set({ savedCombat: data }, { merge:true }).catch(()=>{});
+  db.collection('players').doc(currentUser.uid).set({ savedCombat: data }, { merge:true })
+    .catch((err)=>{
+      /* Ne jamais avaler une erreur d'écriture : c'est elle qui décide si le combat sera
+         retrouvé après un rechargement. Silencieuse, on ne l'apprend qu'en perdant sa partie. */
+      if (sauvegardeCombatSignalee) return;
+      sauvegardeCombatSignalee = true;
+      showToast('⚠️ Sauvegarde du combat impossible : ' + (err && err.message ? err.message : 'erreur inconnue'));
+    });
 }
 /* Repère local (localStorage) en plus du nettoyage Firestore : un enregistrement sur le téléphone est
    instantané et ne peut pas être coupé par une fermeture brutale de l'appli, contrairement à une requête
@@ -17045,6 +17109,11 @@ function clearSavedCombat(){
   return db.collection('players').doc(currentUser.uid).set({ savedCombat: firebase.firestore.FieldValue.delete() }, { merge:true }).catch(()=>{});
 }
 async function tryResumeSavedCombat(saved){
+  /* À poser AVANT de reconstruire les combattants : c'est ce filtre que lit
+     `resolveFighterAttacks`, donc un duel à thème doit le retrouver dès la désérialisation. */
+  combatAttaquesAutorisees = Array.isArray(saved.attaquesAutorisees) && saved.attaquesAutorisees.length
+    ? saved.attaquesAutorisees.slice() : null;
+  retourDialogueCombat = saved.retourDialogue || null;
   const playerFighters = (saved.fighters||[]).filter(f=>f.side==='player').map(deserializeFighterFromSave);
   const enemyFighters = (saved.fighters||[]).filter(f=>f.side==='enemy').map(deserializeFighterFromSave);
   if (!playerFighters.length || !enemyFighters.length) return false;
@@ -17074,7 +17143,11 @@ async function tryResumeSavedCombat(saved){
     } catch(e){}
   }
   combatZoneContext = saved.zoneId ? { pt: saved.pointId ? { id: saved.pointId } : null } : null;
-  startCombat(playerFighters, enemyFighters, arenaBg, { skipTransition:true });
+  /* `startCombat` est ASYNCHRONE : depuis la v323 elle attend la résolution des images de dos
+     AVANT de poser `combatState`. Sans ce `await`, la ligne suivante lisait `combatState` encore
+     nul, levait une erreur avalée par le `catch` de l'appelant, et coupait toute la reprise. */
+  await startCombat(playerFighters, enemyFighters, arenaBg, { skipTransition:true });
+  if (!combatState) return false;
   combatState.log = saved.log || [];
   renderCombat();
   showToast('🔄 Reprise de ton combat en cours…');
@@ -17512,6 +17585,7 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
     await playCombatEntryTransition(hasBoss);
   }
   combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
+  sauvegardeCombatSignalee = false;   // nouveau combat : on redonne sa chance à l'avertissement
   combatLogOpen = false;
   document.getElementById('combatActionPanel').style.display = 'flex';
   document.getElementById('combatLog').classList.remove('show');
@@ -17834,6 +17908,20 @@ function chooseEnemyAiAction(fighter){
 
 /* Séquence d'animation d'une action : élan (physique) ou concentration (magique) sur l'attaquant,
    puis résolution réelle de l'attaque, puis particules de résultat (dégâts/soin) sur les cibles touchées. */
+/* La fanfare de victoire ne partait qu'à `endCombat`, c'est-à-dire APRÈS l'effet visuel du coup
+   fatal et les 500 ms de particules — plusieurs secondes après le moment où l'on comprend qu'on
+   a gagné. On la lance dès que le dernier adversaire tombe, pendant que l'animation se termine.
+   `playMusicForKey` ne redémarre pas une piste déjà en cours, donc l'appel de `endCombat` qui
+   suit ne la coupe pas. */
+function demarrerMusiqueVictoireSiGagne(){
+  if (!combatState || combatState.finished || combatState.isPvp) return;
+  if (!musicConfig.combat_victory) return;
+  const joueursDebout = combatState.fighters.some(f=> f.side === 'player' && f.alive);
+  const adversairesDebout = combatState.fighters.some(f=> f.side === 'enemy' && f.alive && !f.fled);
+  if (!joueursDebout || adversairesDebout) return;   // défaite ou combat encore en cours
+  playMusicForKey('combat_victory');
+}
+
 async function playTurnAnimation(actor, attack, target){
   if (!attack){ resolveAttack(actor, attack, target); return; }
   const hpBefore = {}; const aliveBefore = {};
@@ -17850,6 +17938,7 @@ async function playTurnAnimation(actor, attack, target){
 
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
+  demarrerMusiqueVictoireSiGagne();
 
   // L'image d'effet (si réglée sur cette attaque) vient s'ajouter PAR-DESSUS le bond/la charge, pas à
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
