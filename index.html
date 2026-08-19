@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v339</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v343</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -905,6 +905,7 @@
 
     <div class="field-label">Contenu du jeu</div>
     <button class="btn-capture" id="hubPnjBtn" style="width:100%; margin-bottom:10px;">PNJ</button>
+    <button class="btn-secondary" id="hubBrouillonsBtn" style="width:100%; margin-bottom:10px;">🚧 Fiches en travaux</button>
     <button class="btn-capture" id="hubItemsBtn" style="width:100%; margin-bottom:10px;">Objets</button>
     <button class="btn-capture" id="hubRecipesBtn" style="width:100%; margin-bottom:10px;">Recettes</button>
     <button class="btn-capture" id="hubAttacksBtn" style="width:100%; margin-bottom:10px;">Attaques</button>
@@ -913,6 +914,8 @@
     <button class="btn-capture" id="hubRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Robots (apparences)</button>
 
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
+    <button class="btn-secondary" id="oublierChoixBtn" style="width:100%; margin-bottom:10px;">🔄 Oublier mes choix de dialogue</button>
+    <p class="meta">Remet à zéro, pour toi seulement, tout ce que le jeu retient de tes conversations : réponses à usage unique, premières rencontres, conditions « il a déjà dit… ». Indispensable pour rejouer un dialogue qu'on vient de tester. Ne touche ni aux quêtes, ni aux objets, ni aux recrues.</p>
     <p class="meta" style="margin:0 0 8px;">Touche une catégorie pour l'ouvrir. Une seule reste ouverte à la fois, pour éviter de modifier un réglage par mégarde en faisant défiler.</p>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="raccourcis" style="width:100%; margin-bottom:6px; text-align:left;">🧭 Raccourcis de test</button>
     <div class="tt-panel" id="ttPanel-raccourcis" style="display:none; padding:0 0 10px;">
@@ -1948,6 +1951,11 @@
         <option value="combat">Monstre / Combattant</option>
         <option value="zone">Zone d'exploration</option>
       </select>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="checkbox" id="editEnTravaux" style="width:auto;">
+        <span style="font-size:13px;">🚧 En travaux — ne pas publier mes changements</span>
+      </label>
+      <p class="meta">Tant que c'est coché, les joueurs continuent de voir la <strong>dernière version publiée</strong> de ce personnage : tes modifications restent invisibles pour eux. S'il n'a jamais été publié, il n'apparaît pas du tout. Toi, tu peux tester tes brouillons en activant « voir mes brouillons » dans Outils de test.</p>
       <label id="canFightWrap" style="display:none; align-items:center; gap:8px; margin-top:8px;">
         <input type="checkbox" id="editCanFight" style="width:auto;">
         <span style="font-size:13px;">⚔️ Ce personnage peut se battre</span>
@@ -2178,6 +2186,14 @@
         <label for="editHideImmediately" style="margin:0;">Disparition immédiate dès que la condition change (sinon : reste visible tant que le joueur ne quitte pas sa zone de visibilité)</label>
       </div>
 
+      <div id="ficheEnCours" style="display:none; align-items:center; gap:10px; margin:4px 0 10px; padding:8px; border:1px solid var(--line); border-radius:10px;">
+        <div id="ficheEnCoursImg" style="width:44px; height:44px; border-radius:50%; overflow:hidden; flex:0 0 auto; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:22px;"></div>
+        <div style="min-width:0; flex:1;">
+          <div id="ficheEnCoursNom" style="font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+          <div id="ficheEnCoursQuoi" class="meta" style="font-size:11px;"></div>
+        </div>
+        <button type="button" id="oublierCePnjBtn" class="btn-secondary" style="flex:0 0 auto; padding:6px 8px;" title="Oublier mes conversations avec ce personnage">🔄</button>
+      </div>
       <div id="rubriquesMenu" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;"></div>
       <button class="btn-capture" id="editSaveBtn" style="width:100%; margin-top:16px;">Enregistrer le PNJ</button>
       <button class="btn-secondary" id="editDuplicateBtn" style="width:100%; margin-top:8px; display:none;">🧬 Dupliquer ce PNJ (pour le faire "se déplacer")</button>
@@ -2876,6 +2892,7 @@ document.getElementById('addShopItemBtn').addEventListener('click', ()=>{
    ni portrait de combat : ces blocs sont masqués plutôt que d'allonger le défilement. */
 function majBlocsSelonType(type){
   if (typeof majMenuRubriques === 'function') setTimeout(majMenuRubriques, 0);
+  if (typeof majFicheEnCours === 'function') setTimeout(majFicheEnCours, 0);
   const estZone = (type === 'zone');
   const caseSeBattre = document.getElementById('editCanFight');
   const wrapSeBattre = document.getElementById('canFightWrap');
@@ -4830,6 +4847,35 @@ function tousLesMonstres(){
    ni celles rattachées à une zone d'exploration, ni celles en réserve, ni celles hors créneau.
    Pour choisir un adversaire ou le retrouver au moment du combat, il faut la liste complète —
    sinon un habitant d'une maison ou un monstre en réserve est « introuvable ». */
+/* ---------- Brouillons : ce qui est publié, et ce qui ne l'est pas ----------
+   Enregistrer écrit dans la base commune, donc les joueurs voient les dialogues en chantier
+   à la seconde près. Une fiche « en travaux » se fige donc sur sa DERNIÈRE VERSION PUBLIÉE :
+   celui qui l'a déjà rencontrée continue de la voir comme avant, sans rien remarquer.
+   Jamais publiée, elle n'existe pas encore pour eux. */
+const CLE_VOIR_BROUILLONS = 'mascotto_voir_brouillons';
+function voirLesBrouillons(){
+  try { return localStorage.getItem(CLE_VOIR_BROUILLONS) === '1'; } catch(e){ return false; }
+}
+function reglerVoirBrouillons(actif){
+  try { localStorage.setItem(CLE_VOIR_BROUILLONS, actif ? '1' : '0'); } catch(e){}
+}
+/* Retourne la fiche telle qu'elle doit être JOUÉE, ou null si elle n'est pas encore publiée. */
+function ficheJouable(d){
+  if (!d || !d.enTravaux) return d;
+  if (voirLesBrouillons()) return d;            // sur MON téléphone, je teste mes brouillons
+  if (d.versionPubliee) return { ...d, ...d.versionPubliee, enTravaux:true };
+  return null;                                   // jamais publiée : invisible
+}
+/* Champs à figer. On laisse de côté les images enregistrées en base64 : elles pèsent trop
+   pour être dupliquées dans le même document, et une image ne trahit pas un scénario. */
+function versionAPublier(data){
+  const copie = { ...data };
+  delete copie.enTravaux;
+  delete copie.versionPubliee;
+  if (typeof copie.imageUrl === 'string' && copie.imageUrl.startsWith('data:')) delete copie.imageUrl;
+  return copie;
+}
+
 function toutesLesFiches(){
   if (typeof latestSnap === 'undefined' || !latestSnap) return creatures.slice();
   return latestSnap.docs.map(d=> ({ id: d.id, ...d.data() }));
@@ -4842,13 +4888,21 @@ function ficheParId(id){
   }
   return creatures.find(c=> c.id === id) || null;
 }
+/* Même chose, mais pour le JEU : une fiche en travaux revient dans sa version publiée. */
+function ficheParIdJouable(id){
+  const brute = ficheParId(id);
+  if (!brute) return null;
+  const jouable = ficheJouable(brute);
+  return jouable ? { ...jouable, id: brute.id } : null;
+}
 
 function renderAllCreatures(snap){
   majChoixReferencesPartout();
   creatures.forEach(c=>{ if (c.marker) map.removeLayer(c.marker); });
   creatures = [];
   snap.forEach((doc)=>{
-    const d = doc.data();
+    const d = ficheJouable(doc.data());
+    if (!d) return;                     // en travaux, jamais publiée : elle n'existe pas encore
     if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
     if (d.recruitScope === 'shared'){
       if (d.recruited) return; // partagé : recruté par n'importe qui, disparaît définitivement pour tout le monde
@@ -5799,6 +5853,57 @@ function surveillerLesFenetres(){
 document.addEventListener('DOMContentLoaded', surveillerLesFenetres);
 if (document.readyState !== 'loading') surveillerLesFenetres();
 
+/* Modifications non enregistrées. Tout ce qu'on tape dans l'éditeur reste en mémoire tant
+   qu'on n'a pas appuyé sur « Enregistrer » : fermer la fenêtre effaçait le travail sans un
+   mot. On note donc qu'il y a des changements, et on demande avant de sortir. */
+let ficheModifiee = false;
+function marquerFicheModifiee(){ if (document.getElementById('editorOverlay').classList.contains('show')) ficheModifiee = true; }
+document.addEventListener('input', (e)=>{
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+}, true);
+document.addEventListener('change', (e)=>{
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+}, true);
+
+/* Trois issues, pas deux : enregistrer, sortir quand même, ou revenir en arrière. */
+function demanderQuoiFaireAvantDeSortir(){
+  return new Promise((resolve)=>{
+    const fond = document.createElement('div');
+    fond.className = 'overlay show';
+    fond.style.zIndex = '5900';
+    fond.innerHTML = `
+      <div class="sheet">
+        <p style="margin:0 0 16px; line-height:1.5;">Tu as des modifications qui ne sont pas enregistrées. Que veux-tu faire ?</p>
+        <button class="btn-capture" data-r="enregistrer" style="width:100%;">💾 Enregistrer et fermer</button>
+        <button class="btn-secondary" data-r="sortir" style="width:100%; margin-top:8px;">Fermer sans enregistrer</button>
+        <button class="btn-secondary" data-r="rester" style="width:100%; margin-top:8px;">Revenir à la fiche</button>
+      </div>`;
+    document.body.appendChild(fond);
+    fond.querySelectorAll('[data-r]').forEach(b=>{
+      b.addEventListener('click', ()=>{ fond.remove(); resolve(b.dataset.r); });
+    });
+  });
+}
+
+/* Qui suis-je en train de modifier ? Avec les rubriques en fenêtres, le nom et l'image ne
+   sont plus sous les yeux : on peut régler les horaires du mauvais personnage sans s'en
+   apercevoir. Ce bandeau reste visible au-dessus du sommaire. */
+function majFicheEnCours(){
+  const bandeau = document.getElementById('ficheEnCours');
+  if (!bandeau) return;
+  if (!editingId){ bandeau.style.display = 'none'; return; }
+  bandeau.style.display = 'flex';
+  const nom = (document.getElementById('editName').value || '').trim();
+  document.getElementById('ficheEnCoursNom').textContent = nom || '(sans nom)';
+  const type = document.getElementById('editInteractionType').value;
+  const quoi = { dialogue:'PNJ de dialogue', shop:'Boutique', combat:'Monstre', zone:'Zone d\'exploration' }[type] || type;
+  document.getElementById('ficheEnCoursQuoi').textContent = 'Modification · ' + quoi;
+  const img = uploadedImageDataUrl || (document.getElementById('imagePreview') || {}).src || '';
+  const cadre = document.getElementById('ficheEnCoursImg');
+  cadre.innerHTML = img ? ('<img src="' + img + '" style="width:100%; height:100%; object-fit:cover; object-position:top center;">')
+                        : '👤';
+}
+
 /* ---------- La fiche PNJ en rubriques ----------
    La fiche faisait plusieurs écrans de haut : on descendait longtemps avant d'atteindre
    le champ qu'on venait régler. Les champs ne sont pas réécrits — ils sont DÉPLACÉS, tels
@@ -6463,6 +6568,8 @@ function loadForEdit(id){
   renderCombatStatusPicker('combatImmunitiesList', selectedCombatImmunities);
   selectedCombatResistances = new Set(cs.resistances || []);
   document.getElementById('editCanFight').checked = !!d.canFight;
+  document.getElementById('editEnTravaux').checked = !!d.enTravaux;
+  setTimeout(majFicheEnCours, 0);
   renderCombatStatusPicker('combatResistancesList', selectedCombatResistances);
   selectedCombatRewards = new Set(cs.rewardItemIds || []);
   document.getElementById('editCombatStealEasy').dataset.itemId = cs.stealEasyItemId || '';
@@ -6574,6 +6681,8 @@ function resetForm(){
   selectedCombatRewards = new Set();
   renderCombatRewardsPicker();
   document.getElementById('editCanFight').checked = false;
+  document.getElementById('editEnTravaux').checked = false;
+  setTimeout(majFicheEnCours, 0);
   editBackImageDataUrl = null; editBackImageRef = null; editBackImagePath = null;
   document.getElementById('editBackImageFile').value = '';
   renderBackImagePreview();
@@ -6603,6 +6712,117 @@ document.getElementById('editDuplicateBtn').addEventListener('click', ()=>{
   }).catch((err)=> showToast('Échec : ' + err.message));
 });
 
+/* L'écran des brouillons : tout ce qui n'est pas publié, au même endroit, avec de quoi
+   publier d'un geste. Sans cette vue, une fiche laissée « en travaux » resterait invisible
+   aux joueurs sans que personne s'en aperçoive. */
+function ouvrirBrouillons(){
+  const enTravaux = toutesLesFiches().filter(f=> f.enTravaux);
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '4700';
+  fond.innerHTML = `
+    <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+      <div class="sheet-top">
+        <h3 style="margin-top:0;">🚧 Fiches en travaux (${enTravaux.length})</h3>
+        <button class="sheet-x" data-fermer>✕</button>
+      </div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <input type="checkbox" data-voir ${voirLesBrouillons() ? 'checked' : ''} style="width:auto;">
+        <span style="font-size:13px;">👁️ Voir mes brouillons en jeu (sur ce téléphone seulement)</span>
+      </label>
+      <div data-liste></div>
+      ${enTravaux.length ? '<button class="btn-capture" data-tout style="width:100%; margin-top:12px;">Tout publier</button>' : ''}
+    </div>`;
+  document.body.appendChild(fond);
+  fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  fond.querySelector('[data-voir]').addEventListener('change', (e)=>{
+    reglerVoirBrouillons(e.target.checked);
+    showToast(e.target.checked ? 'Tes brouillons sont visibles ici' : 'Tu vois le jeu comme un joueur');
+    redessinerCarte();
+  });
+
+  const liste = fond.querySelector('[data-liste]');
+  if (!enTravaux.length){
+    liste.innerHTML = '<p class="meta">Aucune fiche en travaux : tout ce que tu as enregistré est publié.</p>';
+  } else {
+    liste.innerHTML = enTravaux.map(f=>`
+      <div class="editor-list-item" style="align-items:center;">
+        <div class="thumb">${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%; height:100%; object-fit:cover; object-position:top center;">` : '🚧'}</div>
+        <div class="name">${f.name || '(sans nom)'}<div class="meta" style="font-size:11px;">${f.versionPubliee ? 'les joueurs voient la version publiée' : 'jamais publiée — invisible pour eux'}</div></div>
+        <button type="button" class="btn-secondary" data-publier="${f.id}" style="flex:0 0 auto; padding:6px 10px;">Publier</button>
+      </div>`).join('');
+  }
+
+  const publier = async (id)=>{
+    const f = ficheParId(id);
+    if (!f || !creatureCol) return;
+    const copie = { ...f };
+    delete copie.id;
+    copie.enTravaux = false;
+    copie.versionPubliee = versionAPublier(copie);
+    await creatureCol.doc(id).set(copie);
+  };
+  liste.querySelectorAll('[data-publier]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      b.disabled = true;
+      try { await publier(b.dataset.publier); showToast('Publié'); fond.remove(); ouvrirBrouillons(); }
+      catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
+    });
+  });
+  const tout = fond.querySelector('[data-tout]');
+  if (tout) tout.addEventListener('click', async ()=>{
+    if (!(await appConfirm('Publier les ' + enTravaux.length + ' fiches en travaux ?'))) return;
+    try {
+      for (const f of enTravaux) await publier(f.id);
+      showToast('Tout est publié');
+      fond.remove(); ouvrirBrouillons();
+    } catch(err){ showToast('Échec : ' + err.message); }
+  });
+}
+/* Rejouer un dialogue qu'on vient de tester. Une réponse « une seule fois », une première
+   rencontre ou une condition « il a déjà dit… » ne se rejouent jamais tant que le souvenir
+   est là : sans ce bouton, il fallait un second compte pour vérifier son propre travail. */
+async function oublierMesChoix(){
+  if (!(await appConfirm('Oublier toutes tes conversations passées ? Les dialogues se rejoueront comme si tu rencontrais chacun pour la première fois.'))) return;
+  playerUsedChoices = {};
+  if (!currentUser || !db){ showToast('Choix oubliés (hors ligne)'); return; }
+  try {
+    /* On SUPPRIME le champ plutôt que d'écrire un objet vide : avec `merge`, écrire {} ne
+       retire aucune clé. Et surtout on ne réécrit jamais le document entier — il contient
+       aussi le pseudo, les quêtes et les objets ramassés. */
+    await db.collection('players').doc(currentUser.uid).update({
+      usedChoices: firebase.firestore.FieldValue.delete()
+    });
+    showToast('C\'est oublié : tu peux rejouer les dialogues');
+  } catch(err){
+    /* Document absent : il n'y avait rien à oublier côté serveur, l'oubli local suffit. */
+    showToast('C\'est oublié : tu peux rejouer les dialogues');
+  }
+}
+/* Oublier UN personnage. C'est le geste courant quand on met un dialogue au point : on veut
+   rejouer Vicky sans effacer le passage chez Debora, sinon la condition qu'on teste redevient
+   fausse et on ne teste plus rien. Le bouton global reste pour repartir de zéro. */
+async function oublierCePersonnage(){
+  if (!editingId){ showToast('Ouvre d\'abord une fiche existante'); return; }
+  const nom = (document.getElementById('editName').value || 'ce personnage').trim();
+  if (!(await appConfirm('Oublier tes conversations avec ' + nom + ' ? Les autres personnages gardent leur mémoire.'))) return;
+  const prefixe = editingId + '__';
+  const restant = {};
+  Object.keys(playerUsedChoices).forEach(k=>{ if (k.indexOf(prefixe) !== 0) restant[k] = playerUsedChoices[k]; });
+  const efface = Object.keys(playerUsedChoices).length - Object.keys(restant).length;
+  playerUsedChoices = restant;
+  if (!currentUser || !db){ showToast(efface + ' souvenir(s) oublié(s)'); return; }
+  try {
+    await db.collection('players').doc(currentUser.uid).update({ usedChoices: restant });
+    showToast('Tu peux reparler à ' + nom + ' comme la première fois');
+  } catch(err){ showToast('Échec : ' + err.message); }
+}
+document.getElementById('oublierCePnjBtn').addEventListener('click', oublierCePersonnage);
+
+document.getElementById('oublierChoixBtn').addEventListener('click', oublierMesChoix);
+
+document.getElementById('hubBrouillonsBtn').addEventListener('click', ouvrirBrouillons);
+
 document.getElementById('editHubBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.add('show');
   loadExplorerDurationSetting();
@@ -6622,7 +6842,13 @@ document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
   resetItemForm();
   showItemsSection('new');
 });
-document.getElementById('editorCloseBtn').addEventListener('click', ()=>{
+document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
+  if (ficheModifiee){
+    const quoi = await demanderQuoiFaireAvantDeSortir();
+    if (quoi === 'rester') return;
+    if (quoi === 'enregistrer'){ document.getElementById('editSaveBtn').click(); return; }
+  }
+  ficheModifiee = false;
   document.getElementById('editorOverlay').classList.remove('show');
 });
 
@@ -6780,6 +7006,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const zoneShowName = document.getElementById('editZoneShowName').checked;
   const explorable = document.getElementById('editZoneExplorable').checked;
   const explorerReport = document.getElementById('editZoneExplorerReport').value.trim();
+  ficheModifiee = false;   // ce qui suit part en base : il n'y a plus rien à perdre
+  const enTravaux = document.getElementById('editEnTravaux').checked;
   const canFight = document.getElementById('editCanFight').checked;
   const combatStats = {
     tribe: document.getElementById('editCombatTribe').value,
@@ -6844,7 +7072,15 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
+     en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
+  if (!enTravaux){
+    data.versionPubliee = versionAPublier(data);
+  } else {
+    const ancienne = editingId ? ficheParId(editingId) : null;
+    if (ancienne && ancienne.versionPubliee) data.versionPubliee = ancienne.versionPubliee;
+  }
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
@@ -15375,7 +15611,8 @@ async function renderSceneViewCurrentScene(){
         if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
         creatureCol.doc(pt.linkedPnjId).get().then((doc)=>{
           if (!doc.exists){ showToast('Ce PNJ n\'existe plus'); return; }
-          const data = doc.data();
+          const data = ficheJouable(doc.data());
+          if (!data){ showToast('Ce personnage n\'est pas encore publié'); return; }
           /* Un monstre attaque à vue — SAUF s'il a quelque chose à dire. Depuis que le combat
              peut se lancer depuis une réplique, un adversaire avec un dialogue doit d'abord
              parler : c'est le dialogue qui décide ensuite si l'on se bat. */
