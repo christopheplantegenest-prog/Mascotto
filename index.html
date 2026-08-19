@@ -683,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v350</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v351</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -17705,6 +17705,72 @@ const AI_PERSONALITY_CONFIG = {
   agressif: { healThreshold:0.15, smartTargetChance:1.00, damagePreference:0.95 },
   defensif: { healThreshold:0.60, smartTargetChance:0.50, damagePreference:0.60 },
 };
+/* Une attaque peut être parfaitement inutile à l'instant où l'on joue : soigner quelqu'un qui
+   est au maximum, réanimer quand personne n'est à terre, reposer une altération déjà en place
+   ou contre laquelle la cible est immunisée, voler ce qui a déjà été volé. Le moteur choisissait
+   au hasard dans TOUTES les attaques connues, d'où des monstres qui se soignaient à pleine vie.
+   On écarte donc d'abord ce qui ne peut rien produire, puis on choisit dans ce qui reste. */
+function attaqueUtileMaintenant(a, mesAllies, adversaires){
+  if (!a) return false;
+  const vivants = mesAllies.filter(f=> f.alive);
+  const aTerre = mesAllies.filter(f=> !f.alive);
+  const se = a.statusEffect;
+  if (a.kind === 'revive_single') return aTerre.length > 0;
+  if (isHealAttack(a)) return vivants.some(f=> f.hp < f.maxHp);
+  if (a.kind === 'steal'){
+    return adversaires.some(f=> f.alive && ((f.stealEasyItemId && !f.stolenEasy) || (f.stealHardItemId && !f.stolenHard)));
+  }
+  if (a.kind === 'boost'){
+    if (!se || !se.id) return true;                       // pas d'état posé : on ne sait pas juger, on laisse passer
+    if (se.id === 'purify') return vivants.some(f=> NEGATIVE_STATUS_IDS.some(sid=> f.statuses[sid]));
+    return vivants.some(f=> !f.statuses[se.id]);
+  }
+  if (a.kind === 'debuff'){
+    if (!se || !se.id) return true;
+    if (se.id === 'purify') return false;                 // purifier un adversaire ne rend service qu'à lui
+    return adversaires.some(f=> f.alive && !f.statuses[se.id] && !(f.immunities || []).includes(se.id));
+  }
+  return true;                                             // dégâts : toujours bon à prendre
+}
+/* Choisir la cible qui rend l'attaque VRAIMENT utile : le plus blessé pour un soin, celui qui
+   est à terre pour une réanimation, celui qui n'a pas encore l'état pour un renfort. */
+function cibleUtilePour(a, mesAllies, adversaires, chanceCiblageMalin){
+  const vivants = mesAllies.filter(f=> f.alive);
+  const se = a.statusEffect;
+  if (a.kind === 'revive_single'){
+    const aTerre = mesAllies.filter(f=> !f.alive);
+    return aTerre.length ? aTerre[0] : null;
+  }
+  if (isHealAttack(a)){
+    const blesses = vivants.filter(f=> f.hp < f.maxHp).sort((x, y)=> (x.hp / x.maxHp) - (y.hp / y.maxHp));
+    return blesses.length ? blesses[0] : (vivants[0] || null);
+  }
+  if (a.kind === 'boost'){
+    if (se && se.id && se.id !== 'purify'){
+      const sansEtat = vivants.filter(f=> !f.statuses[se.id]);
+      if (sansEtat.length) return sansEtat[0];
+    }
+    if (se && se.id === 'purify'){
+      const atteints = vivants.filter(f=> NEGATIVE_STATUS_IDS.some(sid=> f.statuses[sid]));
+      if (atteints.length) return atteints[0];
+    }
+    return vivants.length ? vivants[Math.floor(Math.random() * vivants.length)] : null;
+  }
+  const cibles = adversaires.filter(f=> f.alive);
+  if (!cibles.length) return null;
+  if (a.kind === 'debuff' && se && se.id){
+    const utiles = cibles.filter(f=> !f.statuses[se.id] && !(f.immunities || []).includes(se.id));
+    if (utiles.length) return utiles[Math.floor(Math.random() * utiles.length)];
+  }
+  if (a.kind === 'steal'){
+    const volables = cibles.filter(f=> (f.stealEasyItemId && !f.stolenEasy) || (f.stealHardItemId && !f.stolenHard));
+    if (volables.length) return volables[Math.floor(Math.random() * volables.length)];
+  }
+  // Dégâts : achever le plus bas en PV, plus ou moins souvent selon la personnalité.
+  const tries = [...cibles].sort((x, y)=> (x.hp / x.maxHp) - (y.hp / y.maxHp));
+  return (Math.random() < chanceCiblageMalin) ? tries[0] : cibles[Math.floor(Math.random() * cibles.length)];
+}
+
 function chooseEnemyAiAction(fighter){
   // Tentative de fuite : uniquement si autorisée sur ce monstre (case à cocher), sous son seuil de PV réglé,
   // avec sa propre chance par tour réglée (les deux réglables dans l'éditeur, 25%/15% par défaut).
@@ -17718,22 +17784,20 @@ function chooseEnemyAiAction(fighter){
 
   const mySide = combatState.fighters.filter(f=> f.side===fighter.side);
   const allyDown = mySide.find(f=> !f.alive);
-  const usable = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
-  if (!usable.length) return { atk:null, target:null };
+  const connues = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
+  if (!connues.length) return { atk:null, target:null };
   const alivePlayers = combatState.fighters.filter(f=> f.side!==fighter.side && f.alive);
   if (!alivePlayers.length) return { atk:null, target:null };
+  /* On ne garde que ce qui peut produire un effet maintenant. Si plus rien ne le peut, on
+     retombe sur la liste complète plutôt que de laisser passer le tour sans rien faire. */
+  const utiles = connues.filter(a=> attaqueUtileMaintenant(a, mySide, alivePlayers));
+  const usable = utiles.length ? utiles : connues;
 
   if (fighter.aiPersonality === 'chaotique'){
-    // Presque aucune règle : une attaque et une cible au hasard parmi les cibles valides pour son type.
+    /* Presque aucune règle : une attaque au hasard. Le hasard, oui — le geste vide, non :
+       il tire dans les attaques qui servent à quelque chose. */
     const atk = usable[Math.floor(Math.random()*usable.length)];
-    const friendlyAtk = isHealAttack(atk) || atk.kind === 'boost' || atk.kind === 'revive_single';
-    let target;
-    if (friendlyAtk){
-      const pool = atk.kind === 'revive_single' ? mySide.filter(f=>!f.alive) : mySide.filter(f=>f.alive);
-      target = pool.length ? pool[Math.floor(Math.random()*pool.length)] : null;
-    } else {
-      target = alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
-    }
+    const target = cibleUtilePour(atk, mySide, alivePlayers, 0);
     if (!target) return { atk:null, target:null };
     return { atk, target };
   }
@@ -17763,18 +17827,7 @@ function chooseEnemyAiAction(fighter){
     atk = usable[Math.floor(Math.random()*usable.length)];
   }
 
-  const friendlyAtk = isHealAttack(atk) || atk.kind === 'boost' || atk.kind === 'revive_single';
-  let target;
-  if (friendlyAtk){
-    const aliveAllies = mySide.filter(f=>f.alive);
-    const deadAllies = mySide.filter(f=>!f.alive);
-    target = (atk.kind === 'revive_single' && deadAllies.length) ? deadAllies[0]
-      : (aliveAllies.length ? aliveAllies[Math.floor(Math.random()*aliveAllies.length)] : null);
-  } else {
-    // Selon la personnalité : achève la cible la plus basse en PV plus ou moins souvent (le reste du temps, cible au hasard).
-    const sorted = [...alivePlayers].sort((a,b)=> (a.hp/a.maxHp) - (b.hp/b.maxHp));
-    target = (Math.random() < cfg.smartTargetChance) ? sorted[0] : alivePlayers[Math.floor(Math.random()*alivePlayers.length)];
-  }
+  const target = cibleUtilePour(atk, mySide, alivePlayers, cfg.smartTargetChance);
   if (!target) return { atk:null, target:null };
   return { atk, target };
 }
