@@ -793,7 +793,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v358</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v359</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -17581,15 +17581,18 @@ function createCrossfadePlayer(){
        ne coupe pas le son d'un onglet mis en arrière-plan. On la suspend, et on la reprend
        exactement où elle en était au retour — seulement si elle jouait vraiment. */
     suspendre(){
-      if (active.paused && inactive.paused) return;
+      if (active.paused && inactive.paused) return false;
       suspendu = true;
       active.pause(); inactive.pause();
+      return true;
     },
     reprendre(){
-      if (!suspendu) return;
+      if (!suspendu) return false;
       suspendu = false;
       active.play().catch(()=>{});
+      return true;
     },
+    estSuspendu(){ return suspendu; },
     setVolume(v){ targetVolume = v; if (!crossfading) active.volume = v; },
     setLoopPoint(v){ loopPoint = (v && v > 0) ? v : null; },
     getActive(){ return active; },
@@ -17597,19 +17600,36 @@ function createCrossfadePlayer(){
 }
 const bgLoopPlayer = createCrossfadePlayer();
 /* Passer sur une autre application ne coupe pas le son d'une page web : la musique du jeu
-   continuait par-dessus ce que l'utilisateur faisait ailleurs. On la met en pause dès que la
-   page n'est plus visible, et on la reprend au retour. */
+   continuait par-dessus ce que l'utilisateur faisait ailleurs. On la met donc en pause dès que
+   la page n'est plus visible.
+   MAIS le retour n'a pas de chemin unique : selon la façon dont Android rend la main, c'est
+   `visibilitychange`, `pageshow` ou `focus` qui part — et parfois aucun (un journal du 19/08
+   montre deux mises en arrière-plan sans le moindre retour enregistré). On écoute donc les
+   trois, plus un dernier filet au premier appui. `reprendre()` ne fait rien si la musique
+   n'avait pas été suspendue : les appels en double sont sans effet. */
+function reprendreMusiqueApresRetour(origine){
+  try {
+    if (!bgLoopPlayer.estSuspendu()) return;
+    bgLoopPlayer.reprendre();
+    journal('son', 'musique reprise au retour', origine);
+  } catch(e){}
+}
 document.addEventListener('visibilitychange', ()=>{
   try {
     if (document.hidden){
-      bgLoopPlayer.suspendre();
+      const jouait = bgLoopPlayer.suspendre();
+      journal('son', jouait ? 'musique suspendue (arrière-plan)' : 'rien ne jouait à la mise en arrière-plan');
       if (sfxTransitionAudio && !sfxTransitionAudio.paused) sfxTransitionAudio.pause();
       sonsFxCharges.forEach(lot=> lot.forEach(el=>{ if (!el.paused) el.pause(); }));
     } else {
-      bgLoopPlayer.reprendre();
+      reprendreMusiqueApresRetour('visibilitychange');
     }
   } catch(e){}
 });
+window.addEventListener('pageshow', ()=> reprendreMusiqueApresRetour('pageshow'));
+window.addEventListener('focus', ()=> reprendreMusiqueApresRetour('focus'));
+/* Dernier filet : si aucun des trois n'est parti, le premier appui rend la musique. */
+document.addEventListener('click', ()=> reprendreMusiqueApresRetour('premier appui'));
 let bgCurrentUrl = null;
 const sfxTransitionAudio = new Audio();
 function getTrackVolumeFraction(key){
