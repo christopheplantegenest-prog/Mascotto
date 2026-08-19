@@ -57,6 +57,7 @@
       if (detail !== undefined && detail !== null && detail !== '') l.d = (typeof detail === 'string') ? detail : String(detail);
       var mem = memoire(); if (mem) l.mem = mem;
       lignes.push(l);
+      window.dernierRepere = l.m;   // le prochain figement saura d'où il vient
       if (lignes.length > MAX) lignes = lignes.slice(-MAX);
       if (urgent || cat === 'erreur'){ ecrire(); }
       else if (!enAttente){ enAttente = true; setTimeout(ecrire, 400); }
@@ -75,9 +76,21 @@
   };
 
   window.addEventListener('error', function(e){
+    /* Deux choses très différentes arrivent ici. Une vraie erreur de code porte un message.
+       Un fichier qui ne se charge pas (image, script, feuille de style) n'en a AUCUN : c'est
+       ce qui s'affichait « erreur inconnue ». On nomme alors le fichier fautif. */
+    var cible = e.target;
+    if (cible && cible !== window && cible.tagName){
+      var adresse = cible.currentSrc || cible.src || cible.href || '';
+      if (adresse.slice(0, 5) === 'data:') adresse = 'image intégrée (' + Math.round(adresse.length / 1024) + ' ko)';
+      else adresse = String(adresse).split('?')[0];
+      window.journal('erreur', 'fichier non chargé : <' + String(cible.tagName).toLowerCase() + '>',
+        adresse || '(adresse vide)', true);
+      return;
+    }
     var ou = (e.filename ? (String(e.filename).split('/').pop() + ':' + e.lineno + ':' + e.colno) : '');
     var pile = (e.error && e.error.stack) ? String(e.error.stack).split('\n').slice(0, 4).join(' | ') : '';
-    window.journal('erreur', e.message || 'erreur inconnue', (ou ? ou + ' ' : '') + pile, true);
+    window.journal('erreur', e.message || 'erreur sans message', (ou ? ou + ' ' : '') + pile, true);
   }, true);
   window.addEventListener('unhandledrejection', function(e){
     var r = e.reason;
@@ -86,11 +99,13 @@
     window.journal('erreur', 'promesse rejetée : ' + msg, pile, true);
   });
   /* Une tâche qui bloque le fil plus de 50 ms fige l'affichage et retarde le son. C'est
-     exactement le symptôme décrit (« la musique a démarré après le combat ») : on les note. */
+     exactement le symptôme décrit (« la musique a démarré après le combat »). On note aussi
+     le repère posé juste avant : c'est lui qui dit QUOI a figé le jeu. */
+  window.dernierRepere = 'démarrage';
   try {
     var po = new PerformanceObserver(function(list){
       list.getEntries().forEach(function(t){
-        if (t.duration >= 200) window.journal('lent', 'le jeu s\'est figé', Math.round(t.duration) + ' ms');
+        if (t.duration >= 200) window.journal('lent', 'le jeu s\'est figé pendant « ' + window.dernierRepere + ' »', Math.round(t.duration) + ' ms');
       });
     });
     po.observe({ entryTypes: ['longtask'] });
@@ -776,7 +791,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v355</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v356</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -9982,7 +9997,7 @@ const MT_CASES = ['case1','case2','case3','case4'];
 let mtPage = 0;
 let missionTerminalZones = {};
 MT_ZONES.forEach(z=> missionTerminalZones[z.id] = Object.assign({}, z.defaut));
-let mtZoneEnCours = 'liste';       // zone que l'auteur est en train de dessiner
+let mtZoneEnCours = MT_ZONES[0].id;   // zone que l'auteur est en train de dessiner ; 'liste' n'existe plus dans MT_ZONES
 let missionTerminalSelectedId = null; // mission ouverte dans le terminal
 let missionShowChance = false; // outil d'équilibrage : réaffiche le domaine et le % de réussite
 let playerMissionRuns = {};   // { missionId: { recruitId, startedAt, durationSec, success, reported } }
@@ -10015,7 +10030,10 @@ if (typeof db !== 'undefined' && db){
       p.src = missionTerminalImage || '';
       p.style.display = missionTerminalImage ? 'block' : 'none';
     }
-    renderTerminalGuide();
+    /* Un écouteur Firestore rappelle cette fonction à chaque changement : une erreur ici
+       remonterait dans la bibliothèque à chaque fois. On l'isole et on la consigne. */
+    try { renderTerminalGuide(); }
+    catch(err){ journal('erreur', 'affichage du guide du terminal', (err && err.message) || '', true); }
   }, ()=>{});
 }
 
@@ -10668,9 +10686,15 @@ function renderTerminalGuide(){
       border:2px ${active ? 'solid var(--danger)' : 'dashed rgba(0,0,0,.35)'};
       background:${active ? 'rgba(192,57,43,.16)' : 'transparent'};"></div>`;
   }).join('');
-  const z = missionTerminalZones[mtZoneEnCours];
+  /* La zone en cours peut ne plus exister (renommée, retirée d'une version à l'autre) :
+     on retombe sur la première plutôt que de faire tomber tout l'écran — et avec lui
+     l'écouteur Firestore qui appelle cette fonction. */
+  let def = MT_ZONES.find(d=> d.id === mtZoneEnCours);
+  if (!def){ def = MT_ZONES[0]; mtZoneEnCours = def.id; }
+  const z = missionTerminalZones[mtZoneEnCours] || Object.assign({}, def.defaut);
+  missionTerminalZones[mtZoneEnCours] = z;
   document.getElementById('terminalZoneInfo').textContent =
-    `${MT_ZONES.find(d=> d.id === mtZoneEnCours).nom} : ${Math.round(z.x)} % · ${Math.round(z.y)} % · ${Math.round(z.w)} × ${Math.round(z.h)} %`
+    `${def.nom} : ${Math.round(z.x)} % · ${Math.round(z.y)} % · ${Math.round(z.w)} × ${Math.round(z.h)} %`
     + (terminalZonePremierCoin ? ' — touche le second coin' : '');
 }
 function saveTerminalZone(){
