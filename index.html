@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v338</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v339</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3285,10 +3285,19 @@ function renderDialogueBuilder(){
     delBtn.addEventListener('click', async ()=>{
       if (!(await appConfirm('Supprimer l\'étape ' + stepIdx + ' et tous ses choix ?'))) return;
       currentDialogueSteps.splice(stepIdx, 1);
+      /* Tous les renvois se recalent, pas seulement « Ensuite ». Sans ça, après une
+         suppression, une réponse continuait de pointer un numéro qui désigne désormais UNE
+         AUTRE réplique : on tombait sur un vieux texte, et sur les effets d'un autre choix. */
+      const recale = (v)=> (v === null || v === undefined || isNaN(v)) ? v
+        : (v === stepIdx ? null : (v > stepIdx ? v - 1 : v));
       currentDialogueSteps.forEach(s=>{
+        if (s.thenStep !== undefined) s.thenStep = recale(s.thenStep);
         (s.choices || []).forEach(ch=>{
-          if (ch.next === stepIdx) ch.next = null;
-          else if (ch.next !== null && ch.next !== undefined && ch.next > stepIdx) ch.next -= 1;
+          ch.next = recale(ch.next);
+          if (ch.combat){
+            ch.combat.stepWin = recale(ch.combat.stepWin);
+            ch.combat.stepLose = recale(ch.combat.stepLose);
+          }
         });
       });
       dlgSelectStep(Math.max(0, stepIdx - 1));
