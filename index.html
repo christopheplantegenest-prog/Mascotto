@@ -683,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v349</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v350</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3251,6 +3251,136 @@ function resetDialogueNav(){
   dlgTreeCollapsed = new Set();
 }
 
+/* ---------- Voyager d'une fiche à l'autre sans perdre le fil ----------
+   Une réponse peut être conditionnée à une phrase dite chez QUELQU'UN D'AUTRE. Pour aller la
+   relire, il fallait fermer la fiche, retrouver l'autre personnage dans la liste, la rouvrir,
+   y retrouver la bonne réplique — et le scénario qu'on était en train d'écrire se perdait en
+   route. On empile donc l'endroit d'où l'on part, et on y revient exactement.
+   Rien n'est enregistré en douce : enregistrer PUBLIE, et c'est justement à quoi sert la case
+   « en travaux ». Le choix est toujours rendu à l'utilisateur. */
+let pileFiches = [];
+let apresEnregistrementFiche = null;   // suite à donner à un enregistrement réussi (voir editSaveBtn)
+
+function demanderQuoiFaireAvantDeSauter(ou){
+  return new Promise((resolve)=>{
+    const fond = document.createElement('div');
+    fond.className = 'overlay show';
+    fond.style.zIndex = '5900';
+    fond.innerHTML = `
+      <div class="sheet">
+        <p style="margin:0 0 6px; line-height:1.5;">Tu as des modifications qui ne sont pas enregistrées sur cette fiche.</p>
+        <p class="meta" style="margin:0 0 16px;">Pour les retrouver en revenant, il faut les enregistrer maintenant.</p>
+        <button class="btn-capture" data-r="brouillon" style="width:100%;">🚧 Enregistrer comme brouillon</button>
+        <p class="meta" style="margin:4px 0 12px;">La fiche passe en travaux : rien ne part en jeu, les joueurs continuent de voir la version publiée.</p>
+        <button class="btn-secondary" data-r="enregistrer" style="width:100%;">📤 Enregistrer et publier</button>
+        <button class="btn-secondary" data-r="sortir" style="width:100%; margin-top:8px;">Continuer sans enregistrer</button>
+        <button class="btn-secondary" data-r="annuler" style="width:100%; margin-top:8px;">↩ Rester ${ou ? 'ici' : 'ici'}</button>
+      </div>`;
+    document.body.appendChild(fond);
+    fond.querySelectorAll('[data-r]').forEach(b=>{
+      b.addEventListener('click', ()=>{ fond.remove(); resolve(b.dataset.r); });
+    });
+  });
+}
+
+function fermerLesRubriques(){
+  Object.keys(RUBRIQUES_FENETRES).forEach(cle=>{
+    const f = RUBRIQUES_FENETRES[cle];
+    if (f) f.classList.remove('show');
+  });
+}
+function ouvrirRubriqueDialogue(){
+  const f = RUBRIQUES_FENETRES['dialogue'];
+  if (!f) return;
+  majBlocsSelonType(document.getElementById('editInteractionType').value);
+  f.classList.add('show');
+}
+/* Sur quelle réplique se poser en arrivant : celle qui CONTIENT la réponse citée. */
+function etapeContenantLaReponse(choiceId){
+  if (!choiceId) return 0;
+  for (let i = 0; i < currentDialogueSteps.length; i++){
+    const cs = currentDialogueSteps[i].choices || [];
+    if (cs.some(c=> c.id === choiceId)) return i;
+  }
+  return 0;
+}
+/* Charge une fiche et se pose au bon endroit. `etat` (facultatif) rétablit la position
+   exacte d'où l'on était parti — c'est ce qui fait qu'un retour ne désoriente pas. */
+function ouvrirFichePourDialogue(id, choiceId, etat){
+  /* La fenêtre des conséquences appartient à la fiche qu'on quitte : elle ne se referme
+     qu'ICI, une fois le voyage acquis — si l'utilisateur choisit de rester, il la retrouve
+     exactement où il l'avait laissée. */
+  document.querySelectorAll('[data-fenetre-effets]').forEach(el=> el.remove());
+  fermerLesRubriques();
+  loadForEdit(id);
+  if (etat){
+    dlgTreeMode = etat.vue;
+    dlgParcoursIdx = etat.parcours || 0;
+    dlgParcoursPile = (etat.pile || []).slice();
+    dlgStepIdx = etat.etape || 0;
+    dlgChoiceIdx = (etat.choix === undefined) ? null : etat.choix;
+  } else {
+    dlgTreeMode = 'parcours';
+    dlgParcoursIdx = etapeContenantLaReponse(choiceId);
+    dlgParcoursPile = [];
+    dlgChoiceIdx = null;
+  }
+  ouvrirRubriqueDialogue();
+  renderDialogueBuilder();
+}
+function etatFicheCourante(){
+  return {
+    id: editingId,
+    nom: (document.getElementById('editName').value || '').trim(),
+    vue: dlgTreeMode,
+    parcours: dlgParcoursIdx,
+    pile: dlgParcoursPile.slice(),
+    etape: dlgStepIdx,
+    choix: dlgChoiceIdx,
+  };
+}
+/* Tronc commun aux deux sens de voyage : on règle d'abord le sort du travail en cours,
+   et la suite ne se joue qu'ensuite — après l'enregistrement s'il y en a un. */
+async function voyagerVersFiche(suite){
+  if (ficheEstModifiee()){
+    const quoi = await demanderQuoiFaireAvantDeSauter();
+    if (quoi === 'annuler') return;
+    if (quoi === 'brouillon' || quoi === 'enregistrer'){
+      if (quoi === 'brouillon'){
+        const c = document.getElementById('editEnTravaux');
+        if (c) c.checked = true;
+        majFicheEnCours();
+        majLibelleBoutonEnregistrer();
+      }
+      apresEnregistrementFiche = suite;   // l'enregistrement est asynchrone : on enchaîne à sa réussite
+      document.getElementById('editSaveBtn').click();
+      return;
+    }
+  }
+  suite();
+}
+function sauterVersFiche(creatureId, choiceId){
+  const cible = ficheParId(creatureId);
+  if (!cible){ showToast('Ce personnage n\'existe plus'); return; }
+  if (creatureId === editingId){ showToast('Cette réponse est déjà sur cette fiche'); return; }
+  /* Sans identifiant, il n'y aurait aucun chemin de retour : une fiche jamais enregistrée
+     n'existe pas encore en base, on ne saurait pas la rouvrir. */
+  if (!editingId){ showToast('Enregistre d\'abord cette fiche pour pouvoir revenir dessus'); return; }
+  const depart = etatFicheCourante();
+  voyagerVersFiche(()=>{
+    pileFiches.push(depart);
+    ouvrirFichePourDialogue(creatureId, choiceId, null);
+  });
+}
+function revenirFichePrecedente(){
+  if (!pileFiches.length) return;
+  const dest = pileFiches[pileFiches.length - 1];
+  voyagerVersFiche(()=>{
+    pileFiches.pop();
+    ouvrirFichePourDialogue(dest.id, null, dest);
+  });
+}
+
 function renderDialogueBuilder(){
   const wrap = document.getElementById('dialogueStepsBuilder');
   if (!wrap) return;
@@ -3259,6 +3389,19 @@ function renderDialogueBuilder(){
   if (dlgStepIdx >= currentDialogueSteps.length) dlgStepIdx = currentDialogueSteps.length - 1;
   if (dlgStepIdx < 0) dlgStepIdx = 0;
   wrap.innerHTML = '';
+
+  /* On peut être arrivé ici depuis la condition d'une AUTRE fiche : le chemin du retour
+     s'affiche en tête, avant les vues, pour être visible quelle que soit celle qu'on utilise. */
+  if (pileFiches.length){
+    const dest = pileFiches[pileFiches.length - 1];
+    const retourFiche = document.createElement('button');
+    retourFiche.type = 'button';
+    retourFiche.className = 'btn-secondary';
+    retourFiche.style.cssText = 'width:100%; margin-bottom:8px; text-align:left;';
+    retourFiche.textContent = '← Revenir chez ' + (dest.nom || 'le personnage précédent');
+    retourFiche.addEventListener('click', revenirFichePrecedente);
+    wrap.appendChild(retourFiche);
+  }
 
   const topBar = document.createElement('div');
   topBar.className = 'dlg-topbar';
@@ -3946,6 +4089,7 @@ function choixConnusPartout(exclureId){
 function fenetreEffetsReponse(ch){
   const fond = document.createElement('div');
   fond.className = 'overlay show';
+  fond.dataset.fenetreEffets = '1';   // repérable : elle se referme quand on part sur une autre fiche
   fond.style.zIndex = '5300';
   fond.innerHTML = `
     <div class="sheet" style="max-height:85vh; overflow-y:auto;">
@@ -4108,6 +4252,20 @@ function fenetreEffetsReponse(ch){
         + (pris ? '' : ' — cette phrase n\'est pas encore enregistrée comme dite')
         + '</div>';
       l.appendChild(txt);
+
+      /* La condition cite une phrase d'un AUTRE personnage : on doit pouvoir aller la lire
+         sans démonter tout ce qu'on est en train d'écrire. */
+      if (cond.creatureId && cond.creatureId !== editingId){
+        const cible = ficheParId(cond.creatureId);
+        const voir = document.createElement('button');
+        voir.type = 'button';
+        voir.className = 'btn-secondary';
+        voir.style.cssText = 'flex:0 0 auto; padding:6px 8px;';
+        voir.textContent = '→';
+        voir.title = 'Voir chez ' + ((cible && cible.name) || 'ce personnage');
+        voir.addEventListener('click', ()=> sauterVersFiche(cond.creatureId, cond.choiceId));
+        l.appendChild(voir);
+      }
 
       const inv = document.createElement('button');
       inv.type = 'button';
@@ -6712,6 +6870,7 @@ function resetForm(){
   document.getElementById('editRecruitScope').value = 'perPlayer';
   document.getElementById('editDuplicateBtn').style.display = 'none';
   currentDialogueSteps = [ { text:'', choices:[], textVariants:[] } ];
+  pileFiches = [];            // on quitte la session d'édition : plus de chemin de retour à proposer
   resetDialogueNav();
   renderDialogueBuilder();
   document.getElementById('editInteractionType').value = 'dialogue';
@@ -6969,6 +7128,8 @@ document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
   }
   ficheModifiee = false;
   empreinteAuChargement = null;
+  pileFiches = [];
+  apresEnregistrementFiche = null;
   document.getElementById('editorOverlay').classList.remove('show');
 });
 
@@ -7204,8 +7365,17 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
     showToast(enTravaux ? '🚧 Brouillon enregistré — les joueurs ne le voient pas' : '📤 PNJ publié');
+    /* Un enregistrement peut avoir été demandé pour pouvoir PARTIR quelque part : dans ce cas
+       on enchaîne au lieu de vider la fiche, sinon le voyage arriverait sur un formulaire neuf. */
+    if (apresEnregistrementFiche){
+      const suite = apresEnregistrementFiche;
+      apresEnregistrementFiche = null;
+      suite();
+      return;
+    }
     resetForm();
   }).catch((err)=>{
+    apresEnregistrementFiche = null;   // le voyage n'aura pas lieu : ne pas le laisser armé
     showToast('Échec : ' + err.message);
   });
 });
