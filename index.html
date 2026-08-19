@@ -793,7 +793,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v357</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v358</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -17966,6 +17966,24 @@ function decrementFighterStatuses(fighter){
   });
 }
 
+/* Provocation : un provocateur vivant dans le camp visé force l'attaque sur lui. Cette règle
+   vivait au fond de `resolveAttack`, c'est-à-dire APRÈS l'effet visuel : l'éclair partait sur
+   la cible désignée pendant que les dégâts tombaient ailleurs, et on ne comprenait pas
+   pourquoi. On la résout donc AVANT l'animation, pour que l'effet parte au bon endroit.
+   Ne concerne que le ciblage individuel : une attaque de groupe touche tout le monde. */
+function provocateursDe(camp){
+  return combatState.fighters.filter(f=> f.side === camp && f.alive && f.statuses.taunt);
+}
+function cibleApresProvocation(attacker, attack, target){
+  if (!attack || attack.kind !== 'damage_single' || !target || target.side === attacker.side) return target;
+  const provocateurs = provocateursDe(target.side);
+  if (!provocateurs.length || provocateurs.includes(target)) return target;
+  const force = provocateurs[Math.floor(Math.random() * provocateurs.length)];
+  combatState.log.unshift(`📣 ${force.name} provoque : l'attaque part sur lui plutôt que sur ${target.name}.`);
+  combatState.log = combatState.log.slice(0, 20);
+  return force;
+}
+
 async function takeTurn(fighter){
   combatState.currentActorUid = fighter.uid;
   if (combatState.isPvp && fighter.side === 'enemy' && !combatState.isSpectator){
@@ -18049,7 +18067,7 @@ async function takeTurn(fighter){
       // et les survivants se recentrent automatiquement (le nombre de cartes change).
       fighter.fled = true;
     } else if (decision.atk && decision.target){
-      await playTurnAnimation(fighter, decision.atk, decision.target);
+      await playTurnAnimation(fighter, decision.atk, cibleApresProvocation(fighter, decision.atk, decision.target));
     }
     decrementFighterStatuses(fighter);
     combatState.resolving = false;
@@ -18274,9 +18292,20 @@ function renderCombatWaitingPanel(msg){
    bouton Retour pour annuler l'attaque/l'objet/l'analyse en cours et revenir au choix précédent. */
 function renderCombatTargetingPanel(actor, promptText){
   const panel = document.getElementById('combatActionPanel');
+  /* La provocation s'annonce ICI, avant le premier tap : c'est plus clair qu'un refus après
+     coup, et ça évite de laisser croire que le ciblage est libre. */
+  let mentionProvocation = '';
+  const att = combatState && combatState.pendingAttack;
+  if (att && att.kind === 'damage_single' && actor){
+    const provocateurs = provocateursDe(actor.side === 'player' ? 'enemy' : 'player');
+    if (provocateurs.length){
+      mentionProvocation = `<p class="meta" style="margin:0 0 12px; font-size:12px; color:var(--danger);">📣 ${provocateurs.map(f=> f.name).join(' et ')} provoque : les autres ne peuvent pas être visés.</p>`;
+    }
+  }
   panel.innerHTML = `
     <div style="padding:16px 8px; text-align:center;">
       <p class="meta" style="margin:0 0 12px; font-size:13px;">${promptText}</p>
+      ${mentionProvocation}
       <button type="button" class="btn-secondary" id="combatTargetBackBtn">↩️ Retour</button>
     </div>
   `;
@@ -18558,6 +18587,17 @@ async function onFighterCardClick(uid){
   const friendly = isHealAttack(attack) || attack.kind === 'boost' || attack.kind === 'revive_single';
   if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
   if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
+  /* On REFUSE le choix au lieu de le détourner en silence. C'est ce qui fait comprendre la
+     provocation : sans message, on croit avoir visé quelqu'un et on voit l'attaque tomber
+     ailleurs sans savoir pourquoi. */
+  if (attack.kind === 'damage_single'){
+    const provocateurs = provocateursDe(target.side).filter(f=> f.uid !== target.uid);
+    if (provocateurs.length && !provocateursDe(target.side).includes(target)){
+      const noms = provocateurs.map(f=> f.name).join(' et ');
+      showToast('📣 ' + noms + ' provoque : impossible de viser quelqu\'un d\'autre');
+      return;
+    }
+  }
   combatState.pendingActor = null;
   combatState.pendingAttack = null;
   renderCombatWaitingPanel();
@@ -18679,8 +18719,9 @@ function resolveAttackOnTarget(attacker, attack, target){
   }
 
   const isDamageKind = attack.kind === 'damage_single' || attack.kind === 'damage_group';
-  // Provocation : si la cible visée est sur le camp adverse et qu'un provocateur y est actif, la cible est forcée sur lui.
-  // (uniquement pertinent en ciblage individuel — une attaque de groupe touche de toute façon tout le monde)
+  /* Filet de sécurité : la provocation est normalement résolue AVANT l'animation
+     (`cibleApresProvocation`), pour que l'effet visuel parte sur la bonne cible. Si un chemin
+     l'a contournée, on rattrape ici — sans écrire de message, il aurait déjà été écrit. */
   if (attack.kind === 'damage_single' && target.side !== attacker.side){
     const taunters = combatState.fighters.filter(f=> f.side===target.side && f.alive && f.statuses.taunt);
     if (taunters.length && !taunters.includes(target)){
@@ -19020,6 +19061,13 @@ function fighterCardHtml(f, idx, arr){
   const isReviveAction = !!(pendingAttack && (pendingAttack.kind === 'revive_single' || (pendingAttack.kind === 'item' && pendingAttack.combatUse && pendingAttack.combatUse.mode === 'revive')));
   const targetable = f.alive || (isReviveAction && pendingActorFighter && f.side === pendingActorFighter.side);
   const anim = combatState.anim && combatState.anim.actorUid === f.uid ? combatState.anim.kind : null;
+  /* Pendant qu'on choisit une cible, un adversaire protégé par une provocation est grisé :
+     on voit tout de suite qui est atteignable, avant même de toucher l'écran. */
+  let bloqueParProvocation = false;
+  if (pendingAttack && pendingAttack.kind === 'damage_single' && pendingActorFighter
+      && f.side !== pendingActorFighter.side && f.alive && !f.statuses.taunt){
+    bloqueParProvocation = combatState.fighters.some(x=> x.side === f.side && x.alive && x.statuses.taunt);
+  }
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'', f.fleeingOut?'combat-fleeing-out':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
@@ -19046,7 +19094,7 @@ function fighterCardHtml(f, idx, arr){
     </div>
   `;
   return `
-    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${(f.alive || f.fleeing)?'':'opacity:.3;'} ${targetable?'cursor:pointer;':''}">
+    <div class="${wrapperClasses}" data-fighter="${f.uid}" style="text-align:center; width:${cardWidth}px; position:relative; z-index:1; --lunge-y:${lungeY}px; ${(f.alive || f.fleeing)?'':'opacity:.3;'} ${bloqueParProvocation?'opacity:.45; filter:grayscale(.7);':''} ${targetable?'cursor:pointer;':''}">
       <div style="transform:translateX(${shiftX}px);">
         ${f.side==='enemy' ? infoHtml + avatarHtml : avatarHtml + infoHtml}
       </div>
