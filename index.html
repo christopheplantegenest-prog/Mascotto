@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v332</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v334</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4035,35 +4035,82 @@ function fenetreEffetsReponse(ch){
         selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] }; dessiner(); } });
     });
 
-    /* --- condition : ce que le joueur a déjà dit, ici ou ailleurs --- */
-    const decrireCondition = ()=>{
-      if (!ch.showIf || ch.showIf.kind !== 'choice' || !ch.showIf.choiceId) return 'toujours proposée';
-      const chezQui = ch.showIf.creatureId ? ((ficheParId(ch.showIf.creatureId) || {}).name || 'quelqu\'un') : 'ce personnage';
-      const trouve = choixConnusPartout().find(o=> o.id === ch.showIf.choiceId);
+    /* --- conditions : ce que le joueur a déjà dit, ici ou ailleurs. Elles se CUMULENT :
+           la réponse n'apparaît que si toutes sont vraies. --- */
+    const toutesLesConditions = ()=> (ch.showIfList || []).concat(
+      (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
+
+    const decrireUne = (cond)=>{
+      const chezQui = cond.creatureId ? ((ficheParId(cond.creatureId) || {}).name || 'quelqu\'un') : 'ce personnage';
+      const trouve = choixConnusPartout().find(o=> o.id === cond.choiceId);
       const quoi = trouve ? ('« ' + trouve.reponse + ' »') : 'une réponse supprimée';
-      return (ch.showIf.taken === 'no' ? 'seulement si le joueur N\'A PAS dit ' : 'seulement si le joueur a dit ')
-        + quoi + ' à ' + chezQui;
+      return (cond.taken === 'no' ? 'il n\'a PAS dit ' : 'il a dit ') + quoi + ' à ' + chezQui;
     };
-    ligne('🔒 Quand cette réponse apparaît', decrireCondition(), ()=>{
-      if (ch.showIf && ch.showIf.kind === 'choice'){ ch.showIf = null; dessiner(); return; }
+
+    const titreCond = document.createElement('div');
+    titreCond.className = 'field-label';
+    titreCond.textContent = 'Cette réponse n\'apparaît que si…';
+    lignes.appendChild(titreCond);
+
+    const conds = toutesLesConditions();
+    if (!conds.length){
+      const p0 = document.createElement('p');
+      p0.className = 'meta';
+      p0.style.margin = '0 0 8px';
+      p0.textContent = 'Aucune condition : elle est toujours proposée.';
+      lignes.appendChild(p0);
+    }
+    conds.forEach((cond)=>{
+      const l = document.createElement('div');
+      l.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:6px;';
+      const txt = document.createElement('div');
+      txt.style.cssText = 'flex:1; font-size:12px;';
+      txt.textContent = '• ' + decrireUne(cond);
+      l.appendChild(txt);
+
+      const inv = document.createElement('button');
+      inv.type = 'button';
+      inv.className = 'btn-secondary';
+      inv.style.cssText = 'flex:0 0 auto; padding:6px 8px;';
+      inv.textContent = '↔';
+      inv.title = 'Inverser : exiger le contraire';
+      inv.addEventListener('click', ()=>{ cond.taken = (cond.taken === 'no') ? 'yes' : 'no'; dessiner(); });
+      l.appendChild(inv);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'icon-del';
+      del.textContent = '🗑️';
+      del.addEventListener('click', ()=>{
+        if (ch.showIf === cond) ch.showIf = null;
+        ch.showIfList = (ch.showIfList || []).filter(x=> x !== cond);
+        dessiner();
+      });
+      l.appendChild(del);
+      lignes.appendChild(l);
+    });
+
+    const ajoutCond = document.createElement('button');
+    ajoutCond.type = 'button';
+    ajoutCond.className = 'btn-secondary';
+    ajoutCond.style.cssText = 'width:100%; margin-bottom:10px;';
+    ajoutCond.textContent = '➕ Ajouter une condition';
+    ajoutCond.addEventListener('click', ()=>{
       const connus = choixConnusPartout(ch.id);
       if (!connus.length){ showToast('Aucune autre réponse mémorisable pour l\'instant'); return; }
       ouvrirSelecteur({
-        titre:'Apparaît si le joueur a déjà dit…',
+        titre:'N\'apparaît que si le joueur a dit…',
         items: connus.map(o=> ({ id:o.id, label:(o.marque ? '⭐ ' : '') + '« ' + o.reponse +' »',
           emoji: o.marque ? '⭐' : '💬', detail:'à ' + o.pnj })),
         selectionnes: [], max:1,
         onChoisir:(ids)=>{
           const o = connus.find(x=> x.id === ids[0]);
-          if (o) ch.showIf = { kind:'choice', choiceId:o.id, creatureId:o.creatureId, taken:'yes' };
+          if (!o) return;
+          ch.showIfList = (ch.showIfList || []).concat([{ kind:'choice', choiceId:o.id, creatureId:o.creatureId, taken:'yes' }]);
           dessiner();
         } });
     });
-    if (ch.showIf && ch.showIf.kind === 'choice' && ch.showIf.choiceId){
-      bascule('Inverser : apparaît seulement s\'il ne l\'a PAS dit', ch.showIf.taken === 'no', ()=>{
-        ch.showIf.taken = (ch.showIf.taken === 'no') ? 'yes' : 'no';
-      });
-    }
+    lignes.appendChild(ajoutCond);
 
     bascule('Ne proposer cette réponse qu\'une seule fois', !!ch.once, ()=>{ ch.once = !ch.once; });
   };
@@ -4120,9 +4167,31 @@ function renderDialogueParcours(wrap){
   texte.addEventListener('input', ()=>{ st.text = texte.value; });
   box.appendChild(texte);
 
-  /* Première rencontre : réglable ici, et surtout ON PEUT ALLER VOIR la suite. Sans ça, le
-     parcours restait bloqué sur la version « première fois » — la réplique des fois suivantes
-     n'étant reliée par aucune réponse, rien n'y menait. */
+  /* Le cas courant : se présenter une fois, puis dire autre chose — SANS toucher aux
+     réponses, qui restent les mêmes. Un simple second texte suffit, et évite d'avoir à
+     recopier « Debora m'a dit de passer » dans deux versions du dialogue. */
+  if (dlgParcoursIdx === 0){
+    const blocApres = document.createElement('div');
+    blocApres.style.cssText = 'margin-top:8px;';
+    const libApres = document.createElement('div');
+    libApres.className = 'field-label';
+    libApres.textContent = 'Et les fois suivantes (facultatif)';
+    blocApres.appendChild(libApres);
+    const zoneApres = document.createElement('textarea');
+    zoneApres.className = 'field-input';
+    zoneApres.rows = 2;
+    zoneApres.placeholder = 'Laisse vide pour qu\'il dise toujours la même chose…';
+    zoneApres.value = st.textApres || '';
+    zoneApres.addEventListener('input', ()=>{ st.textApres = zoneApres.value.trim() ? zoneApres.value : ''; });
+    blocApres.appendChild(zoneApres);
+    const noteApres = document.createElement('p');
+    noteApres.className = 'meta';
+    noteApres.style.cssText = 'font-size:11px; margin:4px 0 0;';
+    noteApres.textContent = 'Les réponses ci-dessous restent les mêmes dans les deux cas : tu n\'as rien à écrire en double.';
+    blocApres.appendChild(noteApres);
+    box.appendChild(blocApres);
+  }
+
   if (dlgParcoursIdx === 0){
     const bloc1 = document.createElement('div');
     bloc1.style.cssText = 'margin:10px 0 4px; padding:8px; border:1px dashed var(--line); border-radius:8px;';
@@ -4131,7 +4200,8 @@ function renderDialogueParcours(wrap){
     b.type = 'button';
     b.className = 'btn-secondary';
     b.style.cssText = 'width:100%; text-align:left;' + (st.firstOnly ? ' background:var(--accent); color:#fff; border-color:var(--accent);' : '');
-    b.textContent = (st.firstOnly ? '☑ ' : '☐ ') + '🤝 Ne se dit qu\'à la première rencontre';
+    b.title = 'À réserver aux cas où la conversation entière doit être différente, avec d\'autres réponses.';
+    b.textContent = (st.firstOnly ? '☑ ' : '☐ ') + '🤝 Après la 1re fois, partir sur une AUTRE réplique (et d\'autres réponses)';
     b.addEventListener('click', ()=>{
       st.firstOnly = !st.firstOnly;
       if (st.firstOnly && (st.thenStep === undefined || st.thenStep === null)){
@@ -5021,7 +5091,7 @@ function openSheet(c){
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
   activeReferencedChoiceIds = dialogueReferencedChoiceIds(activeSteps);
   currentStepIdx = indexDepartDialogue(c, activeSteps);
-  if (activeSteps[0] && activeSteps[0].firstOnly) markChoiceUsed(cleRencontre(c.id));
+  if (activeSteps[0] && (activeSteps[0].firstOnly || activeSteps[0].textApres)) markChoiceUsed(cleRencontre(c.id));
   renderSheet();
   document.getElementById('overlay').classList.add('show');
 }
@@ -5064,6 +5134,7 @@ function dialogueReferencedChoiceIds(steps){
     (s.textVariants || []).forEach(v=>{ if (v.kind === 'choice' && v.choiceId) ids.add(v.choiceId); });
     (s.choices || []).forEach(ch=>{
       if (ch.showIf && ch.showIf.kind === 'choice' && ch.showIf.choiceId) ids.add(ch.showIf.choiceId);
+      (ch.showIfList || []).forEach(cond=>{ if (cond && cond.choiceId) ids.add(cond.choiceId); });
     });
   });
   return ids;
@@ -5109,6 +5180,12 @@ function resoudreMarqueurs(texte){
 }
 
 function resolveStepText(step, creatureId){
+  /* « Ce qu'il dit les fois suivantes » : même réplique, mêmes réponses, autre texte. C'est
+     la façon simple de ne pas se présenter deux fois — sans couper le dialogue en deux
+     entrées, ce qui obligeait à recopier les réponses des deux côtés. */
+  if (step.textApres && playerUsedChoices[cleRencontre(creatureId)]){
+    return resoudreMarqueurs(step.textApres);
+  }
   const variants = step.textVariants || [];
   for (const v of variants){
     if (v.kind === 'choice'){
@@ -5160,16 +5237,22 @@ function renderSheet(){
       const state = playerQuestsState[ch.questValidate.questId];
       if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
     }
+    /* Conditions cumulées : TOUTES doivent être vraies. `showIf` seul reste lu (ancien
+       format) ; `showIfList` porte les suivantes. C'est ce qui permet d'écrire « il a vu
+       Debora ET il ne me l'a pas encore dit ». */
+    const conditionsChoix = (ch.showIfList || []).concat(
+      (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
+    for (const cond of conditionsChoix){
+      if (!cond || !cond.choiceId) continue;
+      /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
+         Renseigné, il désigne un autre personnage. */
+      const chezQui = cond.creatureId || c.id;
+      const taken = !!playerUsedChoices[choiceUsedKey(chezQui, cond.choiceId)];
+      if (cond.taken === 'no'){ if (taken) return false; }
+      else if (!taken) return false;
+    }
     if (ch.showIf && ch.showIf.kind === 'choice'){
-      if (ch.showIf.choiceId){
-        /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
-           Renseigné, il désigne un autre personnage : c'est ce qui permet à Vicky de savoir
-           que Debora vous a envoyé. */
-        const chezQui = ch.showIf.creatureId || c.id;
-        const taken = !!playerUsedChoices[choiceUsedKey(chezQui, ch.showIf.choiceId)];
-        if (ch.showIf.taken === 'no'){ if (taken) return false; }
-        else if (!taken) return false;
-      }
+      /* déjà traité ci-dessus */
     } else if (ch.showIf && ch.showIf.questId){
       const state = playerQuestsState[ch.showIf.questId] || 'none';
       if (ch.showIf.state === 'active' && state !== 'active') return false;
@@ -6599,7 +6682,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const dialogueSteps = currentDialogueSteps
     .map(s=>({ text: (s.text||'').trim(), choices: (s.choices||[]).filter(c=>c.label && c.label.trim()), textVariants: (s.textVariants||[]).filter(v=> v.text && v.text.trim() && (v.kind === 'choice' ? !!v.choiceId : !!v.questId)),
       /* réglages de première rencontre : sans eux, la case cochée serait perdue à l'enregistrement */
-      firstOnly: !!s.firstOnly, thenStep: (s.thenStep === undefined || s.thenStep === null) ? null : s.thenStep }))
+      firstOnly: !!s.firstOnly, thenStep: (s.thenStep === undefined || s.thenStep === null) ? null : s.thenStep,
+      textApres: (s.textApres || '').trim() }))
     .filter(s=> s.text || s.choices.length || s.textVariants.length);
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
