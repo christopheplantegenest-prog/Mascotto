@@ -679,7 +679,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v336</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v338</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4065,7 +4065,17 @@ function fenetreEffetsReponse(ch){
       l.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:6px;';
       const txt = document.createElement('div');
       txt.style.cssText = 'flex:1; font-size:12px;';
-      txt.textContent = '• ' + decrireUne(cond);
+      /* État RÉEL de la condition pour le joueur en cours. Sans ce voyant, une condition qui
+         ne se déclenche pas oblige à deviner : est-ce le réglage, ou le jeu qui n'a pas
+         retenu la phrase ? Ici, on voit lequel des deux cloche. */
+      const chezQui2 = cond.creatureId || (activeCreature ? activeCreature.id : editingId);
+      const pris = !!playerUsedChoices[choiceUsedKey(chezQui2, cond.choiceId)];
+      const vraie = (cond.taken === 'no') ? !pris : pris;
+      txt.innerHTML = '• ' + decrireUne(cond)
+        + '<div class="meta" style="font-size:11px; margin-top:2px; color:' + (vraie ? '#5B9E5B' : 'var(--danger)') + ';">'
+        + (vraie ? '✔ vraie en ce moment pour toi' : '✘ fausse en ce moment pour toi')
+        + (pris ? '' : ' — cette phrase n\'est pas encore enregistrée comme dite')
+        + '</div>';
       l.appendChild(txt);
 
       const inv = document.createElement('button');
@@ -4549,7 +4559,17 @@ function renderDialogueScript(wrap){
 
   /* Les étapes qu'aucun choix n'atteint : elles existent mais ne se jouent jamais,
      sauf comme retour de combat. Les montrer évite de les oublier des heures. */
-  const orphelines = currentDialogueSteps.map((_, i)=> i).filter(i=> !vues.has(i));
+  const atteintesAutrement2 = new Set();
+  currentDialogueSteps.forEach(s2=>{
+    if (s2.thenStep !== null && s2.thenStep !== undefined && !isNaN(s2.thenStep)) atteintesAutrement2.add(s2.thenStep);
+    (s2.choices || []).forEach(c=>{
+      if (!c.combat) return;
+      [c.combat.stepWin, c.combat.stepLose].forEach(v=>{
+        if (v !== null && v !== undefined && !isNaN(v)) atteintesAutrement2.add(v);
+      });
+    });
+  });
+  const orphelines = currentDialogueSteps.map((_, i)=> i).filter(i=> !vues.has(i) && !atteintesAutrement2.has(i));
   if (orphelines.length){
     const titre = document.createElement('div');
     titre.className = 'field-label';
@@ -4637,22 +4657,43 @@ function renderDialogueTree(wrap){
 
   drawStep(0, 0, box);
 
+  /* Une étape peut être atteinte autrement que par une réponse : au retour d'un combat
+     (victoire ou défaite), et par « les fois suivantes » de la première rencontre. Les
+     compter comme orphelines faisait crier au loup sur des étapes parfaitement reliées. */
+  const atteintesAutrement = new Set();
+  currentDialogueSteps.forEach(s2=>{
+    if (s2.thenStep !== null && s2.thenStep !== undefined && !isNaN(s2.thenStep)) atteintesAutrement.add(s2.thenStep);
+    (s2.choices || []).forEach(c=>{
+      if (!c.combat) return;
+      [c.combat.stepWin, c.combat.stepLose].forEach(v=>{
+        if (v !== null && v !== undefined && !isNaN(v)) atteintesAutrement.add(v);
+      });
+    });
+  });
+
   const orphans = [];
-  currentDialogueSteps.forEach((s, i)=>{ if (!drawn.has(i)) orphans.push(i); });
+  currentDialogueSteps.forEach((s, i)=>{ if (!drawn.has(i) && !atteintesAutrement.has(i)) orphans.push(i); });
   if (orphans.length){
     const warn = document.createElement('div');
     warn.className = 'dlg-tree-orphans';
     const t = document.createElement('div');
-    t.textContent = '⚠️ Étapes qu\'aucun choix n\'atteint :';
+    t.textContent = '⚠️ Répliques que rien n\'atteint — ni une réponse, ni un retour de combat :';
     warn.appendChild(t);
     orphans.forEach(i=>{
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'dlg-pill';
-      b.textContent = 'Étape ' + i;
+      b.textContent = dlgShortText(currentDialogueSteps[i].text, 26);
+      b.title = 'Ouvrir cette réplique';
       b.addEventListener('click', ()=>{ dlgTreeMode = false; dlgSelectStep(i); });
       warn.appendChild(b);
     });
+    const aide = document.createElement('div');
+    aide.className = 'meta';
+    aide.style.cssText = 'font-size:11px; margin-top:6px;';
+    aide.textContent = 'Cela arrive quand on supprime une réponse : la réplique vers laquelle elle menait reste en place. '
+      + 'Ouvre-la pour la relier à autre chose, ou supprime-la depuis le parcours.';
+    warn.appendChild(aide);
     box.appendChild(warn);
   }
 
