@@ -683,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v353</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v354</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -17050,9 +17050,18 @@ function clearCurrentZoneScene(){
     currentZoneId: firebase.firestore.FieldValue.delete(), currentSceneId: firebase.firestore.FieldValue.delete()
   }, { merge:true }).catch(()=>{});
 }
+/* Les images NE PARTENT PAS dans la sauvegarde. Celles des fiches sont en base64 et pèsent
+   plusieurs centaines de kilo-octets : six combattants suffisaient à faire dépasser au document
+   du joueur la limite d'un mégaoctet de Firestore, et l'écriture était REFUSÉE — donc plus
+   aucun combat retrouvé après un rechargement. On ne garde qu'une adresse courte (image
+   hébergée), et on retrouve le reste depuis la recrue ou la fiche d'origine à la reprise. */
+function imageLegereOuRien(url){
+  return (typeof url === 'string' && url && url.slice(0, 5) !== 'data:') ? url : '';
+}
 function serializeFighterForSave(f){
   return {
-    uid:f.uid, side:f.side, sourceId:f.sourceId||null, name:f.name, imageUrl:f.imageUrl||'', tribe:f.tribe||'',
+    uid:f.uid, side:f.side, sourceId:f.sourceId||null, name:f.name,
+    imageUrl: imageLegereOuRien(f.imageUrl), faceImageUrl: imageLegereOuRien(f.faceImageUrl), tribe:f.tribe||'',
     maxHp:f.maxHp, hp:f.hp, atk:f.atk, def:f.def, matk:f.matk, mdef:f.mdef, speed:f.speed,
     precision:f.precision, evasion:f.evasion,
     attackIds:(f.attacksList||[]).map(a=>a.id),
@@ -17068,7 +17077,25 @@ function serializeFighterForSave(f){
   };
 }
 function deserializeFighterFromSave(sf){
-  return { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
+  const f = { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
+  /* L'image n'est pas dans la sauvegarde (voir `imageLegereOuRien`) : on la retrouve chez la
+     recrue pour un allié, sur la fiche d'origine pour un adversaire. Si les deux ont disparu,
+     le combat reprend quand même — sans portrait plutôt que pas du tout. */
+  if (!f.imageUrl && f.sourceId){
+    if (f.side === 'player'){
+      const r = (typeof recruits !== 'undefined' ? recruits : []).find(x=> x.id === f.sourceId);
+      if (r){
+        const dos = dosDeLaRecrue(r);
+        f.imageUrl = (dos.path ? resolveMediaPath(dos.path) : '') || r.imageUrl || '';
+        f.backImageRef = dos.ref;
+        if (!f.faceImageUrl) f.faceImageUrl = r.imageUrl || '';
+      }
+    } else {
+      const c = ficheParId(f.sourceId);
+      if (c) f.imageUrl = c.imageUrl || '';
+    }
+  }
+  return f;
 }
 let sauvegardeCombatSignalee = false;   // un seul avertissement par combat, sinon il reviendrait à chaque tour
 function saveCombatSnapshot(releaseTurn){
@@ -17305,6 +17332,7 @@ function createCrossfadePlayer(){
   let loopPoint = null; // null = pas de boucle du tout ; sinon secondes : c'est LÀ que la piste "se termine"
   let targetVolume = 1;
   let crossfading = false;
+  let suspendu = false;   // l'appli est passée en arrière-plan pendant que la piste jouait
   function onTimeUpdate(e){
     if (e.target !== active || crossfading || loopPoint == null) return;
     const remaining = loopPoint - active.currentTime;
@@ -17344,13 +17372,40 @@ function createCrossfadePlayer(){
       active.loop = false;
       return active.play();
     },
-    stop(){ active.pause(); inactive.pause(); crossfading = false; },
+    stop(){ active.pause(); inactive.pause(); crossfading = false; suspendu = false; },
+    /* Quitter l'appli pour une autre laissait la musique tourner dans le vide : le navigateur
+       ne coupe pas le son d'un onglet mis en arrière-plan. On la suspend, et on la reprend
+       exactement où elle en était au retour — seulement si elle jouait vraiment. */
+    suspendre(){
+      if (active.paused && inactive.paused) return;
+      suspendu = true;
+      active.pause(); inactive.pause();
+    },
+    reprendre(){
+      if (!suspendu) return;
+      suspendu = false;
+      active.play().catch(()=>{});
+    },
     setVolume(v){ targetVolume = v; if (!crossfading) active.volume = v; },
     setLoopPoint(v){ loopPoint = (v && v > 0) ? v : null; },
     getActive(){ return active; },
   };
 }
 const bgLoopPlayer = createCrossfadePlayer();
+/* Passer sur une autre application ne coupe pas le son d'une page web : la musique du jeu
+   continuait par-dessus ce que l'utilisateur faisait ailleurs. On la met en pause dès que la
+   page n'est plus visible, et on la reprend au retour. */
+document.addEventListener('visibilitychange', ()=>{
+  try {
+    if (document.hidden){
+      bgLoopPlayer.suspendre();
+      if (sfxTransitionAudio && !sfxTransitionAudio.paused) sfxTransitionAudio.pause();
+      sonsFxCharges.forEach(lot=> lot.forEach(el=>{ if (!el.paused) el.pause(); }));
+    } else {
+      bgLoopPlayer.reprendre();
+    }
+  } catch(e){}
+});
 let bgCurrentUrl = null;
 const sfxTransitionAudio = new Audio();
 function getTrackVolumeFraction(key){
@@ -17938,7 +17993,6 @@ async function playTurnAnimation(actor, attack, target){
 
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
-  demarrerMusiqueVictoireSiGagne();
 
   // L'image d'effet (si réglée sur cette attaque) vient s'ajouter PAR-DESSUS le bond/la charge, pas à
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
@@ -17958,6 +18012,10 @@ async function playTurnAnimation(actor, attack, target){
 
   combatState.anim = null;
   combatState.particles = [];
+  /* Ici, et pas plus tôt : l'effet visuel du coup fatal vient de se terminer. Lancer la
+     fanfare pendant l'effet la faisait démarrer par-dessus lui. On gagne quand même les
+     500 ms de particules qui suivent, et l'écran de fin ne la redémarre pas. */
+  demarrerMusiqueVictoireSiGagne();
   const hitUids = [];
   combatState.fighters.forEach(f=>{
     const diff = f.hp - hpBefore[f.uid];
