@@ -36,9 +36,13 @@
     background:var(--bg); color:var(--text);
     font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-touch-callout:none;
+    /* Chrome sélectionne le mot touché et ouvre sa barre « appuyer pour afficher les
+       résultats de recherche ». Dans une appli, aucun texte n'a à être sélectionnable —
+       sauf, évidemment, ce qu'on est en train d'écrire. */
+    -webkit-user-select:none; user-select:none;
   }
   img, .creature-icon, .leaflet-marker-icon{ -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; -webkit-user-drag:none; }
-  input, textarea{ -webkit-touch-callout:default; -webkit-user-select:text; user-select:text; }
+  input, textarea, [contenteditable]{ -webkit-touch-callout:default; -webkit-user-select:text; user-select:text; }
   #app{ position:fixed; inset:0; height:100vh; height:100dvh; }
 
   header{
@@ -679,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v345</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v347</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5216,6 +5220,11 @@ let activeCreature = null;
 let activeSteps = [];
 let currentStepIdx = 0;
 let activeReferencedChoiceIds = new Set(); // choix cités par une condition du dialogue en cours
+/* Vrai pendant TOUTE la conversation en cours si c'est la première fois qu'on rencontre ce
+   personnage. Indispensable : le souvenir de rencontre est posé dès l'ouverture de la fenêtre,
+   donc relire playerUsedChoices pendant l'affichage donnerait « déjà rencontré » alors qu'on
+   est justement en train de le rencontrer. */
+let dialoguePremiereRencontre = false;
 
 /* Une rencontre ne se joue qu'une fois. La première étape peut porter « ne se joue qu'à la
    première rencontre » : on y présente le personnage, et les fois suivantes le dialogue
@@ -5235,6 +5244,7 @@ function openSheet(c){
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
   activeReferencedChoiceIds = dialogueReferencedChoiceIds(activeSteps);
   currentStepIdx = indexDepartDialogue(c, activeSteps);
+  dialoguePremiereRencontre = !playerUsedChoices[cleRencontre(c.id)];   // AVANT le marquage ci-dessous
   if (activeSteps[0] && (activeSteps[0].firstOnly || activeSteps[0].textApres)) markChoiceUsed(cleRencontre(c.id));
   renderSheet();
   document.getElementById('overlay').classList.add('show');
@@ -5327,7 +5337,7 @@ function resolveStepText(step, creatureId){
   /* « Ce qu'il dit les fois suivantes » : même réplique, mêmes réponses, autre texte. C'est
      la façon simple de ne pas se présenter deux fois — sans couper le dialogue en deux
      entrées, ce qui obligeait à recopier les réponses des deux côtés. */
-  if (step.textApres && playerUsedChoices[cleRencontre(creatureId)]){
+  if (step.textApres && !dialoguePremiereRencontre && playerUsedChoices[cleRencontre(creatureId)]){
     return resoudreMarqueurs(step.textApres);
   }
   const variants = step.textVariants || [];
@@ -5859,6 +5869,64 @@ if (document.readyState !== 'loading') surveillerLesFenetres();
    mot. On note donc qu'il y a des changements, et on demande avant de sortir. */
 let ficheModifiee = false;
 function marquerFicheModifiee(){ if (document.getElementById('editorOverlay').classList.contains('show')) ficheModifiee = true; }
+
+/* Les événements de frappe ne suffisent pas : TOUT ce qui se règle par bouton — sélecteurs
+   en fenêtre, bascules, ajout ou suppression d'une réponse — modifie la fiche sans qu'aucun
+   champ n'émette quoi que ce soit, et ces fenêtres vivent sur `document.body`, hors de
+   l'éditeur. Plutôt que de courir après chaque bouton, on prend une EMPREINTE de la fiche à
+   l'ouverture et on la recompare à la fermeture : aucun geste ne peut passer entre les
+   mailles, et rien ne se déclenche si l'on n'a touché à rien.
+   Les images ne sont comparées que par leur longueur — inutile de repasser sur des mégaoctets. */
+let empreinteAuChargement = null;
+function empreinteFiche(){
+  const morceaux = [];
+  const champs = [];
+  document.querySelectorAll(
+    '#editorOverlay input, #editorOverlay textarea, #editorOverlay select,' +
+    '[data-rubrique-fenetre] input, [data-rubrique-fenetre] textarea, [data-rubrique-fenetre] select'
+  ).forEach(el=>{
+    if (!el.id) return;   // champs volatiles d'une fenêtre tierce : pas de la fiche
+    champs.push(el.id + '=' + ((el.type === 'checkbox' || el.type === 'radio') ? (el.checked ? '1' : '0') : el.value));
+  });
+  champs.sort();
+  morceaux.push(champs.join('|'));
+  const j = (v)=>{ try { return JSON.stringify(v); } catch(e){ return '?'; } };
+  const ens = (s)=>{ try { return JSON.stringify(Array.from(s || [])); } catch(e){ return '?'; } };
+  const taille = (s)=> String((s || '').length);
+  const dat = (id)=>{ const el = document.getElementById(id); return el ? (el.dataset.itemId || '') : ''; };
+  morceaux.push(
+    j(currentDialogueSteps), j(currentShopItems), j(editTimeRanges), j(pendingCombatPortraitCrop),
+    ens(selectedDays), ens(selectedCombatAttacks), ens(selectedStartingAttacks),
+    ens(selectedCombatImmunities), ens(selectedCombatResistances), ens(selectedCombatRewards),
+    dat('editCombatStealEasy'), dat('editCombatStealHard'),
+    String(pendingLat), String(pendingLng), String(pendingAssignedZoneId), String(pendingReserve),
+    String(pendingMapIconScale), String(pendingMapIconRotation), String(currentDupeGroup),
+    taille(uploadedImageDataUrl), String(uploadedImagePath || ''),
+    taille(editBackImageDataUrl), String(editBackImagePath || ''), String(editBackImageRef || ''),
+    taille(editRoomImageDataUrl), String(editRoomImagePath || ''), String(editRoomImageRef || ''),
+    taille(editZoneArenaImageDataUrl), String(editZoneArenaImagePath || ''), String(editZoneArenaImageRef || '')
+  );
+  return morceaux.join('§');
+}
+/* Appelée à la fin de loadForEdit et de resetForm : c'est le point de comparaison. */
+function poserEmpreinteFiche(){
+  try { empreinteAuChargement = empreinteFiche(); } catch(e){ empreinteAuChargement = null; }
+  ficheModifiee = false;
+}
+function ficheEstModifiee(){
+  if (ficheModifiee) return true;
+  if (empreinteAuChargement === null) return false;   // empreinte impossible : on ne bloque pas
+  try { return empreinteFiche() !== empreinteAuChargement; } catch(e){ return false; }
+}
+/* Le bouton d'enregistrement doit dire ce qu'il FAIT : une fiche en travaux ne publie rien,
+   elle garde sa version figée. Deux mots différents pour deux gestes différents. */
+function majLibelleBoutonEnregistrer(){
+  const btn = document.getElementById('editSaveBtn');
+  const c = document.getElementById('editEnTravaux');
+  if (!btn || !c) return;
+  if (c.checked) btn.textContent = '💾 Enregistrer le brouillon';
+  else btn.textContent = editingId ? '📤 Publier le PNJ' : '📤 Créer et publier le PNJ';
+}
 document.addEventListener('input', (e)=>{
   if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
 }, true);
@@ -6618,9 +6686,10 @@ function loadForEdit(id){
     pendingAssignedZoneId = null; pendingReserve = true;
   }
   refreshPosStatusDisplay();
-  document.getElementById('editSaveBtn').textContent = 'Mettre à jour le PNJ';
   document.getElementById('editCancelBtn').style.display = 'block';
   document.getElementById('editorOverlay').classList.add('show');
+  majLibelleBoutonEnregistrer();
+  poserEmpreinteFiche();   // point de comparaison : tout écart après ça est du travail à perdre
 }
 
 function resetForm(){
@@ -6710,10 +6779,20 @@ function resetForm(){
   setEditTimeRanges({});
   setSelectedDays([]);
   refreshPosStatusDisplay();
-  document.getElementById('editSaveBtn').textContent = 'Enregistrer le PNJ';
   document.getElementById('editCancelBtn').style.display = 'none';
+  majLibelleBoutonEnregistrer();
+  poserEmpreinteFiche();
 }
-document.getElementById('editCancelBtn').addEventListener('click', resetForm);
+/* « Annuler la modification » vide la fiche : c'est exactement la même perte que fermer
+   l'éditeur, et il n'y avait aucun garde ici. */
+document.getElementById('editCancelBtn').addEventListener('click', async ()=>{
+  if (ficheEstModifiee()){
+    const quoi = await demanderQuoiFaireAvantDeSortir();
+    if (quoi === 'rester') return;
+    if (quoi === 'enregistrer'){ document.getElementById('editSaveBtn').click(); return; }
+  }
+  resetForm();
+});
 document.getElementById('editDuplicateBtn').addEventListener('click', ()=>{
   if (!editingId) return;
   const doc = latestSnap.docs.find(d=>d.id===editingId);
@@ -6770,14 +6849,29 @@ function ouvrirBrouillons(){
       </div>`).join('');
   }
 
+  /* On relit la fiche SUR LE SERVEUR avant et après. Avant, parce que l'instantané local peut
+     dater ; après, parce qu'une publication qui n'a pas pris doit le dire au lieu de laisser
+     croire que c'est fait — c'est exactement ce qu'il a vécu, la fiche restant dans la liste. */
   const publier = async (id)=>{
-    const f = ficheParId(id);
-    if (!f || !creatureCol) return;
-    const copie = { ...f };
+    if (!creatureCol) throw new Error('Firebase indisponible ici');
+    const avant = await creatureCol.doc(id).get();
+    if (!avant.exists) throw new Error('cette fiche n\'existe plus');
+    const copie = { ...avant.data() };
     delete copie.id;
     copie.enTravaux = false;
     copie.versionPubliee = versionAPublier(copie);
     await creatureCol.doc(id).set(copie);
+    const apres = await creatureCol.doc(id).get();
+    if (apres.exists && apres.data().enTravaux) throw new Error('la fiche est toujours en travaux après écriture');
+    /* La fiche peut être ouverte dans l'éditeur : sans ça, le prochain enregistrement la
+       remettrait en travaux avec la case restée cochée. */
+    if (editingId === id){
+      const c = document.getElementById('editEnTravaux');
+      if (c) c.checked = false;
+      majFicheEnCours();
+      majLibelleBoutonEnregistrer();
+      poserEmpreinteFiche();
+    }
   };
   liste.querySelectorAll('[data-publier]').forEach(b=>{
     b.addEventListener('click', async ()=>{
@@ -6840,6 +6934,7 @@ document.getElementById('basculeTravauxBtn').addEventListener('click', ()=>{
   c.checked = !c.checked;
   marquerFicheModifiee();
   majFicheEnCours();
+  majLibelleBoutonEnregistrer();
   showToast(c.checked ? 'En travaux : enregistre, les joueurs ne verront rien' : 'Publié : ton prochain enregistrement part en jeu');
 });
 
@@ -6867,12 +6962,13 @@ document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
   showItemsSection('new');
 });
 document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
-  if (ficheModifiee){
+  if (ficheEstModifiee()){
     const quoi = await demanderQuoiFaireAvantDeSortir();
     if (quoi === 'rester') return;
     if (quoi === 'enregistrer'){ document.getElementById('editSaveBtn').click(); return; }
   }
   ficheModifiee = false;
+  empreinteAuChargement = null;
   document.getElementById('editorOverlay').classList.remove('show');
 });
 
@@ -7107,7 +7203,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   }
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{
-    showToast(editingId ? 'PNJ mis à jour' : 'PNJ ajouté');
+    showToast(enTravaux ? '🚧 Brouillon enregistré — les joueurs ne le voient pas' : '📤 PNJ publié');
     resetForm();
   }).catch((err)=>{
     showToast('Échec : ' + err.message);
