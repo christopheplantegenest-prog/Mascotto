@@ -11,6 +11,99 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script>
+/* ===================== BOÎTE NOIRE =====================
+   Posée AVANT tout le reste — bibliothèques comprises — pour attraper même une erreur de
+   démarrage. Le journal vit dans le téléphone (localStorage) : il SURVIT à un plantage et à
+   un rechargement, ce qui est tout l'intérêt. Après un incident, Édition → Outils de test →
+   🧾 Boîte noire, puis « Copier » : le texte se colle tel quel dans la conversation.
+   Règle de conception : écrire tout de suite pour une erreur (la page peut mourir juste
+   après), mais grouper les écritures ordinaires — sinon l'outil de mesure ralentirait
+   justement ce qu'il mesure. */
+(function(){
+  var CLE = 'mascotto_boite_noire';
+  var MAX = 400;                 // au-delà, les plus anciennes lignes sortent
+  var lignes = [];
+  var enAttente = false;
+  var t0 = (window.performance && performance.now) ? performance.now() : 0;
+
+  try { lignes = JSON.parse(localStorage.getItem(CLE) || '[]') || []; } catch(e){ lignes = []; }
+  if (!Array.isArray(lignes)) lignes = [];
+
+  function ecrire(){
+    enAttente = false;
+    try { localStorage.setItem(CLE, JSON.stringify(lignes.slice(-MAX))); } catch(e){
+      /* Plus de place : on repart d'une moitié de journal plutôt que de tout perdre. */
+      try { lignes = lignes.slice(-Math.floor(MAX/2)); localStorage.setItem(CLE, JSON.stringify(lignes)); } catch(e2){}
+    }
+  }
+  function heure(){
+    var d = new Date();
+    var p = function(n, l){ return String(n).padStart(l || 2, '0'); };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+  }
+  function memoire(){
+    try {
+      if (performance && performance.memory && performance.memory.usedJSHeapSize){
+        return Math.round(performance.memory.usedJSHeapSize / 1048576) + ' Mo';
+      }
+    } catch(e){}
+    return '';
+  }
+  /* cat : 'erreur' | 'combat' | 'son' | 'base' | 'appli' | 'lent' … ; urgent = écrire tout de suite */
+  window.journal = function(cat, message, detail, urgent){
+    try {
+      var l = { h: heure(), c: cat || '?', m: String(message == null ? '' : message) };
+      if (detail !== undefined && detail !== null && detail !== '') l.d = (typeof detail === 'string') ? detail : String(detail);
+      var mem = memoire(); if (mem) l.mem = mem;
+      lignes.push(l);
+      if (lignes.length > MAX) lignes = lignes.slice(-MAX);
+      if (urgent || cat === 'erreur'){ ecrire(); }
+      else if (!enAttente){ enAttente = true; setTimeout(ecrire, 400); }
+    } catch(e){}
+  };
+  window.journalLignes = function(){ return lignes.slice(); };
+  window.journalVider = function(){ lignes = []; try { localStorage.removeItem(CLE); } catch(e){} };
+  /* Chronomètre : `const fin = journalChrono(); … fin('combat', 'photo figée')` écrit la durée. */
+  window.journalChrono = function(){
+    var debut = (window.performance && performance.now) ? performance.now() : Date.now();
+    return function(cat, quoi){
+      var ms = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - debut);
+      window.journal(cat, quoi, ms + ' ms');
+      return ms;
+    };
+  };
+
+  window.addEventListener('error', function(e){
+    var ou = (e.filename ? (String(e.filename).split('/').pop() + ':' + e.lineno + ':' + e.colno) : '');
+    var pile = (e.error && e.error.stack) ? String(e.error.stack).split('\n').slice(0, 4).join(' | ') : '';
+    window.journal('erreur', e.message || 'erreur inconnue', (ou ? ou + ' ' : '') + pile, true);
+  }, true);
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason;
+    var msg = (r && r.message) ? r.message : String(r);
+    var pile = (r && r.stack) ? String(r.stack).split('\n').slice(0, 4).join(' | ') : '';
+    window.journal('erreur', 'promesse rejetée : ' + msg, pile, true);
+  });
+  /* Une tâche qui bloque le fil plus de 50 ms fige l'affichage et retarde le son. C'est
+     exactement le symptôme décrit (« la musique a démarré après le combat ») : on les note. */
+  try {
+    var po = new PerformanceObserver(function(list){
+      list.getEntries().forEach(function(t){
+        if (t.duration >= 200) window.journal('lent', 'le jeu s\'est figé', Math.round(t.duration) + ' ms');
+      });
+    });
+    po.observe({ entryTypes: ['longtask'] });
+  } catch(e){}
+
+  document.addEventListener('visibilitychange', function(){
+    window.journal('appli', document.hidden ? 'passée en arrière-plan' : 'revenue au premier plan');
+  });
+  window.addEventListener('pagehide', function(){ window.journal('appli', 'page quittée', '', true); });
+
+  window.journal('appli', '--- démarrage ---', (navigator.userAgent || '').slice(0, 90), true);
+})();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
@@ -683,7 +776,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v354</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v355</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -918,6 +1011,8 @@
     <button class="btn-capture" id="hubRobotsBtn" style="width:100%; margin-bottom:10px;">🤖 Robots (apparences)</button>
 
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
+    <button class="btn-capture" id="boiteNoireBtn" style="width:100%; margin-bottom:6px;">🧾 Boîte noire</button>
+    <p class="meta">Tout ce que le jeu a fait juste avant un plantage : erreurs, temps de chaque étape d'un combat, mémoire, sons, écritures refusées. Le journal survit à un rechargement — après un souci, ouvre-le et copie-le, c'est ce qui permet de comprendre au lieu de deviner.</p>
     <button class="btn-secondary" id="oublierChoixBtn" style="width:100%; margin-bottom:10px;">🔄 Oublier mes choix de dialogue</button>
     <p class="meta">Remet à zéro, pour toi seulement, tout ce que le jeu retient de tes conversations : réponses à usage unique, premières rencontres, conditions « il a déjà dit… ». Indispensable pour rejouer un dialogue qu'on vient de tester. Ne touche ni aux quêtes, ni aux objets, ni aux recrues.</p>
     <p class="meta" style="margin:0 0 8px;">Touche une catégorie pour l'ouvrir. Une seule reste ouverte à la fois, pour éviter de modifier un réglage par mégarde en faisant défiler.</p>
@@ -7150,6 +7245,83 @@ document.getElementById('basculeTravauxBtn').addEventListener('click', ()=>{
 
 document.getElementById('oublierChoixBtn').addEventListener('click', oublierMesChoix);
 
+/* ---------- Lecture de la boîte noire ----------
+   [stated] son besoin : « c'est dur de prendre des screenshots au bon moment ». Le bouton
+   Copier est donc le cœur de l'écran — le texte se colle directement dans la conversation,
+   ce qui vaut mieux qu'une capture (on y lit les temps exacts et les piles d'appel).
+   Le presse-papiers étant souvent bloqué sur téléphone, on sélectionne le texte à défaut. */
+const COULEUR_CAT = { erreur:'#c0392b', lent:'#e67e22', combat:'#2980b9', son:'#8e44ad', base:'#16a085', appli:'#7f8c8d' };
+function texteBoiteNoire(){
+  const l = (typeof journalLignes === 'function') ? journalLignes() : [];
+  const entete = 'Mascotto ' + (document.getElementById('appVersionLabel') || {}).textContent
+    + ' — boîte noire (' + l.length + ' lignes)';
+  return entete + '\n' + l.map(e=>
+    e.h + ' [' + e.c + '] ' + e.m + (e.d ? ' — ' + e.d : '') + (e.mem ? ' (mém. ' + e.mem + ')' : '')
+  ).join('\n');
+}
+function ouvrirBoiteNoire(){
+  const l = (typeof journalLignes === 'function') ? journalLignes() : [];
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '4700';
+  fond.innerHTML = `
+    <div class="sheet" style="max-height:88vh; display:flex; flex-direction:column;">
+      <div class="sheet-top">
+        <h3 style="margin-top:0;">🧾 Boîte noire (${l.length})</h3>
+        <button class="sheet-x" data-fermer>✕</button>
+      </div>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button class="btn-capture" data-copier style="flex:1;">📋 Copier</button>
+        <button class="btn-secondary" data-vider style="flex:0 0 auto;">🗑️ Vider</button>
+      </div>
+      <p class="meta" style="margin:0 0 8px;">La plus récente en haut. Copie ce texte et colle-le dans la conversation : les heures, les durées et les erreurs y sont en clair.</p>
+      <textarea data-texte class="field-input" readonly style="display:none; height:120px; font-size:11px;"></textarea>
+      <div data-liste style="overflow-y:auto; flex:1; font-size:11px; line-height:1.45;"></div>
+    </div>`;
+  document.body.appendChild(fond);
+
+  const liste = fond.querySelector('[data-liste]');
+  liste.innerHTML = l.length ? l.slice().reverse().map(e=>`
+    <div style="padding:5px 0; border-bottom:1px solid rgba(255,255,255,.08);">
+      <span style="opacity:.6;">${e.h}</span>
+      <span style="color:${COULEUR_CAT[e.c] || '#7f8c8d'}; font-weight:600;"> [${e.c}]</span>
+      ${e.m.replace(/</g,'&lt;')}
+      ${e.d ? `<div style="opacity:.7; word-break:break-word;">${String(e.d).replace(/</g,'&lt;')}</div>` : ''}
+      ${e.mem ? `<div style="opacity:.5;">mémoire ${e.mem}</div>` : ''}
+    </div>`).join('') : '<p class="meta">Rien pour l\'instant. Le journal se remplit tout seul.</p>';
+
+  fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  fond.addEventListener('click', (e)=>{ if (e.target === fond) fond.remove(); });
+  fond.querySelector('[data-copier]').addEventListener('click', (e)=>{
+    const txt = texteBoiteNoire();
+    const fini = (ok)=>{ e.target.textContent = ok ? '✅ Copié' : '⚠️ Copie bloquée — le texte est sélectionné, copie-le à la main'; };
+    const repli = ()=>{
+      /* Sur téléphone, le presse-papiers est souvent refusé hors contexte sécurisé : on
+         affiche alors le texte tout sélectionné, il n'y a plus qu'à appuyer sur « Copier ». */
+      const zone = fond.querySelector('[data-texte]');
+      zone.style.display = 'block';
+      zone.value = txt;
+      zone.removeAttribute('readonly');
+      zone.focus(); zone.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch(err){}
+      zone.setAttribute('readonly', 'readonly');
+      fini(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(()=> fini(true), repli);
+    } else repli();
+  });
+  fond.querySelector('[data-vider]').addEventListener('click', async ()=>{
+    if (!(await appConfirm('Vider la boîte noire ?'))) return;
+    if (typeof journalVider === 'function') journalVider();
+    fond.remove();
+    ouvrirBoiteNoire();
+  });
+}
+document.getElementById('boiteNoireBtn').addEventListener('click', ouvrirBoiteNoire);
+
+/* ---------- Lecture de la boîte noire : fin ---------- */
 document.getElementById('hubBrouillonsBtn').addEventListener('click', ouvrirBrouillons);
 
 document.getElementById('editHubBtn').addEventListener('click', ()=>{
@@ -17114,10 +17286,13 @@ function saveCombatSnapshot(releaseTurn){
     attaquesAutorisees: combatAttaquesAutorisees || null,
     savedAt: Date.now(),
   };
+  const charge = JSON.stringify(data);
+  journal('base', 'sauvegarde du combat', Math.round(charge.length / 1024) + ' ko');
   db.collection('players').doc(currentUser.uid).set({ savedCombat: data }, { merge:true })
     .catch((err)=>{
       /* Ne jamais avaler une erreur d'écriture : c'est elle qui décide si le combat sera
          retrouvé après un rechargement. Silencieuse, on ne l'apprend qu'en perdant sa partie. */
+      journal('erreur', 'sauvegarde du combat refusée', (err && err.message) || '', true);
       if (sauvegardeCombatSignalee) return;
       sauvegardeCombatSignalee = true;
       showToast('⚠️ Sauvegarde du combat impossible : ' + (err && err.message ? err.message : 'erreur inconnue'));
@@ -17448,15 +17623,17 @@ const MUSIC_LOOP_POINT_FIELD = { map:'mapLoopStart', combat:'combatLoopStart', c
 function playMusicForKey(key){
   currentMusicKey = key;
   const url = key ? (musicConfig[key] || '') : '';
-  if (!url){ bgLoopPlayer.stop(); bgCurrentUrl = null; return; }
+  if (!url){ bgLoopPlayer.stop(); bgCurrentUrl = null; journal('son', 'musique ' + key + ' : aucune piste réglée'); return; }
   if (bgCurrentUrl === url){ applyMusicVolume(); return; } // même piste déjà en cours : pas de redémarrage, juste le volume
   bgCurrentUrl = url;
   const loopField = MUSIC_LOOP_POINT_FIELD[key];
   const loopPoint = loopField ? (musicConfig[loopField] || 0) : 0; // 0/absent = pas de boucle (ex. victoire, transition)
   const vol = musicMuted ? 0 : savedMusicVolume * getTrackVolumeFraction(key);
   if (musicAudioUnlocked){
-    bgLoopPlayer.play(url, { loopPoint, volume: vol }).catch(()=>{});
+    journal('son', 'musique ' + key);
+    bgLoopPlayer.play(url, { loopPoint, volume: vol }).catch((err)=> journal('son', 'lecture refusée : ' + key, (err && err.message) || '', true));
   } else {
+    journal('son', 'musique ' + key + ' retardée', 'le son n\'est pas encore débloqué (aucun appui depuis le chargement)');
     bgLoopPlayer.stop();
   }
 }
@@ -17599,6 +17776,7 @@ function playCombatEntryTransition(hasBoss){
          retrouveraient ailleurs. */
       const liveWrap = document.getElementById('sceneViewImgWrap');
       if (liveWrap && liveWrap.querySelector('img')){
+        const chronoPhoto = journalChrono();
         const r = liveWrap.getBoundingClientRect();
         freezeFrame = document.createElement('div');
         freezeFrame.style.cssText = 'position:fixed; inset:0; z-index:3990; background:#000; overflow:hidden;';
@@ -17610,6 +17788,12 @@ function playCombatEntryTransition(hasBoss){
           ' display:flex; align-items:center; justify-content:center; background:#111;';
         freezeFrame.appendChild(frozen);
         document.body.appendChild(freezeFrame);
+        /* Combien d'images recopiées, et pour quel poids : c'est l'un des suspects du
+           plantage à l'entrée en combat, autant le mesurer plutôt que le supposer. */
+        let poids = 0, nbImages = 0;
+        frozen.querySelectorAll('img').forEach(im=>{ nbImages++; poids += (im.getAttribute('src') || '').length; });
+        chronoPhoto('combat', 'photo figée de la scène');
+        journal('combat', 'photo figée : ' + nbImages + ' image(s)', Math.round(poids / 1024) + ' ko de données recopiées');
       }
       sceneView.classList.remove('show'); // remplacée par la photo figée, plus besoin d'attendre
     }
@@ -17630,14 +17814,20 @@ function playCombatEntryTransition(hasBoss){
   });
 }
 async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
+  const chrono = journalChrono();
+  journal('combat', 'lancement', playerFighters.length + ' contre ' + enemyFighters.length
+    + (opts && opts.skipTransition ? ' (reprise)' : ''), true);
   preloadVictoryMusic();
   await resoudreImagesDeDos(playerFighters);   // avant l'affichage : pas de bascule face → dos
+  chrono('combat', 'images de dos résolues');
   preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
+  chrono('combat', 'effets et sons préchargés');
   const hasBoss = enemyFighters.some(f=> f.budgetCategory === 'boss');
   if (opts && opts.skipTransition){
     playMusicForKey(hasBoss ? 'combat_boss' : 'combat'); // reprise de session : pas de transition, juste la musique
   } else {
     await playCombatEntryTransition(hasBoss);
+    chrono('combat', 'transition terminée');
   }
   combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
   sauvegardeCombatSignalee = false;   // nouveau combat : on redonne sa chance à l'avertissement
@@ -17650,7 +17840,12 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${arenaBgUrl || DEFAULT_ARENA_BG})`);
   renderCombatWaitingPanel();
   renderCombat();
-  Promise.all(combatState.fighters.map(generateThumbFor)).then(()=>{ if (combatState) renderCombatTurnOrderBar(); });
+  chrono('combat', 'écran de combat affiché');
+  const chronoVignettes = journalChrono();
+  Promise.all(combatState.fighters.map(generateThumbFor)).then(()=>{
+    chronoVignettes('combat', 'vignettes calculées');
+    if (combatState) renderCombatTurnOrderBar();
+  }).catch((err)=> journal('erreur', 'vignettes de combat', err && err.message, true));
   clearInterval(combatTickTimer);
   combatTickTimer = setInterval(combatTick, 150);
   saveCombatSnapshot();
@@ -18637,6 +18832,7 @@ function checkCombatEnd(){
 function endCombat(result){
   combatState.finished = true;
   combatState.result = result;
+  journal('combat', 'fin du combat : ' + result, '', true);
   clearInterval(combatTickTimer);
   clearSavedCombat();
   if (!combatState.isPvp){
