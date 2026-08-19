@@ -57,7 +57,9 @@
       if (detail !== undefined && detail !== null && detail !== '') l.d = (typeof detail === 'string') ? detail : String(detail);
       var mem = memoire(); if (mem) l.mem = mem;
       lignes.push(l);
-      window.dernierRepere = l.m;   // le prochain figement saura d'où il vient
+      /* Le repère sert à dire PENDANT QUOI le jeu s'est figé. Une ligne « lent » ne doit
+         donc pas le remplacer, sinon elle se cite elle-même en s'imbriquant sans fin. */
+      if (l.c !== 'lent') window.dernierRepere = l.m;
       if (lignes.length > MAX) lignes = lignes.slice(-MAX);
       if (urgent || cat === 'erreur'){ ecrire(); }
       else if (!enAttente){ enAttente = true; setTimeout(ecrire, 400); }
@@ -791,7 +793,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v356</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v357</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -10027,7 +10029,9 @@ if (typeof db !== 'undefined' && db){
     }
     const p = document.getElementById('missionTerminalPreview');
     if (p){
-      p.src = missionTerminalImage || '';
+      /* `src = ''` ne vide pas l'image : le navigateur va chercher la PAGE elle-même comme
+         image, échoue, et signale un fichier non chargé. Il faut retirer l'attribut. */
+      if (missionTerminalImage) p.src = missionTerminalImage; else p.removeAttribute('src');
       p.style.display = missionTerminalImage ? 'block' : 'none';
     }
     /* Un écouteur Firestore rappelle cette fonction à chaque changement : une erreur ici
@@ -11186,9 +11190,10 @@ if (typeof db !== 'undefined' && db){
       });
     }
     const pr = document.getElementById('infRoomPreview');
-    if (pr){ pr.src = infirmaryRoomImage || ''; pr.style.display = infirmaryRoomImage ? 'block' : 'none'; }
+    /* Jamais `src = ''` : le navigateur irait chercher la page comme image (voir v357). */
+    if (pr){ if (infirmaryRoomImage) pr.src = infirmaryRoomImage; else pr.removeAttribute('src'); pr.style.display = infirmaryRoomImage ? 'block' : 'none'; }
     const pd = document.getElementById('infDoorPreview');
-    if (pd){ pd.src = infirmaryDoorImage || ''; pd.style.display = infirmaryDoorImage ? 'block' : 'none'; }
+    if (pd){ if (infirmaryDoorImage) pd.src = infirmaryDoorImage; else pd.removeAttribute('src'); pd.style.display = infirmaryDoorImage ? 'block' : 'none'; }
     const ci = document.getElementById('infCapacityInput');
     if (ci && document.activeElement !== ci) ci.value = infirmaryCapacity;
     try { renderInfZoneGuide(); } catch(e){}
@@ -14314,7 +14319,7 @@ if (typeof db !== 'undefined' && db){
     shipImageUrl = d.mapImagePath ? resolveMediaPath(d.mapImagePath) : (d.mapImage || '');
     const p = document.getElementById('shipMapPreview');
     if (p){
-      p.src = shipImageUrl || '';
+      if (shipImageUrl) p.src = shipImageUrl; else p.removeAttribute('src');
       p.style.display = shipImageUrl ? 'block' : 'none';
     }
     lastShipIconKey = null;
@@ -16415,7 +16420,7 @@ function closeSceneBigImage(){
   if (wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
   roomSheetRecruitId = null;
   document.getElementById('sceneBigImageOverlay').classList.remove('show');
-  document.getElementById('sceneBigImageImg').src = '';
+  document.getElementById('sceneBigImageImg').removeAttribute('src');
 }
 document.getElementById('sceneBigImageCloseBtn').addEventListener('click', closeSceneBigImage);
 // on ne ferme que si le doigt tombe à côté de l'image : sinon impossible de la manipuler
@@ -17842,8 +17847,11 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   journal('combat', 'lancement', playerFighters.length + ' contre ' + enemyFighters.length
     + (opts && opts.skipTransition ? ' (reprise)' : ''), true);
   preloadVictoryMusic();
+  libererImagesDeCombat();                     // les adresses du combat précédent n'ont plus d'usage
+  dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
   await resoudreImagesDeDos(playerFighters);   // avant l'affichage : pas de bascule face → dos
   chrono('combat', 'images de dos résolues');
+  await allegerImagesDeCombat([...playerFighters, ...enemyFighters]);
   preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
   chrono('combat', 'effets et sons préchargés');
   const hasBoss = enemyFighters.some(f=> f.budgetCategory === 'boss');
@@ -17866,8 +17874,13 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   renderCombat();
   chrono('combat', 'écran de combat affiché');
   const chronoVignettes = journalChrono();
-  Promise.all(combatState.fighters.map(generateThumbFor)).then(()=>{
+  Promise.all(combatState.fighters.map(generateThumbFor)).then(async ()=>{
     chronoVignettes('combat', 'vignettes calculées');
+    /* Même raison que pour les portraits : la barre des tours se redessine à chaque
+       battement d'horloge, et une vignette en base64 y serait relue à chaque fois. */
+    await Promise.all(combatState ? combatState.fighters.map(async (f)=>{
+      f.thumbUrl = await adresseCourtePourImage(f.thumbUrl);
+    }) : []);
     if (combatState) renderCombatTurnOrderBar();
   }).catch((err)=> journal('erreur', 'vignettes de combat', err && err.message, true));
   clearInterval(combatTickTimer);
@@ -18970,6 +18983,35 @@ function particlesHtml(f){
 function getAvatarSizePx(){
   return Math.max(80, Math.min(150, window.innerWidth * 0.36 - 15)); // même formule que --avatar-size en CSS
 }
+/* Une image en base64 pèse des centaines de kilo-octets DANS LA CHAÎNE HTML elle-même. Or
+   l'arène se redessine 6 à 7 fois par seconde : le navigateur relisait et redécodait ces
+   mégaoctets à chaque redessin. C'est ce qui figeait le jeu un tiers de seconde en boucle,
+   retardait le son, et finissait par faire tuer l'onglet par le téléphone.
+   Une adresse `blob:` fait quelques dizaines de signes et l'image reste décodée une fois
+   pour toutes : même dessin, coût divisé par mille. */
+let blobsDeCombat = [];
+function libererImagesDeCombat(){
+  blobsDeCombat.splice(0).forEach(u=>{ try { URL.revokeObjectURL(u); } catch(e){} });
+}
+async function adresseCourtePourImage(url){
+  if (!url || String(url).slice(0, 5) !== 'data:') return url;
+  try {
+    const blob = await fetch(url).then(r=> r.blob());
+    const court = URL.createObjectURL(blob);
+    blobsDeCombat.push(court);
+    return court;
+  } catch(e){ return url; }   // en cas de refus, on garde l'image telle quelle : moins vite, mais visible
+}
+async function allegerImagesDeCombat(fighters){
+  const chrono = journalChrono();
+  let lourdes = 0;
+  await Promise.all((fighters || []).map(async (f)=>{
+    if (f.imageUrl && String(f.imageUrl).slice(0, 5) === 'data:') lourdes++;
+    f.imageUrl = await adresseCourtePourImage(f.imageUrl);
+  }));
+  if (lourdes) chrono('combat', 'images allégées (' + lourdes + ')');
+}
+
 function fighterCardHtml(f, idx, arr){
   const hpPct = Math.max(0, Math.round((f.hp/f.maxHp)*100));
   const isActing = combatState.pendingActor === f.uid;
@@ -19011,15 +19053,35 @@ function fighterCardHtml(f, idx, arr){
     </div>
   `;
 }
+/* Le contenu des cartes ne change qu'aux coups reçus, pas à chaque battement d'horloge.
+   On compare avant d'écrire : la plupart des redessins ne touchent alors plus au tout. */
+let dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
 function renderCombat(){
   if (!combatState) return;
   renderCombatTurnOrderBar();
-  document.getElementById('combatEnemyRow').innerHTML = combatState.fighters.filter(f=>f.side==='enemy' && !f.fled).map(fighterCardHtml).join('');
-  document.getElementById('combatPlayerRow').innerHTML = combatState.fighters.filter(f=>f.side==='player').map(fighterCardHtml).join('');
-  document.querySelectorAll('.combat-fighter').forEach(el=>{
-    el.addEventListener('click', ()=> onFighterCardClick(el.dataset.fighter));
-  });
-  document.getElementById('combatLogEntries').innerHTML = combatState.log.slice(0, 20).map(l=>`<div>${l}</div>`).join('');
+  const ennemis = combatState.fighters.filter(f=>f.side==='enemy' && !f.fled).map(fighterCardHtml).join('');
+  const joueurs = combatState.fighters.filter(f=>f.side==='player').map(fighterCardHtml).join('');
+  let reecrit = false;
+  if (ennemis !== dernierRenduArene.ennemis){
+    document.getElementById('combatEnemyRow').innerHTML = ennemis;
+    dernierRenduArene.ennemis = ennemis; reecrit = true;
+  }
+  if (joueurs !== dernierRenduArene.joueurs){
+    document.getElementById('combatPlayerRow').innerHTML = joueurs;
+    dernierRenduArene.joueurs = joueurs; reecrit = true;
+  }
+  /* Les écouteurs ne se rebranchent que si les cartes ont été refaites : sans ça, on en
+     empilerait plusieurs par carte. */
+  if (reecrit){
+    document.querySelectorAll('.combat-fighter').forEach(el=>{
+      el.addEventListener('click', ()=> onFighterCardClick(el.dataset.fighter));
+    });
+  }
+  const journal = combatState.log.slice(0, 20).map(l=>`<div>${l}</div>`).join('');
+  if (journal !== dernierRenduArene.journal){
+    document.getElementById('combatLogEntries').innerHTML = journal;
+    dernierRenduArene.journal = journal;
+  }
 }
 
 
