@@ -683,7 +683,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v347</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v349</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -16418,12 +16418,40 @@ async function resoudreImagesDeDos(fighters){
   }));
 }
 
+/* Les sons d'attaque étaient créés au moment de frapper (`new Audio(url).play()`) : le
+   navigateur allait chercher le fichier À CET INSTANT, d'où le décalage entre l'animation et
+   le bruit. On les charge maintenant avec les images, et on rejoue l'élément déjà en mémoire.
+   Un petit lot par son (3) permet à deux coups rapprochés de sonner sans se couper. */
+const sonsFxCharges = new Map();   // url -> [éléments audio réutilisables]
+function prechargerSonFx(url){
+  if (!url || sonsFxCharges.has(url)) return;
+  const el = new Audio();
+  el.preload = 'auto';
+  el.src = url;
+  try { el.load(); } catch(e){}
+  sonsFxCharges.set(url, [el]);
+}
+function jouerSonFx(url){
+  if (!url) return;
+  let lot = sonsFxCharges.get(url);
+  if (!lot){ prechargerSonFx(url); lot = sonsFxCharges.get(url); }
+  let el = lot.find(a=> a.paused || a.ended);
+  if (!el){
+    if (lot.length < 3){ el = new Audio(url); el.preload = 'auto'; lot.push(el); }
+    else el = lot[0];   // plafond atteint : on recycle le plus ancien
+  }
+  try { el.currentTime = 0; } catch(e){}
+  el.play().catch(()=>{});
+}
+
 function preloadCombatFx(fighters){
   const urls = new Set();
   (fighters || []).forEach(f=>{
     (f.attacksList || []).forEach(a=>{
       if (a && a.fx && a.fx.image) urls.add(a.fx.image);
       if (a && a.fxSelf && a.fxSelf.image) urls.add(a.fxSelf.image);
+      if (a && a.fx && a.fx.sound) prechargerSonFx(a.fx.sound);
+      if (a && a.fxSelf && a.fxSelf.sound) prechargerSonFx(a.fxSelf.sound);
     });
   });
   if (!urls.size) return;
@@ -16436,8 +16464,11 @@ function preloadCombatFx(fighters){
   });
 }
 function playAttackFx(attackerUid, targetUids, fx, containerEl){
-  if (!fx || !fx.image) return Promise.resolve();
-  if (fx.sound){ new Audio(fx.sound).play().catch(()=>{}); }
+  if (!fx) return Promise.resolve();
+  /* Le son part AVANT le test de l'image : une attaque réglée avec un bruit mais sans
+     image restait muette, ce qui n'avait aucune raison d'être. */
+  if (fx.sound) jouerSonFx(fx.sound);
+  if (!fx.image) return Promise.resolve();
   const proms = targetUids.map(uid=>{
     if (fx.type === 'impact') return playFxImpact(uid, fx, containerEl);
     if (fx.type === 'burst') return playFxBurst(uid, fx, containerEl);
@@ -17262,13 +17293,24 @@ function playCombatEntryTransition(hasBoss){
     const wasInScene = sceneView.classList.contains('show');
     let freezeFrame = null;
     if (wasInScene){
-      const liveImg = document.querySelector('#sceneViewImgWrap img');
-      if (liveImg){
+      /* On photographie TOUTE la scène, pas seulement son image de fond. En ne clonant que
+         l'`<img>`, les personnages et objets posés dans le décor (des `.scene-point`, frères
+         de l'image) disparaissaient d'un coup au lancement du combat : le décor restait, ses
+         habitants s'évaporaient. Le clone du conteneur entier est recalé au pixel sur la
+         position réelle de l'original, sinon les points — placés en % du conteneur — se
+         retrouveraient ailleurs. */
+      const liveWrap = document.getElementById('sceneViewImgWrap');
+      if (liveWrap && liveWrap.querySelector('img')){
+        const r = liveWrap.getBoundingClientRect();
         freezeFrame = document.createElement('div');
-        freezeFrame.style.cssText = 'position:fixed; inset:0; z-index:3990; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden;';
-        const frozenImg = liveImg.cloneNode();
-        frozenImg.style.cssText = 'max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain;';
-        freezeFrame.appendChild(frozenImg);
+        freezeFrame.style.cssText = 'position:fixed; inset:0; z-index:3990; background:#000; overflow:hidden;';
+        const frozen = liveWrap.cloneNode(true);
+        frozen.querySelectorAll('[id]').forEach(el=> el.removeAttribute('id')); // pas d'identifiant en double dans la page
+        frozen.removeAttribute('id');
+        frozen.style.cssText = 'position:absolute; inset:auto; left:' + r.left + 'px; top:' + r.top + 'px;' +
+          ' width:' + r.width + 'px; height:' + r.height + 'px; overflow:hidden;' +
+          ' display:flex; align-items:center; justify-content:center; background:#111;';
+        freezeFrame.appendChild(frozen);
         document.body.appendChild(freezeFrame);
       }
       sceneView.classList.remove('show'); // remplacée par la photo figée, plus besoin d'attendre
@@ -18278,6 +18320,12 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   }
   combatZoneContext = null;
   combatState = null;
+  /* La musique de carte revient ICI, avant tout le reste. Elle était rendue tout en bas de
+     la fonction, APRÈS un `return` : un combat lancé depuis une réplique repartait dans son
+     dialogue de conclusion et l'appel n'était jamais atteint — plus aucune musique jusqu'au
+     rechargement. Même famille de faute que la v321 (un traitement qui se greffe avant un
+     autre et fait `return` : relire ce qu'on saute). */
+  playMusicForKey('map');
   /* Le retour de zone se fait D'ABORD, une seule fois. Le dialogue de conclusion s'ouvre
      ensuite, par-dessus ce qui a été rétabli — carte après une défaite, scène après une
      victoire. Faire l'inverse déclenchait DEUX rendus de la même scène en parallèle, et
@@ -18309,7 +18357,6 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   }
   if (retourDialogueCombat && reprendreDialogueApresCombat(result)) return;
   apresFermetureDialogue = null;   // le dialogue n'a pas pu s'ouvrir : rien à traîner
-  playMusicForKey('map'); // reprend la musique de carte (remplace la musique de victoire si elle jouait)
   clearSavedCombat(); // pas d'attente ici : la confirmation se fait en arrière-plan, les 3 sorties de zone servent de filet de sécurité si elle est coupée par une actualisation
 });
 
