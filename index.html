@@ -2642,16 +2642,39 @@ function hideAuthScreen(){
   authOverlay.classList.remove('show');
 }
 
+/* Connexion Google : on tente la fenêtre pop-up, et si l'appareil la refuse
+   (cas courant d'une PWA installée sur téléphone) on bascule sur la redirection.
+   Sans ce repli, un joueur sur mobile n'avait aucun moyen de se reconnecter. */
+function connexionGoogle(){
+  if (!mascottoGoogleProvider || !auth){ showToast('Connexion indisponible'); return; }
+  showAuthScreen('Connexion en cours…', false);
+  auth.signInWithPopup(mascottoGoogleProvider).catch((err)=>{
+    if (err.code === 'auth/popup-closed-by-user'){ afficherChoixConnexion(); return; }
+    if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/cancelled-popup-request'){
+      auth.signInWithRedirect(mascottoGoogleProvider).catch((e2)=>{
+        afficherChoixConnexion();
+        showToast('Échec de connexion : ' + e2.message);
+      });
+      return;
+    }
+    afficherChoixConnexion();
+    showToast('Échec de connexion : ' + err.message);
+  });
+}
+
+/* Écran de choix : c'est lui qui s'affiche désormais quand personne n'est connecté,
+   au lieu de fabriquer un profil invité en douce. */
+function afficherChoixConnexion(){
+  authStatus.textContent = 'Connecte-toi avec ton compte Google pour retrouver ta progression, ou continue avec un nouveau profil invité.';
+  googleSignInBtn.textContent = 'Se connecter avec Google';
+  googleSignInBtn.style.display = 'block';
+  guestContinueBtn.style.display = 'block';
+  authOverlay.classList.add('show');
+}
+
 googleSignInBtn.addEventListener('click', ()=>{
-  if (awaitingGoogleReSignIn && mascottoGoogleProvider && auth){
-    auth.signInWithPopup(mascottoGoogleProvider).catch((err)=>{
-      if (err.code === 'auth/popup-closed-by-user') return;
-      if (err.code === 'auth/popup-blocked'){ showToast('Fenêtre bloquée — autorise les pop-ups pour ce site et réessaie'); return; }
-      showToast('Échec de connexion : ' + err.message);
-    });
-  } else {
-    location.reload();
-  }
+  if (googleSignInBtn.textContent === 'Réessayer'){ location.reload(); return; }
+  connexionGoogle();
 });
 guestContinueBtn.addEventListener('click', ()=>{
   awaitingGoogleReSignIn = false;
@@ -2675,7 +2698,13 @@ document.getElementById('agencySaveBtn').addEventListener('click', ()=>{
 document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
   const pseudo = document.getElementById('pseudoInput').value.trim();
   if (!pseudo){ showToast('Choisis un pseudo'); return; }
-  db.collection('players').doc(currentUser.uid).set({ pseudo, createdAt: Date.now(), coins: 500 }, { merge: true })
+  const ref = db.collection('players').doc(currentUser.uid);
+  ref.get().then((doc)=>{
+    /* coins et createdAt ne s'écrivent qu'à la création. Sinon, un joueur renvoyé
+       ici par erreur repartait avec 500 pièces à la place de son vrai solde. */
+    const donnees = (doc && doc.exists) ? { pseudo } : { pseudo, createdAt: Date.now(), coins: 500 };
+    return ref.set(donnees, { merge: true });
+  })
     .then(()=>{
       currentPseudo = pseudo;
       document.getElementById('pseudoOverlay').classList.remove('show');
@@ -2715,9 +2744,10 @@ function onSignedIn(user){
       hideAuthScreen();
       pseudoOverlay.classList.add('show');
     }
-  }).catch(()=>{
-    hideAuthScreen();
-    pseudoOverlay.classList.add('show');
+  }).catch((err)=>{
+    /* Une lecture qui échoue (réseau coupé, Firestore indisponible) n'est PAS
+       un nouveau joueur : l'envoyer choisir un pseudo lui ferait écraser sa fiche. */
+    showAuthScreen('Impossible de lire ton profil (' + (err && err.code ? err.code : 'réseau') + '). Vérifie ta connexion et réessaie.', true);
   });
 }
 
@@ -2749,17 +2779,12 @@ try {
       if (user){
         awaitingGoogleReSignIn = false;
         onSignedIn(user);
-      } else if (awaitingGoogleReSignIn){
-        authStatus.textContent = 'Déconnecté(e). Connecte-toi avec un compte Google, ou continue avec un nouveau profil invité.';
-        googleSignInBtn.textContent = 'Se connecter avec Google';
-        googleSignInBtn.style.display = 'block';
-        guestContinueBtn.style.display = 'block';
-        authOverlay.classList.add('show');
       } else {
-        showAuthScreen('Connexion en cours…', false);
-        auth.signInAnonymously().catch((err)=>{
-          showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
-        });
+        /* Personne n'est connecté. Avant, on créait ici un profil invité tout neuf :
+           un joueur ayant lié Google mais dont la session locale avait disparu
+           (données effacées, purge du navigateur, autre appareil) se retrouvait
+           donc sur un compte vide, sans jamais qu'on lui propose Google. */
+        afficherChoixConnexion();
       }
     }, (err)=>{
       showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
