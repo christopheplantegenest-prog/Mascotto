@@ -793,7 +793,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v361</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v363</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2114,6 +2114,17 @@
         <p class="meta">Sert uniquement quand ce personnage combat À TES CÔTÉS : on le voit alors de dos, tourné vers l'ennemi, comme dans les jeux de combat classiques. Face à toi, en adversaire, il garde son image normale. Sans image de dos, rien ne change.</p>
       </div>
 
+      <div id="bustImageBlock">
+        <div class="field-label">💬 Image de buste (optionnelle)</div>
+        <input type="file" id="editBustImageFile" accept="image/*" class="field-input">
+        <button type="button" class="btn-secondary" id="editBustImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
+        <div id="bustImagePreviewWrap" style="display:none; margin-top:8px;">
+          <img id="bustImagePreview" style="width:80px; height:80px; border-radius:8px; object-fit:contain; border:2px solid var(--accent);">
+          <button type="button" class="btn-secondary" id="clearBustImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+        </div>
+        <p class="meta">Portrait affiché pendant les DIALOGUES, à la place de l'image en pied. Un buste se lit bien mieux à l'écran quand le personnage parle. Sans image de buste, c'est l'image normale qui reste affichée.</p>
+      </div>
+
       <div id="zoneBlock" style="display:none;">
         <div class="field-label" style="margin-top:0;">🚪 Message quand la zone est fermée</div>
         <p class="meta" style="margin:0 0 6px;">Hors de ses horaires, la zone reste visible sur la carte mais ne s'ouvre plus : ce message s'affiche à la place. Laisse vide pour le message par défaut.</p>
@@ -2245,6 +2256,8 @@
           <p class="meta">S'ajoute EN PLUS du butin normal, indépendamment — voler ne réduit pas ce que le monstre lâche à sa défaite. L'objet facile est toujours tenté en premier tant qu'il n'a pas déjà été volé, puis le difficile.</p>
         </div>
       </div>
+
+      <button type="button" class="btn-secondary" id="editZoneSceneBtnTop" style="width:100%; margin-top:10px; display:none;">🗺️ Éditer la scène de cette zone</button>
 
       <div data-rubrique="presence" data-titre="📍 Où et quand"></div>
       <div class="field-label">Position sur la carte</div>
@@ -5583,8 +5596,28 @@ function indexDepartDialogue(c, steps){
   return (!isNaN(suite) && suite >= 0 && suite < steps.length) ? suite : 0;
 }
 
+/* Portrait affiché pendant un dialogue : le buste s'il existe, sinon l'image normale.
+   Une image hébergée se résout tout de suite ; une image stockée à part (ref) arrive
+   en différé et rafraîchit la fiche quand elle est là. */
+let bustImageCache = {}; // ref -> url
+function bustUrlPourFiche(c){
+  if (!c) return null;
+  if (c.bustImagePath) return resolveMediaPath(c.bustImagePath);
+  if (c.bustImageRef) return bustImageCache[c.bustImageRef] || null;
+  return null;
+}
+function prechargerBuste(c){
+  if (!c || !c.bustImageRef || c.bustImagePath) return;
+  if (bustImageCache[c.bustImageRef]) return;
+  internalizeSceneImage(c.bustImageRef).then((url)=>{
+    bustImageCache[c.bustImageRef] = url;
+    if (activeCreature && activeCreature.id === c.id) renderSheet();
+  }).catch(()=>{});
+}
+
 function openSheet(c){
   activeCreature = c;
+  prechargerBuste(c);
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
   activeReferencedChoiceIds = dialogueReferencedChoiceIds(activeSteps);
   currentStepIdx = indexDepartDialogue(c, activeSteps);
@@ -5704,7 +5737,9 @@ function renderSheet(){
   const c = activeCreature;
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
   const emojiEl = document.getElementById('sheetEmoji');
-  emojiEl.innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
+  const buste = bustUrlPourFiche(c);
+  const portrait = buste || c.imageUrl;
+  emojiEl.innerHTML = portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
@@ -5883,6 +5918,8 @@ function recruitCreature(creature, metierId){
     /* L'image de dos suit le personnage quand il rejoint l'équipe : c'est là qu'elle sert. */
     backImagePath: creature.backImagePath || null,
     backImageRef: creature.backImageRef || null,
+    bustImagePath: creature.bustImagePath || null,
+    bustImageRef: creature.bustImageRef || null,
     combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
@@ -6247,6 +6284,7 @@ function empreinteFiche(){
     String(pendingMapIconScale), String(pendingMapIconRotation), String(currentDupeGroup),
     taille(uploadedImageDataUrl), String(uploadedImagePath || ''),
     taille(editBackImageDataUrl), String(editBackImagePath || ''), String(editBackImageRef || ''),
+    taille(editBustImageDataUrl), String(editBustImagePath || ''), String(editBustImageRef || ''),
     taille(editRoomImageDataUrl), String(editRoomImagePath || ''), String(editRoomImageRef || ''),
     taille(editZoneArenaImageDataUrl), String(editZoneArenaImagePath || ''), String(editZoneArenaImageRef || '')
   );
@@ -6355,7 +6393,7 @@ function installerRubriques(){
        Le bandeau du personnage et la bascule « en travaux » y étaient aspirés : ils
        finissaient au fond de « 📍 Où et quand », donc invisibles là où ils servent. */
     const RESTE_SUR_LA_FICHE = ['rubriquesMenu','editSaveBtn','editDuplicateBtn','editCancelBtn',
-      'ficheEnCours','basculeTravauxBtn'];
+      'ficheEnCours','basculeTravauxBtn','editZoneSceneBtnTop'];
     while (el && !el.hasAttribute('data-rubrique') && RESTE_SUR_LA_FICHE.indexOf(el.id) === -1){
       const suivant = el.nextElementSibling;
       contenu.push(el);
@@ -6692,6 +6730,60 @@ document.getElementById('clearBackImageBtn').addEventListener('click', ()=>{
   renderBackImagePreview();
 });
 
+/* Image de buste (v362) : le portrait qu'on voit pendant les dialogues. Même mécanique
+   que l'image de dos — fichier du téléphone, image hébergée, ou rien. En pied, un
+   personnage devient minuscule dans une fenêtre de dialogue ; un buste reste lisible. */
+let editBustImageDataUrl = null;
+let editBustImageRef = null;
+let editBustImagePath = null;
+function renderBustImagePreview(){
+  const wrap = document.getElementById('bustImagePreviewWrap');
+  if (editBustImageDataUrl){
+    document.getElementById('bustImagePreview').src = editBustImageDataUrl;
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+document.getElementById('editBustImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 600;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      editBustImageDataUrl = canvas.toDataURL('image/png');
+      editBustImageRef = null;
+      editBustImagePath = null;
+      renderBustImagePreview();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('editBustImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    editBustImagePath = item.path;
+    editBustImageDataUrl = resolveMediaPath(item.path);
+    editBustImageRef = null;
+    renderBustImagePreview();
+  });
+});
+document.getElementById('clearBustImageBtn').addEventListener('click', ()=>{
+  editBustImageDataUrl = null; editBustImageRef = null; editBustImagePath = null;
+  document.getElementById('editBustImageFile').value = '';
+  renderBustImagePreview();
+});
+
 function renderRoomImagePreview(){
   const wrap = document.getElementById('roomImagePreviewWrap');
   if (editRoomImageDataUrl){
@@ -6930,6 +7022,7 @@ function loadForEdit(id){
   document.getElementById('editZoneExplorable').checked = !!d.explorable;
   document.getElementById('editZoneExplorerReport').value = d.explorerReport || '';
   document.getElementById('editZoneSceneBtn').style.display = 'block';
+  document.getElementById('editZoneSceneBtnTop').style.display = 'block';
   document.getElementById('editZoneSceneHint').style.display = 'none';
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
   document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
@@ -6941,6 +7034,14 @@ function loadForEdit(id){
   renderBackImagePreview();
   if (editBackImageRef){
     internalizeSceneImage(editBackImageRef).then(url=>{ editBackImageDataUrl = url; renderBackImagePreview(); }).catch(()=>{});
+  }
+  editBustImagePath = d.bustImagePath || null;
+  editBustImageDataUrl = editBustImagePath ? resolveMediaPath(editBustImagePath) : null;
+  editBustImageRef = editBustImagePath ? null : (d.bustImageRef || null);
+  document.getElementById('editBustImageFile').value = '';
+  renderBustImagePreview();
+  if (editBustImageRef){
+    internalizeSceneImage(editBustImageRef).then(url=>{ editBustImageDataUrl = url; renderBustImagePreview(); }).catch(()=>{});
   }
   editRoomImagePath = d.roomImagePath || null;
   editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
@@ -7066,6 +7167,7 @@ function resetForm(){
   document.getElementById('editZoneExplorable').checked = false;
   document.getElementById('editZoneExplorerReport').value = '';
   document.getElementById('editZoneSceneBtn').style.display = 'none';
+  document.getElementById('editZoneSceneBtnTop').style.display = 'none';
   document.getElementById('editZoneSceneHint').style.display = 'block';
   pendingCombatPortraitCrop = null;
   document.getElementById('editPortraitCropBtn').style.display = 'none';
@@ -7117,6 +7219,9 @@ function resetForm(){
   editBackImageDataUrl = null; editBackImageRef = null; editBackImagePath = null;
   document.getElementById('editBackImageFile').value = '';
   renderBackImagePreview();
+  editBustImageDataUrl = null; editBustImageRef = null; editBustImagePath = null;
+  document.getElementById('editBustImageFile').value = '';
+  renderBustImagePreview();
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
@@ -7607,6 +7712,11 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   if (!backImagePath && !backImageRef && editBackImageDataUrl){
     backImageRef = await externalizeSceneImage(editBackImageDataUrl);
   }
+  const bustImagePath = editBustImagePath || null;
+  let bustImageRef = bustImagePath ? null : (editBustImageRef || null);
+  if (!bustImagePath && !bustImageRef && editBustImageDataUrl){
+    bustImageRef = await externalizeSceneImage(editBustImageDataUrl);
+  }
   const roomImagePath = editRoomImagePath || null;
   let roomImageRef = roomImagePath ? null : (editRoomImageRef || null);
   if (editRoomImageDataUrl && editRoomImageDataUrl.startsWith('data:')){
@@ -7616,7 +7726,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -15979,6 +16089,13 @@ document.getElementById('sceneEditorImageFile').addEventListener('change', (e)=>
 function openSceneEditor(creatureId){
   if (!creatureId){ showToast('Enregistre d\'abord ce PNJ'); return; }
   if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
+  /* Les fenêtres de rubrique sont posées à 4600, l'éditeur de scène à 4000 : ouvert
+     depuis l'une d'elles, il se retrouvait caché derrière. On les referme donc — on
+     revient de toute façon sur la fiche en quittant l'éditeur. */
+  Object.keys(RUBRIQUES_FENETRES).forEach(cle=>{
+    const f = RUBRIQUES_FENETRES[cle];
+    if (f) f.classList.remove('show');
+  });
   sceneEditorZoneId = creatureId;
   sceneEditorScenes = [{ id: genSceneId(), name: 'Scène 1', imageUrl: '', points: [] }];
   sceneEditorStartSceneId = sceneEditorScenes[0].id;
@@ -16048,6 +16165,7 @@ function measureColdZoneLoadTime(scenesArr){
   )).then(()=> (performance.now() - t0) / 1000);
 }
 document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
+document.getElementById('editZoneSceneBtnTop').addEventListener('click', ()=> openSceneEditor(editingId));
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorFull').classList.remove('show');
 });
