@@ -2642,39 +2642,16 @@ function hideAuthScreen(){
   authOverlay.classList.remove('show');
 }
 
-/* Connexion Google : on tente la fenêtre pop-up, et si l'appareil la refuse
-   (cas courant d'une PWA installée sur téléphone) on bascule sur la redirection.
-   Sans ce repli, un joueur sur mobile n'avait aucun moyen de se reconnecter. */
-function connexionGoogle(){
-  if (!mascottoGoogleProvider || !auth){ showToast('Connexion indisponible'); return; }
-  showAuthScreen('Connexion en cours…', false);
-  auth.signInWithPopup(mascottoGoogleProvider).catch((err)=>{
-    if (err.code === 'auth/popup-closed-by-user'){ afficherChoixConnexion(); return; }
-    if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/cancelled-popup-request'){
-      auth.signInWithRedirect(mascottoGoogleProvider).catch((e2)=>{
-        afficherChoixConnexion();
-        showToast('Échec de connexion : ' + e2.message);
-      });
-      return;
-    }
-    afficherChoixConnexion();
-    showToast('Échec de connexion : ' + err.message);
-  });
-}
-
-/* Écran de choix : c'est lui qui s'affiche désormais quand personne n'est connecté,
-   au lieu de fabriquer un profil invité en douce. */
-function afficherChoixConnexion(){
-  authStatus.textContent = 'Connecte-toi avec ton compte Google pour retrouver ta progression, ou continue avec un nouveau profil invité.';
-  googleSignInBtn.textContent = 'Se connecter avec Google';
-  googleSignInBtn.style.display = 'block';
-  guestContinueBtn.style.display = 'block';
-  authOverlay.classList.add('show');
-}
-
 googleSignInBtn.addEventListener('click', ()=>{
-  if (googleSignInBtn.textContent === 'Réessayer'){ location.reload(); return; }
-  connexionGoogle();
+  if (awaitingGoogleReSignIn && mascottoGoogleProvider && auth){
+    auth.signInWithPopup(mascottoGoogleProvider).catch((err)=>{
+      if (err.code === 'auth/popup-closed-by-user') return;
+      if (err.code === 'auth/popup-blocked'){ showToast('Fenêtre bloquée — autorise les pop-ups pour ce site et réessaie'); return; }
+      showToast('Échec de connexion : ' + err.message);
+    });
+  } else {
+    location.reload();
+  }
 });
 guestContinueBtn.addEventListener('click', ()=>{
   awaitingGoogleReSignIn = false;
@@ -2698,13 +2675,7 @@ document.getElementById('agencySaveBtn').addEventListener('click', ()=>{
 document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
   const pseudo = document.getElementById('pseudoInput').value.trim();
   if (!pseudo){ showToast('Choisis un pseudo'); return; }
-  const ref = db.collection('players').doc(currentUser.uid);
-  ref.get().then((doc)=>{
-    /* coins et createdAt ne s'écrivent qu'à la création. Sinon, un joueur renvoyé
-       ici par erreur repartait avec 500 pièces à la place de son vrai solde. */
-    const donnees = (doc && doc.exists) ? { pseudo } : { pseudo, createdAt: Date.now(), coins: 500 };
-    return ref.set(donnees, { merge: true });
-  })
+  db.collection('players').doc(currentUser.uid).set({ pseudo, createdAt: Date.now(), coins: 500 }, { merge: true })
     .then(()=>{
       currentPseudo = pseudo;
       document.getElementById('pseudoOverlay').classList.remove('show');
@@ -2744,10 +2715,9 @@ function onSignedIn(user){
       hideAuthScreen();
       pseudoOverlay.classList.add('show');
     }
-  }).catch((err)=>{
-    /* Une lecture qui échoue (réseau coupé, Firestore indisponible) n'est PAS
-       un nouveau joueur : l'envoyer choisir un pseudo lui ferait écraser sa fiche. */
-    showAuthScreen('Impossible de lire ton profil (' + (err && err.code ? err.code : 'réseau') + '). Vérifie ta connexion et réessaie.', true);
+  }).catch(()=>{
+    hideAuthScreen();
+    pseudoOverlay.classList.add('show');
   });
 }
 
@@ -2779,12 +2749,17 @@ try {
       if (user){
         awaitingGoogleReSignIn = false;
         onSignedIn(user);
+      } else if (awaitingGoogleReSignIn){
+        authStatus.textContent = 'Déconnecté(e). Connecte-toi avec un compte Google, ou continue avec un nouveau profil invité.';
+        googleSignInBtn.textContent = 'Se connecter avec Google';
+        googleSignInBtn.style.display = 'block';
+        guestContinueBtn.style.display = 'block';
+        authOverlay.classList.add('show');
       } else {
-        /* Personne n'est connecté. Avant, on créait ici un profil invité tout neuf :
-           un joueur ayant lié Google mais dont la session locale avait disparu
-           (données effacées, purge du navigateur, autre appareil) se retrouvait
-           donc sur un compte vide, sans jamais qu'on lui propose Google. */
-        afficherChoixConnexion();
+        showAuthScreen('Connexion en cours…', false);
+        auth.signInAnonymously().catch((err)=>{
+          showAuthScreen('Erreur : ' + err.code + ' — ' + err.message, true);
+        });
       }
     }, (err)=>{
       showAuthScreen('Erreur d\'écoute : ' + (err && err.message ? err.message : err), true);
@@ -14361,6 +14336,7 @@ const SCENE_POINT_TYPES = [
   { id:'sortie_zone', label:'🏳️ Sortie de zone' },
   { id:'decor', label:'🖼️ Décor' },
   { id:'image', label:'🔍 Image en grand' },
+  { id:'coffre', label:'📦 Coffre' },
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
   { id:'missions', label:'📨 Terminal de missions' },
   { id:'infirmerie', label:'🏥 Infirmerie (capsules de soin)' },
@@ -14981,7 +14957,31 @@ function getSceneImageDisplayRect(wrap){
   };
 }
 
+/* ---------- Coffres (v361) ----------
+   Un coffre n'est pas un point qui disparaît : il CHANGE d'image. L'état durable
+   (déjà fouillé ou non) est celui que gère déjà `resetMode` ; on n'ajoute ici qu'un
+   état d'affichage pour la session, qui sert à deux choses — refermer un coffre à la
+   main, et montrer l'image ouverte même en mode « illimité », où rien n'est mémorisé. */
+let chestVisualState = {}; // pointId -> 'open' | 'closed'
+
+function chestOpenImageUrl(pt){
+  if (pt.openImageUrl) return pt.openImageUrl;
+  if (pt.openImagePath) return resolveMediaPath(pt.openImagePath);
+  return '';
+}
+function isChestOpen(pt){
+  const forced = chestVisualState[pt.id];
+  if (forced) return forced === 'open';
+  return !isScenePointAvailable(pt);
+}
+
 function pointEffectiveImageUrl(pt){
+  /* Le coffre ouvert montre sa seconde image ; sans seconde image on garde la première,
+     pour qu'un coffre mal configuré reste visible au lieu de disparaître du décor. */
+  if (pt.type === 'coffre' && isChestOpen(pt)){
+    const ouverte = chestOpenImageUrl(pt);
+    if (ouverte) return ouverte;
+  }
   if (pt.type === 'objet' && !pt.useCustomImage){
     const it = items.find(i=>i.id===pt.itemId);
     if (it && it.imageUrl) return it.imageUrl;
@@ -15665,6 +15665,182 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'coffre'){
+    if (!pt.resetMode) pt.resetMode = 'perPlayer';
+    if (!pt.resetMinutes) pt.resetMinutes = 60;
+    if (!pt.lockType) pt.lockType = 'none';
+    if (!pt.trapMode) pt.trapMode = 'flat';
+    if (!pt.trapTarget) pt.trapTarget = 'team';
+    if (!Array.isArray(pt.loot)) pt.loot = [];
+    const ouverte = chestOpenImageUrl(pt);
+    const lockIt = items.find(i=>i.id===pt.lockItemId);
+    const lootHtml = pt.loot.map((l,i)=>{
+      const it = items.find(x=>x.id===l.itemId);
+      return `<div class="field-row" style="align-items:center; margin-top:6px;">
+        <button type="button" class="btn-secondary" data-coffre-loot-pick="${i}" style="flex:2; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${it ? (itemThumbHtml(it)+' '+it.name) : '— choisir —'}</button>
+        <input type="number" data-coffre-loot-qty="${i}" class="field-input" value="${l.qty||1}" min="1" style="flex:1;" title="Quantité">
+        <input type="number" data-coffre-loot-chance="${i}" class="field-input" value="${l.chance==null?100:l.chance}" min="1" max="100" style="flex:1;" title="Chance %">
+        <button type="button" class="btn-secondary" data-coffre-loot-del="${i}" style="flex:0 0 auto; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+      </div>`;
+    }).join('');
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Le joueur touche le coffre : il s'ouvre, l'image change, et il reçoit ce qu'il y a dedans. L'image FERMÉE est celle réglée dans « Apparence du point ».</p>
+
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Image une fois ouvert</div>
+      ${ouverte ? `<img src="${ouverte}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image d'ouverture : le coffre gardera son image fermée.</p>`}
+      <button type="button" class="btn-secondary" data-coffre-img-github style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
+      <button type="button" class="btn-secondary" data-coffre-img-pick style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🖼️ Importer depuis le téléphone</button>
+      ${ouverte ? `<button type="button" class="btn-secondary" data-coffre-img-clear style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer l'image</button>` : ''}
+      ${pt.openImagePath ? `<p class="meta" style="margin:6px 0 0; word-break:break-all;">📁 ${pt.openImagePath}</p>` : ''}
+      <input type="file" id="scenePointChestImgFile" accept="image/*" style="display:none;">
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Message à l'ouverture</div>
+      <input type="text" data-coffre-msg class="field-input" placeholder="Ex. Une vieille armoire pleine de linge." value="${(pt.message||'').replace(/"/g,'&quot;')}">
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Contenu</div>
+      ${pt.loot.length ? lootHtml : `<p class="meta" style="margin:0;">Vide pour l'instant. Quantité au milieu, chance sur cent à droite : 100 = toujours donné.</p>`}
+      <button type="button" class="btn-secondary" data-coffre-loot-add style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">＋ Ajouter un objet</button>
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Verrouillage</div>
+      <select data-coffre-lock class="field-input">
+        <option value="none" ${pt.lockType==='none'?'selected':''}>Aucun</option>
+        <option value="item" ${pt.lockType==='item'?'selected':''}>Objet requis (à posséder, pas consommé)</option>
+        <option value="code" ${pt.lockType==='code'?'selected':''}>Code numérique</option>
+      </select>
+      <div data-coffre-lock-item-wrap style="display:${pt.lockType==='item'?'block':'none'}; margin-top:6px;">
+        <button type="button" class="btn-secondary" data-coffre-lock-item-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${lockIt ? (itemThumbHtml(lockIt)+' '+lockIt.name) : '— choisir l\'objet —'}</button>
+      </div>
+      <div data-coffre-lock-code-wrap style="display:${pt.lockType==='code'?'block':'none'}; margin-top:6px;">
+        <input type="text" inputmode="numeric" data-coffre-lock-code class="field-input" placeholder="Ex. 1234" value="${pt.lockCode||''}">
+      </div>
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Piège</div>
+      <label style="display:flex; align-items:center; gap:8px; color:rgba(255,255,255,.85);">
+        <input type="checkbox" data-coffre-trap ${pt.trapEnabled?'checked':''}> Blesse l'équipe à l'ouverture
+      </label>
+      <div data-coffre-trap-wrap style="display:${pt.trapEnabled?'block':'none'}; margin-top:6px;">
+        <div class="field-row" style="align-items:center;">
+          <select data-coffre-trap-mode class="field-input" style="flex:2;">
+            <option value="flat" ${pt.trapMode==='flat'?'selected':''}>Points de vie fixes</option>
+            <option value="percent" ${pt.trapMode==='percent'?'selected':''}>% des PV max</option>
+          </select>
+          <input type="number" data-coffre-trap-amount class="field-input" value="${pt.trapAmount==null?10:pt.trapAmount}" min="1" style="flex:1;">
+        </div>
+        <select data-coffre-trap-target class="field-input" style="margin-top:6px;">
+          <option value="team" ${pt.trapTarget==='team'?'selected':''}>Toute l'équipe active</option>
+          <option value="one" ${pt.trapTarget==='one'?'selected':''}>Un combattant au hasard</option>
+        </select>
+        <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Les PV ne se régénèrent pas seuls : il faudra du repos ou une potion. Un combattant déjà K.O. est épargné.</p>
+      </div>
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Refermer</div>
+      <label style="display:flex; align-items:center; gap:8px; color:rgba(255,255,255,.85);">
+        <input type="checkbox" data-coffre-reclose ${pt.chestReclosable?'checked':''}> On peut le refermer en le touchant
+      </label>
+      <div data-coffre-emptymsg-wrap style="display:${pt.chestReclosable?'none':'block'}; margin-top:6px;">
+        <input type="text" data-coffre-emptymsg class="field-input" placeholder="Ex. Tu as déjà fouillé ça." value="${(pt.emptyMessage||'').replace(/"/g,'&quot;')}">
+      </div>
+
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition du contenu</div>
+      <select data-coffre-reset class="field-input">
+        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Chaque joueur peut le fouiller une fois</option>
+        <option value="once" ${pt.resetMode==='once'?'selected':''}>Une seule fois, pour tout le monde</option>
+        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>Se remplit à nouveau après un délai</option>
+        <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>Toujours ouvrable</option>
+      </select>
+      <div data-coffre-reset-min-wrap style="display:${pt.resetMode==='timed'?'block':'none'}; margin-top:6px;">
+        <input type="number" data-coffre-reset-min class="field-input" value="${pt.resetMinutes}" min="1" placeholder="Minutes avant de se remplir">
+      </div>
+    `;
+
+    const gh = typeWrap.querySelector('[data-coffre-img-github]');
+    if (gh) gh.addEventListener('click', ()=>{
+      openGithubFilePicker(null, (item)=>{
+        pt.openImagePath = item.path;
+        pt.openImageUrl = resolveMediaPath(item.path);
+        renderSceneDetailTypeSpecific(pt);
+      });
+    });
+    const pick = typeWrap.querySelector('[data-coffre-img-pick]');
+    if (pick) pick.addEventListener('click', ()=> document.getElementById('scenePointChestImgFile').click());
+    const fileInput = typeWrap.querySelector('#scenePointChestImgFile');
+    if (fileInput) fileInput.addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        const im = new Image();
+        im.onload = ()=>{
+          pt.openImageUrl = compressPointImageDataUrl(im);
+          pt.openImagePath = null;
+          renderSceneDetailTypeSpecific(pt);
+        };
+        im.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    const clr = typeWrap.querySelector('[data-coffre-img-clear]');
+    if (clr) clr.addEventListener('click', ()=>{
+      pt.openImageUrl = null; pt.openImagePath = null;
+      renderSceneDetailTypeSpecific(pt);
+    });
+
+    typeWrap.querySelector('[data-coffre-msg]').addEventListener('input', (e)=>{ pt.message = e.target.value; });
+
+    typeWrap.querySelector('[data-coffre-loot-add]').addEventListener('click', ()=>{
+      pt.loot.push({ itemId:null, qty:1, chance:100 });
+      renderSceneDetailTypeSpecific(pt);
+    });
+    typeWrap.querySelectorAll('[data-coffre-loot-pick]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const i = +el.dataset.coffreLootPick;
+        openRecipeItemChooser((itemId)=>{ pt.loot[i].itemId = itemId; renderSceneDetailTypeSpecific(pt); });
+      });
+    });
+    typeWrap.querySelectorAll('[data-coffre-loot-qty]').forEach(el=>{
+      el.addEventListener('input', ()=>{ pt.loot[+el.dataset.coffreLootQty].qty = Math.max(1, +el.value || 1); });
+    });
+    typeWrap.querySelectorAll('[data-coffre-loot-chance]').forEach(el=>{
+      el.addEventListener('input', ()=>{ pt.loot[+el.dataset.coffreLootChance].chance = Math.max(1, Math.min(100, +el.value || 100)); });
+    });
+    typeWrap.querySelectorAll('[data-coffre-loot-del]').forEach(el=>{
+      el.addEventListener('click', ()=>{ pt.loot.splice(+el.dataset.coffreLootDel, 1); renderSceneDetailTypeSpecific(pt); });
+    });
+
+    typeWrap.querySelector('[data-coffre-lock]').addEventListener('change', (e)=>{
+      pt.lockType = e.target.value; renderSceneDetailTypeSpecific(pt);
+    });
+    const lockPick = typeWrap.querySelector('[data-coffre-lock-item-pick]');
+    if (lockPick) lockPick.addEventListener('click', ()=>{
+      openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneDetailTypeSpecific(pt); });
+    });
+    const lockCode = typeWrap.querySelector('[data-coffre-lock-code]');
+    if (lockCode) lockCode.addEventListener('input', (e)=>{ pt.lockCode = e.target.value.replace(/[^0-9]/g, ''); });
+
+    typeWrap.querySelector('[data-coffre-trap]').addEventListener('change', (e)=>{
+      pt.trapEnabled = e.target.checked; renderSceneDetailTypeSpecific(pt);
+    });
+    const tm = typeWrap.querySelector('[data-coffre-trap-mode]');
+    if (tm) tm.addEventListener('change', (e)=>{ pt.trapMode = e.target.value; });
+    const ta = typeWrap.querySelector('[data-coffre-trap-amount]');
+    if (ta) ta.addEventListener('input', (e)=>{ pt.trapAmount = Math.max(1, +e.target.value || 1); });
+    const tt = typeWrap.querySelector('[data-coffre-trap-target]');
+    if (tt) tt.addEventListener('change', (e)=>{ pt.trapTarget = e.target.value; });
+
+    typeWrap.querySelector('[data-coffre-reclose]').addEventListener('change', (e)=>{
+      pt.chestReclosable = e.target.checked; renderSceneDetailTypeSpecific(pt);
+    });
+    const em = typeWrap.querySelector('[data-coffre-emptymsg]');
+    if (em) em.addEventListener('input', (e)=>{ pt.emptyMessage = e.target.value; });
+
+    typeWrap.querySelector('[data-coffre-reset]').addEventListener('change', (e)=>{
+      pt.resetMode = e.target.value; renderSceneDetailTypeSpecific(pt);
+    });
+    const rm = typeWrap.querySelector('[data-coffre-reset-min]');
+    if (rm) rm.addEventListener('input', (e)=>{ pt.resetMinutes = Math.max(1, +e.target.value || 1); });
+    return;
+  }
+
   if (pt.type === 'decor'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Point purement décoratif : image affichée sur la scène, sans aucune interaction possible pour le joueur (un tap dessus passe à travers, comme s'il n'était pas là).</p>`;
     return;
@@ -15883,6 +16059,51 @@ document.getElementById('sceneEditorSaveBtn').addEventListener('click', async ()
 
 
 /* Vue joueur (comportements : sortie ferme la scène, objet est donné une fois, dialogue affiche un texte) */
+/* Butin d'un coffre : chaque ligne a sa propre chance sur cent, tirée séparément.
+   Une chance vide ou à 100 est un objet garanti. Rien ne sort ? on le dit, sinon le
+   joueur croit à un bug. Renvoie le nombre de lignes effectivement données. */
+function donnerButinCoffre(pt){
+  const table = Array.isArray(pt.loot) ? pt.loot.filter(l=> l && l.itemId) : [];
+  let donnes = 0;
+  table.forEach(l=>{
+    const chance = (l.chance == null || l.chance === '') ? 100 : Math.max(0, Math.min(100, +l.chance));
+    if (Math.random() * 100 >= chance) return;
+    grantItemByIdToPlayer(l.itemId, l.qty || 1);
+    donnes++;
+  });
+  return donnes;
+}
+
+/* Piège : des dégâts secs, sans combat. Les PV étant persistants depuis la v215, ils
+   coûtent vraiment quelque chose — du repos ou une potion — et peuvent mettre K.O.
+   On ne touche jamais un combattant déjà à terre : l'achever n'ajouterait rien. */
+function appliquerPiegeCoffre(pt){
+  if (!pt.trapEnabled) return null;
+  let cibles = recruits.filter(r=> activeTeamIds.includes(r.id) && !recruitIsKo(r));
+  if (!cibles.length) return null;
+  if (pt.trapTarget === 'one'){
+    cibles = [cibles[Math.floor(Math.random() * cibles.length)]];
+  }
+  const touches = [];
+  cibles.forEach(r=>{
+    const max = recruitMaxHp(r);
+    const brut = (pt.trapMode === 'percent')
+      ? Math.round(max * (+pt.trapAmount || 10) / 100)
+      : (+pt.trapAmount || 10);
+    const degats = Math.max(1, brut);
+    const avant = recruitEffectiveHp(r);
+    const apres = Math.max(0, avant - degats);
+    /* On repart de recruitEffectiveHp : la valeur enregistrée peut être en retard sur ce
+       que le repos a fait remonter depuis. On coupe aussi le repos en cours, sinon les PV
+       remonteraient encore à partir d'un instant devenu faux. */
+    r.currentHp = apres; r.restingSince = null;
+    if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: apres, restingSince: null })
+      .catch((err)=> showToast('Dégâts non enregistrés : ' + err.message));
+    touches.push({ nom: r.name, degats: avant - apres, ko: apres <= 0 });
+  });
+  return touches;
+}
+
 function grantItemByIdToPlayer(itemId, quantity){
   if (!currentUser || !db) return;
   const it = items.find(i=>i.id===itemId);
@@ -16126,6 +16347,64 @@ async function renderSceneViewCurrentScene(){
           return;
         }
         showToast('Ce point n\'a pas encore d\'image configurée');
+      };
+    } else if (pt.type === 'coffre'){
+      wrapPointActions[pt.id] = ()=>{
+        /* Coffre déjà ouvert : soit on le referme (et il redevient ouvrable seulement si
+           son mode de réapparition le permet), soit on rappelle qu'il est vide. */
+        if (isChestOpen(pt)){
+          if (pt.chestReclosable){
+            chestVisualState[pt.id] = 'closed';
+            renderSceneViewCurrentScene();
+          } else {
+            showToast(pt.emptyMessage || 'Tu as déjà fouillé ça.');
+          }
+          return;
+        }
+
+        const ouvrir = ()=>{
+          const touches = appliquerPiegeCoffre(pt);
+          const donnes = donnerButinCoffre(pt);
+
+          chestVisualState[pt.id] = 'open';
+          markScenePointTaken(pt).catch(()=>{});
+
+          /* Le message d'abord, les conséquences ensuite : le joueur lit ce qu'il a
+             ouvert, puis voit passer les objets et les dégâts. */
+          const lignes = [];
+          if (pt.message) lignes.push(pt.message);
+          if (touches && touches.length){
+            const kos = touches.filter(t=> t.ko);
+            lignes.push('💥 ' + touches.map(t=> t.nom + ' −' + t.degats + ' PV').join(', ')
+              + (kos.length ? ' — ' + kos.map(t=> t.nom).join(', ') + ' est K.O.' : ''));
+          }
+          if (!donnes && !(touches && touches.length) && !pt.message) lignes.push('Il n\'y a rien à l\'intérieur.');
+          if (lignes.length){
+            document.getElementById('sceneDialogueText').textContent = lignes.join('\n\n');
+            document.getElementById('sceneDialogueOverlay').classList.add('show');
+          }
+          renderSceneViewCurrentScene();
+        };
+
+        /* Même verrouillage que les portes : un objet qu'on garde, ou un code au pavé. */
+        if (pt.lockType === 'item'){
+          if (!pt.lockItemId){ ouvrir(); return; }
+          if (!currentUser || !db){ ouvrir(); return; }
+          db.collection('players').doc(currentUser.uid).get().then((freshDoc)=>{
+            const inv = (freshDoc.exists && freshDoc.data().inventory) || {};
+            if ((inv[pt.lockItemId] || 0) > 0){
+              ouvrir();
+            } else {
+              const it = items.find(i=>i.id===pt.lockItemId);
+              showToast('🔒 Il te faut ' + (it ? it.name : 'un objet particulier') + ' pour ouvrir');
+            }
+          });
+        } else if (pt.lockType === 'code'){
+          demanderCode('🔒 Coffre verrouillé', 'Entre le code', (saisi)=> saisi === (pt.lockCode || ''))
+            .then((saisi)=>{ if (saisi !== null) ouvrir(); });
+        } else {
+          ouvrir();
+        }
       };
     } else if (pt.type === 'objet'){
       wrapPointActions[pt.id] = ()=>{
@@ -19540,6 +19819,8 @@ async function importerScenario(sc){
           /* Un point « image en grand » ouvre une image plein écran : l'import
              n'en apporte aucune, il faut la poser à la main dans l'éditeur. */
           if (pt.type === 'image') journal.push('⚠️ Zone « ' + z.name + ' » : point « image en grand » — pense à y poser l\'image dans l\'éditeur');
+          if (pt.type === 'coffre' && !pt.openImageUrl && !pt.openImagePath) journal.push('⚠️ Zone « ' + z.name + ' » : coffre sans image d\'ouverture — il gardera son image fermée');
+          if (pt.type === 'coffre' && !(pt.loot||[]).some(l=>l && l.itemId) && !pt.trapEnabled && !pt.message) journal.push('⚠️ Zone « ' + z.name + ' » : coffre vide — ni objet, ni piège, ni message');
           if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
           if (pt.lockItem){
             base.lockType = 'item';
