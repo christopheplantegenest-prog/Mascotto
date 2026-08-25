@@ -804,7 +804,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v371</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v373</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6007,6 +6007,9 @@ function fermerDialogue(){
   if (typeof suite === 'function'){
     try { suite(); } catch(e){ /* une conséquence ratée ne doit pas bloquer la fermeture */ }
   }
+  /* Un deuxième agresseur peut attendre son tour : on lui laisse le temps que la fenêtre
+     se referme avant de le lancer, sinon les deux dialogues se chevauchent. */
+  setTimeout(relancerAgressionsSiScene, 400);
 }
 
 let retourDialogueCombat = null;
@@ -16019,6 +16022,11 @@ function renderSceneDetailTypeSpecific(pt){
         <span style="font-size:13px; color:rgba(255,255,255,.9);">🏆 Ne plus agresser une fois battu</span>
       </label>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px; padding-left:22px;">Le jour où le joueur gagne le combat, ce personnage cesse de lui foncer dessus. Il reste là, on peut toujours l'aborder — il a simplement compris.</p>
+      <div style="padding-left:22px; margin-top:8px;">
+        <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Ordre d'agression</div>
+        <input type="number" id="scenePointPnjAggroOrdre" class="field-input" min="1" max="99" placeholder="laisser vide" value="${pt.agressionOrdre || ''}">
+        <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Quand plusieurs personnages agressent dans la même pièce, ils viennent l'un après l'autre : le plus petit numéro parle en premier. Sans numéro, ils passent après les autres, dans l'ordre où tu les as posés.</p>
+      </div>
       <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
         <input type="checkbox" id="scenePointPnjPartApres" ${pt.partApresDialogue ? 'checked' : ''} style="width:auto;">
         <span style="font-size:13px; color:rgba(255,255,255,.9);">👋 Disparaît quand son dialogue se referme</span>
@@ -16029,6 +16037,11 @@ function renderSceneDetailTypeSpecific(pt){
     if (caseAuto) caseAuto.addEventListener('change', (e)=>{ pt.autoTrigger = e.target.checked; });
     const caseAggro1 = typeWrap.querySelector('#scenePointPnjAggroUneFois');
     if (caseAggro1) caseAggro1.addEventListener('change', (e)=>{ pt.agressionUneFois = e.target.checked; });
+    const champOrdre = typeWrap.querySelector('#scenePointPnjAggroOrdre');
+    if (champOrdre) champOrdre.addEventListener('input', (e)=>{
+      const v = parseInt(e.target.value, 10);
+      pt.agressionOrdre = (isNaN(v) || v < 1) ? null : Math.min(99, v);
+    });
     const casePart = typeWrap.querySelector('#scenePointPnjPartApres');
     if (casePart) casePart.addEventListener('change', (e)=>{ pt.partApresDialogue = e.target.checked; });
 
@@ -16653,6 +16666,7 @@ function openSceneView(creature, resumeSceneId, opts){
     sceneViewCreature = creature;
     sceneViewScenes = norm.scenes;
     sceneViewCurrentSceneId = (resumeSceneId && norm.scenes.some(s=>s.id===resumeSceneId)) ? resumeSceneId : norm.startSceneId;
+    agressionsJouees = new Set();   // on entre dans la zone : personne n'est encore venu
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
@@ -16736,6 +16750,7 @@ async function renderSceneViewCurrentScene(){
         const proceed = async ()=>{
           if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
             sceneViewCurrentSceneId = pt.targetSceneId;
+            agressionsJouees = new Set();   // nouvelle pièce, nouveaux agresseurs
             renderSceneViewCurrentScene();
             if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
           } else {
@@ -16944,15 +16959,24 @@ async function renderSceneViewCurrentScene(){
    touche — il ouvre son dialogue tout seul. Le petit délai laisse le décor apparaître : une
    fenêtre qui surgit sur un écran encore noir donne l'impression d'un bug, pas d'une embuscade. */
 let agressionEnCours = false;
+/* Agresseurs déjà venus au joueur PENDANT CETTE VISITE. Sans cette mémoire, on retombait
+   toujours sur le même : il parlait, refermait, et se relançait aussitôt — le deuxième
+   agresseur d'une scène n'avait jamais son tour. Remis à zéro à chaque entrée dans une scène. */
+let agressionsJouees = new Set();
 function declencherAgressions(sc, actions){
   if (agressionEnCours) return;
   if (document.getElementById('overlay').classList.contains('show')) return;   // déjà en train de parler
   if (combatState) return;                                                     // ou de se battre
-  const pt = (sc.points || []).find(p=> p.type === 'pnj' && p.autoTrigger
+  const candidats = (sc.points || []).filter(p=> p.type === 'pnj' && p.autoTrigger
     && p.linkedPnjId && isScenePointAvailable(p) && typeof actions[p.id] === 'function'
+    && !agressionsJouees.has(p.id)
     /* Une agression « une seule fois » ne se relance pas une fois son auteur battu : il
        reste sur place et se laisse aborder, mais il ne fonce plus sur le joueur. */
     && !(p.agressionUneFois && playerCombatsWon[p.linkedPnjId]));
+  /* Ordre choisi dans l'éditeur : le plus petit numéro passe en premier. Sans numéro, on
+     garde l'ordre des points dans la scène — ceux qui n'en ont pas passent en dernier. */
+  candidats.sort((a,b)=> ((a.agressionOrdre || 999) - (b.agressionOrdre || 999)));
+  const pt = candidats[0];
   if (!pt) return;
   agressionEnCours = true;
   setTimeout(()=>{
@@ -16961,8 +16985,19 @@ function declencherAgressions(sc, actions){
     if (!document.getElementById('sceneViewFull').classList.contains('show')) return;
     if (document.getElementById('overlay').classList.contains('show') || combatState) return;
     const action = sceneViewPointActions[pt.id];
-    if (typeof action === 'function') action();
+    if (typeof action !== 'function') return;
+    agressionsJouees.add(pt.id);   // marqué au moment où il parle, pas avant
+    action();
   }, 600);
+}
+
+/* Après chaque dialogue refermé dans une scène, on regarde si un AUTRE agresseur attend
+   son tour : plusieurs personnages peuvent se succéder à l'entrée d'un lieu. */
+function relancerAgressionsSiScene(){
+  if (!document.getElementById('sceneViewFull').classList.contains('show')) return;
+  if (combatState) return;
+  const sc = sceneViewScenes.find(s=> s.id === sceneViewCurrentSceneId);
+  if (sc) declencherAgressions(sc, sceneViewPointActions);
 }
 
 /* Un seul listener délégué : trouve le point cliqué de haut en bas (ordre du DOM = ordre des plans),
