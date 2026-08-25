@@ -804,7 +804,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v367</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v369</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4473,10 +4473,13 @@ function fenetreEffetsReponse(ch){
     /* --- conditions : ce que le joueur a déjà dit, ici ou ailleurs. Elles se CUMULENT :
            la réponse n'apparaît que si toutes sont vraies. --- */
     const toutesLesConditions = ()=> (ch.showIfList || []).concat(
-      (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
+      (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'combat')) ? [ch.showIf] : []);
 
     const decrireUne = (cond)=>{
       const chezQui = cond.creatureId ? ((ficheParId(cond.creatureId) || {}).name || 'quelqu\'un') : 'ce personnage';
+      if (cond.kind === 'combat'){
+        return (cond.state === 'not_won' ? 'il n\'a PAS encore battu ' : 'il a déjà battu ') + chezQui;
+      }
       const trouve = choixConnusPartout().find(o=> o.id === cond.choiceId);
       const quoi = trouve ? ('« ' + trouve.reponse + ' »') : 'une réponse supprimée';
       return (cond.taken === 'no' ? 'il n\'a PAS dit ' : 'il a dit ') + quoi + ' à ' + chezQui;
@@ -4504,18 +4507,26 @@ function fenetreEffetsReponse(ch){
          ne se déclenche pas oblige à deviner : est-ce le réglage, ou le jeu qui n'a pas
          retenu la phrase ? Ici, on voit lequel des deux cloche. */
       const chezQui2 = cond.creatureId || (activeCreature ? activeCreature.id : editingId);
-      const pris = !!playerUsedChoices[choiceUsedKey(chezQui2, cond.choiceId)];
-      const vraie = (cond.taken === 'no') ? !pris : pris;
+      let vraie, precision = '';
+      if (cond.kind === 'combat'){
+        const battu = !!playerCombatsWon[chezQui2];
+        vraie = (cond.state === 'not_won') ? !battu : battu;
+        precision = battu ? '' : ' — tu ne l\'as pas encore battu';
+      } else {
+        const pris = !!playerUsedChoices[choiceUsedKey(chezQui2, cond.choiceId)];
+        vraie = (cond.taken === 'no') ? !pris : pris;
+        precision = pris ? '' : ' — cette phrase n\'est pas encore enregistrée comme dite';
+      }
       txt.innerHTML = '• ' + decrireUne(cond)
         + '<div class="meta" style="font-size:11px; margin-top:2px; color:' + (vraie ? '#5B9E5B' : 'var(--danger)') + ';">'
         + (vraie ? '✔ vraie en ce moment pour toi' : '✘ fausse en ce moment pour toi')
-        + (pris ? '' : ' — cette phrase n\'est pas encore enregistrée comme dite')
+        + precision
         + '</div>';
       l.appendChild(txt);
 
       /* La condition cite une phrase d'un AUTRE personnage : on doit pouvoir aller la lire
          sans démonter tout ce qu'on est en train d'écrire. */
-      if (cond.creatureId && cond.creatureId !== editingId){
+      if (cond.kind !== 'combat' && cond.creatureId && cond.creatureId !== editingId){
         const cible = ficheParId(cond.creatureId);
         const voir = document.createElement('button');
         voir.type = 'button';
@@ -4533,7 +4544,11 @@ function fenetreEffetsReponse(ch){
       inv.style.cssText = 'flex:0 0 auto; padding:6px 8px;';
       inv.textContent = '↔';
       inv.title = 'Inverser : exiger le contraire';
-      inv.addEventListener('click', ()=>{ cond.taken = (cond.taken === 'no') ? 'yes' : 'no'; dessiner(); });
+      inv.addEventListener('click', ()=>{
+        if (cond.kind === 'combat') cond.state = (cond.state === 'not_won') ? 'won' : 'not_won';
+        else cond.taken = (cond.taken === 'no') ? 'yes' : 'no';
+        dessiner();
+      });
       l.appendChild(inv);
 
       const del = document.createElement('button');
@@ -4554,7 +4569,10 @@ function fenetreEffetsReponse(ch){
     ajoutCond.className = 'btn-secondary';
     ajoutCond.style.cssText = 'width:100%; margin-bottom:10px;';
     ajoutCond.textContent = '➕ Ajouter une condition';
-    ajoutCond.addEventListener('click', ()=>{
+
+    /* Deux sortes de conditions désormais : ce que le joueur a DIT, et ce qu'il a GAGNÉ.
+       On lui demande d'abord laquelle, plutôt que d'empiler deux boutons. */
+    const ajouterConditionPhrase = ()=>{
       const connus = choixConnusPartout(ch.id);
       if (!connus.length){ showToast('Aucune autre réponse mémorisable pour l\'instant'); return; }
       ouvrirSelecteur({
@@ -4567,6 +4585,41 @@ function fenetreEffetsReponse(ch){
           if (!o) return;
           ch.showIfList = (ch.showIfList || []).concat([{ kind:'choice', choiceId:o.id, creatureId:o.creatureId, taken:'yes' }]);
           dessiner();
+        } });
+    };
+
+    const ajouterConditionCombat = ()=>{
+      /* « ce personnage » d'abord : c'est le cas courant, un rival qui provoque tant
+         qu'il n'a pas perdu. Les autres combattants viennent ensuite. */
+      const combattants = creatures.filter(x=> x.canFight && x.id !== editingId)
+        .sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+      ouvrirSelecteur({
+        titre:'Un combat gagné contre qui ?',
+        items: [{ id:'__self__', label:'ce personnage', emoji:'⚔️', detail:'celui dont tu écris le dialogue' }]
+          .concat(combattants.map(x=> ({ id:x.id, label:x.name || 'Sans nom', emoji:'⚔️' }))),
+        selectionnes: [], max:1,
+        onChoisir:(ids)=>{
+          if (!ids[0]) return;
+          ch.showIfList = (ch.showIfList || []).concat([{
+            kind:'combat',
+            creatureId: (ids[0] === '__self__') ? '' : ids[0],
+            state:'not_won',   // le cas le plus utile : tant qu'il ne l'a pas battu
+          }]);
+          dessiner();
+        } });
+    };
+
+    ajoutCond.addEventListener('click', ()=>{
+      ouvrirSelecteur({
+        titre:'Quelle sorte de condition ?',
+        items: [
+          { id:'phrase', label:'Il a dit une certaine réponse', emoji:'💬' },
+          { id:'combat', label:'Il a gagné ou non un combat', emoji:'⚔️' },
+        ],
+        selectionnes: [], max:1,
+        onChoisir:(ids)=>{
+          if (ids[0] === 'combat') ajouterConditionCombat();
+          else if (ids[0] === 'phrase') ajouterConditionPhrase();
         } });
     });
     lignes.appendChild(ajoutCond);
@@ -5844,7 +5897,17 @@ function renderSheet(){
     const conditionsChoix = (ch.showIfList || []).concat(
       (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
     for (const cond of conditionsChoix){
-      if (!cond || !cond.choiceId) continue;
+      if (!cond) continue;
+      /* Une condition de combat peut se cumuler avec des conditions de phrase : on la
+         traite ici aussi, sinon elle serait silencieusement ignorée dans la liste. */
+      if (cond.kind === 'combat'){
+        const contreQui = cond.creatureId || c.id;
+        const dejaBattu = !!playerCombatsWon[contreQui];
+        if (cond.state === 'not_won'){ if (dejaBattu) return false; }
+        else if (!dejaBattu) return false;
+        continue;
+      }
+      if (!cond.choiceId) continue;
       /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
          Renseigné, il désigne un autre personnage. */
       const chezQui = cond.creatureId || c.id;
@@ -7501,13 +7564,18 @@ function ouvrirBrouillons(){
 async function oublierMesChoix(){
   if (!(await appConfirm('Oublier toutes tes conversations passées ? Les dialogues se rejoueront comme si tu rencontrais chacun pour la première fois.'))) return;
   playerUsedChoices = {};
+  /* Les combats gagnés s'oublient avec le reste : sans ça, un choix « Se battre » posé en
+     « pas encore battu » restait caché après une victoire, et le dialogue paraissait amputé
+     alors qu'on venait justement de le réinitialiser pour le retester. */
+  playerCombatsWon = {};
   if (!currentUser || !db){ showToast('Choix oubliés (hors ligne)'); return; }
   try {
     /* On SUPPRIME le champ plutôt que d'écrire un objet vide : avec `merge`, écrire {} ne
        retire aucune clé. Et surtout on ne réécrit jamais le document entier — il contient
        aussi le pseudo, les quêtes et les objets ramassés. */
     await db.collection('players').doc(currentUser.uid).update({
-      usedChoices: firebase.firestore.FieldValue.delete()
+      usedChoices: firebase.firestore.FieldValue.delete(),
+      combatsWon: firebase.firestore.FieldValue.delete()
     });
     showToast('C\'est oublié : tu peux rejouer les dialogues');
   } catch(err){
@@ -7527,9 +7595,13 @@ async function oublierCePersonnage(){
   Object.keys(playerUsedChoices).forEach(k=>{ if (k.indexOf(prefixe) !== 0) restant[k] = playerUsedChoices[k]; });
   const efface = Object.keys(playerUsedChoices).length - Object.keys(restant).length;
   playerUsedChoices = restant;
+  /* Et la victoire remportée sur LUI : c'est elle qui décide si son défi réapparaît. */
+  const victoires = { ...playerCombatsWon };
+  delete victoires[editingId];
+  playerCombatsWon = victoires;
   if (!currentUser || !db){ showToast(efface + ' souvenir(s) oublié(s)'); return; }
   try {
-    await db.collection('players').doc(currentUser.uid).update({ usedChoices: restant });
+    await db.collection('players').doc(currentUser.uid).update({ usedChoices: restant, combatsWon: victoires });
     showToast('Tu peux reparler à ' + nom + ' comme la première fois');
   } catch(err){ showToast('Échec : ' + err.message); }
 }
@@ -15879,6 +15951,11 @@ function renderSceneDetailTypeSpecific(pt){
         <span style="font-size:13px; color:rgba(255,255,255,.9);">🗡️ Vient au joueur dès l'entrée (agression)</span>
       </label>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Son dialogue s'ouvre tout seul quand le joueur entre dans la scène, sans qu'il ait à le toucher. Combine avec un choix « ⚔️ Déclencher un combat » pour une agression complète : deux mots, puis les coups.</p>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-left:22px;">
+        <input type="checkbox" id="scenePointPnjAggroUneFois" ${pt.agressionUneFois ? 'checked' : ''} style="width:auto;">
+        <span style="font-size:13px; color:rgba(255,255,255,.9);">🏆 Ne plus agresser une fois battu</span>
+      </label>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px; padding-left:22px;">Le jour où le joueur gagne le combat, ce personnage cesse de lui foncer dessus. Il reste là, on peut toujours l'aborder — il a simplement compris.</p>
       <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
         <input type="checkbox" id="scenePointPnjPartApres" ${pt.partApresDialogue ? 'checked' : ''} style="width:auto;">
         <span style="font-size:13px; color:rgba(255,255,255,.9);">👋 Disparaît quand son dialogue se referme</span>
@@ -15887,6 +15964,8 @@ function renderSceneDetailTypeSpecific(pt){
     `;
     const caseAuto = typeWrap.querySelector('#scenePointPnjAuto');
     if (caseAuto) caseAuto.addEventListener('change', (e)=>{ pt.autoTrigger = e.target.checked; });
+    const caseAggro1 = typeWrap.querySelector('#scenePointPnjAggroUneFois');
+    if (caseAggro1) caseAggro1.addEventListener('change', (e)=>{ pt.agressionUneFois = e.target.checked; });
     const casePart = typeWrap.querySelector('#scenePointPnjPartApres');
     if (casePart) casePart.addEventListener('change', (e)=>{ pt.partApresDialogue = e.target.checked; });
 
@@ -16807,7 +16886,10 @@ function declencherAgressions(sc, actions){
   if (document.getElementById('overlay').classList.contains('show')) return;   // déjà en train de parler
   if (combatState) return;                                                     // ou de se battre
   const pt = (sc.points || []).find(p=> p.type === 'pnj' && p.autoTrigger
-    && p.linkedPnjId && isScenePointAvailable(p) && typeof actions[p.id] === 'function');
+    && p.linkedPnjId && isScenePointAvailable(p) && typeof actions[p.id] === 'function'
+    /* Une agression « une seule fois » ne se relance pas une fois son auteur battu : il
+       reste sur place et se laisse aborder, mais il ne fonce plus sur le joueur. */
+    && !(p.agressionUneFois && playerCombatsWon[p.linkedPnjId]));
   if (!pt) return;
   agressionEnCours = true;
   setTimeout(()=>{
