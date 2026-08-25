@@ -804,7 +804,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v365</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v367</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2137,6 +2137,17 @@
           <button type="button" class="btn-secondary" id="clearBustImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
         </div>
         <p class="meta">Portrait affiché pendant les DIALOGUES, à la place de l'image en pied. Un buste se lit bien mieux à l'écran quand le personnage parle. Sans image de buste, c'est l'image normale qui reste affichée.</p>
+      </div>
+
+      <div id="combatImageBlock">
+        <div class="field-label">⚔️ Image de combat (optionnelle)</div>
+        <input type="file" id="editCombatImageFile" accept="image/*" class="field-input">
+        <button type="button" class="btn-secondary" id="editCombatImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
+        <div id="combatImagePreviewWrap" style="display:none; margin-top:8px;">
+          <img id="combatImagePreview" style="width:80px; height:80px; border-radius:8px; object-fit:contain; border:2px solid var(--accent);">
+          <button type="button" class="btn-secondary" id="clearCombatImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+        </div>
+        <p class="meta">Pose de COMBAT, vue de face. Sert quand ce personnage se bat contre toi, à la place de son image normale — pratique quand celle-ci le montre assis ou occupé. À tes côtés, l'image de dos garde la priorité ; l'image de combat prend le relais s'il n'y en a pas.</p>
       </div>
 
       <div id="zoneBlock" style="display:none;">
@@ -3949,8 +3960,8 @@ function renderDialogueBuilder(){
 
     const showIfKindSel = document.createElement('select');
     showIfKindSel.className = 'field-input';
-    showIfKindSel.innerHTML = '<option value="">Aucune condition</option><option value="quest">une quête est dans tel état</option><option value="choice">un autre choix a déjà été pris</option>';
-    showIfKindSel.value = choice.showIf ? (choice.showIf.kind === 'choice' ? 'choice' : 'quest') : '';
+    showIfKindSel.innerHTML = '<option value="">Aucune condition</option><option value="quest">une quête est dans tel état</option><option value="choice">un autre choix a déjà été pris</option><option value="combat">un combat a été gagné ou non</option>';
+    showIfKindSel.value = choice.showIf ? (choice.showIf.kind === 'choice' ? 'choice' : (choice.showIf.kind === 'combat' ? 'combat' : 'quest')) : '';
     row.appendChild(showIfKindSel);
 
     const showIfRow = document.createElement('div');
@@ -3996,6 +4007,42 @@ function renderDialogueBuilder(){
         return;
       }
 
+      if (showIfKindSel.value === 'combat'){
+        /* Le cas courant est « moi » : un rival provoque tant qu'il n'a pas été battu.
+           On laisse quand même désigner quelqu'un d'autre, pour qu'un personnage puisse
+           réagir à une victoire remportée ailleurs. */
+        if (!choice.showIf || choice.showIf.kind !== 'combat'){
+          choice.showIf = { kind:'combat', creatureId:'', state:'not_won' };
+        }
+
+        const qui = document.createElement('select');
+        qui.className = 'field-input';
+        qui.style.flex = '2';
+        const autres = creatures.filter(x=> x.canFight && x.id !== editingId)
+          .sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+        qui.innerHTML = '<option value="">ce personnage</option>'
+          + autres.map(x=> '<option value="' + x.id + '">' + (x.name || 'Sans nom') + '</option>').join('');
+        qui.value = choice.showIf.creatureId || '';
+        qui.addEventListener('change', ()=>{ choice.showIf.creatureId = qui.value; });
+
+        const etat = document.createElement('select');
+        etat.className = 'field-input';
+        etat.style.flex = '2';
+        etat.innerHTML = '<option value="not_won">n\'a pas encore été battu</option><option value="won">a déjà été battu</option>';
+        etat.value = (choice.showIf.state === 'won') ? 'won' : 'not_won';
+        choice.showIf.state = etat.value;
+        etat.addEventListener('change', ()=>{ choice.showIf.state = etat.value; });
+
+        showIfRow.appendChild(qui); showIfRow.appendChild(etat);
+
+        const aide = document.createElement('p');
+        aide.className = 'meta';
+        aide.style.cssText = 'margin:6px 0 0; flex-basis:100%;';
+        aide.textContent = 'La victoire est retenue pour de bon, même sans réplique de victoire prévue.';
+        showIfRow.appendChild(aide);
+        return;
+      }
+
       if (!quests.length){
         const p = document.createElement('p');
         p.className = 'meta';
@@ -4005,7 +4052,7 @@ function renderDialogueBuilder(){
         choice.showIf = null;
         return;
       }
-      if (!choice.showIf || choice.showIf.kind === 'choice'){
+      if (!choice.showIf || choice.showIf.kind === 'choice' || choice.showIf.kind === 'combat'){
         choice.showIf = { kind:'quest', questId:quests[0].id, state:'active' };
       }
       if (!choice.showIf.questId) choice.showIf.questId = quests[0].id;
@@ -5807,6 +5854,13 @@ function renderSheet(){
     }
     if (ch.showIf && ch.showIf.kind === 'choice'){
       /* déjà traité ci-dessus */
+    } else if (ch.showIf && ch.showIf.kind === 'combat'){
+      /* Sans personnage précisé, la condition porte sur CELUI qui parle : c'est le cas
+         courant — un rival qui provoque tant qu'il n'a pas perdu. */
+      const contre = ch.showIf.creatureId || c.id;
+      const gagne = !!playerCombatsWon[contre];
+      if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
+      else if (!gagne) return false;
     } else if (ch.showIf && ch.showIf.questId){
       const state = playerQuestsState[ch.showIf.questId] || 'none';
       if (ch.showIf.state === 'active' && state !== 'active') return false;
@@ -5900,6 +5954,10 @@ function reprendreDialogueApresCombat(resultat){
   retourDialogueCombat = null;
   combatAttaquesAutorisees = null;
   if (!retour) return false;
+  /* La victoire se retient AVANT tout le reste : elle vaut même si l'auteur n'a prévu
+     aucune réplique de victoire, sinon la condition « je l'ai déjà battu » ne se
+     déclencherait que dans les dialogues bien remplis. */
+  if (resultat === 'victory') marquerCombatGagne(retour.creatureId);
   const c = ficheParId(retour.creatureId);
   if (!c) return false;
   const cible = (resultat === 'victory') ? retour.victoire : retour.defaite;
@@ -5941,6 +5999,8 @@ function recruitCreature(creature, metierId){
     backImageRef: creature.backImageRef || null,
     bustImagePath: creature.bustImagePath || null,
     bustImageRef: creature.bustImageRef || null,
+    combatImagePath: creature.combatImagePath || null,
+    combatImageRef: creature.combatImageRef || null,
     combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
@@ -5975,6 +6035,19 @@ function recruitCreature(creature, metierId){
 /* ---------- Suivi permanent de la progression du joueur (quêtes) ---------- */
 let playerQuestsState = {}; // { questId: 'active' | 'completed' }
 let playerUsedChoices = {}; // { "<idPnj>__<idChoix>": true } — choix à usage unique déjà pris
+/* Combats déjà remportés, par personnage : { "<idPnj>": true }. Permet à une fiche de
+   proposer le duel tant qu'on ne l'a pas battue, et de dire autre chose une fois vaincue. */
+let playerCombatsWon = {};
+function marquerCombatGagne(creatureId){
+  if (!creatureId) return;
+  if (playerCombatsWon[creatureId]) return;
+  playerCombatsWon[creatureId] = true; // effet immédiat, sans attendre le serveur
+  if (currentUser && db){
+    db.collection('players').doc(currentUser.uid)
+      .set({ combatsWon: { [creatureId]: true } }, { merge:true })
+      .catch(()=>{});
+  }
+}
 let playerCoins = 0;
 let playerDiscoveredZoneIds = new Set();
 let playerExplorerMissionStartedAt = null;
@@ -5998,6 +6071,7 @@ function watchPlayerQuests(uid){
     } catch(e){}
     playerQuestsState = (doc.exists && doc.data().quests) || {};
     playerUsedChoices = (doc.exists && doc.data().usedChoices) || {};
+    playerCombatsWon = (doc.exists && doc.data().combatsWon) || {};
     playerDiscoveredZoneIds = new Set((doc.exists && doc.data().discoveredZoneIds) || []);
     playerExplorerMissionStartedAt = (doc.exists && doc.data().explorerMissionStartedAt) || null;
     playerExplorerMissionDuration = (doc.exists && doc.data().explorerMissionDuration) || null;
@@ -6301,6 +6375,7 @@ function empreinteFiche(){
     taille(uploadedImageDataUrl), String(uploadedImagePath || ''),
     taille(editBackImageDataUrl), String(editBackImagePath || ''), String(editBackImageRef || ''),
     taille(editBustImageDataUrl), String(editBustImagePath || ''), String(editBustImageRef || ''),
+    taille(editCombatImageDataUrl), String(editCombatImagePath || ''), String(editCombatImageRef || ''),
     taille(editRoomImageDataUrl), String(editRoomImagePath || ''), String(editRoomImageRef || ''),
     taille(editZoneArenaImageDataUrl), String(editZoneArenaImagePath || ''), String(editZoneArenaImageRef || '')
   );
@@ -6800,6 +6875,59 @@ document.getElementById('clearBustImageBtn').addEventListener('click', ()=>{
   renderBustImagePreview();
 });
 
+/* Image de combat (v367) : la pose de bagarre, de face. Une fiche peut montrer le
+   personnage assis derrière son comptoir ; il ne va pas se battre dans cette position. */
+let editCombatImageDataUrl = null;
+let editCombatImageRef = null;
+let editCombatImagePath = null;
+function renderCombatImagePreview(){
+  const wrap = document.getElementById('combatImagePreviewWrap');
+  if (editCombatImageDataUrl){
+    document.getElementById('combatImagePreview').src = editCombatImageDataUrl;
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+document.getElementById('editCombatImageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 600;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; }
+        else { w = Math.round(w * maxSize/h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      editCombatImageDataUrl = canvas.toDataURL('image/png');
+      editCombatImageRef = null;
+      editCombatImagePath = null;
+      renderCombatImagePreview();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('editCombatImageGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    editCombatImagePath = item.path;
+    editCombatImageDataUrl = resolveMediaPath(item.path);
+    editCombatImageRef = null;
+    renderCombatImagePreview();
+  });
+});
+document.getElementById('clearCombatImageBtn').addEventListener('click', ()=>{
+  editCombatImageDataUrl = null; editCombatImageRef = null; editCombatImagePath = null;
+  document.getElementById('editCombatImageFile').value = '';
+  renderCombatImagePreview();
+});
+
 function renderRoomImagePreview(){
   const wrap = document.getElementById('roomImagePreviewWrap');
   if (editRoomImageDataUrl){
@@ -7059,6 +7187,14 @@ function loadForEdit(id){
   if (editBustImageRef){
     internalizeSceneImage(editBustImageRef).then(url=>{ editBustImageDataUrl = url; renderBustImagePreview(); }).catch(()=>{});
   }
+  editCombatImagePath = d.combatImagePath || null;
+  editCombatImageDataUrl = editCombatImagePath ? resolveMediaPath(editCombatImagePath) : null;
+  editCombatImageRef = editCombatImagePath ? null : (d.combatImageRef || null);
+  document.getElementById('editCombatImageFile').value = '';
+  renderCombatImagePreview();
+  if (editCombatImageRef){
+    internalizeSceneImage(editCombatImageRef).then(url=>{ editCombatImageDataUrl = url; renderCombatImagePreview(); }).catch(()=>{});
+  }
   editRoomImagePath = d.roomImagePath || null;
   editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
   editRoomImageRef = editRoomImagePath ? null : (d.roomImageRef || null);
@@ -7238,6 +7374,9 @@ function resetForm(){
   editBustImageDataUrl = null; editBustImageRef = null; editBustImagePath = null;
   document.getElementById('editBustImageFile').value = '';
   renderBustImagePreview();
+  editCombatImageDataUrl = null; editCombatImageRef = null; editCombatImagePath = null;
+  document.getElementById('editCombatImageFile').value = '';
+  renderCombatImagePreview();
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
@@ -7728,6 +7867,11 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   if (!backImagePath && !backImageRef && editBackImageDataUrl){
     backImageRef = await externalizeSceneImage(editBackImageDataUrl);
   }
+  const combatImagePath = editCombatImagePath || null;
+  let combatImageRef = combatImagePath ? null : (editCombatImageRef || null);
+  if (!combatImagePath && !combatImageRef && editCombatImageDataUrl){
+    combatImageRef = await externalizeSceneImage(editCombatImageDataUrl);
+  }
   const bustImagePath = editBustImagePath || null;
   let bustImageRef = bustImagePath ? null : (editBustImageRef || null);
   if (!bustImagePath && !bustImageRef && editBustImageDataUrl){
@@ -7742,7 +7886,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -17293,11 +17437,21 @@ let fxPreloadPool = [];
    face, puis basculait de dos une fois l'image lue — un clignotement visible à chaque combat. */
 async function resoudreImagesDeDos(fighters){
   await Promise.all((fighters || []).map(async (f)=>{
-    if (f.side !== 'player' || !f.backImageRef) return;
-    try {
-      const url = await internalizeSceneImage(f.backImageRef);
-      if (url) f.imageUrl = url;
-    } catch(e){ /* l'image de face fait un repli acceptable */ }
+    if (f.side === 'player' && f.backImageRef){
+      try {
+        const url = await internalizeSceneImage(f.backImageRef);
+        if (url) f.imageUrl = url;
+      } catch(e){ /* l'image de face fait un repli acceptable */ }
+      return;
+    }
+    /* Pose de combat stockée en référence interne : même traitement, des deux côtés.
+       Elle ne s'applique jamais par-dessus une image de dos déjà posée. */
+    if (f.combatImageRef){
+      try {
+        const url = await internalizeSceneImage(f.combatImageRef);
+        if (url){ f.imageUrl = url; f.faceImageUrl = url; }
+      } catch(e){ /* l'image de fiche fait un repli acceptable */ }
+    }
   }));
 }
 
@@ -17380,6 +17534,14 @@ function isHealAttack(a){ return a && (a.kind==='heal_single' || a.kind==='heal_
 
 /* L'image de dos peut être posée sur la recrue (recrutée depuis la v314) ou seulement sur
    sa fiche d'origine (recrue plus ancienne, ou image ajoutée après le recrutement). */
+/* Pose de combat : sur la recrue si elle l'a emportée, sinon sur sa fiche d'origine. */
+function combatDeLaRecrue(r){
+  if (r.combatImagePath || r.combatImageRef) return { path: r.combatImagePath || null, ref: r.combatImageRef || null };
+  const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
+  if (source) return { path: source.combatImagePath || null, ref: source.combatImageRef || null };
+  return { path: null, ref: null };
+}
+
 function dosDeLaRecrue(r){
   if (r.backImagePath || r.backImageRef) return { path: r.backImagePath || null, ref: r.backImageRef || null };
   const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
@@ -17404,9 +17566,15 @@ function buildPlayerFighters(){
         /* De dos si le personnage en a une : il fait face à l'ennemi, pas au joueur.
            Les recrues d'avant la v314 n'ont rien copié : on va alors chercher l'image de dos
            sur leur fiche d'origine, pour ne pas avoir à les recruter une seconde fois. */
-        imageUrl: (dosDeLaRecrue(r).path ? resolveMediaPath(dosDeLaRecrue(r).path) : '') || r.imageUrl || '',
-        faceImageUrl: r.imageUrl || '',      // pour la barre d'ordre des tours
+        /* Ordre de priorité : le dos d'abord, puisqu'il fait face à l'ennemi ; à défaut la
+           pose de combat, qui vaut toujours mieux qu'une image où il est assis ; sinon
+           l'image normale. */
+        imageUrl: (dosDeLaRecrue(r).path ? resolveMediaPath(dosDeLaRecrue(r).path) : '')
+          || (combatDeLaRecrue(r).path ? resolveMediaPath(combatDeLaRecrue(r).path) : '')
+          || r.imageUrl || '',
+        faceImageUrl: (combatDeLaRecrue(r).path ? resolveMediaPath(combatDeLaRecrue(r).path) : '') || r.imageUrl || '',
         backImageRef: dosDeLaRecrue(r).ref,
+        combatImageRef: dosDeLaRecrue(r).ref ? null : combatDeLaRecrue(r).ref,
         tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
         maxHp:maxHp, hp:startHp,
@@ -17426,8 +17594,12 @@ function buildEnemyFighters(monsterList){
   return monsterList.slice(0,3).map((c,i)=>{
     const cs = c.combatStats || {};
     return {
-      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name, imageUrl:c.imageUrl||'',
-      faceImageUrl: c.imageUrl||'', tribe:cs.tribe||'',
+      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name,
+      /* Il se bat contre toi : sa pose de combat passe avant son image de fiche. */
+      imageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
+      faceImageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
+      combatImageRef: c.combatImagePath ? null : (c.combatImageRef || null),
+      tribe:cs.tribe||'',
       combatPortraitCrop: c.combatPortraitCrop || null,
       maxHp:cs.hp||1, hp:cs.hp||1,
       atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
@@ -18330,8 +18502,10 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   preloadVictoryMusic();
   libererImagesDeCombat();                     // les adresses du combat précédent n'ont plus d'usage
   dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
-  await resoudreImagesDeDos(playerFighters);   // avant l'affichage : pas de bascule face → dos
-  chrono('combat', 'images de dos résolues');
+  /* Les adversaires y passent aussi désormais : leur pose de combat peut être stockée
+     en référence interne, exactement comme une image de dos. */
+  await resoudreImagesDeDos([...playerFighters, ...enemyFighters]);
+  chrono('combat', 'images de dos et de combat résolues');
   await allegerImagesDeCombat([...playerFighters, ...enemyFighters]);
   preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
   chrono('combat', 'effets et sons préchargés');
