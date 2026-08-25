@@ -804,7 +804,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v369</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v371</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2150,6 +2150,24 @@
         <p class="meta">Pose de COMBAT, vue de face. Sert quand ce personnage se bat contre toi, à la place de son image normale — pratique quand celle-ci le montre assis ou occupé. À tes côtés, l'image de dos garde la priorité ; l'image de combat prend le relais s'il n'y en a pas.</p>
       </div>
 
+      <div id="combatScaleBlock">
+        <div class="field-label">📏 Taille en combat</div>
+        <p class="meta" style="margin:0 0 8px;">Aperçu à la taille réelle du combat. Le personnage est calé sur le sol : agrandir le fait monter, pas descendre.</p>
+        <div id="combatScalePreview" style="display:flex; gap:12px; align-items:flex-end; justify-content:center; padding:10px; border-radius:10px; background:rgba(0,0,0,.35);">
+          <div id="combatScaleBox" style="position:relative; overflow:hidden; border-bottom:2px solid rgba(255,255,255,.35);">
+            <img id="combatScaleImg" style="position:absolute; left:0; bottom:0; width:100%; height:100%; object-fit:contain; transform-origin:bottom center;">
+          </div>
+          <div id="combatScaleRef" style="border-bottom:2px solid rgba(255,255,255,.35); display:flex; align-items:flex-end; justify-content:center;">
+            <div style="width:22%; background:rgba(255,255,255,.22); border-radius:4px 4px 0 0;"></div>
+          </div>
+        </div>
+        <div class="field-row" style="align-items:center; margin-top:8px;">
+          <input type="range" id="editCombatScale" min="40" max="200" step="5" value="100" style="flex:3;">
+          <span id="editCombatScaleVal" class="meta" style="flex:0 0 52px; text-align:right;">100 %</span>
+          <button type="button" class="btn-secondary" id="editCombatScaleReset" style="flex:0 0 auto;">↺</button>
+        </div>
+      </div>
+
       <div id="zoneBlock" style="display:none;">
         <div class="field-label" style="margin-top:0;">🚪 Message quand la zone est fermée</div>
         <p class="meta" style="margin:0 0 6px;">Hors de ses horaires, la zone reste visible sur la carte mais ne s'ouvre plus : ce message s'affiche à la place. Laisse vide pour le message par défaut.</p>
@@ -3290,7 +3308,10 @@ function rendreEmplacementsAdversaires(hote, lireIds, ecrireIds){
       ajouter.title = 'Ajouter un adversaire';
       ajouter.addEventListener('click', ()=>{
         const deja = lireIds() || [];
-        const advs = toutesLesFiches().filter(c=> (c.interactionType === 'combat' || c.canFight) && !deja.includes(c.id));
+        /* Un même modèle peut occuper plusieurs emplacements : les robots sortent d'usine
+           en série, et une escouade de trois exemplaires identiques est le cas normal.
+           Seule « la personne à qui on parle » reste unique — il n'y en a qu'une. */
+        const advs = toutesLesFiches().filter(c=> (c.interactionType === 'combat' || c.canFight));
         const items = (deja.includes('__self__') ? [] : [{ id:'__self__', label:'La personne à qui on parle', emoji:'🙋' }])
           .concat(advs.map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:c.emoji || '⚔️' })));
         if (!items.length){ showToast('Aucun autre adversaire disponible — coche « ⚔️ peut se battre » sur une fiche'); return; }
@@ -6064,6 +6085,7 @@ function recruitCreature(creature, metierId){
     bustImageRef: creature.bustImageRef || null,
     combatImagePath: creature.combatImagePath || null,
     combatImageRef: creature.combatImageRef || null,
+    combatImageScale: (creature.combatImageScale == null) ? 100 : creature.combatImageScale,
     combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
@@ -6439,6 +6461,7 @@ function empreinteFiche(){
     taille(editBackImageDataUrl), String(editBackImagePath || ''), String(editBackImageRef || ''),
     taille(editBustImageDataUrl), String(editBustImagePath || ''), String(editBustImageRef || ''),
     taille(editCombatImageDataUrl), String(editCombatImagePath || ''), String(editCombatImageRef || ''),
+    String(editCombatScale),
     taille(editRoomImageDataUrl), String(editRoomImagePath || ''), String(editRoomImageRef || ''),
     taille(editZoneArenaImageDataUrl), String(editZoneArenaImagePath || ''), String(editZoneArenaImageRef || '')
   );
@@ -6972,6 +6995,7 @@ document.getElementById('editCombatImageFile').addEventListener('change', (e)=>{
       editCombatImageRef = null;
       editCombatImagePath = null;
       renderCombatImagePreview();
+      renderCombatScalePreview();
     };
     img.src = ev.target.result;
   };
@@ -6989,6 +7013,41 @@ document.getElementById('clearCombatImageBtn').addEventListener('click', ()=>{
   editCombatImageDataUrl = null; editCombatImageRef = null; editCombatImagePath = null;
   document.getElementById('editCombatImageFile').value = '';
   renderCombatImagePreview();
+});
+
+/* Taille en combat (v371). Le cadre du combat est carré et de taille fixe : un robot posé
+   dedans peut sembler minuscule et un grand personnage déborder. Ce réglage met chaque
+   fiche à l'échelle, et l'aperçu montre le résultat à la taille réelle du jeu, avec une
+   silhouette de référence à côté pour comparer. */
+let editCombatScale = 100;
+function renderCombatScalePreview(){
+  const px = getAvatarSizePx();
+  const box = document.getElementById('combatScaleBox');
+  const ref = document.getElementById('combatScaleRef');
+  const img = document.getElementById('combatScaleImg');
+  if (!box || !img) return;
+  box.style.width = px + 'px'; box.style.height = px + 'px';
+  ref.style.width = px + 'px'; ref.style.height = px + 'px';
+  /* Ce que le combat afficherait vraiment : la pose de combat d'abord, sinon le dos,
+     sinon l'image ordinaire. */
+  const source = editCombatImageDataUrl || editBackImageDataUrl || uploadedImageDataUrl || ((document.getElementById('imagePreview') || {}).src || '');
+  img.src = source;
+  img.style.display = source ? 'block' : 'none';
+  img.style.transform = 'scale(' + (editCombatScale / 100) + ')';
+  const val = document.getElementById('editCombatScaleVal');
+  if (val) val.textContent = editCombatScale + ' %';
+  const curseur = document.getElementById('editCombatScale');
+  if (curseur && +curseur.value !== editCombatScale) curseur.value = editCombatScale;
+}
+document.getElementById('editCombatScale').addEventListener('input', (e)=>{
+  editCombatScale = Math.max(40, Math.min(200, +e.target.value || 100));
+  renderCombatScalePreview();
+  marquerFicheModifiee();
+});
+document.getElementById('editCombatScaleReset').addEventListener('click', ()=>{
+  editCombatScale = 100;
+  renderCombatScalePreview();
+  marquerFicheModifiee();
 });
 
 function renderRoomImagePreview(){
@@ -7256,8 +7315,10 @@ function loadForEdit(id){
   document.getElementById('editCombatImageFile').value = '';
   renderCombatImagePreview();
   if (editCombatImageRef){
-    internalizeSceneImage(editCombatImageRef).then(url=>{ editCombatImageDataUrl = url; renderCombatImagePreview(); }).catch(()=>{});
+    internalizeSceneImage(editCombatImageRef).then(url=>{ editCombatImageDataUrl = url; renderCombatImagePreview(); renderCombatScalePreview(); }).catch(()=>{});
   }
+  editCombatScale = (d.combatImageScale == null) ? 100 : d.combatImageScale;
+  renderCombatScalePreview();
   editRoomImagePath = d.roomImagePath || null;
   editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
   editRoomImageRef = editRoomImagePath ? null : (d.roomImageRef || null);
@@ -7440,6 +7501,8 @@ function resetForm(){
   editCombatImageDataUrl = null; editCombatImageRef = null; editCombatImagePath = null;
   document.getElementById('editCombatImageFile').value = '';
   renderCombatImagePreview();
+  editCombatScale = 100;
+  renderCombatScalePreview();
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
   document.getElementById('editStartDate').value = '';
@@ -7958,7 +8021,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -17624,6 +17687,15 @@ function combatDeLaRecrue(r){
   return { path: null, ref: null };
 }
 
+/* Échelle d'affichage en combat : sur la recrue si elle l'a emportée, sinon sur la fiche
+   d'origine, sinon 100 %. Une valeur absente ne doit jamais valoir 0. */
+function echelleDeCombat(r){
+  if (r.combatImageScale != null) return r.combatImageScale;
+  const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
+  if (source && source.combatImageScale != null) return source.combatImageScale;
+  return 100;
+}
+
 function dosDeLaRecrue(r){
   if (r.backImagePath || r.backImageRef) return { path: r.backImagePath || null, ref: r.backImageRef || null };
   const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
@@ -17657,6 +17729,7 @@ function buildPlayerFighters(){
         faceImageUrl: (combatDeLaRecrue(r).path ? resolveMediaPath(combatDeLaRecrue(r).path) : '') || r.imageUrl || '',
         backImageRef: dosDeLaRecrue(r).ref,
         combatImageRef: dosDeLaRecrue(r).ref ? null : combatDeLaRecrue(r).ref,
+        combatImageScale: echelleDeCombat(r),
         tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
         maxHp:maxHp, hp:startHp,
@@ -17673,14 +17746,24 @@ function teamHasAnyoneStanding(playerFighters){
   return (playerFighters || []).some(f=> f.alive);
 }
 function buildEnemyFighters(monsterList){
-  return monsterList.slice(0,3).map((c,i)=>{
+  const liste = monsterList.slice(0,3);
+  /* Deux exemplaires du même modèle portent le même nom : sans distinction, le journal
+     de combat et les cibles deviennent illisibles. On numérote seulement ceux qui sont
+     en double — un adversaire unique garde son nom nu. */
+  const compte = {};
+  liste.forEach(c=>{ compte[c.id] = (compte[c.id] || 0) + 1; });
+  const rang = {};
+  return liste.map((c,i)=>{
     const cs = c.combatStats || {};
+    rang[c.id] = (rang[c.id] || 0) + 1;
+    const nomAffiche = (compte[c.id] > 1) ? ((c.name || '') + ' ' + rang[c.id]) : c.name;
     return {
-      uid:'e'+i, side:'enemy', sourceId:c.id, name:c.name,
+      uid:'e'+i, side:'enemy', sourceId:c.id, name:nomAffiche,
       /* Il se bat contre toi : sa pose de combat passe avant son image de fiche. */
       imageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
       faceImageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
       combatImageRef: c.combatImagePath ? null : (c.combatImageRef || null),
+      combatImageScale: (c.combatImageScale == null) ? 100 : c.combatImageScale,
       tribe:cs.tribe||'',
       combatPortraitCrop: c.combatPortraitCrop || null,
       maxHp:cs.hp||1, hp:cs.hp||1,
@@ -19826,7 +19909,7 @@ function fighterCardHtml(f, idx, arr){
   const shiftX = (mid - idx) * overlapStep;
   const avatarHtml = `
     <div class="combat-avatar" style="${isActing?'filter:drop-shadow(0 0 7px var(--accent)) drop-shadow(0 0 7px var(--accent));':''}">
-      ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:44px;">${f.side==='player'?'🧑':'👾'}</div>`}
+      ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%;height:100%;object-fit:contain;transform:scale(${(f.combatImageScale == null ? 100 : f.combatImageScale)/100});transform-origin:bottom center;">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:44px;">${f.side==='player'?'🧑':'👾'}</div>`}
       ${particlesHtml(f)}
     </div>
   `;
