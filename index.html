@@ -708,6 +708,18 @@
   white-space:normal; word-break:break-word; overflow:hidden; display:flex; align-items:center; justify-content:center;
 }
 #combatCloseAnalysisBtn, #combatItemBackBtn{ height:var(--secondary-btn-height); min-height:0; flex:none !important; box-sizing:border-box; display:flex; align-items:center; justify-content:center; padding:2px; }
+/* Dernière action du tour (v374) : un bandeau d'une seule ligne, au ras du journal, à
+   gauche de son bouton. Il ne doit jamais pousser l'arène ni couvrir un combattant —
+   d'où la position absolue et la ligne unique tronquée. Quand une attaque touche
+   plusieurs cibles, les lignes défilent l'une après l'autre au lieu de s'empiler. */
+#combatLastAction{
+  position:absolute; left:8px; right:44px; bottom:8px; z-index:4;
+  background:rgba(18,36,26,.82); color:#dfeee2; border-radius:8px;
+  padding:4px 9px; font-size:11px; line-height:1.25;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  opacity:0; transition:opacity .18s ease; pointer-events:none;
+}
+#combatLastAction.show{ opacity:1; }
 #combatLog{
   background:#12241a; color:#dfeee2; border-radius:12px; padding:8px 10px 6px; font-size:11px;
   height:var(--action-panel-height); flex:none; min-width:0; overflow:hidden; display:none; flex-direction:column; margin:0 10px 8px;
@@ -804,7 +816,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v373</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v374</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1226,6 +1238,7 @@
       <div id="combatTurnOrderBar"></div>
       <div id="combatEnemyRow" class="combat-side"></div>
       <div id="combatPlayerRow" class="combat-side"></div>
+      <div id="combatLastAction"></div>
       <button type="button" id="combatLogToggleBtn" title="Journal de combat">📜</button>
     </div>
     <div id="combatActionPanel"><p class="meta" style="text-align:center;">En attente du prochain tour…</p></div>
@@ -12777,6 +12790,7 @@ function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
       };
       document.getElementById('combatLog').classList.remove('show');
       combatLogOpen = false;
+      majDerniereAction(null);
       document.getElementById('combatFull').classList.add('show');
       document.getElementById('combatEndOverlay').style.display = 'none';
       document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${DEFAULT_ARENA_BG})`);
@@ -17237,6 +17251,8 @@ document.getElementById('combatLogToggleBtn').addEventListener('click', ()=>{
   combatLogOpen = !combatLogOpen;
   document.getElementById('combatActionPanel').style.display = combatLogOpen ? 'none' : 'flex';
   document.getElementById('combatLog').classList.toggle('show', combatLogOpen);
+  /* Le journal complet dit déjà tout : le bandeau ferait doublon. */
+  document.getElementById('combatLastAction').classList.toggle('show', !combatLogOpen && !!document.getElementById('combatLastAction').textContent);
   document.getElementById('combatLogToggleBtn').textContent = combatLogOpen ? '✕' : '📜';
   if (combatState) renderCombat();
 });
@@ -18719,6 +18735,7 @@ async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
   combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
   sauvegardeCombatSignalee = false;   // nouveau combat : on redonne sa chance à l'avertissement
   combatLogOpen = false;
+  majDerniereAction(null);
   document.getElementById('combatActionPanel').style.display = 'flex';
   document.getElementById('combatLog').classList.remove('show');
   document.getElementById('combatLogToggleBtn').textContent = '📜';
@@ -19959,6 +19976,44 @@ function fighterCardHtml(f, idx, arr){
 /* Le contenu des cartes ne change qu'aux coups reçus, pas à chaque battement d'horloge.
    On compare avant d'écrire : la plupart des redessins ne touchent alors plus au tout. */
 let dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
+
+/* File d'attente du bandeau : une attaque de zone produit trois lignes d'un coup. Plutôt
+   que de les empiler sur trois lignes, on les fait défiler — on lit « touche A », puis
+   « touche B », puis « touche C », comme si les coups arrivaient l'un après l'autre. */
+let fileDernieresActions = [];
+let journalDejaVu = null;       // 1re ligne du journal au dernier passage
+let defilementEnCours = null;   // minuterie du défilement
+function afficherProchaineAction(){
+  const el = document.getElementById('combatLastAction');
+  if (!el) return;
+  if (!fileDernieresActions.length){
+    /* Plus rien à dire : on laisse la dernière ligne à l'écran plutôt que de la faire
+       disparaître — elle sert de rappel de ce qui vient de se passer. */
+    defilementEnCours = null;
+    return;
+  }
+  el.innerHTML = fileDernieresActions.shift();
+  el.classList.add('show');
+  defilementEnCours = setTimeout(afficherProchaineAction, fileDernieresActions.length ? 850 : 0);
+}
+function majDerniereAction(log){
+  const el = document.getElementById('combatLastAction');
+  if (!el) return;
+  if (!log || !log.length){
+    fileDernieresActions = []; journalDejaVu = null;
+    el.classList.remove('show'); el.textContent = '';
+    if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
+    return;
+  }
+  if (log[0] === journalDejaVu) return;   // rien de neuf
+  /* Le journal empile les nouveautés en tête : on prend tout ce qui est arrivé depuis
+     le dernier passage, et on le remet dans l'ordre où c'est arrivé. */
+  const pos = journalDejaVu ? log.indexOf(journalDejaVu) : -1;
+  const nouvelles = (pos === -1) ? [log[0]] : log.slice(0, pos);
+  journalDejaVu = log[0];
+  fileDernieresActions = nouvelles.slice().reverse();
+  if (!defilementEnCours) afficherProchaineAction();
+}
 function renderCombat(){
   if (!combatState) return;
   renderCombatTurnOrderBar();
@@ -19980,6 +20035,7 @@ function renderCombat(){
       el.addEventListener('click', ()=> onFighterCardClick(el.dataset.fighter));
     });
   }
+  majDerniereAction(combatState.log);
   const journal = combatState.log.slice(0, 20).map(l=>`<div>${l}</div>`).join('');
   if (journal !== dernierRenduArene.journal){
     document.getElementById('combatLogEntries').innerHTML = journal;
