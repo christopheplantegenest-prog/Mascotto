@@ -723,6 +723,23 @@
   position:absolute; left:39%; bottom:0; width:22%; height:70%;
   background:rgba(255,255,255,.16); border-radius:5px 5px 0 0; pointer-events:none;
 }
+/* Voile de soin de l'infirmerie (v381) : une vague de lumière qui traverse la salle quand
+   toute l'équipe est remise d'aplomb. Courte et sans bouton — on comprend et on repart. */
+#infirmaryHealFlash{
+  position:absolute; inset:0; z-index:6; pointer-events:none;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-weight:800; font-size:15px; letter-spacing:.3px; text-align:center;
+  text-shadow:0 2px 6px rgba(0,0,0,.7);
+  background:radial-gradient(circle at 50% 55%, rgba(120,255,190,.55), rgba(120,255,190,0) 65%);
+  opacity:0;
+}
+#infirmaryHealFlash.show{ animation:infHeal 2.2s ease-out forwards; }
+@keyframes infHeal{
+  0%   { opacity:0; transform:scale(.85); }
+  18%  { opacity:1; transform:scale(1); }
+  70%  { opacity:1; }
+  100% { opacity:0; }
+}
 #combatLastAction{
   position:absolute; left:8px; right:8px; bottom:8px; z-index:4;
   background:rgba(18,36,26,.82); color:#dfeee2; border-radius:8px;
@@ -835,7 +852,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v380</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v382</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2665,6 +2682,7 @@
        la hauteur. Les zones étant en % de l'image, elles suivent sans réglage. -->
   <div id="infirmaryFrame" style="position:relative; max-width:100%; flex:none;">
     <img id="infirmaryBg" alt="" style="max-width:100%; max-height:96vh; width:auto; height:auto; display:block; pointer-events:none;">
+    <div id="infirmaryHealFlash"></div>
     <div id="infCap-1" style="position:absolute;"></div>
     <div id="infCap-2" style="position:absolute;"></div>
     <div id="infCap-3" style="position:absolute;"></div>
@@ -11831,6 +11849,47 @@ function writeBackCombatHp(playerFighters, result){
       .catch((err)=> showToast('PV non enregistrés : ' + err.message));
   });
 }
+/* ---------- Retour forcé à l'infirmerie (v381) ----------
+   Quand plus personne n'est en état de se battre, on ne laisse plus le joueur échoué avec
+   une équipe à terre : il est ramené à l'infirmerie et tout le monde est remis d'aplomb
+   d'un coup. C'est le fonctionnement d'un Centre Pokémon, et il a l'avantage d'être
+   compréhensible sans explication. */
+function soignerToutLeMondeInstantanement(){
+  const soignes = [];
+  recruits.forEach(r=>{
+    if (r.recruitType !== 'combattant') return;
+    const max = recruitMaxHp(r);
+    if (recruitEffectiveHp(r) >= max && !r.restingSince) return;
+    r.currentHp = max; r.restingSince = null;
+    soignes.push(r);
+    if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: max, restingSince: null })
+      .catch((err)=> showToast('Soin non enregistré : ' + err.message));
+  });
+  return soignes;
+}
+
+function ramenerAInfirmerie(){
+  /* La salle a besoin de son décor : sans image configurée, on soigne quand même et on le
+     dit — mieux vaut un joueur soigné sans mise en scène qu'un joueur bloqué. */
+  const soignes = soignerToutLeMondeInstantanement();
+  if (!infirmaryRoomImage){
+    showToast('Toute l\'équipe est K.O. — tout le monde est soigné');
+    renderCombattantsRoster();
+    return;
+  }
+  openInfirmaryRoom();
+  const voile = document.getElementById('infirmaryHealFlash');
+  if (voile){
+    voile.textContent = 'Toute l\'équipe est soignée';
+    voile.classList.remove('show');
+    void voile.offsetWidth;   // relance l'animation même si elle vient de jouer
+    voile.classList.add('show');
+    setTimeout(()=> voile.classList.remove('show'), 2200);
+  }
+  renderInfirmaryRoom();
+  renderCombattantsRoster();
+}
+
 function hpBarHtml(hp, max, height){
   const pct = Math.max(0, Math.min(100, Math.round((hp / max) * 100)));
   const color = (hp <= 0) ? 'var(--danger)' : (pct < 35 ? 'var(--warn)' : 'var(--accent)');
@@ -12363,6 +12422,22 @@ function toggleRecruitTeam(recruit, apres){
   let team = activeTeamIds.filter(id=> recruits.some(r=>r.id===id));
   if (inTeam){
     team = team.filter(id=>id!==recruit.id);
+    /* Une équipe où plus personne ne tient debout n'a aucun usage : on ne peut plus entrer
+       dans une zone de combat, et le joueur se retrouve à chercher pourquoi. On refuse donc
+       de retirer le dernier combattant valide. Une équipe VIDE reste permise — c'est le cas
+       de quelqu'un qui recompose la sienne de zéro. */
+    const resteDebout = team.some(id=>{
+      const r = recruits.find(x=> x.id === id);
+      return r && r.recruitType === 'combattant' && !recruitIsAway(r) && recruitEffectiveHp(r) > 0;
+    });
+    const equipeAuraitDesKo = team.some(id=>{
+      const r = recruits.find(x=> x.id === id);
+      return r && recruitEffectiveHp(r) <= 0;
+    });
+    if (!resteDebout && equipeAuraitDesKo){
+      showToast('Il faut garder au moins un combattant en état de se battre');
+      return;
+    }
   } else {
     if (team.length >= 3){ showToast('L\'équipe est déjà complète (3 combattants max)'); return; }
     team.push(recruit.id);
@@ -15081,6 +15156,14 @@ async function verifierLiensZone(scenes){
         else idsPnj.add(pt.linkedPnjId);
       }
       if (pt.type === 'sortie' && !pt.targetSceneId) soucis.push({ pointId: pt.id, où: oùName, quoi: 'Sortie sans destination' });
+      /* Un coffre sans rien dedans s'ouvre sur du vide : c'est le genre d'oubli qui ne
+         prévient pas en jeu, le point répond simplement « il n'y a rien ». */
+      if (pt.type === 'coffre'){
+        if (!pt.openImageUrl && !pt.openImagePath) soucis.push({ pointId: pt.id, où: oùName, quoi: 'Coffre sans image d\'ouverture' });
+        if (!(pt.loot || []).some(l=> l && l.itemId) && !pt.trapEnabled && !pt.message){
+          soucis.push({ pointId: pt.id, où: oùName, quoi: 'Coffre vide : ni objet, ni piège, ni message' });
+        }
+      }
       if (pt.type === 'sortie' && pt.targetSceneId && !scenes.some(x=> x.id === pt.targetSceneId)){
         soucis.push({ pointId: pt.id, où: oùName, quoi: 'Sortie vers une scène supprimée' });
       }
@@ -15093,10 +15176,35 @@ async function verifierLiensZone(scenes){
 
   /* Une seule lecture par fiche, même si dix points la partagent. */
   const existe = {};
+  const fiches = {};
   if (creatureCol && idsPnj.size){
     const docs = await Promise.all(Array.from(idsPnj).map(id=> creatureCol.doc(id).get().catch(()=> null)));
-    docs.forEach((doc, i)=>{ existe[Array.from(idsPnj)[i]] = !!(doc && doc.exists); });
+    docs.forEach((doc, i)=>{
+      const id = Array.from(idsPnj)[i];
+      existe[id] = !!(doc && doc.exists);
+      if (doc && doc.exists) fiches[id] = doc.data();
+    });
   }
+
+  /* Un choix « ⚔️ Déclencher un combat » sans étape de victoire ni de défaite ne prévient
+     jamais : le combat a lieu, puis plus rien ne s'ouvre. C'est exactement l'oubli qui a
+     coûté une soirée de recherche. */
+  Object.keys(fiches).forEach(id=>{
+    const f = fiches[id];
+    (f.dialogueSteps || []).forEach((st, iEtape)=>{
+      (st.choices || []).forEach(ch=>{
+        if (!ch || !ch.combat) return;
+        const gagne = ch.combat.stepWin;
+        const perdu = ch.combat.stepLose;
+        const rienPrevu = (gagne === null || gagne === undefined || isNaN(gagne))
+          && (perdu === null || perdu === undefined || isNaN(perdu));
+        if (rienPrevu){
+          soucis.push({ pointId: null, où: (f.name || 'PNJ') + ' · réplique ' + (iEtape + 1),
+            quoi: 'Combat sans suite : ni étape de victoire, ni étape de défaite' });
+        }
+      });
+    });
+  });
   const revoir = (liste, oùName)=>{
     (liste || []).forEach(pt=>{
       if (pt.type === 'pnj' && pt.linkedPnjId && existe[pt.linkedPnjId] === false){
@@ -20012,8 +20120,22 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
       }
     }
   }
-  if (retourDialogueCombat && reprendreDialogueApresCombat(result)) return;
+  /* Personne ne tient plus debout : on ramène le joueur à l'infirmerie plutôt que de le
+     laisser avec une équipe à terre et aucune issue. Après le dialogue de fin, s'il y en a
+     un — la réplique du vainqueur passe avant les soins. */
+  const equipeAuTapis = !equipeApteAuCombat();
+  if (retourDialogueCombat && reprendreDialogueApresCombat(result)){
+    if (equipeAuTapis){
+      const suitePrecedente = apresFermetureDialogue;
+      apresFermetureDialogue = ()=>{
+        if (typeof suitePrecedente === 'function'){ try { suitePrecedente(); } catch(e){} }
+        ramenerAInfirmerie();
+      };
+    }
+    return;
+  }
   apresFermetureDialogue = null;   // le dialogue n'a pas pu s'ouvrir : rien à traîner
+  if (equipeAuTapis) setTimeout(ramenerAInfirmerie, 300);
   clearSavedCombat(); // pas d'attente ici : la confirmation se fait en arrière-plan, les 3 sorties de zone servent de filet de sécurité si elle est coupée par une actualisation
 });
 
