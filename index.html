@@ -835,7 +835,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v378</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v380</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2209,9 +2209,14 @@
           <span id="editCombatScaleVal" class="meta" style="flex:0 0 52px; text-align:right;">100 %</span>
         </div>
         <div class="field-row" style="align-items:center; margin-top:4px;">
-          <span class="meta" style="flex:0 0 46px;">Hauteur</span>
+          <span class="meta" style="flex:0 0 74px;">Haut. adv.</span>
           <input type="range" id="editCombatOffset" min="-40" max="20" step="1" value="0" style="flex:3;">
-          <span id="editCombatOffsetVal" class="meta" style="flex:0 0 52px; text-align:right;">0</span>
+          <span id="editCombatOffsetVal" class="meta" style="flex:0 0 40px; text-align:right;">0</span>
+        </div>
+        <div class="field-row" style="align-items:center; margin-top:4px;">
+          <span class="meta" style="flex:0 0 74px;">Haut. allié</span>
+          <input type="range" id="editBackOffset" min="-40" max="20" step="1" value="0" style="flex:3;">
+          <span id="editBackOffsetVal" class="meta" style="flex:0 0 40px; text-align:right;">0</span>
         </div>
         <button type="button" class="btn-secondary" id="editCombatScaleReset" style="width:100%; margin-top:6px;">↺ Revenir au réglage d'origine</button>
         <p class="meta" style="margin:6px 0 0;">Les lignes « 100 / 100 PV » sont exactement celles du combat : c'est par rapport à elles qu'on cale le personnage. Elles sont AU-DESSUS quand il t'affronte, EN DESSOUS quand il se bat à tes côtés — d'où les deux colonnes. La silhouette grise est quelqu'un de taille ordinaire. « Hauteur » remonte ou descend le personnage.</p>
@@ -6139,6 +6144,7 @@ function recruitCreature(creature, metierId){
     combatImageRef: creature.combatImageRef || null,
     combatImageScale: (creature.combatImageScale == null) ? 100 : creature.combatImageScale,
     combatImageOffsetY: (creature.combatImageOffsetY == null) ? 0 : creature.combatImageOffsetY,
+    backImageOffsetY: (creature.backImageOffsetY == null) ? 0 : creature.backImageOffsetY,
     combatPortraitCrop: creature.combatPortraitCrop || null,
     equippedItemIds: { arme:null, armure:null, accessoire:null },
     task: null,
@@ -6514,7 +6520,7 @@ function empreinteFiche(){
     taille(editBackImageDataUrl), String(editBackImagePath || ''), String(editBackImageRef || ''),
     taille(editBustImageDataUrl), String(editBustImagePath || ''), String(editBustImageRef || ''),
     taille(editCombatImageDataUrl), String(editCombatImagePath || ''), String(editCombatImageRef || ''),
-    String(editCombatScale), String(editCombatOffsetY),
+    String(editCombatScale), String(editCombatOffsetY), String(editBackOffsetY),
     taille(editRoomImageDataUrl), String(editRoomImagePath || ''), String(editRoomImageRef || ''),
     taille(editZoneArenaImageDataUrl), String(editZoneArenaImagePath || ''), String(editZoneArenaImageRef || '')
   );
@@ -7073,7 +7079,11 @@ document.getElementById('clearCombatImageBtn').addEventListener('click', ()=>{
    fiche à l'échelle, et l'aperçu montre le résultat à la taille réelle du jeu, avec une
    silhouette de référence à côté pour comparer. */
 let editCombatScale = 100;
-let editCombatOffsetY = 0;   // en % de la hauteur de la case, négatif = vers le haut
+/* Deux décalages séparés : l'image d'adversaire et celle de dos n'ont ni le même cadrage ni
+   leur ligne de PV du même côté. Un réglage commun laissait forcément l'un des deux de
+   travers. En % de la hauteur de la case, négatif = vers le haut. */
+let editCombatOffsetY = 0;   // adversaire
+let editBackOffsetY = 0;     // à tes côtés
 function renderCombatScalePreview(){
   const px = getAvatarSizePx();
   const box = document.getElementById('combatScaleBox');
@@ -7082,22 +7092,23 @@ function renderCombatScalePreview(){
   const imgE = document.getElementById('combatScaleImgEnnemi');
   if (!box || !img) return;
   [box, boxE].forEach(b=>{ if (b){ b.style.width = px + 'px'; b.style.height = px + 'px'; } });
-  /* Ce que le combat afficherait vraiment : la pose de combat d'abord, sinon le dos,
-     sinon l'image ordinaire. */
-  const source = editCombatImageDataUrl || editBackImageDataUrl || uploadedImageDataUrl || ((document.getElementById('imagePreview') || {}).src || '');
+  /* Colonne « à tes côtés » : il est vu DE DOS, donc l'image de dos passe en premier. Sans
+     elle il se bat de face, et c'est la pose de combat qui vaut. L'ordre inverse affichait
+     deux fois la même image de face dans les deux colonnes. */
+  const source = editBackImageDataUrl || editCombatImageDataUrl || uploadedImageDataUrl || ((document.getElementById('imagePreview') || {}).src || '');
   /* Deux colonnes, parce que la ligne de PV n'est pas du même côté : au-dessus pour un
      adversaire, en dessous pour quelqu'un de ton équipe. Le réglage est commun, mais
      l'écart à surveiller n'est pas le même selon le camp. */
-  const transformation = 'translateY(' + editCombatOffsetY + '%) scale(' + (editCombatScale / 100) + ')';
+  const echelle = ' scale(' + (editCombatScale / 100) + ')';
   img.src = source;
   img.style.display = source ? 'block' : 'none';
-  img.style.transform = transformation;
+  img.style.transform = 'translateY(' + editBackOffsetY + '%)' + echelle;
   if (imgE){
     /* Côté adversaire c'est la pose de combat qui compte, jamais l'image de dos. */
     const sourceE = editCombatImageDataUrl || uploadedImageDataUrl || ((document.getElementById('imagePreview') || {}).src || '');
     imgE.src = sourceE;
     imgE.style.display = sourceE ? 'block' : 'none';
-    imgE.style.transform = transformation;
+    imgE.style.transform = 'translateY(' + editCombatOffsetY + '%)' + echelle;
   }
   const val = document.getElementById('editCombatScaleVal');
   if (val) val.textContent = editCombatScale + ' %';
@@ -7107,6 +7118,10 @@ function renderCombatScalePreview(){
   if (valD) valD.textContent = (editCombatOffsetY > 0 ? '+' : '') + editCombatOffsetY;
   const curseurD = document.getElementById('editCombatOffset');
   if (curseurD && +curseurD.value !== editCombatOffsetY) curseurD.value = editCombatOffsetY;
+  const valB = document.getElementById('editBackOffsetVal');
+  if (valB) valB.textContent = (editBackOffsetY > 0 ? '+' : '') + editBackOffsetY;
+  const curseurB = document.getElementById('editBackOffset');
+  if (curseurB && +curseurB.value !== editBackOffsetY) curseurB.value = editBackOffsetY;
 }
 document.getElementById('editCombatScale').addEventListener('input', (e)=>{
   editCombatScale = Math.max(40, Math.min(200, +e.target.value || 100));
@@ -7118,9 +7133,15 @@ document.getElementById('editCombatOffset').addEventListener('input', (e)=>{
   renderCombatScalePreview();
   marquerFicheModifiee();
 });
+document.getElementById('editBackOffset').addEventListener('input', (e)=>{
+  editBackOffsetY = Math.max(-40, Math.min(20, parseInt(e.target.value, 10) || 0));
+  renderCombatScalePreview();
+  marquerFicheModifiee();
+});
 document.getElementById('editCombatScaleReset').addEventListener('click', ()=>{
   editCombatScale = 100;
   editCombatOffsetY = 0;
+  editBackOffsetY = 0;
   renderCombatScalePreview();
   marquerFicheModifiee();
 });
@@ -7394,6 +7415,7 @@ function loadForEdit(id){
   }
   editCombatScale = (d.combatImageScale == null) ? 100 : d.combatImageScale;
   editCombatOffsetY = (d.combatImageOffsetY == null) ? 0 : d.combatImageOffsetY;
+  editBackOffsetY = (d.backImageOffsetY == null) ? 0 : d.backImageOffsetY;
   renderCombatScalePreview();
   editRoomImagePath = d.roomImagePath || null;
   editRoomImageDataUrl = editRoomImagePath ? resolveMediaPath(editRoomImagePath) : null;
@@ -7579,6 +7601,7 @@ function resetForm(){
   renderCombatImagePreview();
   editCombatScale = 100;
   editCombatOffsetY = 0;
+  editBackOffsetY = 0;
   renderCombatScalePreview();
   document.getElementById('editCombatStealEasy').dataset.itemId = '';
   document.getElementById('editCombatStealHard').dataset.itemId = '';
@@ -8098,7 +8121,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -17848,10 +17871,13 @@ function echelleDeCombat(r){
   if (source && source.combatImageScale != null) return source.combatImageScale;
   return 100;
 }
-function decalageDeCombat(r){
-  if (r.combatImageOffsetY != null) return r.combatImageOffsetY;
+/* Le combattant de TON équipe est vu de dos : c'est son réglage à lui qu'on applique.
+   Sans image de dos, il se bat avec sa pose de face, et c'est l'autre qui vaut. */
+function decalageDeCombat(r, deDos){
+  const champ = deDos ? 'backImageOffsetY' : 'combatImageOffsetY';
+  if (r[champ] != null) return r[champ];
   const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
-  if (source && source.combatImageOffsetY != null) return source.combatImageOffsetY;
+  if (source && source[champ] != null) return source[champ];
   return 0;
 }
 
@@ -17889,7 +17915,7 @@ function buildPlayerFighters(){
         backImageRef: dosDeLaRecrue(r).ref,
         combatImageRef: dosDeLaRecrue(r).ref ? null : combatDeLaRecrue(r).ref,
         combatImageScale: echelleDeCombat(r),
-        combatImageOffsetY: decalageDeCombat(r),
+        combatImageOffsetY: decalageDeCombat(r, !!dosDeLaRecrue(r).path || !!dosDeLaRecrue(r).ref),
         tribe:cs.tribe||'',
         combatPortraitCrop: r.combatPortraitCrop || null,
         maxHp:maxHp, hp:startHp,
@@ -18791,9 +18817,14 @@ function playCombatEntryTransition(hasBoss){
         const frozen = liveWrap.cloneNode(true);
         frozen.querySelectorAll('[id]').forEach(el=> el.removeAttribute('id')); // pas d'identifiant en double dans la page
         frozen.removeAttribute('id');
+        /* On relit le découpage AVANT d'écraser le style du clone : `cssText` remplace tout,
+           et le `clip-path` qui coupe les sprites au bord de l'image partait avec. Résultat,
+           les personnages débordaient à nouveau sur les bandes noires pendant la transition. */
+        const decoupe = liveWrap.style.clipPath || '';
         frozen.style.cssText = 'position:absolute; inset:auto; left:' + r.left + 'px; top:' + r.top + 'px;' +
           ' width:' + r.width + 'px; height:' + r.height + 'px; overflow:hidden;' +
           ' display:flex; align-items:center; justify-content:center; background:#111;';
+        if (decoupe && decoupe !== 'none') frozen.style.clipPath = decoupe;
         freezeFrame.appendChild(frozen);
         document.body.appendChild(freezeFrame);
         /* Combien d'images recopiées, et pour quel poids : c'est l'un des suspects du
