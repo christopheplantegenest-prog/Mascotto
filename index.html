@@ -910,7 +910,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v403</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v405</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -17364,6 +17364,7 @@ function openSceneView(creature, resumeSceneId, opts){
     sceneViewCreature = creature;
     sceneViewScenes = norm.scenes;
     sceneViewCurrentSceneId = (resumeSceneId && norm.scenes.some(s=>s.id===resumeSceneId)) ? resumeSceneId : norm.startSceneId;
+    zoneQuittee = false;            // on entre pour de bon : la position peut de nouveau s'enregistrer
     agressionsJouees = new Set();   // on entre dans la zone : personne n'est encore venu
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
@@ -18805,7 +18806,14 @@ setInterval(()=>{
 }, 2000);
 
 /* ---------- Sauvegarde/reprise de session : position en zone d'exploration + combat en cours ---------- */
+/* Une fois la zone quittée, PLUS RIEN ne doit réenregistrer la position : après une défaite,
+   le décor est réaffiché quelques instants pour laisser parler le vaincu, et ce réaffichage
+   réécrivait une position postérieure au repère de sortie. Au rechargement suivant, le jeu
+   croyait donc l'exploration en cours, remettait le joueur dans la zone — et l'agresseur
+   relançait le combat. C'est le tour en boucle qu'il a subi deux fois. */
+let zoneQuittee = false;
 function saveCurrentZoneScene(){
+  if (zoneQuittee) return;
   if (!currentUser || !db || !sceneViewCreature) return;
   db.collection('players').doc(currentUser.uid).set({
     currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId, zoneSavedAt: Date.now()
@@ -18817,6 +18825,7 @@ function markZoneCleared(){
   try { localStorage.setItem('mascotto_zone_cleared_at', String(Date.now())); } catch(e){}
 }
 function clearCurrentZoneScene(){
+  zoneQuittee = true;
   markZoneCleared();
   if (sceneViewCreature){
     lastZoneExitId = sceneViewCreature.id;
@@ -19866,7 +19875,10 @@ async function playTurnAnimation(actor, attack, target){
   await sleep(attack.school === 'magic' ? 900 : 450);
 
   const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
-  const fxTargets = isGroup ? combatState.fighters.filter(f=> f.side===target.side) : [target];
+  /* Les dégâts, eux, ne frappent que les VIVANTS (voir resolveAttack). L'effet visuel, lui,
+     partait sur tout le camp, K.O. compris : on voyait l'éclair tomber sur un corps à terre
+     sans que rien ne se passe. Même filtre des deux côtés. */
+  const fxTargets = isGroup ? combatState.fighters.filter(f=> f.side===target.side && f.alive) : [target];
   combatState.missedUids = []; // rempli par resolveAttackOnTarget en cas de raté sur ce tour
   combatState.nothingToStealUids = []; // idem, cas "plus rien à voler" sur une tentative de vol
 
