@@ -660,7 +660,9 @@
   background-image: var(--arena-bg, none); background-size:cover; background-position:center; background-color:#111;
   position:relative;
 }
-.combat-side{ display:flex; flex-direction:row; justify-content:center; align-items:center; gap:4px; flex-wrap:wrap; }
+.combat-side{
+  /* Décalage commun aux deux rangées, réglable par le joueur. */
+  transform:translateY(var(--combattants-shift, 0px)); display:flex; flex-direction:row; justify-content:center; align-items:center; gap:4px; flex-wrap:wrap; }
 /* Étiquette de PV : sa taille suit celle de l'écran, comme le reste du combat. Un texte figé
    en pixels paraît énorme sur un petit téléphone et minuscule sur une tablette. */
 .combat-hp-label{
@@ -759,7 +761,8 @@
   100% { opacity:0; }
 }
 #combatLastAction{
-  position:absolute; left:8px; right:8px; bottom:8px; z-index:4;
+  position:absolute; left:8px; right:8px; z-index:4;
+  top:var(--bandeau-top, 92%); transform:translateY(-100%);
   background:rgba(18,36,26,.82); color:#dfeee2; border-radius:8px;
   padding:5px 10px; font-size:var(--bandeau-font-size, clamp(10px, 2.9vw, 14px)); line-height:1.3;
   /* Deux lignes au plus : au-delà, la phrase est coupée. Le journal complet reste là pour
@@ -879,7 +882,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v393</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v395</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1338,8 +1341,9 @@
 <!-- Voile de démarrage : la carte ne doit jamais se montrer avant le vaisseau. Il se lève
      quand le vaisseau est ouvert, ou au bout de 6 s si aucun vaisseau n'est configuré —
      mieux vaut voir la carte que rester devant un écran noir. -->
-<div id="voileDemarrage" style="position:fixed; inset:0; z-index:9000; background:#0b1a12; display:flex; align-items:center; justify-content:center; color:#dfeee2; font-weight:700; letter-spacing:1px;">
-  Mascotto
+<div id="voileDemarrage" style="position:fixed; inset:0; z-index:9000; background:#0b1a12; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:#dfeee2;">
+  <div style="font-weight:800; letter-spacing:2px; font-size:20px;">MASCOTTO</div>
+  <div id="voileDemarrageTexte" class="meta" style="color:rgba(223,238,226,.75);">Connexion en cours…</div>
 </div>
 
 <div id="combatUiTuner" style="display:none; position:fixed; left:8px; right:8px; bottom:8px; z-index:4800; background:rgba(0,0,0,.92); border:1px solid rgba(255,255,255,.25); border-radius:12px; padding:8px 10px 10px;">
@@ -1353,6 +1357,7 @@
   </div>
   <p class="meta" id="cuTunerAide" style="margin:4px 0 0; color:rgba(255,255,255,.65);"></p>
   <button type="button" class="btn-secondary" id="cuTunerAutre" style="display:none; width:100%; margin-top:6px;">↕️ Régler plutôt sa hauteur</button>
+  <button type="button" class="btn-secondary" id="cuTunerMasquer" style="display:none; width:100%; margin-top:6px;">🚫 Masquer le bandeau</button>
 </div>
 
 <div class="scene-full" id="combatFull">
@@ -2851,6 +2856,9 @@ const mascottoGoogleProvider = (typeof firebase !== 'undefined' && firebase.auth
 let awaitingGoogleReSignIn = false; // true juste après une déconnexion volontaire (menu Options)
 
 function showAuthScreen(text, showRetryBtn){
+  /* Tant que le voile est là, c'est lui qui parle : afficher l'écran d'authentification
+     par-dessous revenait à montrer la carte au démarrage. */
+  if (typeof messageDeDemarrage === 'function') messageDeDemarrage(text);
   authStatus.textContent = text;
   googleSignInBtn.textContent = 'Réessayer';
   googleSignInBtn.style.display = showRetryBtn ? 'block' : 'none';
@@ -15075,7 +15083,8 @@ function paintShipMarker(){
    Tout est exprimé en PARTS de l'écran, jamais en pixels, et chaque valeur garde ses bornes :
    c'est ce qui rend le rendu comparable d'un téléphone à l'autre. Les valeurs vivent dans
    `app_config/combatUi`, donc le réglage suit le jeu et non l'appareil. */
-const COMBAT_UI_DEFAUT = { panel:30, avatar:36, turnbar:9, attackFont:29, bandeau:29, turnbarY:50 };
+const COMBAT_UI_DEFAUT = { panel:30, avatar:36, turnbar:9, attackFont:29, bandeau:29, turnbarY:50,
+  bandeauY:92, bandeauVisible:1, combattantsY:50 };
 let combatUi = { ...COMBAT_UI_DEFAUT };
 function appliquerCombatUi(){
   const r = document.documentElement.style;
@@ -15089,6 +15098,12 @@ function appliquerCombatUi(){
   /* Position verticale de la barre des tours, en part de la hauteur de l'arène : certains
      préfèrent l'avoir en haut, d'autres au milieu. */
   r.setProperty('--turnbar-top', combatUi.turnbarY + '%');
+  /* Le bandeau des actions et les rangées de combattants se placent librement dans l'arène :
+     chacun a sa préférence, et au-dessus des ennemis le texte gêne parfois moins. */
+  r.setProperty('--bandeau-top', combatUi.bandeauY + '%');
+  r.setProperty('--combattants-shift', ((combatUi.combattantsY - 50) * 0.15) + 'vh');
+  const bandeau = document.getElementById('combatLastAction');
+  if (bandeau) bandeau.style.visibility = combatUi.bandeauVisible ? 'visible' : 'hidden';
   const mettre = (id, valeur, suffixe)=>{
     const el = document.getElementById(id);
     if (el) el.textContent = valeur + suffixe;
@@ -15117,6 +15132,8 @@ const CU_ZONES = {
   attackFont:{ titre:'Taille du texte d\'attaque', min:22, max:42, suffixe:'', aide:'Nom des attaques, en dixièmes de pour cent de la largeur.' },
   bandeau: { titre:'Taille du texte des actions', min:22, max:44, suffixe:'', aide:'Le bandeau du bas, en dixièmes de pour cent de la largeur. Il garde les trois dernières actions.' },
   turnbarY:{ titre:'Hauteur de la barre des tours', min:12, max:88, suffixe:'%', aide:'Où la colonne des tours se place dans l\'arène, de haut en bas.' },
+  bandeauY:{ titre:'Position du bandeau des actions', min:14, max:98, suffixe:'%', aide:'De haut en bas dans l\'arène. Tout en haut, il passe au-dessus des adversaires.' },
+  combattantsY:{ titre:'Position des combattants', min:20, max:80, suffixe:'%', aide:'Monte ou descend les deux rangées ensemble dans l\'arène.' },
 };
 let cuZoneCourante = null;
 function ouvrirReglageCombat(cle){
@@ -15135,9 +15152,29 @@ function ouvrirReglageCombat(cle){
      évite d'inventer un geste de plus. */
   const autre = document.getElementById('cuTunerAutre');
   if (autre){
-    autre.style.display = (cle === 'turnbar' || cle === 'turnbarY') ? 'block' : 'none';
-    autre.textContent = (cle === 'turnbar') ? '↕️ Régler plutôt sa hauteur' : '↔️ Régler plutôt sa largeur';
-    autre.onclick = ()=> ouvrirReglageCombat(cle === 'turnbar' ? 'turnbarY' : 'turnbar');
+    /* Certaines zones ont deux réglages : un bouton bascule de l'un à l'autre plutôt que
+       d'inventer un second geste. */
+    const bascule = { turnbar:['turnbarY','↕️ Régler plutôt sa hauteur'],
+                      turnbarY:['turnbar','↔️ Régler plutôt sa largeur'],
+                      bandeau:['bandeauY','↕️ Régler plutôt sa position'],
+                      bandeauY:['bandeau','🔤 Régler plutôt sa taille'] }[cle];
+    autre.style.display = bascule ? 'block' : 'none';
+    if (bascule){
+      autre.textContent = bascule[1];
+      autre.onclick = ()=> ouvrirReglageCombat(bascule[0]);
+    }
+  }
+  const masquer = document.getElementById('cuTunerMasquer');
+  if (masquer){
+    const surLeBandeau = (cle === 'bandeau' || cle === 'bandeauY');
+    masquer.style.display = surLeBandeau ? 'block' : 'none';
+    masquer.textContent = combatUi.bandeauVisible ? '🚫 Masquer le bandeau' : '👁️ Réafficher le bandeau';
+    masquer.onclick = ()=>{
+      combatUi.bandeauVisible = combatUi.bandeauVisible ? 0 : 1;
+      appliquerCombatUi();
+      enregistrerCombatUi();
+      masquer.textContent = combatUi.bandeauVisible ? '🚫 Masquer le bandeau' : '👁️ Réafficher le bandeau';
+    };
   }
   boite.style.display = 'block';
 }
@@ -15167,7 +15204,10 @@ if (cuTunerClose) cuTunerClose.addEventListener('click', ()=>{
   let minuterie = null, depart = null;
   const zonePour = (cible)=>{
     if (!cible || !cible.closest) return null;
-    if (cible.closest('#combatLastAction')) return 'bandeau';
+    /* Masqué, le bandeau ne répond plus : on passe alors par l'arène pour le retrouver. */
+    if (combatUi.bandeauVisible && cible.closest('#combatLastAction')) return 'bandeau';
+    if (!combatUi.bandeauVisible && cible.closest('#combatArena') && !cible.closest('.combat-side')
+        && !cible.closest('#combatTurnOrderBar')) return 'bandeauY';
     if (cible.closest('#combatActionPanel')) return 'panel';
     if (cible.closest('#combatTurnOrderBar')) return 'turnbar';
     if (cible.closest('.combat-side')) return 'avatar';
@@ -15246,7 +15286,7 @@ if (typeof db !== 'undefined' && db){
           && !document.getElementById('pseudoOverlay').classList.contains('show')){
         ouvrirLeVaisseau();
       }
-      leverLeVoileDeDemarrage();
+      leverLeVoileQuandLeVaisseauEstLa();
     }
   }, ()=>{});
 }
@@ -15259,9 +15299,28 @@ function leverLeVoileDeDemarrage(){
   v.style.opacity = '0';
   setTimeout(()=>{ v.style.display = 'none'; }, 400);
 }
-/* Filet de sécurité : sans vaisseau configuré, ou si Firebase ne répond pas, on ne laisse
-   personne devant un écran noir. */
-setTimeout(leverLeVoileDeDemarrage, 6000);
+/* Le voile ne se lève pas quand on DEMANDE le vaisseau, mais quand il est réellement à
+   l'écran : entre les deux il y a une lecture Firestore et le décodage de l'image, et c'est
+   pendant ce temps qu'on voyait la carte et le message de connexion. */
+function leverLeVoileQuandLeVaisseauEstLa(){
+  let essais = 0;
+  const guetter = setInterval(()=>{
+    essais++;
+    const pret = document.getElementById('sceneViewFull').classList.contains('show');
+    if (pret || essais > 60){          // 60 × 100 ms = 6 s au maximum
+      clearInterval(guetter);
+      leverLeVoileDeDemarrage();
+    }
+  }, 100);
+}
+/* Ce qui se passe pendant le chargement s'écrit SUR le voile : il n'y a plus de raison de
+   montrer la carte pour dire « connexion en cours ». */
+function messageDeDemarrage(texte){
+  const el = document.getElementById('voileDemarrageTexte');
+  if (el) el.textContent = texte || '';
+}
+/* Dernier filet : si rien ne répond, on ne laisse personne devant un écran noir. */
+setTimeout(leverLeVoileDeDemarrage, 12000);
 const SCENE_POINT_TYPES = [
   { id:'sortie', label:'🚪 Sortie' },
   { id:'objet', label:'🎒 Objet' },
