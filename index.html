@@ -138,7 +138,7 @@
     --attack-font-size: clamp(10px, 2.9vw, 13px);
     --attack-desc-font-size: clamp(7px, 2.1vw, 10px);
     --secondary-btn-height: clamp(28px, 8vw, 38px);
-    --arena-min-height: clamp(220px, 55vw, 340px);
+    --arena-min-height: clamp(268px, 62vw, 400px);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
   html,body{
@@ -652,7 +652,9 @@
 .combat-fx-projectile{ position:absolute; pointer-events:none; z-index:8; }
 /* ===== Habillage visuel du combat (repris du prototype donjon-proto.html) ===== */
 #combatArena{
-  flex:1; min-height:var(--arena-min-height); display:flex; flex-direction:column; justify-content:space-evenly; gap:8px; margin:0 10px 8px; padding:10px 6px; border-radius:12px;
+  /* Le haut laisse la place à la barre du journal, le bas à celle des actions : sans ces
+     réserves, le bandeau passait par-dessus les PV et les états des alliés. */
+  flex:1; min-height:var(--arena-min-height); display:flex; flex-direction:column; justify-content:space-evenly; gap:8px; margin:0 10px 8px; padding:22px 6px 46px; border-radius:12px;
   background-image: var(--arena-bg, none); background-size:cover; background-position:center; background-color:#111;
   position:relative;
 }
@@ -852,7 +854,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v382</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v384</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8107,6 +8109,14 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      un emplacement bidon pour tout ce qui n'a pas à être quelque part. */
   if (pendingLat === null && !pendingAssignedZoneId && !pendingReserve){ showToast('Choisis un emplacement, une zone d\'exploration, ou mets la fiche en réserve'); return; }
   if (interactionType === 'combat' && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
+  /* L'image de buste devient obligatoire : sans elle, le dialogue retombait sur l'image en
+     pied et affichait le personnage debout en pleine conversation. Une règle claire vaut
+     mieux qu'un repli silencieux. Les fiches en travaux échappent au contrôle : elles sont
+     justement là pour être incomplètes. */
+  if (!enTravaux && !editBustImageDataUrl && !editBustImagePath && !editBustImageRef){
+    showToast('Il manque l\'image de buste (💬) — c\'est elle qui s\'affiche pendant les dialogues');
+    return;
+  }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
   const combatArenaImagePath = editZoneArenaImagePath || null;
@@ -11869,6 +11879,12 @@ function soignerToutLeMondeInstantanement(){
 }
 
 function ramenerAInfirmerie(){
+  /* On quitte d'abord la zone : sinon l'infirmerie s'ouvrait PAR-DESSUS le décor, et refermer
+     la salle reposait le joueur à l'endroit exact où il venait de perdre. Il doit refaire le
+     chemin — c'est sa règle depuis le début. */
+  if (document.getElementById('sceneViewFull').classList.contains('show') && !sceneViewIsShip){
+    clearCurrentZoneScene();
+  }
   /* La salle a besoin de son décor : sans image configurée, on soigne quand même et on le
      dit — mieux vaut un joueur soigné sans mise en scène qu'un joueur bloqué. */
   const soignes = soignerToutLeMondeInstantanement();
@@ -11910,7 +11926,10 @@ function renderInfirmarySection(){
   if (!combattants.length){ el.innerHTML = '<p class="meta">Aucun combattant recruté pour l\'instant.</p>'; return; }
   if (!blesses.length){ el.innerHTML = '<p class="meta">Personne à soigner pour l\'instant.</p>'; return; }
 
-  el.innerHTML = '<p class="meta" style="margin-top:0;">Le repos est gratuit mais lent, et un combattant au repos quitte l\'équipe active. Pour soigner tout de suite, utilise une potion depuis ton sac 🎒.</p>' +
+  /* Un seul bouton qui remet tout le monde d'aplomb, sans attente : c'est le geste qu'on
+     attend d'une infirmerie, et il rend le repos facultatif au lieu d'obligatoire. */
+  el.innerHTML = '<button type="button" class="btn" id="infHealAllBtn" style="width:100%; margin-bottom:10px;">🏥 Soigner tout le monde</button>'
+    + '<p class="meta" style="margin-top:0;">Le soin ici est immédiat et gratuit. Les potions du sac 🎒 servent en chemin, quand on est loin du vaisseau.</p>' +
     blesses.map(r=>{
       const max = recruitMaxHp(r);
       const hp = recruitEffectiveHp(r);
@@ -14606,6 +14625,18 @@ function ouvrirChoixPatient(capsule){
 }
 /* Compte à rebours des capsules, tant que la pièce est ouverte. */
 setInterval(()=>{ if (infirmaryRoomOuverte()) renderInfirmaryRoom(); }, 5000);
+
+/* Bouton « Soigner tout le monde » de l'onglet Infirmerie. Délégué sur le document : la
+   section est redessinée souvent, un écouteur posé sur le bouton lui-même disparaîtrait. */
+document.addEventListener('click', (e)=>{
+  const b = e.target.closest && e.target.closest('#infHealAllBtn');
+  if (!b) return;
+  if (isGhostTap()) return;
+  const soignes = soignerToutLeMondeInstantanement();
+  showToast(soignes.length ? soignes.length + ' combattant(s) soigné(s)' : 'Personne n\'avait besoin de soins');
+  renderInfirmarySection();
+  renderCombattantsRoster();
+});
 
 /* ---------- Terminal de missions (v244) ----------
    Le même écran que l'onglet de la Base, réutilisé tel quel : un seul code, une seule
@@ -19105,6 +19136,31 @@ function cibleApresProvocation(attacker, attack, target){
   return force;
 }
 
+/* Même piège que la provocation, et même remède : la confusion se résolvait au fond de
+   `resolveAttack`, donc APRÈS l'effet visuel. L'éclair partait sur la cible désignée pendant
+   que les dégâts tombaient ailleurs. On tire donc le hasard AVANT l'animation, une seule
+   fois, et tout le monde — image, dégâts, statuts — suit la même cible. */
+function cibleApresConfusion(attacker, attack, target){
+  if (!attack || !target) return target;
+  const groupe = attack.kind === 'damage_group' || attack.kind === 'heal_group';
+  const reanime = attack.kind === 'revive_single';
+  if (groupe || reanime) return target;                 // pas de sens sur ces attaques
+  if (!attacker.statuses || !attacker.statuses.confuse) return target;
+  if (Math.random() * 100 >= 33) return target;
+  const vivants = combatState.fighters.filter(f=> f.alive);
+  if (!vivants.length) return target;
+  const auHasard = vivants[Math.floor(Math.random() * vivants.length)];
+  combatState.log.unshift(`${attacker.name} est confus(e) et attaque au hasard !`);
+  combatState.log = combatState.log.slice(0, 20);
+  return auHasard;
+}
+
+/* La cible définitive d'un tour : la confusion d'abord — elle peut envoyer le coup dans
+   n'importe quel camp — puis la provocation, qui ne joue que sur le camp visé. */
+function cibleFinale(attacker, attack, target){
+  return cibleApresProvocation(attacker, attack, cibleApresConfusion(attacker, attack, target));
+}
+
 async function takeTurn(fighter){
   combatState.currentActorUid = fighter.uid;
   if (combatState.isPvp && fighter.side === 'enemy' && !combatState.isSpectator){
@@ -19188,7 +19244,7 @@ async function takeTurn(fighter){
       // et les survivants se recentrent automatiquement (le nombre de cartes change).
       fighter.fled = true;
     } else if (decision.atk && decision.target){
-      await playTurnAnimation(fighter, decision.atk, cibleApresProvocation(fighter, decision.atk, decision.target));
+      await playTurnAnimation(fighter, decision.atk, cibleFinale(fighter, decision.atk, decision.target));
     }
     decrementFighterStatuses(fighter);
     combatState.resolving = false;
@@ -19452,7 +19508,9 @@ function renderCombatActionButtons(fighter){
         <button type="button" class="btn-secondary" id="combatAnalyzeBtn">🔍 Analyse</button>
         <button type="button" class="btn-secondary" id="combatItemBtn">🎒 Objet</button>
         <button type="button" class="btn-secondary" id="combatPassBtn">⏭️ Passer</button>
-        <button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">${combatState.isPvp ? '🏳️ Abandonner' : '🏃 Fuir'}</button>
+        ${combatDeDialogue()
+          ? `<button type="button" class="btn-secondary" disabled style="opacity:.5; color:var(--muted);">🚫 Fuite impossible</button>`
+          : `<button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">${combatState.isPvp ? '🏳️ Abandonner' : '🏃 Fuir'}</button>`}
       </div>`;
   panel.querySelectorAll('.combat-action-atk').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -19806,16 +19864,9 @@ function resolveAttack(attacker, attack, target){
 
   const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
 
-  // Confusion : chance d'attaquer une cible au hasard (n'importe quel camp) au lieu de la cible choisie.
-  // Non applicable aux attaques de groupe (elles touchent tout un camp d'un coup, la confusion n'a pas de sens ici)
-  // ni à la réanimation (une cible au hasard vivante n'aurait aucun sens pour cette attaque).
-  if (!isGroup && !isRevive && attacker.statuses.confuse && Math.random()*100 < 33){
-    const anyAlive = combatState.fighters.filter(f=>f.alive);
-    if (anyAlive.length){
-      target = anyAlive[Math.floor(Math.random()*anyAlive.length)];
-      combatState.log.unshift(`${attacker.name} est confus(e) et attaque au hasard !`);
-    }
-  }
+  /* La confusion N'EST PLUS tirée ici : elle l'est dans `cibleFinale`, avant l'animation.
+     La tirer une seconde fois enverrait les dégâts sur une cible encore différente de celle
+     que l'effet visuel vient de frapper — exactement le bug qu'on corrige. */
 
   // Attaque de groupe : on applique l'effet à tous les vivants du même camp que la cible visée
   // (tous les ennemis pour des dégâts de groupe, tous les alliés pour un soin de groupe).
@@ -19999,7 +20050,14 @@ function resolveAttackOnTarget(attacker, attack, target){
   applyAttackStatusEffect(attacker, attack, target);
 }
 
+/* Un combat né d'un dialogue est un duel : quelqu'un t'a provoqué, on ne s'en va pas.
+   Et techniquement, fuir laissait le dialogue en suspens sans issue prévue. */
+function combatDeDialogue(){
+  return !!retourDialogueCombat;
+}
+
 async function attemptFlee(){
+  if (combatDeDialogue()){ showToast('Fuite impossible : ce duel doit aller à son terme'); return; }
   if (!(await appConfirm('Fuir ce combat ? Tu perds ta chance de butin.'))) return;
   const enemyFighters = combatState.fighters.filter(f=>f.side==='enemy' && f.alive);
   const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
@@ -20112,6 +20170,8 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
       await renderSceneViewCurrentScene();
     } else if (result === 'defeat'){
       if (auraUnMotDeLaFin && !sceneViewIsShip){
+        /* On laisse le vaincu dire son mot dans le décor, puis la sortie se fait à la
+           fermeture — soit par l'infirmerie si l'équipe est à terre, soit tout court. */
         document.getElementById('sceneViewFull').classList.add('show');
         await renderSceneViewCurrentScene();
         apresFermetureDialogue = ()=> clearCurrentZoneScene();   // expulsé en refermant
@@ -20548,7 +20608,9 @@ async function importerScenario(sc){
       recruitable: !!p.combatStats.recruitable,
       budgetCategory:p.combatStats.budgetCategory || 'common',
       rarity:p.combatStats.rarity || 'common',
-      fleeChance:p.combatStats.fleeChance || 30,
+      /* `|| 30` transformait une chance de fuite réglée à ZÉRO en 30 % : un adversaire dont
+         on ne devait pas pouvoir s'échapper laissait filer le joueur une fois sur trois. */
+      fleeChance: (p.combatStats.fleeChance != null) ? p.combatStats.fleeChance : 30,
       aiPersonality:p.combatStats.aiPersonality || 'equilibre',
       canFlee: !!p.combatStats.canFlee,
       fleeHpThreshold:p.combatStats.fleeHpThreshold || 25,
