@@ -573,7 +573,11 @@
   100%{ opacity:0; transform:translate(-50%,-32px); }
 }
 .combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
-.combat-avatar{ position:relative; width:var(--avatar-size); height:var(--avatar-size); margin:0 auto; }
+/* `margin:0 auto` ne centre plus rien dès que l'élément est PLUS LARGE que son parent : les
+   marges automatiques tombent à zéro et le bloc déborde vers la droite. C'est ce qui décalait
+   les PV du personnage quand on l'agrandissait. Le calcul explicite, lui, centre toujours. */
+.combat-avatar{ position:relative; width:var(--avatar-size); height:var(--avatar-size);
+  margin-left:calc(50% - var(--avatar-size) / 2); }
 /* Cible directement l'image du PERSONNAGE (frère direct de l'image d'effet quand celle-ci est posée
    "derrière" à l'intérieur de l'avatar) avec un z-index positif explicite : rend la comparaison avec
    le z-index négatif de l'effet totalement non ambiguë, quel que soit un filtre par ailleurs (lueur
@@ -716,13 +720,19 @@
   grid-template-rows:repeat(3, minmax(0, 1fr));
 }
 .combat-attack-grid button{
-  min-width:0; padding:5px 8px; border-radius:8px; height:100%; min-height:0; overflow:hidden;
+  min-width:0; padding:4px 7px; border-radius:8px; height:100%; min-height:0; overflow:hidden;
+  /* La case tient dans sa ligne quelle que soit la hauteur du panneau : le nom d'abord, la
+     description seulement s'il reste de la place. */
+  display:flex; flex-direction:column; justify-content:center; gap:1px;
   display:flex; flex-direction:column; justify-content:center; align-items:flex-start; text-align:left;
 }
 .combat-attack-grid button strong{
   display:block; width:100%; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--attack-font-size);
 }
 .combat-atk-slot-empty{ border:1px dashed var(--line); border-radius:8px; height:100%; min-height:0; min-width:0; }
+/* La description s'efface d'elle-même quand la ligne devient courte, au lieu d'être coupée
+   au milieu d'un mot. */
+.combat-atk-desc{ flex:0 1 auto; min-height:0; overflow:hidden; }
 .combat-atk-desc{
   font-size:var(--attack-desc-font-size); color:var(--muted); opacity:.75; font-style:italic; white-space:normal; margin-top:2px;
   line-height:1.15; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
@@ -790,6 +800,8 @@
   position:fixed; left:10px; right:10px; bottom:8px; height:var(--action-panel-height);
   z-index:8; overflow-y:auto;
 }
+/* Le bouton passe AU-DESSUS du journal, sinon on ne peut plus le refermer. */
+#combatLogToggleBtn{ z-index:9; }
 #combatLog{
   background:#12241a; color:#dfeee2; border-radius:12px; padding:8px 10px 6px; font-size:11px;
   height:var(--action-panel-height); flex:none; min-width:0; overflow:hidden; display:none; flex-direction:column; margin:0 10px 8px;
@@ -886,7 +898,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v396</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v397</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15105,7 +15117,7 @@ function appliquerCombatUi(){
   /* Le bandeau des actions et les rangées de combattants se placent librement dans l'arène :
      chacun a sa préférence, et au-dessus des ennemis le texte gêne parfois moins. */
   r.setProperty('--bandeau-top', combatUi.bandeauY + '%');
-  r.setProperty('--combattants-shift', ((combatUi.combattantsY - 50) * 0.15) + 'vh');
+  r.setProperty('--combattants-shift', ((combatUi.combattantsY - 50) * 0.30) + 'vh');
   r.setProperty('--logbtn-top', combatUi.logBtnY + '%');
   const bandeau = document.getElementById('combatLastAction');
   if (bandeau) bandeau.style.visibility = combatUi.bandeauVisible ? 'visible' : 'hidden';
@@ -15138,7 +15150,7 @@ const CU_ZONES = {
   bandeau: { titre:'Taille du texte des actions', min:22, max:44, suffixe:'', aide:'Le bandeau du bas, en dixièmes de pour cent de la largeur. Il garde les trois dernières actions.' },
   turnbarY:{ titre:'Hauteur de la barre des tours', min:12, max:88, suffixe:'%', aide:'Où la colonne des tours se place dans l\'arène, de haut en bas.' },
   bandeauY:{ titre:'Position du bandeau des actions', min:14, max:98, suffixe:'%', aide:'De haut en bas dans l\'arène. Tout en haut, il passe au-dessus des adversaires.' },
-  combattantsY:{ titre:'Position des combattants', min:20, max:80, suffixe:'%', aide:'Monte ou descend les deux rangées ensemble dans l\'arène.' },
+  combattantsY:{ titre:'Position des combattants', min:0, max:100, suffixe:'%', aide:'Monte ou descend les deux rangées ensemble dans l\'arène.' },
   logBtnY: { titre:'Position du bouton du journal', min:2, max:90, suffixe:'%', aide:'Où se place la petite icône 📜 sur le bord gauche de l\'arène.' },
 };
 let cuZoneCourante = null;
@@ -17916,7 +17928,10 @@ let combatTickTimer = null;
 let combatLogOpen = false;
 document.getElementById('combatLogToggleBtn').addEventListener('click', ()=>{
   combatLogOpen = !combatLogOpen;
-  document.getElementById('combatActionPanel').style.display = combatLogOpen ? 'none' : 'flex';
+  /* Le panneau d'attaques n'est plus MASQUÉ mais simplement recouvert : le cacher le retirait
+     de la colonne, l'arène s'étirait pour prendre sa place, et tout l'écran se réorganisait
+     à chaque ouverture du journal. On le rend juste invisible sans libérer son espace. */
+  document.getElementById('combatActionPanel').style.visibility = combatLogOpen ? 'hidden' : 'visible';
   document.getElementById('combatLog').classList.toggle('show', combatLogOpen);
   /* Le journal complet dit déjà tout : le bandeau ferait doublon. */
   document.getElementById('combatLastAction').classList.toggle('show', !combatLogOpen && !!document.getElementById('combatLastAction').textContent);
@@ -19898,7 +19913,9 @@ function renderCombatTargetingPanel(actor, promptText){
 function renderCombatActionButtons(fighter){
   const panel = document.getElementById('combatActionPanel');
   const silencedNote = fighter.statuses.silence ? '<p class="meta" style="padding:5px 8px 0; margin:0; color:var(--danger);">🔇 Réduit au silence : attaques magiques indisponibles.</p>' : '';
-  const slots = [0,1,2,3].map(i=>{
+  /* Six emplacements : la grille a deux colonnes, donc toujours TROIS lignes, qu'il y ait
+     deux attaques ou six. Sans ça le rectangle changeait de forme d'un personnage à l'autre. */
+  const slots = [0,1,2,3,4,5].map(i=>{
     const a = fighter.attacksList[i];
     if (!a) return `<div class="combat-atk-slot-empty"></div>`;
     const disabled = fighter.statuses.silence && a.school === 'magic';
