@@ -788,6 +788,9 @@
 }
 /* Portraits glissés dans le texte à la place des noms : trois combattants nommés en toutes
    lettres remplissaient la ligne à eux seuls. */
+/* La ligne du moment est franche, les précédentes reculent d'un ton. */
+#combatLastAction .ligne-vive{ opacity:1; }
+#combatLastAction .ligne-passee{ opacity:.45; }
 #combatLastAction img.log-face{
   height:clamp(15px, 4.4vw, 21px); width:clamp(15px, 4.4vw, 21px); border-radius:4px; object-fit:cover; vertical-align:-4px;
   margin:0 1px; border:1px solid rgba(255,255,255,.35);
@@ -900,7 +903,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v400</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v401</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19857,8 +19860,13 @@ async function playTurnAnimation(actor, attack, target){
   combatState.missedUids = []; // rempli par resolveAttackOnTarget en cas de raté sur ce tour
   combatState.nothingToStealUids = []; // idem, cas "plus rien à voler" sur une tentative de vol
 
+  /* On note où en était le journal AVANT l'action : tout ce qui s'y ajoute ensuite décrit ce
+     seul geste, et sera rassemblé en UNE phrase pour le bandeau. Le journal complet, lui, ne
+     change pas — c'est le document qu'on relit, il a le droit d'être détaillé. */
+  const journalAvant = combatState.log.length;
   if (attack.isItem) resolveItemUse(actor, attack, target);
   else resolveAttack(actor, attack, target);
+  annoncerAction(actor, attack, journalAvant);
 
   // L'image d'effet (si réglée sur cette attaque) vient s'ajouter PAR-DESSUS le bond/la charge, pas à
   // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
@@ -20762,6 +20770,48 @@ let fileDernieresActions = [];
 let journalDejaVu = null;       // 1re ligne du journal au dernier passage
 let defilementEnCours = null;   // minuterie du défilement
 let lignesAffichees = [];   // les dernières actions encore lisibles, au plus trois
+
+/* ---------- Une ligne par ACTION, pas par effet (v401) ----------
+   Un seul geste produisait trois phrases de même poids — « X attaque Y », « Y perd 14 PV »,
+   « Y est confus » — et le bandeau défilait sans arrêt. On les rassemble en une phrase, posée
+   au moment du coup et non sur une minuterie, et on estompe les précédentes. */
+function annoncerAction(acteur, attaque, depuis){
+  const el = document.getElementById('combatLastAction');
+  if (!el) return;
+  const nouvelles = combatState.log.slice(0, Math.max(0, combatState.log.length - depuis));
+  if (!nouvelles.length) return;
+
+  /* Les dégâts chiffrés s'affichent déjà en particules sur le combattant touché : les répéter
+     ici doublait l'information et allongeait la phrase pour rien. */
+  const consequences = nouvelles.slice().reverse()
+    .map(l=> String(l)
+      /* « X utilise Y sur Z : -5 PV (peu efficace) » → il ne reste que « peu efficace » : le
+         titre dit déjà qui frappe et avec quoi, et les dégâts sont sur le personnage. */
+      .replace(/^.*?\butilise\b.*?:\s*/i, '')
+      .replace(/[+-]?\d+\s*PV/gi, '')
+      .replace(/\(([^)]{2,})\)/g, '$1')   // on garde les « (e) » d'accord, on retire les mentions
+      .replace(/[!.]+\s*$/g, '')
+      .replace(/^[\s:,.–-]+|[\s:,.–-]+$/g, '')
+      .trim())
+    .filter(Boolean);
+
+  const titre = (attaque && attaque.name)
+    ? ('<strong>' + acteur.name + '</strong> · ' + (attaque.emoji ? attaque.emoji + ' ' : '') + attaque.name)
+    : ('<strong>' + acteur.name + '</strong>');
+  const suite = consequences.length ? ' — ' + consequences.join(' · ') : '';
+
+  /* Les précédentes s'estompent : l'œil trouve la ligne du moment sans la chercher. */
+  lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
+  lignesAffichees.push('<div class="ligne-vive">' + texteAvecPortraits(titre + suite) + '</div>');
+  if (lignesAffichees.length > 3) lignesAffichees.shift();
+  el.innerHTML = lignesAffichees.join('');
+  el.classList.add('show');
+  /* Le bandeau est désormais mené par les actions : on coupe la minuterie de défilement et on
+     tient le journal pour lu, sinon l'ancien mécanisme réafficherait les mêmes lignes. */
+  if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
+  fileDernieresActions = [];
+  journalDejaVu = combatState.log[0];
+}
 function afficherProchaineAction(){
   const el = document.getElementById('combatLastAction');
   if (!el) return;
