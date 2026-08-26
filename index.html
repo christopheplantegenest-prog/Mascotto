@@ -670,7 +670,7 @@
 }
 #combatTurnOrderBar{
   /* Décalée vers le bas pour laisser l'icône du journal au-dessus d'elle. */
-  position:absolute; left:6px; top:calc(50% + 14px); transform:translateY(-50%); z-index:4; width:var(--turnbar-width);
+  position:absolute; left:6px; top:var(--turnbar-top, 50%); transform:translateY(-50%); z-index:4; width:var(--turnbar-width);
   display:flex; flex-direction:column; align-items:center; gap:3px; overflow-y:auto;
   background:rgba(0,0,0,.35); border-radius:10px; padding:5px 3px;
 }
@@ -761,11 +761,14 @@
 #combatLastAction{
   position:absolute; left:8px; right:8px; bottom:8px; z-index:4;
   background:rgba(18,36,26,.82); color:#dfeee2; border-radius:8px;
-  padding:5px 10px; font-size:clamp(10px, 2.9vw, 14px); line-height:1.3;
+  padding:5px 10px; font-size:var(--bandeau-font-size, clamp(10px, 2.9vw, 14px)); line-height:1.3;
   /* Deux lignes au plus : au-delà, la phrase est coupée. Le journal complet reste là pour
      qui veut tout relire. */
   display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
-  opacity:0; transition:opacity .18s ease; pointer-events:none;
+  opacity:0; transition:opacity .18s ease;
+  /* Il reçoit l'appui long pour se régler ; les touches courtes le traversent quand même
+     grâce au garde de mouvement, et il ne recouvre aucun bouton. */
+  pointer-events:auto;
 }
 /* Portraits glissés dans le texte à la place des noms : trois combattants nommés en toutes
    lettres remplissaient la ligne à eux seuls. */
@@ -876,7 +879,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v392</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v393</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1332,6 +1335,13 @@
 <!-- Réglage de la mise en page PENDANT un vrai combat : appui long sur une zone de l'écran
      et cette petite fenêtre s'ouvre, posée par-dessus, sans rien masquer d'essentiel. Un
      aperçu factice ne servait à rien — on règle en regardant ses vrais personnages. -->
+<!-- Voile de démarrage : la carte ne doit jamais se montrer avant le vaisseau. Il se lève
+     quand le vaisseau est ouvert, ou au bout de 6 s si aucun vaisseau n'est configuré —
+     mieux vaut voir la carte que rester devant un écran noir. -->
+<div id="voileDemarrage" style="position:fixed; inset:0; z-index:9000; background:#0b1a12; display:flex; align-items:center; justify-content:center; color:#dfeee2; font-weight:700; letter-spacing:1px;">
+  Mascotto
+</div>
+
 <div id="combatUiTuner" style="display:none; position:fixed; left:8px; right:8px; bottom:8px; z-index:4800; background:rgba(0,0,0,.92); border:1px solid rgba(255,255,255,.25); border-radius:12px; padding:8px 10px 10px;">
   <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
     <span class="meta" id="cuTunerTitre" style="flex:1; color:#dfeee2; font-weight:700;">Réglage</span>
@@ -1342,6 +1352,7 @@
     <span class="meta" id="cuTunerVal" style="flex:0 0 52px; text-align:right; color:#dfeee2;">—</span>
   </div>
   <p class="meta" id="cuTunerAide" style="margin:4px 0 0; color:rgba(255,255,255,.65);"></p>
+  <button type="button" class="btn-secondary" id="cuTunerAutre" style="display:none; width:100%; margin-top:6px;">↕️ Régler plutôt sa hauteur</button>
 </div>
 
 <div class="scene-full" id="combatFull">
@@ -11957,12 +11968,12 @@ function soignerToutLeMondeInstantanement(){
 }
 
 function ramenerAInfirmerie(){
-  /* On quitte d'abord la zone : sinon l'infirmerie s'ouvrait PAR-DESSUS le décor, et refermer
-     la salle reposait le joueur à l'endroit exact où il venait de perdre. Il doit refaire le
-     chemin — c'est sa règle depuis le début. */
+  /* On quitte la zone, puis on REMONTE À BORD : être vaincu ramène chez soi, pas sur la
+     carte. C'est ensuite au joueur de ressortir quand il se sent prêt. */
   if (document.getElementById('sceneViewFull').classList.contains('show') && !sceneViewIsShip){
     clearCurrentZoneScene();
   }
+  if (!sceneViewIsShip && shipZoneId) ouvrirLeVaisseau();
   /* La salle a besoin de son décor : sans image configurée, on soigne quand même et on le
      dit — mieux vaut un joueur soigné sans mise en scène qu'un joueur bloqué. */
   const soignes = soignerToutLeMondeInstantanement();
@@ -15064,7 +15075,7 @@ function paintShipMarker(){
    Tout est exprimé en PARTS de l'écran, jamais en pixels, et chaque valeur garde ses bornes :
    c'est ce qui rend le rendu comparable d'un téléphone à l'autre. Les valeurs vivent dans
    `app_config/combatUi`, donc le réglage suit le jeu et non l'appareil. */
-const COMBAT_UI_DEFAUT = { panel:30, avatar:36, turnbar:9, attackFont:29 };
+const COMBAT_UI_DEFAUT = { panel:30, avatar:36, turnbar:9, attackFont:29, bandeau:29, turnbarY:50 };
 let combatUi = { ...COMBAT_UI_DEFAUT };
 function appliquerCombatUi(){
   const r = document.documentElement.style;
@@ -15074,6 +15085,10 @@ function appliquerCombatUi(){
   r.setProperty('--avatar-size',        'clamp(64px, ' + combatUi.avatar + 'vw, 190px)');
   r.setProperty('--turnbar-width',      'clamp(20px, ' + combatUi.turnbar + 'vw, 52px)');
   r.setProperty('--attack-font-size',   'clamp(9px, ' + (combatUi.attackFont / 10) + 'vw, 16px)');
+  r.setProperty('--bandeau-font-size',  'clamp(9px, ' + (combatUi.bandeau / 10) + 'vw, 17px)');
+  /* Position verticale de la barre des tours, en part de la hauteur de l'arène : certains
+     préfèrent l'avoir en haut, d'autres au milieu. */
+  r.setProperty('--turnbar-top', combatUi.turnbarY + '%');
   const mettre = (id, valeur, suffixe)=>{
     const el = document.getElementById(id);
     if (el) el.textContent = valeur + suffixe;
@@ -15100,6 +15115,8 @@ const CU_ZONES = {
   panel:   { titre:'Hauteur du panneau bas', min:22, max:45, suffixe:'%', aide:'Part de la hauteur de l\'écran prise par le rectangle des attaques.' },
   turnbar: { titre:'Largeur de la barre des tours', min:6, max:16, suffixe:'%', aide:'Colonne des tours, à gauche de l\'arène.' },
   attackFont:{ titre:'Taille du texte d\'attaque', min:22, max:42, suffixe:'', aide:'Nom des attaques, en dixièmes de pour cent de la largeur.' },
+  bandeau: { titre:'Taille du texte des actions', min:22, max:44, suffixe:'', aide:'Le bandeau du bas, en dixièmes de pour cent de la largeur. Il garde les trois dernières actions.' },
+  turnbarY:{ titre:'Hauteur de la barre des tours', min:12, max:88, suffixe:'%', aide:'Où la colonne des tours se place dans l\'arène, de haut en bas.' },
 };
 let cuZoneCourante = null;
 function ouvrirReglageCombat(cle){
@@ -15111,8 +15128,17 @@ function ouvrirReglageCombat(cle){
   document.getElementById('cuTunerAide').textContent = def.aide;
   const curseur = document.getElementById('cuTunerRange');
   curseur.min = def.min; curseur.max = def.max; curseur.value = combatUi[cle];
-  document.getElementById('cuTunerVal').textContent = (cle === 'attackFont')
+  const enDixiemes = (cle === 'attackFont' || cle === 'bandeau');
+  document.getElementById('cuTunerVal').textContent = enDixiemes
     ? (combatUi[cle] / 10).toFixed(1) + ' %' : combatUi[cle] + ' ' + def.suffixe;
+  /* La barre des tours a deux réglages : sa largeur et sa place verticale. Un second bouton
+     évite d'inventer un geste de plus. */
+  const autre = document.getElementById('cuTunerAutre');
+  if (autre){
+    autre.style.display = (cle === 'turnbar' || cle === 'turnbarY') ? 'block' : 'none';
+    autre.textContent = (cle === 'turnbar') ? '↕️ Régler plutôt sa hauteur' : '↔️ Régler plutôt sa largeur';
+    autre.onclick = ()=> ouvrirReglageCombat(cle === 'turnbar' ? 'turnbarY' : 'turnbar');
+  }
   boite.style.display = 'block';
 }
 const cuTunerRange = document.getElementById('cuTunerRange');
@@ -15121,7 +15147,8 @@ if (cuTunerRange){
     if (!cuZoneCourante) return;
     combatUi[cuZoneCourante] = parseInt(cuTunerRange.value, 10);
     appliquerCombatUi();
-    document.getElementById('cuTunerVal').textContent = (cuZoneCourante === 'attackFont')
+    const dix = (cuZoneCourante === 'attackFont' || cuZoneCourante === 'bandeau');
+    document.getElementById('cuTunerVal').textContent = dix
       ? (combatUi[cuZoneCourante] / 10).toFixed(1) + ' %'
       : combatUi[cuZoneCourante] + ' ' + CU_ZONES[cuZoneCourante].suffixe;
   });
@@ -15140,6 +15167,7 @@ if (cuTunerClose) cuTunerClose.addEventListener('click', ()=>{
   let minuterie = null, depart = null;
   const zonePour = (cible)=>{
     if (!cible || !cible.closest) return null;
+    if (cible.closest('#combatLastAction')) return 'bandeau';
     if (cible.closest('#combatActionPanel')) return 'panel';
     if (cible.closest('#combatTurnOrderBar')) return 'turnbar';
     if (cible.closest('.combat-side')) return 'avatar';
@@ -15211,16 +15239,29 @@ if (typeof db !== 'undefined' && db){
        une reprise de combat ou une zone en cours passe avant. */
     if (!demarrageVaisseauFait && shipZoneId){
       demarrageVaisseauFait = true;
-      setTimeout(()=>{
-        if (document.getElementById('sceneViewFull').classList.contains('show')) return;
-        if (combatState) return;
-        if (document.getElementById('pseudoOverlay').classList.contains('show')) return;
+      /* Sans attente : la carte ne doit jamais apparaître, même une demi-seconde. Le voile
+         de démarrage la cache jusqu'ici, et ne se lève qu'une fois le vaisseau à l'écran. */
+      if (!document.getElementById('sceneViewFull').classList.contains('show')
+          && !combatState
+          && !document.getElementById('pseudoOverlay').classList.contains('show')){
         ouvrirLeVaisseau();
-      }, 900);
+      }
+      leverLeVoileDeDemarrage();
     }
   }, ()=>{});
 }
 let demarrageVaisseauFait = false;
+function leverLeVoileDeDemarrage(){
+  const v = document.getElementById('voileDemarrage');
+  if (!v || v.dataset.leve) return;
+  v.dataset.leve = '1';
+  v.style.transition = 'opacity .35s ease';
+  v.style.opacity = '0';
+  setTimeout(()=>{ v.style.display = 'none'; }, 400);
+}
+/* Filet de sécurité : sans vaisseau configuré, ou si Firebase ne répond pas, on ne laisse
+   personne devant un écran noir. */
+setTimeout(leverLeVoileDeDemarrage, 6000);
 const SCENE_POINT_TYPES = [
   { id:'sortie', label:'🚪 Sortie' },
   { id:'objet', label:'🎒 Objet' },
@@ -20604,16 +20645,22 @@ let dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
 let fileDernieresActions = [];
 let journalDejaVu = null;       // 1re ligne du journal au dernier passage
 let defilementEnCours = null;   // minuterie du défilement
+let lignesAffichees = [];   // les dernières actions encore lisibles, au plus trois
 function afficherProchaineAction(){
   const el = document.getElementById('combatLastAction');
   if (!el) return;
   if (!fileDernieresActions.length){
-    /* Plus rien à dire : on laisse la dernière ligne à l'écran plutôt que de la faire
-       disparaître — elle sert de rappel de ce qui vient de se passer. */
+    /* Plus rien à dire : on laisse les dernières lignes à l'écran plutôt que de les faire
+       disparaître — elles servent de rappel de ce qui vient de se passer. */
     defilementEnCours = null;
     return;
   }
-  el.innerHTML = texteAvecPortraits(fileDernieresActions.shift());
+  /* On EMPILE au lieu de remplacer : quand une attaque touche trois personnages, on veut
+     voir les trois d'un coup, la plus ancienne en haut. Au-delà de trois, la plus vieille
+     s'efface. */
+  lignesAffichees.push(texteAvecPortraits(fileDernieresActions.shift()));
+  if (lignesAffichees.length > 3) lignesAffichees.shift();
+  el.innerHTML = lignesAffichees.join('<br>');
   el.classList.add('show');
   /* Chaque action reste lisible avant la suivante : à 850 ms on n'avait pas fini de lire.
      1,6 s laisse le temps de voir qui a été touché, sans immobiliser le combat. */
@@ -20642,12 +20689,13 @@ function majDerniereAction(log){
   const el = document.getElementById('combatLastAction');
   if (!el) return;
   if (!log || !log.length){
-    fileDernieresActions = []; journalDejaVu = null;
+    fileDernieresActions = []; journalDejaVu = null; lignesAffichees = [];
     el.classList.remove('show'); el.textContent = '';
     if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
     return;
   }
   if (log[0] === journalDejaVu) return;   // rien de neuf
+  lignesAffichees = [];                  // nouveau tour : on repart d'un bandeau propre
   /* Le journal empile les nouveautés en tête : on prend tout ce qui est arrivé depuis
      le dernier passage, et on le remet dans l'ordre où c'est arrivé. */
   const pos = journalDejaVu ? log.indexOf(journalDejaVu) : -1;
