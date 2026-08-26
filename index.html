@@ -854,7 +854,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v384</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v385</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -864,7 +864,7 @@
     </div>
     <div class="icon-row">
       <button class="icon-btn" id="inventoryBtn" title="Inventaire">🎒</button>
-      <button class="icon-btn" id="baseBtn" title="Base">🏡</button>
+      <button class="icon-btn" id="baseBtn" title="Vaisseau">🚀</button>
       <button class="icon-btn" id="nearbyPlayersBtn" title="Joueurs proches">👥</button>
       <button class="icon-btn" id="tradeOffersBtn" title="Négociations">🤝<span class="badge" id="tradeOffersBadge" style="display:none;"></span></button>
       <button class="icon-btn" id="questTrackerBtn" title="Suivi des quêtes">🧭</button>
@@ -11937,7 +11937,7 @@ function renderInfirmarySection(){
       const resting = !!r.restingSince;
       const koLeft = recruitKoRemainingMs(r);
       let etat;
-      if (ko) etat = '💀 K.O. — se relève dans ' + formatRemainingDuration(koLeft);
+      if (ko) etat = '💀 K.O.';
       else if (resting) etat = '🛏️ Au repos';
       else etat = '🩹 Blessé';
       return `
@@ -12728,11 +12728,21 @@ setInterval(()=>{
 }, 1000);
 
 document.getElementById('baseAddResBtn').addEventListener('click', addTestResources);
+/* L'ancienne Base n'est plus accessible : le vaisseau fait tout ce qu'elle faisait depuis
+   la v280, et garder deux portes vers les mêmes fonctions n'apportait que de la confusion.
+   Son écran et son code restent en place pour l'instant — plusieurs écrans du vaisseau
+   retombent encore sur ses conteneurs quand ils sont fermés. Le ménage viendra après
+   vérification, pas avant : couper large sur ce fichier a déjà coûté deux versions. */
+function ouvrirLeVaisseau(){
+  if (!shipZoneId){
+    showToast('Aucune zone n\'est désignée comme vaisseau — choisis-la dans l\'éditeur de scènes');
+    return;
+  }
+  openSceneView({ id: shipZoneId, name: 'Vaisseau' }, null, { isShip:true });
+}
 document.getElementById('baseBtn').addEventListener('click', ()=>{
-  watchPlayerInventoryForBase();
-  renderBaseResources();
-  renderBaseRoster();
-  document.getElementById('baseOverlay').classList.add('show');
+  if (isGhostTap()) return;
+  ouvrirLeVaisseau();
 });
 document.getElementById('baseCloseBtn').addEventListener('click', ()=>{
   document.getElementById('baseOverlay').classList.remove('show');
@@ -14986,8 +14996,21 @@ if (typeof db !== 'undefined' && db){
     lastShipIconKey = null;
     refreshShipMarker();
     paintShipMarker();
+    /* On démarre à bord. C'est le point de départ naturel : on prépare son équipe, puis on
+       descend. Une seule fois par session, et jamais si le joueur est déjà quelque part —
+       une reprise de combat ou une zone en cours passe avant. */
+    if (!demarrageVaisseauFait && shipZoneId){
+      demarrageVaisseauFait = true;
+      setTimeout(()=>{
+        if (document.getElementById('sceneViewFull').classList.contains('show')) return;
+        if (combatState) return;
+        if (document.getElementById('pseudoOverlay').classList.contains('show')) return;
+        ouvrirLeVaisseau();
+      }, 900);
+    }
   }, ()=>{});
 }
+let demarrageVaisseauFait = false;
 const SCENE_POINT_TYPES = [
   { id:'sortie', label:'🚪 Sortie' },
   { id:'objet', label:'🎒 Objet' },
@@ -17100,11 +17123,16 @@ async function renderSceneViewCurrentScene(){
               + (kos.length ? ' — ' + kos.map(t=> t.nom).join(', ') + ' est K.O.' : ''));
           }
           if (!donnes && !(touches && touches.length) && !pt.message) lignes.push('Il n\'y a rien à l\'intérieur.');
+          /* Le piège peut mettre le dernier combattant valide à terre : dans ce cas on ne
+             laisse pas le joueur planté dans le décor, il rentre se faire soigner. */
+          const plusPersonne = !equipeApteAuCombat();
+          if (plusPersonne) lignes.push('Plus personne ne tient debout — retour au vaisseau.');
           if (lignes.length){
             document.getElementById('sceneDialogueText').textContent = lignes.join('\n\n');
             document.getElementById('sceneDialogueOverlay').classList.add('show');
           }
           renderSceneViewCurrentScene();
+          if (plusPersonne) setTimeout(ramenerAInfirmerie, 900);
         };
 
         /* Même verrouillage que les portes : un objet qu'on garde, ou un code au pavé. */
@@ -17381,6 +17409,15 @@ async function verifierFermetureZone(){
 }
 setInterval(verifierFermetureZone, 15000);
 document.getElementById('sceneViewCloseBtn').addEventListener('click', async ()=>{
+  /* On ne descend pas du vaisseau les mains vides : dehors il y a des combats, et sans
+     personne en état de se battre le joueur ne pourrait rien faire — il l'a déjà vécu. */
+  if (sceneViewIsShip && !equipeApteAuCombat()){
+    const aDesCombattants = recruits.some(r=> r.recruitType === 'combattant');
+    showToast(aDesCombattants
+      ? 'Emmène au moins un combattant en état de se battre — soigne ton équipe avant de sortir'
+      : 'Il te faut au moins un combattant dans ton équipe avant de sortir');
+    return;
+  }
   /* Confirmation demandée hors du vaisseau : quitter une zone en cours fait perdre le chemin
      parcouru, puisqu'on y revient par l'entrée. Chez soi, la question n'a pas lieu d'être. */
   if (!sceneViewIsShip && !(await appConfirm('Quitter cette zone ? Tu y reviendras par l\'entrée.'))) return;
