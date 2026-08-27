@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v424</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v425</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6350,17 +6350,45 @@ function watchPlayerQuests(uid){
     playerExplorerPendingReport = (doc.exists && doc.data().explorerPendingReport) || null;
     updateExplorerBadge();
     if (explorerEstOuvert()) renderExplorerSection();
+    /* MIGRATION DES PIÈCES — la cause de « mon solde est retombé à 500 », reproduite deux fois.
+       Ce bloc est une migration pour les comptes créés AVANT l'arrivée de la monnaie : la
+       création d'un compte pose déjà `coins: 500` (voir ligne ~2918). Il ne devrait donc
+       quasiment jamais se déclencher.
+       Le défaut : il agissait sur l'ABSENCE d'un champ. Or un instantané peut venir du cache
+       local et ne pas être complet — et la fiche joueur met 9 à 14 s à arriver du serveur sur
+       cette connexion, ce qui laisse une très large fenêtre pour se tromper. Pendant ce temps
+       le bloc voyait « pas de coins », écrivait 500, et cette écriture locale partait ensuite
+       écraser le vrai solde sur le serveur.
+       Comparer avec le voisin juste au-dessus (`robotId`) : lui n'agit QUE si le champ est
+       PRÉSENT, donc un instantané partiel ne lui fait rien faire. C'est le bon sens de lecture.
+       RÈGLE : on ne déduit jamais rien de l'absence d'un champ dans un instantané dont on n'a
+       pas la preuve qu'il est complet. */
     if (doc.exists && typeof doc.data().coins !== 'number' && !coinsBackfillDone){
-      // Compte créé avant l'ajout de la monnaie : on lui donne les 500 de départ une seule fois
-      coinsBackfillDone = true;
-      db.collection('players').doc(uid).set({ coins: 500 }, { merge: true }).catch(()=>{});
+      const duCache = !!(doc.metadata && doc.metadata.fromCache);
+      const ecrituresEnAttente = !!(doc.metadata && doc.metadata.hasPendingWrites);
+      if (duCache || ecrituresEnAttente){
+        /* On ne fait RIEN, et on le dit : si le solde retombe encore, la boîte noire dira
+           si c'est ce bloc qui a frappé ou si la cause est ailleurs. */
+        journal('joueur', 'migration des pièces écartée', 'instantané non confirmé — '
+          + (duCache ? 'venu du cache' : '') + (duCache && ecrituresEnAttente ? ' + ' : '')
+          + (ecrituresEnAttente ? 'écriture en attente' : ''), true);
+      } else {
+        coinsBackfillDone = true;
+        journal('joueur', 'migration des pièces appliquée',
+          'instantané serveur confirmé, aucun champ coins — 500 posées', true);
+        db.collection('players').doc(uid).set({ coins: 500 }, { merge: true }).catch(()=>{});
+      }
     }
     redessinerCarte();
     const questsListSection = document.getElementById('questsection-list');
     if (questsListSection && questsListSection.style.display !== 'none') renderQuestsListView();
     const coinsEl = document.getElementById('coinsDisplay');
     if (coinsEl){
-      const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+      /* Un instantané peut arriver sans le champ `coins` (cache local incomplet). Afficher 0
+         dans ce cas, c'est annoncer une perte qui n'a pas eu lieu. Tant qu'on n'a pas un
+         nombre, on garde la dernière valeur connue et on ne touche à rien. */
+      const brut = doc.exists ? doc.data().coins : null;
+      const coins = (typeof brut === 'number') ? brut : playerCoins;
       playerCoins = coins;
       coinsEl.textContent = '💰 ' + coins;
       const shopCoinsEl = document.getElementById('shopCoinsLabel');
