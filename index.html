@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v422</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v423</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -18382,6 +18382,13 @@ async function tryResumeSavedCombat(saved){
   /* `startCombat` est ASYNCHRONE : depuis la v323 elle attend la résolution des images de dos
      AVANT de poser `combatState`. Sans ce `await`, la ligne suivante lisait `combatState` encore
      nul, levait une erreur avalée par le `catch` de l'appelant, et coupait toute la reprise. */
+  /* Si le chien de garde a déjà rendu la main, la sauvegarde a été effacée et les écrans
+     libérés : relancer le combat maintenant remettrait le joueur dans une partie que le jeu
+     vient officiellement d'abandonner. On s'arrête. */
+  if (repriseAbandonnee){
+    etapeReprise('relance annulée', 'la reprise avait déjà été abandonnée');
+    return false;
+  }
   etapeReprise('relance du combat');
   await startCombat(playerFighters, enemyFighters, arenaBg, { skipTransition:true });
   etapeReprise('combat relancé');
@@ -18402,11 +18409,20 @@ function etapeReprise(nom, detail){
   repriseEtape = nom;
   const ms = repriseDebut ? Math.round(performance.now() - repriseDebut) : 0;
   journal('reprise', nom, (detail ? detail + ' — ' : '') + ms + ' ms', true);
+  /* CHAQUE étape franchie REPOUSSE le couperet. Le chien de garde comptait le temps TOTAL de
+     la reprise : sur une connexion lente il coupait une reprise parfaitement en train de
+     réussir. Vu en journal : lecture de la fiche joueur 13,8 s + images des scènes 4,3 s =
+     21 s au total, donc abandon annoncé à 15 s alors que le combat est reparti six secondes
+     plus tard. Et l'abandon n'est pas qu'un message : il EFFACE la sauvegarde du combat et la
+     position de zone. Ce qu'il faut surveiller, ce n'est pas la durée, c'est l'ABSENCE DE
+     PROGRÈS. Tant que les étapes défilent, on laisse faire ; on ne coupe que si plus rien ne
+     bouge. */
+  if (sessionResumeChienDeGarde) armerChienDeGardeReprise();
 }
 let sessionResumeFilet = null;          // minuterie du filet de sécurité
 let sessionResumeChienDeGarde = null;   // surveille une reprise qui ne se termine jamais
 const SESSION_RESUME_DELAI = 8000;      // au-delà, on reprend avec ce qu'on a
-const SESSION_RESUME_LIMITE = 15000;    // au-delà, la reprise est considérée comme perdue
+const SESSION_RESUME_LIMITE = 15000;    // sans AUCUN progrès pendant ce temps, la reprise est perdue
 
 /* TOUTES les sources que la reconstruction d'un combat sauvegardé va relire. Les images ne
    partent pas dans la sauvegarde (voir `imageLegereOuRien`) : elles sont retrouvées sur les
@@ -18439,7 +18455,9 @@ function fermerLeVaisseauPourReprise(){
   if (el) el.classList.remove('show', 'reveal');
   sceneViewIsShip = false;
 }
+let repriseAbandonnee = false;
 async function abandonnerRepriseBloquee(message){
+  repriseAbandonnee = true;
   journal('erreur', 'reprise abandonnée', message || '', true);
   libererEcransDeReprise();
   try { await clearSavedCombat(); } catch(e){}
@@ -18454,7 +18472,9 @@ function armerChienDeGardeReprise(){
        pouvait donc se faire balayer par son propre filet de sécurité. */
     if (combatState) return;
     if (document.getElementById('sceneViewFull').classList.contains('show')) return;
-    abandonnerRepriseBloquee('bloquée à l\'étape « ' + repriseEtape + ' »');
+    /* On arrive ici seulement si AUCUNE étape n'a été franchie depuis `SESSION_RESUME_LIMITE` :
+       la reprise est vraiment immobile, pas seulement lente. */
+    abandonnerRepriseBloquee('immobile à l\'étape « ' + repriseEtape + ' »');
   }, SESSION_RESUME_LIMITE);
 }
 
