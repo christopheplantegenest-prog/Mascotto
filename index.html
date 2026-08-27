@@ -386,8 +386,12 @@
     background:var(--accent); color:#ffffff; font-weight:700; font-size:13px;
     padding:10px 18px; border-radius:999px; z-index:5000; opacity:0; pointer-events:none;
     transition:opacity .25s, transform .25s;
+    /* Un message d'erreur un peu long sortait de l'écran par les côtés : illisible. */
+    max-width:88vw; text-align:center; line-height:1.35;
   }
-  .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); }
+  /* Cliquable UNIQUEMENT quand il est affiché, pour pouvoir le fermer d'un appui sans
+     attendre. Le reste du temps il laisse passer les appuis, comme avant. */
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(6px); pointer-events:auto; cursor:pointer; }
 
   .field-label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 4px;
     display:flex; align-items:center; gap:2px; flex-wrap:wrap; }
@@ -938,7 +942,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v417</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v418</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2875,12 +2879,20 @@ document.getElementById('pseudoSaveBtn').addEventListener('click', ()=>{
   const pseudo = document.getElementById('pseudoInput').value.trim();
   if (!pseudo){ showToast('Choisis un pseudo'); return; }
   const ref = db.collection('players').doc(currentUser.uid);
-  ref.get().then((doc)=>{
-    /* coins et createdAt ne s'écrivent qu'à la création : un joueur renvoyé ici par
-       erreur repartait sinon avec 500 pièces à la place de son vrai solde. */
-    const donnees = (doc && doc.exists) ? { pseudo } : { pseudo, createdAt: Date.now(), coins: 500 };
-    return ref.set(donnees, { merge: true });
-  })
+  /* coins et createdAt ne s'écrivent qu'à la création : un joueur renvoyé ici par erreur
+     repartait sinon avec 500 pièces à la place de son vrai solde.
+     Ce garde ne suffisait PAS : un `get()` ordinaire peut répondre depuis le cache local, et
+     un cache vide (hors ligne, appli réinstallée, connexion pas encore rétablie) dit
+     "document absent" pour un compte qui existe pourtant. Le solde était alors écrasé pour
+     de bon. On EXIGE donc une réponse du SERVEUR, et si elle ne vient pas on n'écrit que le
+     pseudo : ne rien écrire vaut toujours mieux qu'écrire une valeur fausse. */
+  ref.get({ source: 'server' })
+    .then((doc)=> ref.set((doc && doc.exists) ? { pseudo } : { pseudo, createdAt: Date.now(), coins: 500 }, { merge: true }))
+    .catch((err)=>{
+      journal('erreur', 'compte illisible avant le pseudo', (err && err.message) || String(err), true);
+      showToast('⚠️ Compte injoignable : ton pseudo est enregistré, ton solde reste intact.');
+      return ref.set({ pseudo }, { merge: true });
+    })
     .then(()=>{
       currentPseudo = pseudo;
       document.getElementById('pseudoOverlay').classList.remove('show');
@@ -6472,8 +6484,15 @@ function showToast(msg, iconUrl){
     t.textContent = msg;
   }
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 1800);
+  /* 1800 ms FIXES pour tout le monde : un message d'erreur disparaissait avant d'avoir pu être
+     lu, ce qui nous a coûté plusieurs diagnostics à l'aveugle. La durée suit maintenant la
+     longueur du texte, comme le récit de combat, et un appui le ferme tout de suite. */
+  const dureeToast = Math.max(2000, Math.min(8000, 1200 + String(msg == null ? '' : msg).length * 45));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> t.classList.remove('show'), dureeToast);
+  t.onclick = ()=>{ clearTimeout(toastTimer); t.classList.remove('show'); };
 }
+let toastTimer = null;
 
 /* Remplace window.confirm() par une fenêtre au style de l'application (pas de barre d'adresse du navigateur) */
 function appConfirm(message){
