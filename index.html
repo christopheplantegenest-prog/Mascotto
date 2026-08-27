@@ -911,7 +911,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v410</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v412</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3267,25 +3267,33 @@ const COMBAT_STATUSES = [
 ];
 // Catalogue complet (négatifs + positifs) utilisé par le sélecteur d'état sur une attaque.
 const STATUS_CATALOG = [
-  { id:'poison', label:'🤢 Empoisonné (dégâts/tour)', negative:true },
-  { id:'burn', label:'🔥 Brûlé (dégâts/tour)', negative:true },
-  { id:'sleep', label:'😴 Endormi (ne peut pas agir, se réveille si touché)', negative:true },
-  { id:'stun', label:'💫 Étourdi (ne peut pas agir)', negative:true },
-  { id:'confuse', label:'😵 Confus (peut attaquer au hasard)', negative:true },
-  { id:'paralysis', label:'⚡ Paralysé (peut échouer à agir)', negative:true },
-  { id:'silence', label:'🔇 Réduit au silence (attaques magiques impossibles)', negative:true },
-  { id:'blind', label:'🌑 Aveuglé (précision réduite)', negative:true },
-  { id:'slow', label:'🐌 Ralenti (jauge de vitesse plus lente)', negative:true },
-  { id:'shield', label:'🛡️ Bouclier (absorbe les dégâts)', negative:false },
-  { id:'regen', label:'💚 Régénération (soin/tour)', negative:false },
-  { id:'haste', label:'💨 Accéléré (jauge de vitesse plus rapide)', negative:false },
-  { id:'taunt', label:'📣 Provocation (force les ennemis à cibler)', negative:false },
-  { id:'counter', label:'🔁 Contre-attaque (riposte automatique)', negative:false },
-  { id:'reflect', label:'🪞 Réflexion (renvoie les dégâts subis)', negative:false },
-  { id:'revive', label:'✨ Réanimation (renaît une fois)', negative:false },
-  { id:'purify', label:'🧼 Purification (retire les états négatifs — instantané)', negative:false, instant:true },
+  { id:'poison', label:'🤢 Empoisonné (dégâts/tour)', nom:'🤢 Poison', negative:true },
+  { id:'burn', label:'🔥 Brûlé (dégâts/tour)', nom:'🔥 Brûlure', negative:true },
+  { id:'sleep', label:'😴 Endormi (ne peut pas agir, se réveille si touché)', nom:'😴 Sommeil', negative:true },
+  { id:'stun', label:'💫 Étourdi (ne peut pas agir)', nom:'💫 Étourdissement', negative:true },
+  { id:'confuse', label:'😵 Confus (peut attaquer au hasard)', nom:'😵 Confusion', negative:true },
+  { id:'paralysis', label:'⚡ Paralysé (peut échouer à agir)', nom:'⚡ Paralysie', negative:true },
+  { id:'silence', label:'🔇 Réduit au silence (attaques magiques impossibles)', nom:'🔇 Silence', negative:true },
+  { id:'blind', label:'🌑 Aveuglé (précision réduite)', nom:'🌑 Cécité', negative:true },
+  { id:'slow', label:'🐌 Ralenti (jauge de vitesse plus lente)', nom:'🐌 Lenteur', negative:true },
+  { id:'shield', label:'🛡️ Bouclier (absorbe les dégâts)', nom:'🛡️ Bouclier', negative:false },
+  { id:'regen', label:'💚 Régénération (soin/tour)', nom:'💚 Régénération', negative:false },
+  { id:'haste', label:'💨 Accéléré (jauge de vitesse plus rapide)', nom:'💨 Hâte', negative:false },
+  { id:'taunt', label:'📣 Provocation (force les ennemis à cibler)', nom:'📣 Provocation', negative:false },
+  { id:'counter', label:'🔁 Contre-attaque (riposte automatique)', nom:'🔁 Contre-attaque', negative:false },
+  { id:'reflect', label:'🪞 Réflexion (renvoie les dégâts subis)', nom:'🪞 Réflexion', negative:false },
+  { id:'revive', label:'✨ Réanimation (renaît une fois)', nom:'✨ Réanimation', negative:false },
+  { id:'purify', label:'🧼 Purification (retire les états négatifs — instantané)', nom:'🧼 Purification', negative:false, instant:true },
 ];
 const STATUS_META = {}; STATUS_CATALOG.forEach(s=> STATUS_META[s.id] = s);
+/* Le libellé du catalogue est un ADJECTIF accordable (« Confus », « Empoisonné ») : bon pour
+   une case à cocher, faux dans une phrase (« est affecté par Confus »). `nom` donne la forme
+   NOMINALE — Confusion, Poison, Brûlure — qu'on emploie dans le journal de combat. */
+function statusNom(id){
+  const m = STATUS_META[id];
+  if (!m) return id;
+  return m.nom || String(m.label || id).split(' (')[0];
+}
 let selectedCombatImmunities = new Set();
 let selectedCombatResistances = new Set();
 let selectedCombatRewards = new Set();
@@ -3425,16 +3433,27 @@ function rendreEmplacementsAdversaires(hote, lireIds, ecrireIds){
 function renderCombatAttacksPicker(){
   const wrap = document.getElementById('combatAttacksList');
   if (!wrap) return;
-  const choisies = attacks.filter(a=> selectedCombatAttacks.has(a.id));
+  /* On part des IDENTIFIANTS RETENUS, pas de la liste des attaques existantes. L'ancien code
+     filtrait `attacks`, si bien qu'un identifiant devenu orphelin — attaque supprimée depuis —
+     disparaissait de l'affichage tout en restant compté : le bouton annonçait « 4/4 » avec
+     trois cartes à l'écran, et l'emplacement fantôme était impossible à libérer. */
+  const choisies = Array.from(selectedCombatAttacks).map(id=> ({ id, a: attacks.find(x=> x.id === id) || null }));
+  /* Une ligne par attaque plutôt qu'un pavage : les noms sont de longueurs très variables
+     (« Voler » à côté de « Test combat : Coup étourdissant ») et les cartes se plaçaient un peu
+     n'importe où. En colonne, l'étoile est toujours au même endroit et l'œil suit. */
   wrap.innerHTML = `
-    <div style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">
-      ${choisies.length ? choisies.map(a=>`
-        <span style="display:inline-flex; align-items:center; gap:2px;">
-          <button type="button" class="btn-secondary" data-attack-star="${a.id}" title="Attaque connue dès le recrutement"
-            style="padding:4px 8px; ${selectedStartingAttacks.has(a.id) ? 'background:#f1c40f; color:#000; border-color:#f1c40f;' : ''}">⭐</button>
-          <button type="button" class="btn-secondary" data-attack-off="${a.id}" title="Retirer"
-            style="background:var(--accent); color:#fff; border-color:var(--accent);">${a.emoji||'✨'} ${a.name} ✕</button>
-        </span>`).join('')
+    <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
+      ${choisies.length ? choisies.map(({id, a})=> a ? `
+        <div style="display:flex; align-items:stretch; gap:4px;">
+          <button type="button" class="btn-secondary" data-attack-star="${id}" title="Attaque connue dès le recrutement"
+            style="flex:0 0 auto; min-width:0; width:34px; padding:4px 0; font-size:13px; ${selectedStartingAttacks.has(id) ? 'background:#f1c40f; color:#000; border-color:#f1c40f;' : ''}">⭐</button>
+          <button type="button" class="btn-secondary" data-attack-off="${id}" title="Retirer"
+            style="flex:1 1 auto; min-width:0; text-align:left; padding:6px 8px; background:var(--accent); color:#fff; border-color:var(--accent);">${a.emoji||'✨'} ${a.name} <span style="float:right; opacity:.8;">✕</span></button>
+        </div>` : `
+        <div style="display:flex; align-items:stretch; gap:4px;">
+          <button type="button" class="btn-secondary" data-attack-off="${id}" title="Libérer cet emplacement"
+            style="flex:1 1 auto; min-width:0; text-align:left; padding:6px 8px; background:#c0392b; color:#fff; border-color:#c0392b;">⚠️ Attaque introuvable (supprimée) <span style="float:right; opacity:.8;">✕</span></button>
+        </div>`).join('')
         : '<p class="meta" style="margin:0;">Aucune attaque choisie.</p>'}
     </div>
     <button type="button" class="btn-secondary" data-attack-open style="width:100%; margin-top:8px;">➕ Choisir des attaques (${selectedCombatAttacks.size}/4)</button>`;
@@ -3461,7 +3480,9 @@ function renderCombatAttacksPicker(){
       titre: 'Attaques connues — 4 maximum',
       items: attacks.map(a=> ({ id:a.id, label:a.name, emoji:a.emoji || '✨',
         detail: [a.element, a.power ? ('puissance ' + a.power) : ''].filter(Boolean).join(' · ') })),
-      selectionnes: Array.from(selectedCombatAttacks),
+      /* Les emplacements fantômes ne sont pas proposés au sélecteur : sinon ils mangeraient
+         un des quatre choix possibles sans rien représenter. Valider le sélecteur les efface. */
+      selectionnes: Array.from(selectedCombatAttacks).filter(id=> attacks.some(x=> x.id === id)),
       max: 4,
       onChoisir: (ids)=>{
         selectedCombatAttacks = new Set(ids);
@@ -14127,8 +14148,12 @@ function renderQuartersList(){
       gens.map((r, i)=>{
         const etat = recruitStateBadge(r);
         /* Absent = chambre inaccessible et vignette grisée : on voit d'un coup d'œil qui est à
-           bord. Celui qui rentre de mission n'est PAS grisé : il est là, on peut aller le voir. */
-        const absent = !!etat && !etat.ouvert;
+           bord. Celui qui rentre de mission n'est PAS grisé : il est là, on peut aller le voir.
+           On teste l'ABSENCE elle-même, pas la présence d'une étiquette : la règle précédente
+           (« a une étiquette sans le drapeau ouvert ») fermait aussi les chambres des 🩹 Blessés
+           et des 💀 Dans le coma, qui sont pourtant à bord — et toute étiquette ajoutée plus tard
+           aurait refermé une porte de plus, sans qu'on l'ait voulu. */
+        const absent = recruitIsAway(r);
         /* En mode réorganisation, les flèches remplacent l'ouverture de la chambre : deux gestes
            différents ne partagent pas la même vignette. Elles sont volontairement hautes et
            pleine largeur — sur un téléphone, une petite flèche se rate une fois sur trois. */
@@ -18742,7 +18767,7 @@ function tickStatusesAtTurnStart(fighter){
     if (st && fighter.alive){
       const dmg = Math.max(1, Math.round(fighter.maxHp * (st.value!=null?st.value:8)/100));
       fighter.hp = Math.max(0, fighter.hp - dmg);
-      combatState.log.unshift(`${fighter.name} subit ${dmg} dégâts (${STATUS_META[sid].label.split(' (')[0]}).`);
+      combatState.log.unshift(`${fighter.name} subit ${dmg} dégâts (${statusNom(sid)}).`);
       if (fighter.hp <= 0) fighter.alive = false;
     }
   });
@@ -18798,7 +18823,7 @@ function cibleApresProvocation(attacker, attack, target){
   const provocateurs = provocateursDe(target.side);
   if (!provocateurs.length || provocateurs.includes(target)) return target;
   const force = provocateurs[Math.floor(Math.random() * provocateurs.length)];
-  combatState.log.unshift(`📣 ${force.name} provoque : l'attaque part sur lui plutôt que sur ${target.name}.`);
+  combatState.log.unshift(`📣 ${force.name} intercepte l'attaque visant ${target.name}.`);
   combatState.log = combatState.log.slice(0, 20);
   return force;
 }
@@ -19491,14 +19516,14 @@ function applyStatus(target, statusId, chance, duration, value){
     return;
   }
   if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.immunities||[]).includes(statusId)){
-    combatState.log.unshift(`${target.name} est immunisé(e) contre ${STATUS_META[statusId].label.split(' (')[0]}.`);
+    combatState.log.unshift(`${target.name} est immunisé(e) contre ${statusNom(statusId)}.`);
     return;
   }
   let effChance = chance;
   if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.resistances||[]).includes(statusId)) effChance = effChance / 2;
   if (Math.random()*100 >= effChance) return;
   target.statuses[statusId] = { turns: duration, value: value };
-  combatState.log.unshift(`${target.name} est affecté(e) par ${STATUS_META[statusId].label.split(' (')[0]} !`);
+  combatState.log.unshift(`${target.name} ${STATUS_META[statusId] && STATUS_META[statusId].negative ? 'subit' : 'gagne'} ${statusNom(statusId)} !`);
 }
 function applyAttackStatusEffect(attacker, attack, target){
   const se = attack.statusEffect;
@@ -19514,14 +19539,14 @@ function resolveItemUse(actor, attack, target){
     const pct = Math.max(1, Math.min(100, cu.revivePercent || 30));
     target.alive = true;
     target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
-    combatState.log.unshift(`${actor.name} utilise ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
+    combatState.log.unshift(`${actor.name} lance ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
     combatState.log = combatState.log.slice(0, 20);
   } else if (!target.alive){
     return;
   } else if (cu.mode === 'heal'){
     const healAmount = cu.healPower || 1;
     target.hp = Math.min(target.maxHp, target.hp + healAmount);
-    combatState.log.unshift(`${actor.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
+    combatState.log.unshift(`${actor.name} lance ${attack.name} sur ${target.name} : +${healAmount} PV`);
     combatState.log = combatState.log.slice(0, 20);
   } else if (cu.mode === 'purify'){
     applyStatus(target, 'purify', 100, 1, 0);
@@ -19598,14 +19623,14 @@ function resolveAttackOnTarget(attacker, attack, target){
     const power = attack.power || 10;
     const healAmount = Math.round(power * (1 + (isMagic ? (attacker.matk||1) : (attacker.atk||1))/50));
     target.hp = Math.min(target.maxHp, target.hp + healAmount);
-    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : +${healAmount} PV`);
+    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name} : +${healAmount} PV`);
     combatState.log = combatState.log.slice(0, 20);
     applyAttackStatusEffect(attacker, attack, target);
     return;
   }
 
   if (isBoostOrDebuff){
-    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}.`);
+    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}.`);
     combatState.log = combatState.log.slice(0, 20);
     applyAttackStatusEffect(attacker, attack, target);
     return;
@@ -19614,7 +19639,7 @@ function resolveAttackOnTarget(attacker, attack, target){
   if (isRevive){
     const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
     if (Math.random()*100 >= hitChance){
-      combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
+      combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}... raté !`);
       combatState.log = combatState.log.slice(0, 20);
       combatState.missedUids = combatState.missedUids || [];
       combatState.missedUids.push(target.uid);
@@ -19623,7 +19648,7 @@ function resolveAttackOnTarget(attacker, attack, target){
     const pct = Math.max(1, Math.min(100, attack.power || 30));
     target.alive = true;
     target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
-    combatState.log.unshift(`${attacker.name} utilise ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
+    combatState.log.unshift(`${attacker.name} lance ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
     combatState.log = combatState.log.slice(0, 20);
     return;
   }
@@ -19651,7 +19676,7 @@ function resolveAttackOnTarget(attacker, attack, target){
     }
     if (tryHard) target.stolenHard = true; else target.stolenEasy = true;
     const stolenItem = items.find(it=>it.id===itemId);
-    combatState.log.unshift(`${attacker.name} vole ${stolenItem ? (stolenItem.emoji||'📦')+' '+stolenItem.name : 'un objet'} à ${target.name} !`);
+    combatState.log.unshift(`${attacker.name} vole ${stolenItem ? (stolenItem.emoji||'📦')+' '+stolenItem.name : 'un objet'} !`);
     combatState.log = combatState.log.slice(0, 20);
     if (playerDocRef){
       playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
@@ -19662,7 +19687,7 @@ function resolveAttackOnTarget(attacker, attack, target){
 
   const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
   if (Math.random()*100 >= hitChance){
-    combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name}... raté !`);
+    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}... raté !`);
     combatState.log = combatState.log.slice(0, 20);
     // Mémorise le raté pour que playTurnAnimation affiche "Raté !" sur la cible (les PV n'ayant pas
     // bougé, rien ne le distinguerait sinon d'un tour sans aucun effet).
@@ -19696,7 +19721,7 @@ function resolveAttackOnTarget(attacker, attack, target){
 
   target.hp = Math.max(0, target.hp - dmg);
   const bonus = mult > 1 ? ' (efficace !)' : (mult < 1 ? ' (peu efficace...)' : '');
-  combatState.log.unshift(`${attacker.name} utilise ${attack.name} sur ${target.name} : -${dmg} PV${bonus}`);
+  combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name} : -${dmg} PV${bonus}`);
   combatState.log = combatState.log.slice(0, 20);
 
   // Sommeil : se réveille en cas de dégâts.
@@ -20032,11 +20057,20 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
      motif que les particules les affichent déjà sur le combattant touché ; en pratique elles
      passent trop vite, et l'ancien mécanisme (majDerniereAction) les faisait réapparaître au
      hasard après quelques tours — le bandeau disait donc tantôt l'un, tantôt l'autre. */
+  const nomActeur = (acteur && acteur.name) ? acteur.name : '';
+  const echappe = t=> String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const consequences = nouvelles.slice().reverse()
     .map(l=> String(l)
-      /* « X utilise Y sur Z : -5 PV (peu efficace) » → il ne reste que « -5 PV peu efficace » :
+      /* « X lance Y sur Z : -5 PV (peu efficace) » → il ne reste que « -5 PV peu efficace » :
          le titre dit déjà qui frappe et avec quoi, le chiffre complète. */
-      .replace(/^.*?\butilise\b.*?:\s*/i, '')
+      .replace(/^.*?\blance\b.*?:\s*/i, '')
+      /* Le MÊME geste sans chiffres — « X lance Y sur Z. » — n'a pas de deux-points : la règle
+         ci-dessus ne mordait pas et la ligne repassait ENTIÈRE, avec le nom de l'acteur déjà
+         présent dans le titre. On finissait à trois portraits sur une seule ligne. Ici on ne
+         garde que « sur Z ». */
+      .replace(/^.*?\blance\b\s+.*?\s+(?=sur\b)/i, '')
+      /* Même raison, cas général : le titre nomme l'acteur, la suite n'a pas à le répéter. */
+      .replace(new RegExp('^' + echappe(nomActeur) + '\\s+'), '')
       .replace(/\(([^)]{2,})\)/g, '$1')   // on garde les « (e) » d'accord, on retire les mentions
       .replace(/[!.]+\s*$/g, '')
       .replace(/^[\s:,.–-]+|[\s:,.–-]+$/g, '')
@@ -20047,12 +20081,18 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
      ligne par cible, dans l'ordre où les coups sont tombés. */
   const parCible = consequences.length > 1 && attaque && (attaque.kind === 'damage_group' || attaque.kind === 'heal_group');
 
+  /* Plus d'emoji d'attaque ici : le nom suffit à la reconnaître et la ligne déborde vite.
+     Les boutons d'attaque, eux, le gardent. */
   const titre = (attaque && attaque.name)
-    ? ('<strong>' + acteur.name + '</strong> · ' + (attaque.emoji ? attaque.emoji + ' ' : '') + attaque.name)
+    ? ('<strong>' + acteur.name + '</strong> · ' + attaque.name)
     : ('<strong>' + acteur.name + '</strong>');
   /* Deux-points plutôt qu'un tiret cadratin : maintenant que la suite commence souvent par
      « -19 PV », un « — -19 » accolerait deux tirets et se lirait mal. */
-  const suite = consequences.length ? ' : ' + consequences.join(' · ') : '';
+  /* « sur Z » prolonge le titre et se colle donc sans deux-points (« Roco · Provocation sur
+     Luna ») ; tout le reste garde le « : » qui introduit un résultat chiffré. */
+  const suite = consequences.length
+    ? consequences.map((c,i)=> i===0 ? (/^sur\b/i.test(c) ? ' ' + c : ' : ' + c) : ' · ' + c).join('')
+    : '';
 
   if (parCible){
     /* La première ligne annonce le geste, les suivantes disent ce qu'il a fait à chacun, et
