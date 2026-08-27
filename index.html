@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v423</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v424</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2841,6 +2841,11 @@ function showAuthScreen(text, showRetryBtn){
   googleSignInBtn.style.display = showRetryBtn ? 'block' : 'none';
   guestContinueBtn.style.display = 'none';
   authOverlay.classList.add('show');
+  /* Le voile parle à la place de cet écran tant que tout va bien — mais dès qu'un BOUTON
+     apparaît, il faut pouvoir appuyer dessus. Le laisser couvert, c'est un écran mort. */
+  if (showRetryBtn && typeof leverLeVoileDeDemarrage === 'function'){
+    leverLeVoileDeDemarrage('écran de connexion avec un bouton à presser');
+  }
 }
 function hideAuthScreen(){
   authOverlay.classList.remove('show');
@@ -14715,10 +14720,13 @@ if (typeof db !== 'undefined' && db){
   }, ()=>{});
 }
 let demarrageVaisseauFait = false;
-function leverLeVoileDeDemarrage(){
+function leverLeVoileDeDemarrage(motif){
   const v = document.getElementById('voileDemarrage');
   if (!v || v.dataset.leve) return;
   v.dataset.leve = '1';
+  /* Le voile se levait SANS RIEN ÉCRIRE : quand la carte est apparue au démarrage, il a fallu
+     déduire lequel des quatre chemins l'avait levée. Chacun se nomme maintenant. */
+  journal('reprise', 'voile de démarrage levé', motif || 'motif non précisé', true);
   v.style.transition = 'opacity .35s ease';
   v.style.opacity = '0';
   setTimeout(()=>{ v.style.display = 'none'; }, 400);
@@ -14738,12 +14746,12 @@ function ouvrirLeVaisseauQuandLaRepriseARendu(){
     if (combatState || document.getElementById('sceneViewFull').classList.contains('show')){
       journal('reprise', 'vaisseau de démarrage annulé', 'une session a été reprise', true);
       clearInterval(guetter);
-      leverLeVoileDeDemarrage();
+      leverLeVoileDeDemarrage('une session a été reprise');
       return;
     }
     if (document.getElementById('pseudoOverlay').classList.contains('show')){
       clearInterval(guetter);
-      leverLeVoileDeDemarrage();
+      leverLeVoileDeDemarrage('écran du pseudo à l\'écran');
       return;
     }
     /* `repriseEtape` vaut 'terminée' dès que `tryResumeSession` est passée par son `finally`,
@@ -14764,7 +14772,8 @@ function leverLeVoileQuandLeVaisseauEstLa(){
     const pret = document.getElementById('sceneViewFull').classList.contains('show');
     if (pret || essais > 60){          // 60 × 100 ms = 6 s au maximum
       clearInterval(guetter);
-      leverLeVoileDeDemarrage();
+      leverLeVoileDeDemarrage(pret ? 'le vaisseau est à l\'écran'
+                                   : 'le vaisseau n\'est pas venu en 6 s');
     }
   }, 100);
 }
@@ -14773,9 +14782,38 @@ function leverLeVoileQuandLeVaisseauEstLa(){
 function messageDeDemarrage(texte){
   const el = document.getElementById('voileDemarrageTexte');
   if (el) el.textContent = texte || '';
+  signeDeVieDemarrage();
 }
-/* Dernier filet : si rien ne répond, on ne laisse personne devant un écran noir. */
-setTimeout(leverLeVoileDeDemarrage, 12000);
+/* DERNIER FILET — si rien ne répond, on ne laisse personne devant un écran noir.
+   Il comptait 12 s depuis le CHARGEMENT, quoi qu'il arrive. Relevé au journal le 27/08 :
+   démarrage à 45:37,6 · fiche joueur lue seulement à 45:57,2 (9,5 s rien que pour elle) ·
+   scène ouverte à 45:58,2. Le filet levait donc le voile vers 45:49, en plein milieu d'une
+   reprise qui allait parfaitement aboutir, et la carte restait visible huit secondes sous
+   « Bienvenue sur Mascotto ».
+   C'est EXACTEMENT l'erreur du chien de garde de la reprise, corrigée avant la v423 : ce
+   qu'il faut surveiller n'est pas la DURÉE, c'est l'ABSENCE DE PROGRÈS. Tant que le
+   démarrage avance, le voile reste. On ne le lève que si plus rien ne bouge.
+   Le seuil de silence doit rester bien au-dessus de `SESSION_RESUME_DELAI` : cette
+   attente-là est VOULUE et n'écrit rien au journal pendant 8 secondes. Un seuil de 12 s
+   tomberait au milieu. */
+var dernierSigneDeVieDemarrage = Date.now();
+var demarrageDebut = Date.now();
+var DEMARRAGE_SILENCE_MAX = 20000;   // plus rien ne bouge pendant 20 s → on montre la carte
+var DEMARRAGE_PLAFOND = 60000;       // et jamais plus d'une minute de voile, quoi qu'il arrive
+function signeDeVieDemarrage(){ dernierSigneDeVieDemarrage = Date.now(); }
+var filetDuVoile = setInterval(function(){
+  var v = document.getElementById('voileDemarrage');
+  if (!v || v.dataset.leve){ clearInterval(filetDuVoile); return; }
+  var silence = Date.now() - dernierSigneDeVieDemarrage;
+  var total = Date.now() - demarrageDebut;
+  if (silence > DEMARRAGE_SILENCE_MAX){
+    clearInterval(filetDuVoile);
+    leverLeVoileDeDemarrage('filet — plus aucun progrès depuis ' + Math.round(silence/1000) + ' s');
+  } else if (total > DEMARRAGE_PLAFOND){
+    clearInterval(filetDuVoile);
+    leverLeVoileDeDemarrage('filet — plafond de ' + Math.round(total/1000) + ' s atteint');
+  }
+}, 1000);
 const SCENE_POINT_TYPES = [
   { id:'sortie', label:'🚪 Sortie' },
   { id:'objet', label:'🎒 Objet' },
@@ -18409,6 +18447,9 @@ function etapeReprise(nom, detail){
   repriseEtape = nom;
   const ms = repriseDebut ? Math.round(performance.now() - repriseDebut) : 0;
   journal('reprise', nom, (detail ? detail + ' — ' : '') + ms + ' ms', true);
+  /* Une étape franchie est un signe de vie : elle repousse le filet du voile de démarrage,
+     exactement comme elle repousse le chien de garde juste en dessous. */
+  if (typeof signeDeVieDemarrage === 'function') signeDeVieDemarrage();
   /* CHAQUE étape franchie REPOUSSE le couperet. Le chien de garde comptait le temps TOTAL de
      la reprise : sur une connexion lente il coupait une reprise parfaitement en train de
      réussir. Vu en journal : lecture de la fiche joueur 13,8 s + images des scènes 4,3 s =
