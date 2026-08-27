@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v420</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v421</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -18403,9 +18403,47 @@ async function abandonnerRepriseBloquee(message){
 function armerChienDeGardeReprise(){
   clearTimeout(sessionResumeChienDeGarde);
   sessionResumeChienDeGarde = setTimeout(()=>{
-    if (combatState) return;   // le combat est bien reparti : rien à sauver
+    /* Le combat OU l'exploration est bien reparti : il n'y a rien à sauver, et surtout rien
+       à refermer. Le chien de garde ne regardait que `combatState` : une exploration reprise
+       pouvait donc se faire balayer par son propre filet de sécurité. */
+    if (combatState) return;
+    if (document.getElementById('sceneViewFull').classList.contains('show')) return;
     abandonnerRepriseBloquee('bloquée à l\'étape « ' + repriseEtape + ' »');
   }, SESSION_RESUME_LIMITE);
+}
+
+/* Recherche du duel actif du joueur. DEUX précautions par rapport à la version d'avant :
+   - UNE SEULE condition dans la requête (`status`), puis on filtre soi-même sur l'identifiant.
+     C'est exactement ce que fait déjà l'affichage des duels à proximité, et ça n'exige aucun
+     index composite. Une requête à deux conditions restait sans réponse pour toujours.
+   - UNE LIMITE DE TEMPS : même si la requête se bloque à nouveau pour une raison qu'on n'a pas
+     prévue, elle rend la main au bout de `DUEL_RECHERCHE_LIMITE` et la reprise continue. Une
+     étape secondaire ne doit JAMAIS pouvoir retenir tout le démarrage. */
+const DUEL_RECHERCHE_LIMITE = 5000;
+async function chercherMonDuelActif(){
+  if (!pvpDuelsCol || !currentUser) return null;
+  const recherche = pvpDuelsCol.where('status','==','active').get().then((snap)=>{
+    let trouve = null;
+    snap.forEach((doc)=>{
+      if (trouve) return;
+      const d = doc.data();
+      if (d.playerAUid === currentUser.uid){
+        trouve = { id: doc.id, role:'A', oppUid: d.playerBUid, oppPseudo: d.playerBPseudo };
+      } else if (d.playerBUid === currentUser.uid){
+        trouve = { id: doc.id, role:'B', oppUid: d.playerAUid, oppPseudo: d.playerAPseudo };
+      }
+    });
+    return trouve;
+  }).catch((e)=>{
+    journal('reprise', 'recherche de duel en échec', (e && e.message) || String(e), true);
+    return null;
+  });
+  const chrono = new Promise((resoudre)=> setTimeout(()=>{
+    journal('reprise', 'recherche de duel abandonnée', 'sans réponse après '
+      + DUEL_RECHERCHE_LIMITE + ' ms — on continue sans', true);
+    resoudre(null);
+  }, DUEL_RECHERCHE_LIMITE));
+  return Promise.race([recherche, chrono]);
 }
 
 async function tryResumeSession(forcer){
@@ -18434,23 +18472,6 @@ async function tryResumeSession(forcer){
     // Duel JcJ en cours : le seul type de session qui n'était pas du tout vérifié à la reprise
     // (contrairement au combat solo et à l'exploration) — un redémarrage complet de l'appli en plein
     // duel ramenait donc sur la carte au lieu de reprendre le combat.
-    if (pvpDuelsCol){
-      etapeReprise('recherche d\'un duel');
-      let duelSnap = await pvpDuelsCol.where('status','==','active').where('playerAUid','==',currentUser.uid).limit(1).get();
-      let myRole = 'A';
-      if (duelSnap.empty){
-        duelSnap = await pvpDuelsCol.where('status','==','active').where('playerBUid','==',currentUser.uid).limit(1).get();
-        myRole = 'B';
-      }
-      if (!duelSnap.empty){
-        const d = duelSnap.docs[0].data();
-        const oppUid = myRole==='A' ? d.playerBUid : d.playerAUid;
-        const oppPseudo = myRole==='A' ? d.playerBPseudo : d.playerAPseudo;
-        startPvpDuel(duelSnap.docs[0].id, myRole, oppUid, oppPseudo);
-        showToast('🔄 Reprise de ton duel en cours…');
-        return;
-      }
-    }
     etapeReprise('lecture de ta fiche joueur');
     const doc = await db.collection('players').doc(currentUser.uid).get();
     if (!doc.exists){ etapeReprise('aucune fiche joueur — rien à reprendre'); return; }
@@ -18485,6 +18506,25 @@ async function tryResumeSession(forcer){
           showToast('🔄 Reprise de ton exploration en cours…');
         }
       }
+    }
+    /* La recherche d'un duel passe EN DERNIER. Elle était en premier, et elle bloquait tout :
+       elle interrogeait Firestore avec DEUX conditions à la fois (`status` + `playerAUid`), ce
+       qui réclame un index composite qui n'existe pas. La requête ne recevait jamais de
+       réponse, la reprise attendait indéfiniment, et le chien de garde coupait au bout de
+       quinze secondes — le combat sauvegardé n'avait jamais eu sa chance. Elle est donc
+       reléguée après le combat et l'exploration : c'est le cas le plus rare, il ne doit pas
+       passer devant les autres. */
+    const dejaRepris = combatState
+      || document.getElementById('sceneViewFull').classList.contains('show');
+    if (pvpDuelsCol && !dejaRepris){
+      etapeReprise('recherche d\'un duel');
+      const duel = await chercherMonDuelActif();
+      if (duel){
+        startPvpDuel(duel.id, duel.role, duel.oppUid, duel.oppPseudo);
+        showToast('🔄 Reprise de ton duel en cours…');
+        return;
+      }
+      etapeReprise('pas de duel en cours');
     }
   } catch(e){
     /* Ce `catch` était TOTALEMENT SILENCIEUX. Une reprise qui échouait en cours de route
