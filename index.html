@@ -938,7 +938,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v416</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v417</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -10460,6 +10460,9 @@ if (recruitsCol){
     if (!recruitsPrets) majRecruesPretes(); // premier instantané : c'est lui qui déclenche le dessin
     else redessinerCarte();
     rafraichirEtatDesCombattants();
+    /* Les recrues portent les images de TON équipe à la reprise d'un combat : sans cette
+       relance, la reprise n'attendrait leur arrivée que pour se faire doubler par le filet. */
+    tryResumeSession();
     if (activeRecruitId) renderRecruitSheet();
   });
 }
@@ -18191,7 +18194,12 @@ function deserializeFighterFromSave(sf){
       }
     } else {
       const c = ficheParId(f.sourceId);
-      if (c) f.imageUrl = c.imageUrl || '';
+      /* Même ordre de priorité qu'à la création du combattant : sa pose de combat d'abord,
+         sinon il reprenait le combat avec son image de fiche, où il ne se bat pas. */
+      if (c){
+        f.imageUrl = (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '';
+        if (!f.faceImageUrl) f.faceImageUrl = f.imageUrl;
+      }
     }
   }
   return f;
@@ -18283,12 +18291,62 @@ async function tryResumeSavedCombat(saved){
   return true;
 }
 let sessionResumeAttempted = false;
-async function tryResumeSession(){
+let sessionResumeFilet = null;          // minuterie du filet de sécurité
+let sessionResumeChienDeGarde = null;   // surveille une reprise qui ne se termine jamais
+const SESSION_RESUME_DELAI = 8000;      // au-delà, on reprend avec ce qu'on a
+const SESSION_RESUME_LIMITE = 15000;    // au-delà, la reprise est considérée comme perdue
+
+/* TOUTES les sources que la reconstruction d'un combat sauvegardé va relire. Les images ne
+   partent pas dans la sauvegarde (voir `imageLegereOuRien`) : elles sont retrouvées sur les
+   fiches et sur les recrues au moment de la reprise. L'ancien garde se contentait d'un OU
+   (`!attacks.length && !creatures.length`), donc l'arrivée du PREMIER instantané suffisait à
+   lancer la reprise : le combat repartait complet mais SANS AUCUNE IMAGE, des deux côtés,
+   parce que fiches et recrues n'étaient pas encore là. Et comme la reprise ne s'exécute
+   qu'une seule fois, elle ne se rattrapait jamais. */
+function sourcesDeReprisePretes(){
+  const fiches = (typeof latestSnap !== 'undefined' && latestSnap) || creatures.length;
+  return !!(attacks.length && fiches && recruitsSnapshotRecu);
+}
+
+/* Une reprise interrompue laissait ses écrans à moitié construits PAR-DESSUS le reste :
+   invisibles, mais bien présents, ils avalaient tous les appuis. Plus aucun bouton ne
+   répondait et rien à l'écran ne disait pourquoi. On rend la main de force. */
+function libererEcransDeReprise(){
+  ['combatFull','sceneViewFull'].forEach((id)=>{
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('show','reveal');
+  });
+  combatState = null;
+  clearInterval(combatTickTimer);
+}
+async function abandonnerRepriseBloquee(message){
+  journal('erreur', 'reprise abandonnée', message || '', true);
+  libererEcransDeReprise();
+  try { await clearSavedCombat(); } catch(e){}
+  try { clearCurrentZoneScene(); } catch(e){}
+  showToast('⚠️ ' + (message || 'Reprise impossible') + ' — session abandonnée pour ne pas te bloquer.');
+}
+function armerChienDeGardeReprise(){
+  clearTimeout(sessionResumeChienDeGarde);
+  sessionResumeChienDeGarde = setTimeout(()=>{
+    if (combatState) return;   // le combat est bien reparti : rien à sauver
+    abandonnerRepriseBloquee('La reprise de ta session n\'a jamais abouti');
+  }, SESSION_RESUME_LIMITE);
+}
+
+async function tryResumeSession(forcer){
   if (sessionResumeAttempted) return;
   if (!currentUser || !db) return;
-  if (!attacks.length && !creatures.length) return; // données pas encore prêtes, on retentera au prochain snapshot
+  if (!sourcesDeReprisePretes() && !forcer){
+    /* Filet : si l'une des sources ne vient jamais, on reprend quand même au bout de quelques
+       secondes. Un combat sans portraits vaut toujours mieux qu'un combat perdu. */
+    if (!sessionResumeFilet) sessionResumeFilet = setTimeout(()=> tryResumeSession(true), SESSION_RESUME_DELAI);
+    return;
+  }
   if (combatState || document.getElementById('sceneViewFull').classList.contains('show')) return; // déjà dans une session live, rien à reprendre
   sessionResumeAttempted = true;
+  if (sessionResumeFilet){ clearTimeout(sessionResumeFilet); sessionResumeFilet = null; }
+  armerChienDeGardeReprise();
   try {
     // Duel JcJ en cours : le seul type de session qui n'était pas du tout vérifié à la reprise
     // (contrairement au combat solo et à l'exploration) — un redémarrage complet de l'appli en plein
@@ -18338,7 +18396,17 @@ async function tryResumeSession(){
         }
       }
     }
-  } catch(e){}
+  } catch(e){
+    /* Ce `catch` était TOTALEMENT SILENCIEUX. Une reprise qui échouait en cours de route
+       laissait le joueur devant un écran figé, sans un mot pour l'expliquer — et nous sans
+       le message qui aurait dit où ça cassait. */
+    journal('erreur', 'reprise de session', (e && e.message) || String(e), true);
+    if (combatState) showToast('⚠️ Reprise incomplète : ' + ((e && e.message) || 'erreur inconnue'));
+    else await abandonnerRepriseBloquee('Reprise impossible : ' + ((e && e.message) || 'erreur inconnue'));
+  } finally {
+    clearTimeout(sessionResumeChienDeGarde);
+    sessionResumeChienDeGarde = null;
+  }
 }
 
 /* Combat déclenché par un PNJ de type Monstre/Combattant (boss) ou par une rencontre aléatoire dans une zone d'exploration. */
