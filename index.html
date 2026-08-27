@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v419</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v420</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7913,7 +7913,7 @@ document.getElementById('oublierChoixBtn').addEventListener('click', oublierMesC
    Copier est donc le cœur de l'écran — le texte se colle directement dans la conversation,
    ce qui vaut mieux qu'une capture (on y lit les temps exacts et les piles d'appel).
    Le presse-papiers étant souvent bloqué sur téléphone, on sélectionne le texte à défaut. */
-const COULEUR_CAT = { erreur:'#c0392b', lent:'#e67e22', combat:'#2980b9', son:'#8e44ad', base:'#16a085', appli:'#7f8c8d' };
+const COULEUR_CAT = { erreur:'#c0392b', lent:'#e67e22', combat:'#2980b9', reprise:'#d35400', son:'#8e44ad', base:'#16a085', appli:'#7f8c8d' };
 function texteBoiteNoire(){
   const l = (typeof journalLignes === 'function') ? journalLignes() : [];
   const entete = 'Mascotto ' + (document.getElementById('appVersionLabel') || {}).textContent
@@ -18308,6 +18308,7 @@ async function tryResumeSavedCombat(saved){
   retourDialogueCombat = saved.retourDialogue || null;
   const playerFighters = (saved.fighters||[]).filter(f=>f.side==='player').map(deserializeFighterFromSave);
   const enemyFighters = (saved.fighters||[]).filter(f=>f.side==='enemy').map(deserializeFighterFromSave);
+  etapeReprise('combattants reconstruits', playerFighters.length + ' contre ' + enemyFighters.length);
   if (!playerFighters.length || !enemyFighters.length) return false;
   let arenaBg = DEFAULT_ARENA_BG;
   if (saved.zoneId && creatureCol && zonesCol){
@@ -18315,30 +18316,37 @@ async function tryResumeSavedCombat(saved){
       const zoneDocGet = zonesCol.doc(saved.zoneId).get();
       const creatureDocGet = creatureCol.doc(saved.zoneId).get();
       const playerGet = (currentUser && db) ? db.collection('players').doc(currentUser.uid).get() : Promise.resolve(null);
+      etapeReprise('lecture de la zone du combat');
       const [zoneDoc, creatureDoc, playerDoc] = await Promise.all([zoneDocGet, creatureDocGet, playerGet]);
+      etapeReprise('zone du combat lue');
       if (creatureDoc.exists){
         sceneViewCreature = { id: creatureDoc.id, ...creatureDoc.data() };
         if (sceneViewCreature.combatArenaImagePath){
           arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
         } else if (sceneViewCreature.combatArenaImageRef){
+          etapeReprise('téléchargement du décor de l\'arène');
           const url = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef);
           if (url) arenaBg = url;
         }
         const d = zoneDoc.exists ? zoneDoc.data() : null;
         const norm = normalizeZoneScenes(d);
+        etapeReprise('images des scènes de la zone', norm.scenes.length + ' scène(s)');
         await resolveImageRefsInScenes(norm.scenes);
+        etapeReprise('images des scènes chargées');
         sceneViewScenes = norm.scenes;
         sceneViewCurrentSceneId = (saved.sceneId && norm.scenes.some(s=>s.id===saved.sceneId)) ? saved.sceneId : norm.startSceneId;
         sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creatureDoc.id]) || {};
         sceneViewPointState = (d && d.pointState) || {};
       }
-    } catch(e){}
+    } catch(e){ journal('reprise', 'décor du combat abandonné', (e && e.message) || String(e), true); }
   }
   combatZoneContext = saved.zoneId ? { pt: saved.pointId ? { id: saved.pointId } : null } : null;
   /* `startCombat` est ASYNCHRONE : depuis la v323 elle attend la résolution des images de dos
      AVANT de poser `combatState`. Sans ce `await`, la ligne suivante lisait `combatState` encore
      nul, levait une erreur avalée par le `catch` de l'appelant, et coupait toute la reprise. */
+  etapeReprise('relance du combat');
   await startCombat(playerFighters, enemyFighters, arenaBg, { skipTransition:true });
+  etapeReprise('combat relancé');
   if (!combatState) return false;
   combatState.log = saved.log || [];
   renderCombat();
@@ -18346,6 +18354,17 @@ async function tryResumeSavedCombat(saved){
   return true;
 }
 let sessionResumeAttempted = false;
+/* REPÈRES DE LA REPRISE. Un abandon ne disait rien de plus que « ça n'a pas abouti » : entre
+   le démarrage et le couperet, le journal restait MUET, donc impossible de savoir laquelle
+   des attentes bloquait. Chaque étape se nomme maintenant, avec le temps écoulé depuis le
+   début de la reprise, et le chien de garde cite la dernière franchie. */
+let repriseEtape = '(pas commencée)';
+let repriseDebut = 0;
+function etapeReprise(nom, detail){
+  repriseEtape = nom;
+  const ms = repriseDebut ? Math.round(performance.now() - repriseDebut) : 0;
+  journal('reprise', nom, (detail ? detail + ' — ' : '') + ms + ' ms', true);
+}
 let sessionResumeFilet = null;          // minuterie du filet de sécurité
 let sessionResumeChienDeGarde = null;   // surveille une reprise qui ne se termine jamais
 const SESSION_RESUME_DELAI = 8000;      // au-delà, on reprend avec ce qu'on a
@@ -18385,7 +18404,7 @@ function armerChienDeGardeReprise(){
   clearTimeout(sessionResumeChienDeGarde);
   sessionResumeChienDeGarde = setTimeout(()=>{
     if (combatState) return;   // le combat est bien reparti : rien à sauver
-    abandonnerRepriseBloquee('La reprise de ta session n\'a jamais abouti');
+    abandonnerRepriseBloquee('bloquée à l\'étape « ' + repriseEtape + ' »');
   }, SESSION_RESUME_LIMITE);
 }
 
@@ -18395,18 +18414,28 @@ async function tryResumeSession(forcer){
   if (!sourcesDeReprisePretes() && !forcer){
     /* Filet : si l'une des sources ne vient jamais, on reprend quand même au bout de quelques
        secondes. Un combat sans portraits vaut toujours mieux qu'un combat perdu. */
-    if (!sessionResumeFilet) sessionResumeFilet = setTimeout(()=> tryResumeSession(true), SESSION_RESUME_DELAI);
+    if (!sessionResumeFilet){
+      const manque = [];
+      if (!attacks.length) manque.push('attaques');
+      if (!((typeof latestSnap !== 'undefined' && latestSnap) || creatures.length)) manque.push('fiches');
+      if (!recruitsSnapshotRecu) manque.push('recrues');
+      journal('reprise', 'en attente de ses sources', manque.join(', ') || '(aucune ?)', true);
+      sessionResumeFilet = setTimeout(()=> tryResumeSession(true), SESSION_RESUME_DELAI);
+    }
     return;
   }
   if (combatState || document.getElementById('sceneViewFull').classList.contains('show')) return; // déjà dans une session live, rien à reprendre
   sessionResumeAttempted = true;
   if (sessionResumeFilet){ clearTimeout(sessionResumeFilet); sessionResumeFilet = null; }
+  repriseDebut = performance.now();
   armerChienDeGardeReprise();
+  etapeReprise('départ', forcer ? 'forcée par le filet' : 'sources prêtes');
   try {
     // Duel JcJ en cours : le seul type de session qui n'était pas du tout vérifié à la reprise
     // (contrairement au combat solo et à l'exploration) — un redémarrage complet de l'appli en plein
     // duel ramenait donc sur la carte au lieu de reprendre le combat.
     if (pvpDuelsCol){
+      etapeReprise('recherche d\'un duel');
       let duelSnap = await pvpDuelsCol.where('status','==','active').where('playerAUid','==',currentUser.uid).limit(1).get();
       let myRole = 'A';
       if (duelSnap.empty){
@@ -18422,9 +18451,12 @@ async function tryResumeSession(forcer){
         return;
       }
     }
+    etapeReprise('lecture de ta fiche joueur');
     const doc = await db.collection('players').doc(currentUser.uid).get();
-    if (!doc.exists) return;
+    if (!doc.exists){ etapeReprise('aucune fiche joueur — rien à reprendre'); return; }
     const pd = doc.data();
+    etapeReprise('fiche joueur lue',
+      (pd.savedCombat ? 'combat sauvegardé' : 'pas de combat') + (pd.currentZoneId ? ' + zone' : ''));
     if (pd.savedCombat){
       const clearedAt = parseInt(localStorage.getItem('mascotto_combat_cleared_at') || '0', 10);
       if (pd.savedCombat.savedAt && pd.savedCombat.savedAt <= clearedAt){
@@ -18434,6 +18466,7 @@ async function tryResumeSession(forcer){
         clearSavedCombat();
       } else {
         const ok = await tryResumeSavedCombat(pd.savedCombat);
+        etapeReprise(ok ? 'combat repris' : 'reprise du combat refusée');
         if (ok) return;
       }
     }
@@ -18444,8 +18477,10 @@ async function tryResumeSession(forcer){
         // suppression côté serveur n'a simplement pas eu le temps d'arriver. On ne la reprend pas.
         clearCurrentZoneScene();
       } else {
+        etapeReprise('lecture de la zone d\'exploration');
         const zoneDoc = await creatureCol.doc(pd.currentZoneId).get();
         if (zoneDoc.exists){
+          etapeReprise('ouverture de la scène');
           openSceneView({ id: zoneDoc.id, ...zoneDoc.data() }, pd.currentSceneId);
           showToast('🔄 Reprise de ton exploration en cours…');
         }
@@ -18459,6 +18494,7 @@ async function tryResumeSession(forcer){
     if (combatState) showToast('⚠️ Reprise incomplète : ' + ((e && e.message) || 'erreur inconnue'));
     else await abandonnerRepriseBloquee('Reprise impossible : ' + ((e && e.message) || 'erreur inconnue'));
   } finally {
+    etapeReprise('terminée');
     clearTimeout(sessionResumeChienDeGarde);
     sessionResumeChienDeGarde = null;
   }
