@@ -911,7 +911,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v409</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v410</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -20028,14 +20028,15 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
   const nouvelles = combatState.log.slice(0, Math.max(0, combatState.log.length - depuis));
   if (!nouvelles.length) return;
 
-  /* Les dégâts chiffrés s'affichent déjà en particules sur le combattant touché : les répéter
-     ici doublait l'information et allongeait la phrase pour rien. */
+  /* v410 — les dégâts chiffrés RESTENT dans le bandeau. Ils avaient été retirés en v401 au
+     motif que les particules les affichent déjà sur le combattant touché ; en pratique elles
+     passent trop vite, et l'ancien mécanisme (majDerniereAction) les faisait réapparaître au
+     hasard après quelques tours — le bandeau disait donc tantôt l'un, tantôt l'autre. */
   const consequences = nouvelles.slice().reverse()
     .map(l=> String(l)
-      /* « X utilise Y sur Z : -5 PV (peu efficace) » → il ne reste que « peu efficace » : le
-         titre dit déjà qui frappe et avec quoi, et les dégâts sont sur le personnage. */
+      /* « X utilise Y sur Z : -5 PV (peu efficace) » → il ne reste que « -5 PV peu efficace » :
+         le titre dit déjà qui frappe et avec quoi, le chiffre complète. */
       .replace(/^.*?\butilise\b.*?:\s*/i, '')
-      .replace(/[+-]?\d+\s*PV/gi, '')
       .replace(/\(([^)]{2,})\)/g, '$1')   // on garde les « (e) » d'accord, on retire les mentions
       .replace(/[!.]+\s*$/g, '')
       .replace(/^[\s:,.–-]+|[\s:,.–-]+$/g, '')
@@ -20049,7 +20050,9 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
   const titre = (attaque && attaque.name)
     ? ('<strong>' + acteur.name + '</strong> · ' + (attaque.emoji ? attaque.emoji + ' ' : '') + attaque.name)
     : ('<strong>' + acteur.name + '</strong>');
-  const suite = consequences.length ? ' — ' + consequences.join(' · ') : '';
+  /* Deux-points plutôt qu'un tiret cadratin : maintenant que la suite commence souvent par
+     « -19 PV », un « — -19 » accolerait deux tirets et se lirait mal. */
+  const suite = consequences.length ? ' : ' + consequences.join(' · ') : '';
 
   if (parCible){
     /* La première ligne annonce le geste, les suivantes disent ce qu'il a fait à chacun, et
@@ -20104,9 +20107,13 @@ function afficherProchaineAction(){
   /* On EMPILE au lieu de remplacer : quand une attaque touche trois personnages, on veut
      voir les trois d'un coup, la plus ancienne en haut. Au-delà de trois, la plus vieille
      s'efface. */
-  lignesAffichees.push(texteAvecPortraits(fileDernieresActions.shift()));
+  /* Même habillage que `annoncerAction` : ces lignes-là (poison, paralysie, régénération)
+     s'ajoutent hors animation et passaient en texte nu, joint par <br>. Elles ne
+     s'estompaient donc jamais et se mélangeaient mal aux lignes mises en forme. */
+  lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
+  lignesAffichees.push('<div class="ligne-vive">' + texteAvecPortraits(fileDernieresActions.shift()) + '</div>');
   if (lignesAffichees.length > 3) lignesAffichees.shift();
-  el.innerHTML = lignesAffichees.join('<br>');
+  el.innerHTML = lignesAffichees.join('');
   el.classList.add('show');
   /* Chaque action reste lisible avant la suivante : à 850 ms on n'avait pas fini de lire.
      1,6 s laisse le temps de voir qui a été touché, sans immobiliser le combat. */
@@ -20145,6 +20152,13 @@ function majDerniereAction(log){
   /* Le journal empile les nouveautés en tête : on prend tout ce qui est arrivé depuis
      le dernier passage, et on le remet dans l'ordre où c'est arrivé. */
   const pos = journalDejaVu ? log.indexOf(journalDejaVu) : -1;
+  /* Le journal est tronqué à 20 lignes : au bout de quelques tours, le repère du dernier
+     passage en sort et `indexOf` renvoie -1. On se rabattait alors sur `log[0]` affiché TEL
+     QUEL — c'est ce qui faisait réapparaître la ligne brute d'attaque par-dessus celle,
+     mise en forme, que `annoncerAction` venait de poser. Repère perdu = on resynchronise
+     en silence, sans rien afficher. Le cas `journalDejaVu === null` (tout premier passage
+     du combat) reste traité comme avant. */
+  if (journalDejaVu && pos === -1){ journalDejaVu = log[0]; return; }
   const nouvelles = (pos === -1) ? [log[0]] : log.slice(0, pos);
   journalDejaVu = log[0];
   fileDernieresActions = nouvelles.slice().reverse();
