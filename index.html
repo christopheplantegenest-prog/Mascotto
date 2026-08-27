@@ -56,6 +56,18 @@
       var l = { h: heure(), c: cat || '?', m: String(message == null ? '' : message) };
       if (detail !== undefined && detail !== null && detail !== '') l.d = (typeof detail === 'string') ? detail : String(detail);
       var mem = memoire(); if (mem) l.mem = mem;
+      /* UNE SEULE image morte a produit 400 lignes en 3 secondes et chassé de la boîte noire
+         le message qu'on cherchait. Une erreur identique qui se répète est donc REGROUPéE
+         sur sa première ligne avec un compteur, au lieu d'en ajouter une nouvelle. On garde
+         l'heure du premier passage et on note celle du dernier : l'information est la même,
+         et le journal reste lisible. */
+      var prec = lignes.length ? lignes[lignes.length - 1] : null;
+      if (prec && prec.c === l.c && prec.m === l.m && prec.d === l.d){
+        prec.n = (prec.n || 1) + 1;
+        prec.hf = l.h;
+        if (urgent || cat === 'erreur') ecrire();
+        return;
+      }
       lignes.push(l);
       /* Le repère sert à dire PENDANT QUOI le jeu s'est figé. Une ligne « lent » ne doit
          donc pas le remplacer, sinon elle se cite elle-même en s'imbriquant sans fin. */
@@ -86,6 +98,17 @@
       var adresse = cible.currentSrc || cible.src || cible.href || '';
       if (adresse.slice(0, 5) === 'data:') adresse = 'image intégrée (' + Math.round(adresse.length / 1024) + ' ko)';
       else adresse = String(adresse).split('?')[0];
+      /* Une image morte était redemandée à chaque redessin de l'arène, 6 à 7 fois par seconde :
+         des centaines de requêtes perdues, et le jeu qui se fige par à-coups. On retient
+         l'adresse en échec et on n'y retouche plus. */
+      try {
+        var adrMorte = cible.src || cible.currentSrc || '';
+        if (adrMorte){
+          window.imagesMortes = window.imagesMortes || Object.create(null);
+          if (window.imagesMortes[adrMorte]) { window.imagesMortes[adrMorte]++; return; }
+          window.imagesMortes[adrMorte] = 1;
+        }
+      } catch(e){}
       window.journal('erreur', 'fichier non chargé : <' + String(cible.tagName).toLowerCase() + '>',
         adresse || '(adresse vide)', true);
       return;
@@ -942,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v418</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v419</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7896,7 +7919,9 @@ function texteBoiteNoire(){
   const entete = 'Mascotto ' + (document.getElementById('appVersionLabel') || {}).textContent
     + ' — boîte noire (' + l.length + ' lignes)';
   return entete + '\n' + l.map(e=>
-    e.h + ' [' + e.c + '] ' + e.m + (e.d ? ' — ' + e.d : '') + (e.mem ? ' (mém. ' + e.mem + ')' : '')
+    e.h + (e.hf ? '→' + e.hf : '') + ' [' + e.c + '] '
+    + (e.n > 1 ? '×' + e.n + ' ' : '') + e.m
+    + (e.d ? ' — ' + e.d : '') + (e.mem ? ' (mém. ' + e.mem + ')' : '')
   ).join('\n');
 }
 function ouvrirBoiteNoire(){
@@ -18177,7 +18202,18 @@ function clearCurrentZoneScene(){
    aucun combat retrouvé après un rechargement. On ne garde qu'une adresse courte (image
    hébergée), et on retrouve le reste depuis la recrue ou la fiche d'origine à la reprise. */
 function imageLegereOuRien(url){
-  return (typeof url === 'string' && url && url.slice(0, 5) !== 'data:') ? url : '';
+  /* On écarte les images en `data:` (trop lourdes pour Firestore) ET les adresses `blob:`.
+     Ces dernières étaient le vrai coupable des portraits manquants : `allegerImagesDeCombat`
+     transforme toutes les images du combat en `blob:` juste avant la sauvegarde, or une
+     adresse `blob:` N'EST VALABLE QUE POUR LA PAGE QUI L'A CRÉÉE. Elle mourait donc au
+     rechargement — mais comme elle ressemblait à une adresse légitime, elle passait le
+     filtre, et `deserializeFighterFromSave` croyait avoir une image : il n'allait jamais la
+     rechercher sur la fiche ou la recrue. Résultat : une feuille de papier des deux côtés.
+     Mieux vaut sauvegarder RIEN, qui déclenche le rattrapage, qu'une adresse morte. */
+  if (typeof url !== 'string' || !url) return '';
+  if (url.slice(0, 5) === 'data:') return '';
+  if (url.slice(0, 5) === 'blob:') return '';
+  return url;
 }
 function serializeFighterForSave(f){
   return {
