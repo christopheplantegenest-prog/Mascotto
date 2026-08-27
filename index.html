@@ -709,6 +709,27 @@
   display:flex; align-items:center; justify-content:center; padding:0;
 }
 #combatActionPanel > p.meta{ padding:14px 8px; margin:0; text-align:center; }
+/* v414 — LE RÉCIT DU TOUR SE JOUE ICI, à la place des boutons d'attaque. Pendant la
+   résolution le joueur ne peut pas agir : ce rectangle ne lui sert à rien, c'est donc de
+   l'espace mort qu'on récupère sans rien ajouter à l'écran. Et il est bien plus grand que
+   l'ancien bandeau de trois lignes — plus aucune phrase n'est coupée, même une attaque de
+   groupe sur trois cibles avec un état sur chacune. Les boutons reviennent quand c'est au
+   joueur de jouer, ce qui donne au passage un signal de rythme clair. */
+#combatRecit{
+  padding:10px 12px; margin:0; text-align:center; color:#1d2b22;
+  font-size:var(--bandeau-font-size, clamp(10px, 2.9vw, 14px)); line-height:1.35;
+  /* Le débordement reste possible en théorie (police réglée au maximum + panneau réduit au
+     minimum) : on défile plutôt que de tronquer, la fin de phrase reste atteignable. */
+  max-height:100%; overflow-y:auto;
+}
+#combatRecit .ligne-vive,
+#combatRecit .ligne-passee{ overflow-wrap:anywhere; margin:3px 0; }
+#combatRecit .ligne-vive{ opacity:1; }
+#combatRecit .ligne-passee{ opacity:.45; }
+#combatRecit img.log-face{
+  height:clamp(16px, 4.8vw, 24px); width:clamp(16px, 4.8vw, 24px); border-radius:4px;
+  object-fit:cover; vertical-align:-5px; margin:0 1px; border:1px solid rgba(0,0,0,.25);
+}
 /* La grille remplit le panneau au lieu de garder des lignes d'une hauteur figée : quand on
    réduit le panneau, des cases hautes dépassaient ou flottaient bizarrement dedans. */
 .combat-attack-grid{
@@ -915,7 +936,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v413</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v414</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19162,7 +19183,10 @@ async function playTurnAnimation(actor, attack, target){
      donc déjà posée sans elles, et un K.O. passait à la trappe. On la complète maintenant. */
   completerAction(journalAvant);
   renderCombat();
-  await sleep(900);   // un temps de lecture, plutôt que d'enchaîner aussitôt
+  /* v414 — le temps de lecture s'adapte à ce qu'il y a à lire, et un appui le raccourcit.
+     Remplace le `sleep(900)` fixe, qui était trop court pour une attaque de groupe et trop
+     long pour un coup simple. */
+  await attendreLecture();
   combatState.particles = [];
   combatState.hitUids = [];
   renderCombat();
@@ -20041,6 +20065,58 @@ let lignesAffichees = [];   // les dernières actions encore lisibles, au plus t
    au moment du coup et non sur une minuterie, et on estompe les précédentes. */
 let derniereAnnonce = null;   // { acteur, attaque, depuis } — pour pouvoir la compléter
 
+/* ---------- v414 — OÙ S'AFFICHE LE RÉCIT D'UN TOUR ----------
+   Passer ce drapeau à `false` remet TOUT l'ancien comportement : le bandeau flottant de trois
+   lignes en haut de l'arène, avec ses réglages (taille, position, bouton masquer). Il est
+   volontairement laissé en place et intact pour ça — c'est le chemin du retour en arrière si
+   le nouveau système ne convient pas en jeu. Rien d'autre à toucher que cette ligne. */
+const RECIT_DANS_PANNEAU = true;
+
+/* Pose les lignes courantes là où le récit doit vivre. Une seule fonction pour les trois
+   appelants (annonce d'un geste, défilement hors tour, remise à zéro), sinon les mises en
+   forme divergent — c'est exactement ce qui avait produit la bascule de la v413. */
+function poserLignesRecit(){
+  const bandeau = document.getElementById('combatLastAction');
+  if (!RECIT_DANS_PANNEAU){
+    if (!bandeau) return;
+    bandeau.innerHTML = lignesAffichees.join('');
+    bandeau.classList.add('show');
+    return;
+  }
+  /* Le panneau appartient au JOUEUR dès qu'il a la main : on n'écrase jamais ses boutons.
+     Les lignes écrites hors tour (poison, brûlure, régénération) tombent parfois pendant
+     qu'il choisit son attaque — elles restent lisibles dans le journal complet. */
+  if (combatState && combatState.pendingActor) return;
+  const panel = document.getElementById('combatActionPanel');
+  if (!panel) return;
+  panel.innerHTML = '<div id="combatRecit">' + lignesAffichees.join('') + '</div>';
+}
+
+/* Le temps de lecture n'est plus une constante. Un coup simple se lit en un clin d'œil, une
+   attaque de groupe sur trois cibles a trois fois plus à dire : on compte à peu près une
+   quarantaine de caractères par seconde, borné des deux côtés. Et un appui n'importe où
+   passe à la suite tout de suite, pour qui lit vite — personne n'est ni pressé ni bloqué,
+   et il n'y a aucun clic obligatoire à chaque tour. */
+function attendreLecture(){
+  const el = document.getElementById('combatRecit');
+  const texte = (RECIT_DANS_PANNEAU && el) ? (el.textContent || '') : '';
+  const duree = Math.max(900, Math.min(5000, 700 + texte.length * 22));
+  return new Promise(resolve=>{
+    let fini = false;
+    const finir = ()=>{
+      if (fini) return;
+      fini = true;
+      clearTimeout(minuterie);
+      document.removeEventListener('pointerdown', finir, true);
+      resolve();
+    };
+    const minuterie = setTimeout(finir, duree);
+    /* En phase de CAPTURE : le récit occupe la place des boutons, donc aucun gestionnaire
+       légitime n'a de raison d'avaler l'appui, et un tap sur l'arène doit compter aussi. */
+    document.addEventListener('pointerdown', finir, true);
+  });
+}
+
 /* Rejoue l'annonce en tenant compte de tout ce qui s'est ajouté au journal depuis le début du
    geste, y compris les mises à terre inscrites après coup. */
 function completerAction(depuis){
@@ -20075,8 +20151,6 @@ function lignesAjoutees(avant){
 }
 
 function annoncerAction(acteur, attaque, depuis, estUnComplement){
-  const el = document.getElementById('combatLastAction');
-  if (!el) return;
   const nouvelles = lignesAjoutees(depuis);
   if (!nouvelles.length) return;
 
@@ -20151,15 +20225,18 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
   }).join('');
 
 
-  /* Les précédentes s'estompent : l'œil trouve la ligne du moment sans la chercher. */
+  /* v414 — un nouveau tour repart d'un cadre VIDE : on ne montre que ce qui se passe dans CE
+     tour-là, le journal complet restant à un tap pour relire le reste. L'ancien bandeau, lui,
+     empilait trois lignes en estompant les précédentes : c'était utile quand le cadre était
+     minuscule et permanent, ça ne l'est plus quand chaque tour a tout l'espace du panneau. */
   if (!estUnComplement){
-    lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
+    if (RECIT_DANS_PANNEAU) lignesAffichees = [];
+    else lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
   }
   lignesAffichees.push('<div class="ligne-vive">' + texteAvecPortraits(titre + suite) + '</div>');
   derniereAnnonce = { acteur, attaque, depuis };
   if (lignesAffichees.length > 3) lignesAffichees.shift();
-  el.innerHTML = lignesAffichees.join('');
-  el.classList.add('show');
+  poserLignesRecit();
   /* Le bandeau est désormais mené par les actions : on coupe la minuterie de défilement et on
      tient le journal pour lu, sinon l'ancien mécanisme réafficherait les mêmes lignes. */
   if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
@@ -20167,8 +20244,6 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
   journalDejaVu = combatState.log[0];
 }
 function afficherProchaineAction(){
-  const el = document.getElementById('combatLastAction');
-  if (!el) return;
   if (!fileDernieresActions.length){
     /* Plus rien à dire : on laisse les dernières lignes à l'écran plutôt que de les faire
        disparaître — elles servent de rappel de ce qui vient de se passer. */
@@ -20184,8 +20259,7 @@ function afficherProchaineAction(){
   lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
   lignesAffichees.push('<div class="ligne-vive">' + texteAvecPortraits(fileDernieresActions.shift()) + '</div>');
   if (lignesAffichees.length > 3) lignesAffichees.shift();
-  el.innerHTML = lignesAffichees.join('');
-  el.classList.add('show');
+  poserLignesRecit();
   /* Chaque action reste lisible avant la suivante : à 850 ms on n'avait pas fini de lire.
      1,6 s laisse le temps de voir qui a été touché, sans immobiliser le combat. */
   defilementEnCours = setTimeout(afficherProchaineAction, fileDernieresActions.length ? 1600 : 0);
@@ -20215,6 +20289,10 @@ function majDerniereAction(log){
   if (!log || !log.length){
     fileDernieresActions = []; journalDejaVu = null; lignesAffichees = [];
     el.classList.remove('show'); el.textContent = '';
+    /* Le récit vit maintenant dans le panneau : on le retire là aussi, sinon la phrase du
+       combat précédent resterait affichée au début du suivant. */
+    const recit = document.getElementById('combatRecit');
+    if (recit) recit.remove();
     if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
     return;
   }
