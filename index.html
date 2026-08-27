@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v421</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v422</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -14702,14 +14702,15 @@ if (typeof db !== 'undefined' && db){
        une reprise de combat ou une zone en cours passe avant. */
     if (!demarrageVaisseauFait && shipZoneId){
       demarrageVaisseauFait = true;
-      /* Sans attente : la carte ne doit jamais apparaître, même une demi-seconde. Le voile
-         de démarrage la cache jusqu'ici, et ne se lève qu'une fois le vaisseau à l'écran. */
-      if (!document.getElementById('sceneViewFull').classList.contains('show')
-          && !combatState
-          && !document.getElementById('pseudoOverlay').classList.contains('show')){
-        ouvrirLeVaisseau();
-      }
-      leverLeVoileQuandLeVaisseauEstLa();
+      /* On n'ouvre PLUS le vaisseau immédiatement. La garde d'avant était juste dans son
+         intention (« une reprise de combat passe avant ») mais elle s'exécutait TROP TÔT :
+         la reprise attend ses attaques, ses fiches et ses recrues, donc à cet instant rien
+         n'est encore ouvert, la garde ne voit rien, et le vaisseau s'installe le premier.
+         Ensuite la reprise trouvait `sceneViewFull` déjà affiché — le vaisseau PARTAGE cet
+         écran avec l'exploration — le prenait pour une session en cours et n'osait plus
+         prendre la main. D'où le combat reconstruit DERRIÈRE le vaisseau, et le retour au
+         vaisseau en fin de combat puisqu'il n'avait jamais été fermé. */
+      ouvrirLeVaisseauQuandLaRepriseARendu();
     }
   }, ()=>{});
 }
@@ -14725,6 +14726,37 @@ function leverLeVoileDeDemarrage(){
 /* Le voile ne se lève pas quand on DEMANDE le vaisseau, mais quand il est réellement à
    l'écran : entre les deux il y a une lecture Firestore et le décodage de l'image, et c'est
    pendant ce temps qu'on voyait la carte et le message de connexion. */
+/* Le vaisseau de démarrage attend de savoir s'il y a une session à reprendre. Trois issues :
+   - une session est à l'écran (combat, exploration, ou choix du pseudo) → on n'ouvre pas ;
+   - la reprise est retombée sans rien reprendre → on ouvre, c'est le départ normal ;
+   - au-delà de la limite, on ouvre quand même : personne ne doit rester devant un voile noir. */
+const VAISSEAU_ATTENTE_LIMITE = 20000;
+function ouvrirLeVaisseauQuandLaRepriseARendu(){
+  const debut = Date.now();
+  const guetter = setInterval(()=>{
+    const tropLong = (Date.now() - debut) > VAISSEAU_ATTENTE_LIMITE;
+    if (combatState || document.getElementById('sceneViewFull').classList.contains('show')){
+      journal('reprise', 'vaisseau de démarrage annulé', 'une session a été reprise', true);
+      clearInterval(guetter);
+      leverLeVoileDeDemarrage();
+      return;
+    }
+    if (document.getElementById('pseudoOverlay').classList.contains('show')){
+      clearInterval(guetter);
+      leverLeVoileDeDemarrage();
+      return;
+    }
+    /* `repriseEtape` vaut 'terminée' dès que `tryResumeSession` est passée par son `finally`,
+       qu'elle ait repris quelque chose ou non. C'est le signal fiable que la place est libre. */
+    if (repriseEtape === 'terminée' || tropLong){
+      clearInterval(guetter);
+      journal('reprise', 'ouverture du vaisseau de démarrage',
+        tropLong ? 'après expiration de l\'attente' : 'rien à reprendre', true);
+      ouvrirLeVaisseau();
+      leverLeVoileQuandLeVaisseauEstLa();
+    }
+  }, 150);
+}
 function leverLeVoileQuandLeVaisseauEstLa(){
   let essais = 0;
   const guetter = setInterval(()=>{
@@ -18175,6 +18207,12 @@ let zoneQuittee = false;
 function saveCurrentZoneScene(){
   if (zoneQuittee) return;
   if (!currentUser || !db || !sceneViewCreature) return;
+  /* Le VAISSEAU n'est pas une exploration : il ne doit jamais s'enregistrer comme position en
+     cours. Il partage `sceneViewFull` avec les zones, donc sans cette garde son ouverture
+     ECRASAIT `currentZoneId` — et la zone que le joueur explorait vraiment était perdue pour
+     la reprise. De toute façon le vaisseau est le point de départ par défaut : il n'y a rien
+     à mémoriser pour y revenir. */
+  if (sceneViewIsShip) return;
   db.collection('players').doc(currentUser.uid).set({
     currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId, zoneSavedAt: Date.now()
   }, { merge:true }).catch(()=>{});
@@ -18393,6 +18431,14 @@ function libererEcransDeReprise(){
   combatState = null;
   clearInterval(combatTickTimer);
 }
+/* Fermeture du vaisseau AU PROFIT d'une reprise. On ne passe surtout pas par la sortie normale
+   (`closeSceneView`) : celle-ci efface la position sauvegardée et rebascule sur la carte, alors
+   qu'on veut au contraire laisser la sauvegarde intacte pour que la reprise la relise. */
+function fermerLeVaisseauPourReprise(){
+  const el = document.getElementById('sceneViewFull');
+  if (el) el.classList.remove('show', 'reveal');
+  sceneViewIsShip = false;
+}
 async function abandonnerRepriseBloquee(message){
   journal('erreur', 'reprise abandonnée', message || '', true);
   libererEcransDeReprise();
@@ -18462,7 +18508,15 @@ async function tryResumeSession(forcer){
     }
     return;
   }
-  if (combatState || document.getElementById('sceneViewFull').classList.contains('show')) return; // déjà dans une session live, rien à reprendre
+  if (combatState) return;                        // déjà en combat : rien à reprendre
+  /* Le vaisseau partage `sceneViewFull` avec l'exploration. Il ne doit PAS compter comme une
+     session en cours : sinon un vaisseau ouvert au démarrage interdit toute reprise. Une VRAIE
+     exploration, elle, reste intouchable. */
+  if (document.getElementById('sceneViewFull').classList.contains('show')){
+    if (!sceneViewIsShip) return;                 // vraie exploration : on n'y touche pas
+    journal('reprise', 'vaisseau refermé', 'il occupait la place de la reprise', true);
+    fermerLeVaisseauPourReprise();
+  }
   sessionResumeAttempted = true;
   if (sessionResumeFilet){ clearTimeout(sessionResumeFilet); sessionResumeFilet = null; }
   repriseDebut = performance.now();
