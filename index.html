@@ -709,31 +709,26 @@
   display:flex; align-items:center; justify-content:center; padding:0;
 }
 #combatActionPanel > p.meta{ padding:14px 8px; margin:0; text-align:center; }
-/* v414 — LE RÉCIT DU TOUR SE JOUE ICI, à la place des boutons d'attaque. Pendant la
-   résolution le joueur ne peut pas agir : ce rectangle ne lui sert à rien, c'est donc de
-   l'espace mort qu'on récupère sans rien ajouter à l'écran. Et il est bien plus grand que
-   l'ancien bandeau de trois lignes — plus aucune phrase n'est coupée, même une attaque de
-   groupe sur trois cibles avec un état sur chacune. Les boutons reviennent quand c'est au
-   joueur de jouer, ce qui donne au passage un signal de rythme clair. */
-#combatRecit{
-  /* v415 — le récit prend TOUT le rectangle, sur le vert foncé du journal et du bandeau, au
-     lieu de flotter en petit noir au milieu d'un grand fond blanc. Le blanc, c'est la couleur
-     des boutons — la garder pour le récit brouillait le signal « ce n'est pas à toi de jouer ».
-     Le texte part du HAUT À GAUCHE : centré au milieu d'un cadre haut, une phrase courte
-     paraissait perdue, et l'œil devait la chercher ailleurs à chaque tour. */
-  flex:1 1 auto; align-self:stretch; min-height:0;
-  background:#12241a; color:#dfeee2;
-  padding:10px 12px; margin:0; text-align:left;
+/* v416 — LE RÉCIT A SON PROPRE RECTANGLE, dans la colonne et non par-dessus l'arène.
+   Le panneau du bas est rendu aux boutons d'attaque, qui restent visibles en permanence : y
+   loger le récit donnait un très grand cadre pour très peu de texte, et cela écrasait au
+   passage la fiche d'analyse. Ce rectangle-ci se place au-dessus ou en dessous de l'arène,
+   au choix, et peut être retiré — l'ancien bandeau flottant reste disponible lui aussi.
+   HAUTEUR FIXE ET RÉGLABLE, jamais dictée par le texte : si le cadre grandissait à chaque
+   phrase, l'arène et le rectangle des attaques se redimensionneraient à chaque tour et tout
+   sauterait sous les yeux. Il prend sa hauteur une fois pour toutes, et défile si besoin. */
+#combatRecitBar{
+  display:none; flex:none; height:var(--recit-height, 12vh); overflow-y:auto;
+  margin:0 10px 8px; padding:8px 10px; border-radius:10px;
+  background:#12241a; color:#dfeee2; text-align:left;
   font-size:var(--bandeau-font-size, clamp(10px, 2.9vw, 14px)); line-height:1.35;
-  /* Le débordement reste possible en théorie (police réglée au maximum + panneau réduit au
-     minimum) : on défile plutôt que de tronquer, la fin de phrase reste atteignable. */
-  overflow-y:auto;
 }
-#combatRecit .ligne-vive,
-#combatRecit .ligne-passee{ overflow-wrap:anywhere; margin:0 0 4px; }
-#combatRecit .ligne-vive{ opacity:1; }
-#combatRecit .ligne-passee{ opacity:.45; }
-#combatRecit img.log-face{
+#combatRecitBar.on{ display:block; }
+#combatRecitBar .ligne-vive,
+#combatRecitBar .ligne-passee{ overflow-wrap:anywhere; margin:0 0 4px; }
+#combatRecitBar .ligne-vive{ opacity:1; }
+#combatRecitBar .ligne-passee{ opacity:.45; }
+#combatRecitBar img.log-face{
   height:clamp(16px, 4.8vw, 24px); width:clamp(16px, 4.8vw, 24px); border-radius:4px;
   object-fit:cover; vertical-align:-5px; margin:0 1px; border:1px solid rgba(255,255,255,.35);
 }
@@ -943,7 +938,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v415</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v416</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1385,6 +1380,7 @@
       <div id="combatLastAction"></div>
       <button type="button" id="combatLogToggleBtn" title="Journal de combat">📜</button>
     </div>
+    <div id="combatRecitBar"></div>
     <div id="combatActionPanel"><p class="meta" style="text-align:center;">En attente du prochain tour…</p></div>
     <div id="combatLog"><div id="combatLogEntries"></div></div>
   </div>
@@ -14392,7 +14388,13 @@ const COMBAT_UI_DEFAUT = { panel:30, avatar:36, turnbar:9, attackFont:29, bandea
   /* Chaque camp a sa taille et sa hauteur : les adversaires sont plus loin dans le décor,
      ils gagnent souvent à être un peu plus petits. `avatar` reste la valeur commune de repli
      pour les réglages enregistrés avant cette version. */
-  avatarEnnemi:36, avatarAllie:36, ennemisY:50, alliesY:50 };
+  avatarEnnemi:36, avatarAllie:36, ennemisY:50, alliesY:50,
+  /* v416 — où vit le récit du tour. 0 masqué · 1 ancien bandeau flottant sur l'arène ·
+     2 rectangle au-dessus de l'arène · 3 rectangle en dessous. `recitH` est sa hauteur en
+     parts de l'écran : FIXE une fois réglée, pour que rien ne se redimensionne en cours de
+     combat. Les réglages enregistrés avant cette version n'ont pas ces clés — le repli sur
+     COMBAT_UI_DEFAUT leur donne le rectangle du bas, qui est le comportement voulu. */
+  recitMode:3, recitH:12 };
 let combatUi = { ...COMBAT_UI_DEFAUT };
 function appliquerCombatUi(){
   const r = document.documentElement.style;
@@ -14416,7 +14418,23 @@ function appliquerCombatUi(){
   r.setProperty('--combattants-shift', ((combatUi.combattantsY - 50) * 0.30) + 'vh');
   r.setProperty('--logbtn-top', combatUi.logBtnY + '%');
   const bandeau = document.getElementById('combatLastAction');
-  if (bandeau) bandeau.style.visibility = combatUi.bandeauVisible ? 'visible' : 'hidden';
+  /* Le bandeau flottant ne s'affiche plus que si c'est LUI qu'on a choisi. `bandeauVisible`
+     reste respecté par-dessus : qui l'avait masqué le retrouve masqué. */
+  if (bandeau) bandeau.style.visibility = (combatUi.recitMode === 1 && combatUi.bandeauVisible) ? 'visible' : 'hidden';
+  r.setProperty('--recit-height', 'clamp(40px, ' + combatUi.recitH + 'vh, 40vh)');
+  const barre = document.getElementById('combatRecitBar');
+  if (barre){
+    const dansLaColonne = (combatUi.recitMode === 2 || combatUi.recitMode === 3);
+    barre.classList.toggle('on', dansLaColonne);
+    /* On DÉPLACE l'élément plutôt que d'en tenir deux : un seul endroit où écrire, donc
+       aucun risque de voir les deux se remplir puis diverger. */
+    const pile = document.getElementById('combatStack');
+    const arene = document.getElementById('combatArena');
+    if (dansLaColonne && pile && arene){
+      if (combatUi.recitMode === 2 && barre.nextElementSibling !== arene) pile.insertBefore(barre, arene);
+      if (combatUi.recitMode === 3 && barre.previousElementSibling !== arene) pile.insertBefore(barre, arene.nextElementSibling);
+    }
+  }
   const mettre = (id, valeur, suffixe)=>{
     const el = document.getElementById(id);
     if (el) el.textContent = valeur + suffixe;
@@ -14451,7 +14469,21 @@ const CU_ZONES = {
   ennemisY: { titre:'Hauteur des adversaires', min:0, max:100, suffixe:'%', aide:'Monte ou descend la rangée des adversaires.' },
   alliesY:  { titre:'Hauteur de ton équipe', min:0, max:100, suffixe:'%', aide:'Monte ou descend la rangée de tes combattants.' },
   logBtnY: { titre:'Position du bouton du journal', min:2, max:90, suffixe:'%', aide:'Où se place la petite icône 📜 sur le bord gauche de l\'arène.' },
+  recitH:  { titre:'Hauteur du récit', min:6, max:30, suffixe:'%', aide:'Hauteur du rectangle qui raconte le tour. Elle est FIXE : le texte défile dedans, rien ne se redimensionne en cours de combat.' },
 };
+/* v416 — les places possibles du récit, dans l'ordre où le bouton les fait défiler. Le
+   bandeau flottant reste de la partie : le choix entre lui et le rectangle n'est pas
+   tranché, et il se fait mieux en jeu qu'en imagination. */
+const RECIT_MODES = [
+  { v:2, nom:'⬆️ Au-dessus de l\'arène' },
+  { v:3, nom:'⬇️ En dessous de l\'arène' },
+  { v:1, nom:'🪟 Bandeau flottant (ancien)' },
+  { v:0, nom:'🚫 Aucun récit' },
+];
+function libelleRecitMode(){
+  const m = RECIT_MODES.find(x=> x.v === combatUi.recitMode);
+  return m ? m.nom : RECIT_MODES[0].nom;
+}
 let cuZoneCourante = null;
 function ouvrirReglageCombat(cle){
   const def = CU_ZONES[cle];
@@ -14487,6 +14519,23 @@ function ouvrirReglageCombat(cle){
   }
   const masquer = document.getElementById('cuTunerMasquer');
   if (masquer){
+    /* Sur le récit, ce même bouton ne masque pas : il fait TOURNER les places possibles,
+       « masqué » n'étant qu'une place parmi les autres. Un seul bouton, quatre états, et son
+       libellé dit toujours où l'on est — plutôt qu'un réglage de plus à aller chercher. */
+    if (cle === 'recitH'){
+      masquer.style.display = 'block';
+      masquer.textContent = libelleRecitMode();
+      masquer.onclick = ()=>{
+        const i = RECIT_MODES.findIndex(x=> x.v === combatUi.recitMode);
+        combatUi.recitMode = RECIT_MODES[(i + 1) % RECIT_MODES.length].v;
+        appliquerCombatUi();
+        enregistrerCombatUi();
+        poserLignesRecit();   // la nouvelle place est vide tant qu'on n'y a pas réécrit
+        masquer.textContent = libelleRecitMode();
+      };
+      boite.style.display = 'block';
+      return;
+    }
     const surLeBandeau = (cle === 'bandeau' || cle === 'bandeauY');
     masquer.style.display = surLeBandeau ? 'block' : 'none';
     masquer.textContent = combatUi.bandeauVisible ? '🚫 Masquer le bandeau' : '👁️ Réafficher le bandeau';
@@ -14530,6 +14579,7 @@ if (cuTunerClose) cuTunerClose.addEventListener('click', ()=>{
     if (!combatUi.bandeauVisible && cible.closest('#combatArena') && !cible.closest('.combat-side')
         && !cible.closest('#combatTurnOrderBar')) return 'bandeauY';
     if (cible.closest('#combatLogToggleBtn')) return 'logBtnY';
+    if (cible.closest('#combatRecitBar')) return 'recitH';
     if (cible.closest('#combatActionPanel')) return 'panel';
     if (cible.closest('#combatTurnOrderBar')) return 'turnbar';
     /* On règle le camp qu'on touche : les adversaires et l'équipe ont chacun leur taille
@@ -20072,51 +20122,40 @@ let lignesAffichees = [];   // les dernières actions encore lisibles, au plus t
    au moment du coup et non sur une minuterie, et on estompe les précédentes. */
 let derniereAnnonce = null;   // { acteur, attaque, depuis } — pour pouvoir la compléter
 
-/* ---------- v414 — OÙ S'AFFICHE LE RÉCIT D'UN TOUR ----------
-   Passer ce drapeau à `false` remet TOUT l'ancien comportement : le bandeau flottant de trois
-   lignes en haut de l'arène, avec ses réglages (taille, position, bouton masquer). Il est
-   volontairement laissé en place et intact pour ça — c'est le chemin du retour en arrière si
-   le nouveau système ne convient pas en jeu. Rien d'autre à toucher que cette ligne. */
-const RECIT_DANS_PANNEAU = true;
+/* ---------- v416 — OÙ S'AFFICHE LE RÉCIT D'UN TOUR ----------
+   Trois destinations possibles, au choix du joueur (`combatUi.recitMode`) : son propre
+   rectangle dans la colonne, l'ancien bandeau flottant sur l'arène, ou nulle part. Le panneau
+   du bas n'en fait plus partie — il est rendu aux boutons d'attaque, visibles en permanence.
+   C'est aussi ce qui règle définitivement la fiche d'analyse écrasée de la v414 : le récit ne
+   touche plus du tout au panneau, il n'a donc plus rien à y écraser. Le journal complet, lui,
+   s'ouvre toujours à la demande sur le bouton 📜. */
+function elementRecitActif(){
+  if (combatUi.recitMode === 1) return document.getElementById('combatLastAction');
+  if (combatUi.recitMode === 2 || combatUi.recitMode === 3) return document.getElementById('combatRecitBar');
+  return null;   // masqué : le journal reste la seule trace, à la demande
+}
 
 /* Pose les lignes courantes là où le récit doit vivre. Une seule fonction pour les trois
    appelants (annonce d'un geste, défilement hors tour, remise à zéro), sinon les mises en
    forme divergent — c'est exactement ce qui avait produit la bascule de la v413. */
 function poserLignesRecit(){
-  const bandeau = document.getElementById('combatLastAction');
-  if (!RECIT_DANS_PANNEAU){
-    if (!bandeau) return;
-    bandeau.innerHTML = lignesAffichees.join('');
-    bandeau.classList.add('show');
-    return;
-  }
-  /* Le panneau appartient au JOUEUR dès qu'il a quelque chose à y faire : on n'écrase jamais
-     ses boutons, ni sa fiche d'analyse. Les lignes écrites hors tour (poison, brûlure,
-     régénération) tombent parfois pendant qu'il choisit son attaque — elles restent lisibles
-     dans le journal complet.
-     `showingAnalysis` est le cas qui a mordu en v414 : l'analyse met `pendingActor` à null
-     AVANT d'afficher sa fiche, puis inscrit sa ligne au journal, et le récit reprenait la
-     place — bouton « Fermer » compris. Le combat restait alors bloqué, en pause, sans aucun
-     moyen d'en sortir autrement qu'en rechargeant. */
-  if (combatState && (combatState.pendingActor || combatState.showingAnalysis)) return;
-  const panel = document.getElementById('combatActionPanel');
-  if (!panel) return;
-  /* Filet de sécurité, indépendant des drapeaux ci-dessus : s'il y a un bouton dans le
-     panneau, c'est que quelque chose y attend un appui. Aucun écran de résolution n'en
-     contient — ni le récit, ni « En attente du prochain tour… ». Un panneau ajouté plus tard
-     sera donc protégé sans qu'on ait à y repenser, ce qui est exactement ce qui a manqué ici. */
-  if (panel.querySelector('button')) return;
-  panel.innerHTML = '<div id="combatRecit">' + lignesAffichees.join('') + '</div>';
+  const el = elementRecitActif();
+  if (!el) return;
+  el.innerHTML = lignesAffichees.join('');
+  if (el.id === 'combatLastAction') el.classList.add('show');
+  /* Le cadre a une hauteur fixe : si le tour a beaucoup à dire, on remonte au début plutôt
+     que de garder la position de défilement laissée par le tour précédent. */
+  else el.scrollTop = 0;
 }
 
-/* Le temps de lecture n'est plus une constante. Un coup simple se lit en un clin d'œil, une
+/* Le temps de lecture n'est pas une constante. Un coup simple se lit en un clin d'œil, une
    attaque de groupe sur trois cibles a trois fois plus à dire : on compte à peu près une
    quarantaine de caractères par seconde, borné des deux côtés. Et un appui n'importe où
    passe à la suite tout de suite, pour qui lit vite — personne n'est ni pressé ni bloqué,
    et il n'y a aucun clic obligatoire à chaque tour. */
 function attendreLecture(){
-  const el = document.getElementById('combatRecit');
-  const texte = (RECIT_DANS_PANNEAU && el) ? (el.textContent || '') : '';
+  const el = elementRecitActif();
+  const texte = el ? (el.textContent || '') : '';
   const duree = Math.max(900, Math.min(5000, 700 + texte.length * 22));
   return new Promise(resolve=>{
     let fini = false;
@@ -20242,14 +20281,15 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
   }).join('');
 
 
-  /* v414 — un nouveau tour repart d'un cadre VIDE : on ne montre que ce qui se passe dans CE
-     tour-là, le journal complet restant à un tap pour relire le reste. L'ancien bandeau, lui,
-     empilait trois lignes en estompant les précédentes : c'était utile quand le cadre était
-     minuscule et permanent, ça ne l'est plus quand chaque tour a tout l'espace du panneau. */
+  /* Un nouveau tour repart d'un cadre VIDE : on ne montre que ce qui se passe dans CE tour-là,
+     le journal complet restant à un tap pour relire le reste. L'ancien bandeau flottant, lui,
+     garde son empilement de trois lignes estompées : il est petit et posé en permanence sur
+     l'arène, où une phrase isolée laisserait un cadre presque toujours à moitié vide. */
   if (!estUnComplement){
-    if (RECIT_DANS_PANNEAU) lignesAffichees = [];
-    else lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
+    if (combatUi.recitMode === 1) lignesAffichees = lignesAffichees.map(l=> l.replace(/ class="ligne-vive"/, ' class="ligne-passee"'));
+    else lignesAffichees = [];
   }
+
   lignesAffichees.push('<div class="ligne-vive">' + texteAvecPortraits(titre + suite) + '</div>');
   derniereAnnonce = { acteur, attaque, depuis };
   if (lignesAffichees.length > 3) lignesAffichees.shift();
@@ -20306,10 +20346,10 @@ function majDerniereAction(log){
   if (!log || !log.length){
     fileDernieresActions = []; journalDejaVu = null; lignesAffichees = [];
     el.classList.remove('show'); el.textContent = '';
-    /* Le récit vit maintenant dans le panneau : on le retire là aussi, sinon la phrase du
-       combat précédent resterait affichée au début du suivant. */
-    const recit = document.getElementById('combatRecit');
-    if (recit) recit.remove();
+    /* Le récit a son propre rectangle : on le vide aussi, sinon la phrase du combat précédent
+       resterait affichée au début du suivant. */
+    const barre = document.getElementById('combatRecitBar');
+    if (barre) barre.textContent = '';
     if (defilementEnCours){ clearTimeout(defilementEnCours); defilementEnCours = null; }
     return;
   }
