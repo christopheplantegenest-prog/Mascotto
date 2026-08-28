@@ -973,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v441</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v442</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6839,7 +6839,27 @@ if (document.readyState !== 'loading') surveillerLesFenetres();
    qu'on n'a pas appuyé sur « Enregistrer » : fermer la fenêtre effaçait le travail sans un
    mot. On note donc qu'il y a des changements, et on demande avant de sortir. */
 let ficheModifiee = false;
-function marquerFicheModifiee(){ if (document.getElementById('editorOverlay').classList.contains('show')) ficheModifiee = true; }
+/* UN SEUL juge pour « ceci fait-il partie de la fiche ? ».
+   Le détecteur a DEUX portes : le drapeau `ficheModifiee` levé dès la frappe, et l'empreinte
+   comparée à la sortie. La v441 n'a fermé que la seconde — taper dans la recherche levait
+   toujours le drapeau, et `ficheEstModifiee()` répond sur le drapeau AVANT de regarder
+   l'empreinte. La question revenait donc exactement comme avant (constaté le 28/08).
+   [LEÇON] Deux portes qui gardent la même chose doivent partager le même juge, sinon on en
+   corrige une et on croit le travail fini. */
+const ZONES_HORS_FICHE = '#pnjsection-list';   // la liste des PNJ : recherche, tri, filtres à venir
+function elementDeLaFiche(el){
+  if (!el || !el.closest) return true;   // pas un élément identifiable : on ne prend pas le risque de l'ignorer
+  return !el.closest(ZONES_HORS_FICHE);
+}
+function marquerFicheModifiee(source){
+  if (source && !elementDeLaFiche(source)) return;
+  if (!document.getElementById('editorOverlay').classList.contains('show')) return;
+  /* On trace la PREMIÈRE levée seulement, avec le champ coupable : si une fausse alerte
+     revient, la boîte noire dira tout de suite d'où elle vient au lieu de nous laisser lire
+     le code à l'aveugle. Les frappes suivantes ne réécrivent rien. */
+  if (!ficheModifiee) traceDetecteur('drapeau LEVÉ', source ? (source.id || source.tagName || '?') : 'appel direct');
+  ficheModifiee = true;
+}
 /* [DIAGNOSTIC v432 — à retirer une fois la cause connue] */
 function traceDetecteur(quoi, detail){
   try { if (window.journal) window.journal('appli', 'détecteur · ' + quoi, detail || ''); } catch(e){}
@@ -6868,7 +6888,7 @@ function empreinteFiche(){
        [LEÇON] Un détecteur qui surveille « tout ce qui est dans cet écran » finit par
        surveiller des choses qui ne sont pas la fiche. On exclut la section entière plutôt que
        ce champ précis : un futur tri ou filtre posé là sera écarté d'office. */
-    if (el.closest('#pnjsection-list')) return;
+    if (!elementDeLaFiche(el)) return;
     champs.push(el.id + '=' + ((el.type === 'checkbox' || el.type === 'radio') ? (el.checked ? '1' : '0') : el.value));
   });
   champs.sort();
@@ -6927,10 +6947,10 @@ function majLibelleBoutonEnregistrer(){
   else btn.textContent = editingId ? '📤 Publier le PNJ' : '📤 Créer et publier le PNJ';
 }
 document.addEventListener('input', (e)=>{
-  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee(e.target);
 }, true);
 document.addEventListener('change', (e)=>{
-  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee(e.target);
 }, true);
 
 /* Trois issues, pas deux : enregistrer, sortir quand même, ou revenir en arrière. */
