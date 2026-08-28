@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v428</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v429</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2552,6 +2552,20 @@
            zone : une zone d'exploration ne doit plus se préoccuper de savoir si elle est un
            vaisseau. Le bouton n'apparaît que dans la catégorie Vaisseaux. -->
       <button class="btn-secondary" id="listeChangerVaisseauBtn" style="width:100%; margin-bottom:10px; display:none;">🚀 Changer la zone qui sert de vaisseau</button>
+      <!-- Recherche dans la liste (étape 3 de la refonte, 28/08). PAS d'autofocus, jamais :
+           un clavier qui s'ouvre tout seul à chaque ouverture de liste est insupportable sur
+           téléphone. type="text" et non "search" pour éviter la croix native qui varie d'un
+           navigateur à l'autre — on met la nôtre, qui rend aussi le champ effaçable d'un doigt. -->
+      <div id="listeRechercheBloc" style="display:none; position:relative; margin-bottom:10px;">
+        <input type="text" id="listeRechercheInput" placeholder="Rechercher par nom…"
+               autocomplete="off" autocorrect="off" spellcheck="false"
+               style="width:100%; box-sizing:border-box; padding-right:34px;">
+        <button id="listeRechercheEffacer" type="button"
+                style="display:none; position:absolute; right:4px; top:50%; transform:translateY(-50%);
+                       background:none; border:none; font-size:18px; line-height:1; padding:4px 8px;
+                       color:var(--muted, #888); cursor:pointer;">✕</button>
+      </div>
+      <p class="meta" id="listeRechercheCompte" style="display:none;"></p>
       <p class="meta" style="display:flex; gap:12px; flex-wrap:wrap;">
         <span>⬤ <span style="opacity:.8;">en jeu maintenant</span></span>
         <span style="color:#C9A227;">⬤ hors horaire</span>
@@ -7385,8 +7399,26 @@ document.getElementById('clearRoomImageBtn').addEventListener('click', ()=>{
    toutes les autres, undefined = pas de distinction. */
 let filtreFiches = null;
 
+/* Texte de la recherche dans la liste. Vidé à chaque changement de catégorie : chercher
+   « Odile » dans les PNJ puis ouvrir les Zones ne doit pas donner une liste vide inexplicable. */
+let rechercheFiches = '';
+
+/* Comparaison indulgente : « residence » doit trouver « Résidence », « CAFE » doit trouver
+   « Café ». On retire les accents et on passe en minuscules des deux côtés. */
+function normaliserRecherche(txt){
+  return (txt || '').toString().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function ouvrirListeFiches(filtre, titre){
   filtreFiches = filtre;
+  rechercheFiches = '';
+  const champ = document.getElementById('listeRechercheInput');
+  if (champ) champ.value = '';
+  /* La recherche n'a pas de sens dans une catégorie qui n'affiche rien (Robots aujourd'hui) :
+     on cache le champ plutôt que de proposer de chercher dans le vide. */
+  const bloc = document.getElementById('listeRechercheBloc');
+  if (bloc) bloc.style.display = (filtre && filtre.vide) ? 'none' : 'block';
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('editorOverlay').classList.add('show');
   const h = document.getElementById('editorTitre');
@@ -7423,14 +7455,36 @@ function renderEditorList(snap){
 
   /* Application du filtre du menu Édition. Le vaisseau est une zone comme une autre pour le
      moteur : il n'est distingué que par le pointeur app_config/ship, d'où le test sur son id. */
-  const docsFiltres = !filtreFiches ? allDocs : allDocs.filter(doc=>{
+  const docsFiltres = (!filtreFiches ? allDocs : allDocs.filter(doc=>{
     const d = doc.data();
     const cle = d.interactionType || 'dialogue';
     if (filtreFiches.cles && !filtreFiches.cles.includes(cle)) return false;
     if (filtreFiches.vaisseau === true  && doc.id !== shipZoneId) return false;
     if (filtreFiches.vaisseau === false && doc.id === shipZoneId) return false;
     return true;
+  })).filter(doc=>{
+    /* La recherche s'applique APRÈS le filtre de catégorie : dans les Zones, elle ne peut
+       jamais ramener un PNJ. C'est ce qu'il a demandé — si on a ouvert les zones, c'est
+       qu'on cherche une zone. */
+    if (!rechercheFiches) return true;
+    return normaliserRecherche(doc.data().name).includes(rechercheFiches);
   });
+
+  /* Compte affiché seulement pendant une recherche : sinon il ferait doublon avec la liste. */
+  const compteEl = document.getElementById('listeRechercheCompte');
+  if (compteEl){
+    if (rechercheFiches){
+      const n = docsFiltres.length;
+      compteEl.textContent = n === 0 ? 'Aucun résultat'
+                           : n === 1 ? '1 résultat'
+                           : n + ' résultats';
+      compteEl.style.display = 'block';
+    } else {
+      compteEl.style.display = 'none';
+    }
+  }
+  const croix = document.getElementById('listeRechercheEffacer');
+  if (croix) croix.style.display = rechercheFiches ? 'block' : 'none';
 
   const nomsDeZone = {};
   allDocs.forEach(doc=>{
@@ -7483,7 +7537,9 @@ function renderEditorList(snap){
 
   const remplir = (conteneur, docs)=>{
     if (!docs.length){
-      conteneur.innerHTML = (filtreFiches && filtreFiches.vide)
+      conteneur.innerHTML = rechercheFiches
+        ? '<p class="meta">Aucune fiche ne porte ce nom ici.</p>'
+        : (filtreFiches && filtreFiches.vide)
         ? '<p class="meta">Les robots auront leur propre fiche, conçue à part — avec leurs modèles, leurs exemplaires et la capture. Rien à afficher tant qu\'elle n\'existe pas.</p>'
         : '<p class="meta">Aucune fiche ici pour le moment.</p>';
       return;
@@ -8081,6 +8137,22 @@ document.getElementById('editHubBtn').addEventListener('click', ()=>{
 document.getElementById('editHubCloseBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
 });
+/* Recherche dans la liste. On redessine à chaque frappe : la liste est petite (quelques
+   dizaines de fiches) et un délai rendrait la frappe collante pour rien. */
+document.getElementById('listeRechercheInput').addEventListener('input', (e)=>{
+  rechercheFiches = normaliserRecherche(e.target.value).trim();
+  if (latestSnap) renderEditorList(latestSnap);
+});
+document.getElementById('listeRechercheEffacer').addEventListener('click', ()=>{
+  const champ = document.getElementById('listeRechercheInput');
+  champ.value = '';
+  rechercheFiches = '';
+  if (latestSnap) renderEditorList(latestSnap);
+  /* On rend la main au champ SEULEMENT ici : c'est un geste volontaire de l'utilisateur, qui
+     vient d'effacer pour retaper. C'est le seul endroit où le clavier a le droit de s'ouvrir. */
+  champ.focus();
+});
+
 document.getElementById('hubPnjBtn').addEventListener('click', ()=>{
   /* « PNJ » ne montre plus que les habitants : les zones et le vaisseau ont leurs propres
      boutons. On ouvre la LISTE et non un formulaire vierge — on vient presque toujours ici
@@ -8118,6 +8190,9 @@ document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
      ouverture par un autre chemin (depuis la carte, depuis une quête) hériterait du dernier
      filtre du menu et semblerait avoir perdu des fiches. */
   filtreFiches = null;
+  rechercheFiches = '';
+  const champRech = document.getElementById('listeRechercheInput');
+  if (champRech) champRech.value = '';
   document.getElementById('editorOverlay').classList.remove('show');
 });
 
