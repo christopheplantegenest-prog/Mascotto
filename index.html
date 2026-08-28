@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v431</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v432</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6748,6 +6748,10 @@ if (document.readyState !== 'loading') surveillerLesFenetres();
    mot. On note donc qu'il y a des changements, et on demande avant de sortir. */
 let ficheModifiee = false;
 function marquerFicheModifiee(){ if (document.getElementById('editorOverlay').classList.contains('show')) ficheModifiee = true; }
+/* [DIAGNOSTIC v432 — à retirer une fois la cause connue] */
+function traceDetecteur(quoi, detail){
+  try { if (window.journal) window.journal('appli', 'détecteur · ' + quoi, detail || ''); } catch(e){}
+}
 
 /* Les événements de frappe ne suffisent pas : TOUT ce qui se règle par bouton — sélecteurs
    en fenêtre, bascules, ajout ou suppression d'une réponse — modifie la fiche sans qu'aucun
@@ -6794,6 +6798,7 @@ function empreinteFiche(){
 function poserEmpreinteFiche(){
   try { empreinteAuChargement = empreinteFiche(); } catch(e){ empreinteAuChargement = null; }
   ficheModifiee = false;
+  traceDetecteur('empreinte POSÉE', 'fiche=' + editingId);
 }
 /* Cinq images de la fiche (dos, buste, combat, chambre, arène de zone) sont stockées par
    référence et arrivent APRÈS la pose de l'empreinte. Leur arrivée changeait l'empreinte, donc
@@ -6803,11 +6808,15 @@ function poserEmpreinteFiche(){
    On réactualise donc le point de comparaison quand l'image se pose : ce n'est pas du travail
    de l'utilisateur, il n'y a rien à lui proposer d'enregistrer. */
 function reactualiserEmpreinteApresImage(id){
-  if (editingId !== id) return;          // il est déjà parti sur une autre fiche
-  if (ficheModifiee) return;             // il a modifié quelque chose entre-temps : son travail prime
+  if (editingId !== id){ traceDetecteur('image tardive IGNORÉE', 'parti ailleurs'); return; }
+  if (ficheModifiee){ traceDetecteur('image tardive IGNORÉE', 'drapeau déjà levé'); return; }
   try { empreinteAuChargement = empreinteFiche(); } catch(e){}
+  traceDetecteur('empreinte REPOSÉE (image tardive)', 'fiche=' + id);
 }
 function ficheEstModifiee(){
+  let parEmpreinte = null;
+  try { parEmpreinte = (empreinteAuChargement === null) ? 'pas d empreinte' : (empreinteFiche() !== empreinteAuChargement ? 'DIFFÉRENTE' : 'identique'); } catch(e){ parEmpreinte = 'erreur'; }
+  traceDetecteur('VERDICT', 'drapeau=' + (ficheModifiee ? 'LEVÉ' : 'baissé') + ' · empreinte=' + parEmpreinte);
   if (ficheModifiee) return true;
   if (empreinteAuChargement === null) return false;   // empreinte impossible : on ne bloque pas
   try { return empreinteFiche() !== empreinteAuChargement; } catch(e){ return false; }
@@ -6822,10 +6831,14 @@ function majLibelleBoutonEnregistrer(){
   else btn.textContent = editingId ? '📤 Publier le PNJ' : '📤 Créer et publier le PNJ';
 }
 document.addEventListener('input', (e)=>{
-  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+  const dedans = e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]');
+  traceDetecteur('input', (e.target.id || e.target.tagName) + ' · dedans=' + (dedans ? 'oui' : 'NON') + ' · show=' + (document.getElementById('editorOverlay').classList.contains('show') ? 'oui' : 'NON'));
+  if (dedans) marquerFicheModifiee();
 }, true);
 document.addEventListener('change', (e)=>{
-  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
+  const dedans = e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]');
+  traceDetecteur('change', (e.target.id || e.target.tagName) + ' · dedans=' + (dedans ? 'oui' : 'NON'));
+  if (dedans) marquerFicheModifiee();
 }, true);
 
 /* Trois issues, pas deux : enregistrer, sortir quand même, ou revenir en arrière. */
