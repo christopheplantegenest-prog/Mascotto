@@ -1015,7 +1015,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v443</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v444</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2243,10 +2243,15 @@
 <div class="overlay" id="editorOverlay">
   <div class="sheet" style="max-height:85vh; overflow-y:auto;">
     <div class="sheet-top">
-      <h3 style="margin-top:0;" id="editorTitre">Éditeur de PNJ</h3>
+      <!-- v444 : le compteur (« 35 PNJ dans Firebase ») vit SUR la ligne du titre. Il occupait
+           une ligne à lui seul juste dessous, pour une information qu'on ne lit qu'en passant :
+           autant de hauteur perdue sur une fiche qui doit tenir sans défilement. -->
+      <div style="display:flex; align-items:baseline; gap:8px; min-width:0; flex:1;">
+        <h3 style="margin-top:0;" id="editorTitre">Éditeur de PNJ</h3>
+        <div class="meta" id="editorStatus" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Connexion…</div>
+      </div>
       <button class="sheet-x" id="editorCloseBtn">✕</button>
     </div>
-    <div class="meta" id="editorStatus">Connexion…</div>
     <!-- Chemin de retour (étape 4, 28/08) : posé ICI, sous le titre, pour rester visible quelle
          que soit la rubrique ouverte. L'ancien bouton du constructeur de dialogue n'apparaissait
          que dans le dialogue, ce qui ne suffit plus depuis qu'on arrive aussi depuis une zone. -->
@@ -2593,7 +2598,6 @@
         </div>
         <button type="button" id="oublierCePnjBtn" class="btn-secondary" style="flex:0 0 auto; padding:6px 8px;" title="Oublier mes conversations avec ce personnage">🔄</button>
       </div>
-      <button type="button" id="basculeTravauxBtn" class="btn-secondary" style="display:none; width:100%; text-align:left; margin-bottom:10px;"></button>
 
       <!-- v443 : les versions du personnage. Le bandeau au-dessus (#ficheEnCours) sert de carte
            d'identité ; ici on choisit LAQUELLE de ses versions on modifie. Ce bloc doit rester
@@ -2618,11 +2622,15 @@
         <button class="btn-capture" id="editSaveBtn" style="flex:1;">Enregistrer le PNJ</button>
         <button class="btn-secondary" id="editPlusBtn" style="flex:0 0 auto; width:48px; font-size:18px; display:none;">⋯</button>
       </div>
+      <!-- v444 : tout ce qui n'est PAS « enregistrer » est rangé ici. « En travaux » et
+           « Annuler » prenaient chacun une ligne pleine largeur sur la fiche, ce qui obligeait
+           à défiler ; et ils se lisent mieux séparés du bouton qui met en jeu. -->
       <div id="editPlusMenu" style="display:none;">
+        <button type="button" id="basculeTravauxBtn" style="text-align:left;"></button>
         <button type="button" id="editRattacherBtn">🔗 Rattacher une fiche existante à ce personnage</button>
         <button type="button" id="editSupprVersionBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">🗑️ Supprimer cette version</button>
+        <button type="button" id="editCancelBtn" style="display:none;">✖️ Annuler la modification</button>
       </div>
-      <button class="btn-secondary" id="editCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
     </div>
 
     <!-- Section : toutes les fiches, une seule liste, l'état dit par la couleur du nom -->
@@ -3390,6 +3398,20 @@ function majBlocsSelonType(type){
     const el = document.getElementById(id);
     if (el) el.style.display = estZone ? 'none' : 'block';
   });
+  /* v444 : « 🗺️ Éditer la scène de cette zone » ne s'affiche QUE sur une zone déjà enregistrée.
+     `loadForEdit` l'allumait pour TOUTE fiche sans regarder sa nature : il traînait donc en haut
+     des fiches de PNJ, où il n'a rien à faire. Défaut ancien, sans rapport avec les versions.
+     La visibilité vit désormais ici, avec les autres blocs qui dépendent du type, pour qu'elle
+     suive aussi un changement de nature en cours de fiche. */
+  let ficheExistante = false;
+  try { ficheExistante = !!editingId && !forcerCreation; } catch(e){}
+  const zonePrete = estZone && ficheExistante;
+  ['editZoneSceneBtn','editZoneSceneBtnTop'].forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) el.style.display = zonePrete ? 'block' : 'none';
+  });
+  const indice = document.getElementById('editZoneSceneHint');
+  if (indice) indice.style.display = (estZone && !zonePrete) ? 'block' : 'none';
 }
 document.getElementById('editInteractionType').addEventListener('change', (e)=>{
   majBlocsSelonType(e.target.value);
@@ -7073,8 +7095,16 @@ function majFicheEnCours(){
   let nVersions = 0;
   try { nVersions = versionsDuPersonnage().length; } catch(e){}
   const suite = (nVersions > 1) ? (' · 🧬 ' + nVersions + ' versions') : '';
-  document.getElementById('ficheEnCoursQuoi').textContent =
-    (forcerCreation ? 'Nouvelle version · ' : 'Modification · ') + quoi + suite;
+  /* v444 : la bascule « en travaux » est partie dans le menu ⋯, donc son état n'est plus sous
+     les yeux. Il est rappelé ICI : savoir qu'une fiche ne part pas en jeu doit se voir sans
+     ouvrir un menu, sinon on corrige quelque chose que les joueurs ne verront jamais. */
+  const enTravaux = document.getElementById('editEnTravaux').checked;
+  const ligneQuoi = document.getElementById('ficheEnCoursQuoi');
+  ligneQuoi.textContent =
+    (forcerCreation ? 'Nouvelle version · ' : 'Modification · ') + quoi + suite
+    + (enTravaux ? ' · 🚧 en travaux' : '');
+  ligneQuoi.style.color = enTravaux ? '#8a6d00' : '';
+  ligneQuoi.style.fontWeight = enTravaux ? '700' : '';
   const img = uploadedImageDataUrl || (document.getElementById('imagePreview') || {}).src || '';
   const cadre = document.getElementById('ficheEnCoursImg');
   cadre.innerHTML = img ? ('<img src="' + img + '" style="width:100%; height:100%; object-fit:cover; object-position:top center;">')
@@ -7106,8 +7136,10 @@ function installerRubriques(){
     /* Tout ce qui doit rester SUR la fiche, et non partir dans une fenêtre de rubrique.
        Le bandeau du personnage et la bascule « en travaux » y étaient aspirés : ils
        finissaient au fond de « 📍 Où et quand », donc invisibles là où ils servent. */
-    const RESTE_SUR_LA_FICHE = ['rubriquesMenu','editSaveBtn','editCancelBtn',
-      'ficheEnCours','basculeTravauxBtn','editZoneSceneBtnTop',
+    /* v444 : « en travaux » et « annuler » ne sont plus listés ici — ils sont passés DANS
+       #editPlusMenu, donc ils ne sont plus des voisins directs susceptibles d'être aspirés. */
+    const RESTE_SUR_LA_FICHE = ['rubriquesMenu','editSaveBtn',
+      'ficheEnCours','editZoneSceneBtnTop',
       'ficheVersionsBloc','editPlusMenu'];
     while (el && !el.hasAttribute('data-rubrique') && RESTE_SUR_LA_FICHE.indexOf(el.id) === -1){
       const suivant = el.nextElementSibling;
@@ -7371,15 +7403,21 @@ function majFicheVersions(){
   const bloc = document.getElementById('ficheVersionsBloc');
   const plus = document.getElementById('editPlusBtn');
   if (!bloc) return;
+  /* v444 : le ⋯ abrite désormais « en travaux », qui sert AUSSI sur une fiche jamais
+     enregistrée. Il reste donc toujours atteignable ; seules les entrées qui n'ont de sens
+     que sur une fiche existante se masquent. */
+  if (plus) plus.style.display = 'block';
+  ['editRattacherBtn','editSupprVersionBtn'].forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) el.style.display = editingId ? 'block' : 'none';
+  });
   if (!editingId){
     bloc.style.display = 'none';
-    if (plus) plus.style.display = 'none';
     const menu = document.getElementById('editPlusMenu');
     if (menu) menu.style.display = 'none';
     return;
   }
   bloc.style.display = 'block';
-  if (plus) plus.style.display = 'block';
 
   document.querySelectorAll('#fvTri button[data-fvtri]').forEach(b=>{
     b.classList.toggle('on', b.dataset.fvtri === fvTriCourant);
@@ -8205,9 +8243,8 @@ function loadForEdit(id){
   document.getElementById('editZoneShowName').checked = !!d.zoneShowName;
   document.getElementById('editZoneExplorable').checked = !!d.explorable;
   document.getElementById('editZoneExplorerReport').value = d.explorerReport || '';
-  document.getElementById('editZoneSceneBtn').style.display = 'block';
-  document.getElementById('editZoneSceneBtnTop').style.display = 'block';
-  document.getElementById('editZoneSceneHint').style.display = 'none';
+  /* v444 : plus d'allumage inconditionnel des boutons de scène ici — c'est `majBlocsSelonType`
+     (appelé juste au-dessus) qui décide, en fonction de la nature de la fiche. */
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
   document.getElementById('editPortraitCropBtn').style.display = d.imageUrl ? 'block' : 'none';
   document.getElementById('portraitCropHint').style.display = d.imageUrl ? 'none' : 'block';
@@ -8491,6 +8528,9 @@ async function creerNouvelleVersion(choix){
      drapeau à la main, l'empreinte ayant été posée par loadForEdit sur la fiche source. */
   ficheModifiee = true;
   majLibelleBoutonEnregistrer();
+  /* v444 : `loadForEdit` a calculé les blocs AVANT que `forcerCreation` soit levé. Une nouvelle
+     version d'une zone montrerait sinon le bouton de scène de la fiche source. */
+  majBlocsSelonType(document.getElementById('editInteractionType').value);
   majFicheEnCours();
   majFicheVersions();
   showToast('Nouvelle version — choisis son lieu et ses horaires dans « Où et quand »');
@@ -8622,9 +8662,7 @@ function resetForm(){
   document.getElementById('editZoneShowName').checked = false;
   document.getElementById('editZoneExplorable').checked = false;
   document.getElementById('editZoneExplorerReport').value = '';
-  document.getElementById('editZoneSceneBtn').style.display = 'none';
-  document.getElementById('editZoneSceneBtnTop').style.display = 'none';
-  document.getElementById('editZoneSceneHint').style.display = 'block';
+  /* v444 : `majBlocsSelonType('dialogue')` juste au-dessus a déjà éteint les boutons de scène. */
   pendingCombatPortraitCrop = null;
   document.getElementById('editPortraitCropBtn').style.display = 'none';
   document.getElementById('portraitCropHint').style.display = 'block';
@@ -8703,6 +8741,7 @@ function resetForm(){
 /* « Annuler la modification » vide la fiche : c'est exactement la même perte que fermer
    l'éditeur, et il n'y avait aucun garde ici. */
 document.getElementById('editCancelBtn').addEventListener('click', async ()=>{
+  document.getElementById('editPlusMenu').style.display = 'none';   // v444 : il vit dans le ⋯
   if (ficheEstModifiee()){
     const quoi = await demanderQuoiFaireAvantDeSortir();
     if (quoi === 'rester') return;
@@ -8845,6 +8884,7 @@ async function oublierCePersonnage(){
 }
 document.getElementById('oublierCePnjBtn').addEventListener('click', oublierCePersonnage);
 document.getElementById('basculeTravauxBtn').addEventListener('click', ()=>{
+  document.getElementById('editPlusMenu').style.display = 'none';   // v444 : comme les autres entrées du ⋯
   const c = document.getElementById('editEnTravaux');
   c.checked = !c.checked;
   marquerFicheModifiee();
