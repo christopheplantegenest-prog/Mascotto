@@ -973,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v434</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v435</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3892,6 +3892,17 @@ function revenirFichePrecedente(){
     if (dest.type === 'zone'){
       fermerLesRubriques();
       document.getElementById('editorOverlay').classList.remove('show');
+      /* Le PNJ n'est posé que s'il a bien été enregistré : `pnjCree` n'existe que si un
+         enregistrement a réussi pendant le séjour sur la fiche. Abandonner en route ne laisse
+         donc aucune trace dans la scène. */
+      if (dest.placerDans && dest.pnjCree){
+        placementVoulu = {
+          sceneId: dest.placerDans.sceneId,
+          variantId: dest.placerDans.variantId,
+          pnjId: dest.pnjCree,
+          nom: dest.pnjNom, emoji: dest.pnjEmoji, image: dest.pnjImage
+        };
+      }
       openSceneEditor(dest.id);
       if (dest.sceneId) retourSceneVoulue = dest.sceneId;
       majBoutonRetourEtape();
@@ -3925,6 +3936,69 @@ function sauterVersPnjDepuisZone(pnjId){
   showPnjSection('new');
   loadForEdit(pnjId);
   majBoutonRetourEtape();
+}
+
+/* Point à poser au retour dans la zone : le PNJ n'existait pas encore au départ, on ne peut
+   donc le placer qu'une fois revenu, et une fois l'éditeur de scène rechargé depuis la base. */
+let placementVoulu = null;
+
+/* Créer un PNJ SANS quitter la zone (fin de l'étape 4, 28/08). On ne pose PAS le point tout de
+   suite : s'il abandonne la fiche en route, la scène ne doit pas garder un point orphelin. Le
+   point n'est créé qu'au retour, et seulement si la fiche a bien été enregistrée. */
+function creerHabitantDepuisZone(sceneId, variantId, titre){
+  const zoneId = sceneEditorZoneId;
+  if (!zoneId) return;
+  const nomZone = (ficheParId(zoneId) && ficheParId(zoneId).name) || 'la zone';
+  document.getElementById('sceneEditorSaveBtn').click();
+  pileFiches.push({
+    type:'zone', id: zoneId, nom: nomZone,
+    sceneId, variantId: (variantId || null),
+    placerDans: { sceneId, variantId: (variantId || null), titre: titre || 'la scène' }
+  });
+  document.getElementById('sceneEditorFull').classList.remove('show');
+  document.getElementById('habitantsOverlay').classList.remove('show');
+  document.getElementById('editorOverlay').classList.add('show');
+  resetForm();
+  showPnjSection('new');
+  /* Le « où » est réglé d'office : il crée ce PNJ depuis cette zone, il n'a pas à le redire.
+     C'est exactement ce que fait déjà le sélecteur de PNJ quand on rattache une fiche
+     existante à un point de zone. */
+  pendingLat = null; pendingLng = null;
+  pendingAssignedZoneId = zoneId;
+  pendingReserve = false;
+  refreshPosStatusDisplay();
+  poserEmpreinteFiche();
+  majBoutonRetourEtape();
+  showToast('Nouveau PNJ pour « ' + (titre || 'la scène') + ' » — il sera posé au retour');
+}
+
+/* Pose effective du point, une fois l'éditeur de scène revenu et rechargé. On charge d'abord la
+   scène et la variante visées pour que sceneEditorPoints soit bien LEUR tableau : y pousser
+   directement une autre liste laisserait le point invisible sur l'image. */
+function poserHabitantCree(p){
+  const sc = (sceneEditorScenes || []).find(s=> s.id === p.sceneId);
+  if (!sc){ showToast('La scène de destination a disparu — PNJ créé mais pas posé'); return; }
+  if (p.variantId && !(sc.variants || []).some(v=> v.id === p.variantId)){
+    showToast('La variante a disparu — PNJ créé mais pas posé'); return;
+  }
+  loadSceneIntoEditorState(p.sceneId);
+  if (p.variantId) loadVariantIntoEditorState(p.variantId);
+  const pt = {
+    id: 'pt_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+    type: 'pnj',
+    x: 50, y: 50, w: 18, h: 18, rotation: 0, flipped: false,
+    linkedPnjId: p.pnjId,
+    linkedPnjName: p.nom || 'PNJ',
+    linkedPnjEmoji: p.emoji || '👤',
+    linkedPnjImageUrl: p.image || ''
+  };
+  sceneEditorPoints.push(pt);
+  renderSceneEditorPoints();
+  selectScenePoint(pt.id);
+  /* On enregistre tout de suite : sans ça, un point créé par ce chemin serait perdu à la
+     première fermeture, alors qu'il vient d'une fiche déjà publiée. */
+  document.getElementById('sceneEditorSaveBtn').click();
+  showToast((p.nom || 'Le PNJ') + ' est posé au centre — déplace-le où tu veux');
 }
 
 /* Le chemin du retour doit être visible depuis N'IMPORTE QUELLE vue de la fiche, pas seulement
@@ -8567,7 +8641,20 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     if (ancienne && ancienne.versionPubliee) data.versionPubliee = ancienne.versionPubliee;
   }
   const op = editingId ? creatureCol.doc(editingId).set(data) : creatureCol.add({ ...data, createdAt: Date.now() });
-  op.then(()=>{
+  op.then((ref)=>{
+    /* Un PNJ créé depuis une zone doit pouvoir être posé sur la scène au retour — or une fiche
+       neuve n'a d'identifiant qu'ICI, à l'instant où Firestore le rend. On le note sur l'étape
+       de la pile plutôt que dans une variable globale : il ne vaut que pour ce retour-là, et il
+       disparaît de lui-même si le voyage est abandonné. On garde aussi nom/emoji/image, pris
+       sur le formulaire : le cache local n'a pas encore reçu la fiche à cet instant. */
+    const idEnregistre = editingId || (ref && ref.id) || null;
+    const etape = pileFiches.length ? pileFiches[pileFiches.length - 1] : null;
+    if (etape && etape.type === 'zone' && etape.placerDans && idEnregistre){
+      etape.pnjCree = idEnregistre;
+      etape.pnjNom = name;
+      etape.pnjEmoji = emoji;
+      etape.pnjImage = imageUrl || '';
+    }
     showToast(enTravaux ? '🚧 Brouillon enregistré — les joueurs ne le voient pas' : '📤 PNJ publié');
     /* Un enregistrement peut avoir été demandé pour pouvoir PARTIR quelque part : dans ce cas
        on enchaîne au lieu de vider la fiche, sinon le voyage arriverait sur un formulaire neuf. */
@@ -16876,6 +16963,13 @@ function openSceneEditor(creatureId){
       ? retourSceneVoulue : sceneEditorStartSceneId;
     retourSceneVoulue = null;
     loadSceneIntoEditorState(voulue);
+    /* Après le rechargement, pas avant : les scènes lues ici remplacent celles qu'on avait, un
+       point posé plus tôt serait écrasé. */
+    if (placementVoulu){
+      const p = placementVoulu;
+      placementVoulu = null;
+      poserHabitantCree(p);
+    }
     // Mesure séparée du temps de chargement, TOUJOURS à froid (ignore le cache local ET celui de
     // Firestore) pour donner un chiffre honnête et comparable à chaque fois, même en rouvrant l'éditeur
     // juste après avoir déjà consulté ces mêmes images.
@@ -16943,13 +17037,15 @@ document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
 function collecterHabitants(){
   const groupes = [];
   (sceneEditorScenes || []).forEach(sc=>{
+    /* On liste maintenant TOUTES les scènes et variantes, même vides : c'est depuis leur
+       en-tête qu'on ajoute un habitant, donc une scène sans PNJ ne pourrait jamais être
+       peuplée si elle n'apparaissait pas. */
     const ajouter = (liste, titre, variantId)=>{
-      const pnjs = (liste || []).filter(pt=> pt.type === 'pnj');
-      if (pnjs.length) groupes.push({ titre, sceneId: sc.id, variantId, pnjs });
+      groupes.push({ titre, sceneId: sc.id, variantId, pnjs: (liste || []).filter(pt=> pt.type === 'pnj') });
     };
     ajouter(sc.points, sc.name || 'Scène', null);
     (sc.variants || []).forEach((v, i)=>
-      ajouter(v.points, (sc.name || 'Scène') + ' · variante ' + (i+1), v.id));
+      ajouter(v.points, (sc.name || 'Scène') + ' · ' + (v.label || ('variante ' + (i+1))), v.id));
   });
   return groupes;
 }
@@ -16960,14 +17056,40 @@ function renderHabitants(){
   wrap.innerHTML = '';
   const groupes = collecterHabitants();
   if (!groupes.length){
-    wrap.innerHTML = '<p class="meta">Aucun PNJ n\'est posé dans cette zone pour le moment. Ajoute un point de type PNJ sur une scène.</p>';
+    wrap.innerHTML = '<p class="meta">Cette zone n\'a pas encore de scène.</p>';
     return;
   }
   groupes.forEach(g=>{
+    /* L'ajout se fait scène par scène et variante par variante — son choix du 28/08 : les
+       habitants d'une variante ne sont pas ceux de la scène par défaut, donc chacune doit
+       pouvoir être peuplée séparément. */
+    const enTete = document.createElement('div');
+    enTete.style.cssText = 'display:flex; gap:8px; align-items:center; margin:10px 0 6px;';
+
     const titre = document.createElement('div');
     titre.className = 'field-label';
+    titre.style.cssText = 'flex:1; margin:0;';
     titre.textContent = g.titre;
-    wrap.appendChild(titre);
+    enTete.appendChild(titre);
+
+    const ajouter = document.createElement('button');
+    ajouter.type = 'button';
+    ajouter.className = 'btn-secondary';
+    ajouter.style.cssText = 'padding:6px 12px; white-space:nowrap;';
+    ajouter.textContent = '➕ PNJ';
+    ajouter.title = 'Créer un PNJ et le poser sur ' + g.titre;
+    ajouter.addEventListener('click', ()=> creerHabitantDepuisZone(g.sceneId, g.variantId, g.titre));
+    enTete.appendChild(ajouter);
+
+    wrap.appendChild(enTete);
+
+    if (!g.pnjs.length){
+      const vide = document.createElement('p');
+      vide.className = 'meta';
+      vide.style.cssText = 'margin:0 0 6px;';
+      vide.textContent = 'Aucun habitant ici.';
+      wrap.appendChild(vide);
+    }
 
     g.pnjs.forEach(pt=>{
       const ligne = document.createElement('div');
