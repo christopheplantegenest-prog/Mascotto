@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v429</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v430</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2197,6 +2197,10 @@
       <button class="sheet-x" id="editorCloseBtn">✕</button>
     </div>
     <div class="meta" id="editorStatus">Connexion…</div>
+    <!-- Chemin de retour (étape 4, 28/08) : posé ICI, sous le titre, pour rester visible quelle
+         que soit la rubrique ouverte. L'ancien bouton du constructeur de dialogue n'apparaissait
+         que dans le dialogue, ce qui ne suffit plus depuis qu'on arrive aussi depuis une zone. -->
+    <div id="editorRetourEtape" style="display:none; margin-bottom:10px;"></div>
 
     <!-- Navigation par boutons -->
     <div id="pnjNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
@@ -2620,6 +2624,19 @@
 </div>
 
 <!-- Éditeur de scène d'exploration (plein écran) -->
+<!-- Liste des habitants d'une zone (étape 4, 28/08). Groupée par scène, et par variante quand
+     un PNJ n'est posé que dans une variante — même vocabulaire que le vérificateur de liens. -->
+<div class="overlay" id="habitantsOverlay" style="z-index:4200;">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">👥 Habitants de la zone</h3>
+      <button class="sheet-x" id="habitantsCloseBtn">✕</button>
+    </div>
+    <p class="meta">Retirer un habitant l'enlève de la scène — sa fiche continue d'exister et reste utilisable ailleurs.</p>
+    <div id="habitantsListe"></div>
+  </div>
+</div>
+
 <div class="scene-full" id="sceneEditorFull">
   <div class="scene-topbar">
     <button class="sheet-x" id="sceneEditorCloseBtn">✕</button>
@@ -2639,6 +2656,7 @@
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageGithubBtn">📁 Image hébergée</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorHabitantsBtn">👥 Habitants</button>
     </div>
     <div id="sceneEditorRotateBar" style="margin:0;"></div>
     <p class="meta" id="sceneEditorSelectedInfo" style="color:rgba(255,255,255,.75); margin:0; display:none;">Point sélectionné — appuie sur 🗑️ pour le supprimer.</p>
@@ -3859,8 +3877,67 @@ function revenirFichePrecedente(){
   const dest = pileFiches[pileFiches.length - 1];
   voyagerVersFiche(()=>{
     pileFiches.pop();
+    /* Depuis le 28/08 la pile peut contenir deux natures d'étapes : une FICHE (saut depuis
+       une condition de dialogue, v350) ou une ZONE (saut depuis l'éditeur de scène). Sans ce
+       test, revenir d'un PNJ ouvert depuis une zone tentait de rouvrir la zone comme s'il
+       s'agissait d'un dialogue, et retombait sur un constructeur vide. */
+    if (dest.type === 'zone'){
+      fermerLesRubriques();
+      document.getElementById('editorOverlay').classList.remove('show');
+      openSceneEditor(dest.id);
+      if (dest.sceneId) retourSceneVoulue = dest.sceneId;
+      majBoutonRetourEtape();
+      return;
+    }
     ouvrirFichePourDialogue(dest.id, null, dest);
+    majBoutonRetourEtape();
   });
+}
+
+/* Scène sur laquelle se reposer au retour dans une zone : openSceneEditor relit la base et
+   atterrit sur la scène de départ, ce qui ferait perdre l'endroit d'où l'on était parti. */
+let retourSceneVoulue = null;
+
+/* Saut ZONE → PNJ (étape 4 de la refonte, 28/08). On empile la zone plutôt que la fiche :
+   au retour, c'est l'éditeur de scène qui se rouvre, à la scène où l'on était. */
+function sauterVersPnjDepuisZone(pnjId){
+  if (!pnjId){ showToast('Ce point n\'a pas encore de PNJ choisi'); return; }
+  const cible = ficheParId(pnjId);
+  if (!cible){ showToast('Ce personnage n\'existe plus'); return; }
+  const zoneId = sceneEditorZoneId;
+  if (!zoneId) return;
+  const nomZone = (ficheParId(zoneId) && ficheParId(zoneId).name) || 'la zone';
+  /* La scène en cours n'est pas encore écrite en base : on enregistre avant de partir, sinon
+     un déplacement de point fait juste avant le saut serait perdu au retour. */
+  document.getElementById('sceneEditorSaveBtn').click();
+  pileFiches.push({ type:'zone', id: zoneId, nom: nomZone, sceneId: sceneEditorCurrentSceneId });
+  document.getElementById('sceneEditorFull').classList.remove('show');
+  document.getElementById('habitantsOverlay').classList.remove('show');
+  document.getElementById('editorOverlay').classList.add('show');
+  showPnjSection('new');
+  loadForEdit(pnjId);
+  majBoutonRetourEtape();
+}
+
+/* Le chemin du retour doit être visible depuis N'IMPORTE QUELLE vue de la fiche, pas seulement
+   depuis le constructeur de dialogue : on arrive maintenant ici depuis une zone, où le
+   dialogue n'est pas forcément ce qu'on vient modifier. */
+function majBoutonRetourEtape(){
+  const barre = document.getElementById('editorRetourEtape');
+  if (!barre) return;
+  const dest = pileFiches.length ? pileFiches[pileFiches.length - 1] : null;
+  if (!dest){ barre.style.display = 'none'; barre.innerHTML = ''; return; }
+  barre.style.display = 'block';
+  barre.innerHTML = '';
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn-secondary';
+  b.style.cssText = 'width:100%; text-align:left;';
+  b.textContent = (dest.type === 'zone')
+    ? '← Revenir dans ' + (dest.nom || 'la zone')
+    : '← Revenir chez ' + (dest.nom || 'le personnage précédent');
+  b.addEventListener('click', ()=> revenirFichePrecedente());
+  barre.appendChild(b);
 }
 
 function renderDialogueBuilder(){
@@ -3872,18 +3949,10 @@ function renderDialogueBuilder(){
   if (dlgStepIdx < 0) dlgStepIdx = 0;
   wrap.innerHTML = '';
 
-  /* On peut être arrivé ici depuis la condition d'une AUTRE fiche : le chemin du retour
-     s'affiche en tête, avant les vues, pour être visible quelle que soit celle qu'on utilise. */
-  if (pileFiches.length){
-    const dest = pileFiches[pileFiches.length - 1];
-    const retourFiche = document.createElement('button');
-    retourFiche.type = 'button';
-    retourFiche.className = 'btn-secondary';
-    retourFiche.style.cssText = 'width:100%; margin-bottom:8px; text-align:left;';
-    retourFiche.textContent = '← Revenir chez ' + (dest.nom || 'le personnage précédent');
-    retourFiche.addEventListener('click', revenirFichePrecedente);
-    wrap.appendChild(retourFiche);
-  }
+  /* Le chemin du retour vivait ici jusqu'au 28/08. Il est remonté dans la barre
+     #editorRetourEtape, sous le titre de l'éditeur, pour être visible depuis toutes les
+     rubriques — on arrive désormais aussi depuis une zone d'exploration. */
+  majBoutonRetourEtape();
 
   const topBar = document.createElement('div');
   topBar.className = 'dlg-topbar';
@@ -8186,6 +8255,7 @@ document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
   empreinteAuChargement = null;
   pileFiches = [];
   apresEnregistrementFiche = null;
+  majBoutonRetourEtape();
   /* Le filtre appartient au chemin d'entrée, pas à l'éditeur : sans cette remise à zéro, une
      ouverture par un autre chemin (depuis la carte, depuis une quête) hériterait du dernier
      filtre du menu et semblerait avoir perdu des fiches. */
@@ -16320,6 +16390,7 @@ function renderSceneDetailTypeSpecific(pt){
       <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">PNJ affiché à ce point</div>
       <button type="button" class="btn-secondary" data-pnj-link-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${pt.linkedPnjId ? ((pt.linkedPnjEmoji||'👤')+' '+(pt.linkedPnjName||'PNJ')) : '— choisir un PNJ existant —'}</button>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Utilise le dialogue, les objets donnés, quêtes et le recrutement déjà configurés pour ce PNJ dans l'éditeur de PNJ — pas de configuration séparée ici.</p>
+      ${pt.linkedPnjId ? '<button type="button" class="btn-secondary" data-pnj-ouvrir-fiche style="width:100%; margin-bottom:6px; text-align:left;">✏️ Modifier la fiche de ' + (pt.linkedPnjName || 'ce PNJ') + '</button>' : ''}
       <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition après un combat gagné</div>
       <select id="scenePointPnjReset" class="field-input">
         <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>Toujours là (dialogue, ou monstre qui revient tout de suite)</option>
@@ -16372,6 +16443,9 @@ function renderSceneDetailTypeSpecific(pt){
     });
     const inpReset = typeWrap.querySelector('#scenePointPnjResetMinutes');
     if (inpReset) inpReset.addEventListener('input', (e)=>{ pt.resetMinutes = parseInt(e.target.value, 10) || 60; });
+
+    const btnOuvrirFiche = typeWrap.querySelector('[data-pnj-ouvrir-fiche]');
+    if (btnOuvrirFiche) btnOuvrirFiche.addEventListener('click', ()=> sauterVersPnjDepuisZone(pt.linkedPnjId));
 
     typeWrap.querySelector('[data-pnj-link-pick]').addEventListener('click', ()=>{
       openPnjChooser((id, c)=>{
@@ -16743,7 +16817,12 @@ function openSceneEditor(creatureId){
     await resolveImageRefsInScenes(norm.scenes); // résolution normale (peut profiter du cache) pour afficher l'éditeur tout de suite
     sceneEditorScenes = norm.scenes;
     sceneEditorStartSceneId = norm.startSceneId;
-    loadSceneIntoEditorState(sceneEditorStartSceneId);
+    /* On revient d'un PNJ ouvert depuis cette zone : on retrouve la scène qu'on regardait,
+       pas la scène de départ de la zone. */
+    const voulue = retourSceneVoulue && norm.scenes.some(s=> s.id === retourSceneVoulue)
+      ? retourSceneVoulue : sceneEditorStartSceneId;
+    retourSceneVoulue = null;
+    loadSceneIntoEditorState(voulue);
     // Mesure séparée du temps de chargement, TOUJOURS à froid (ignore le cache local ET celui de
     // Firestore) pour donner un chiffre honnête et comparable à chaque fois, même en rouvrant l'éditeur
     // juste après avoir déjà consulté ces mêmes images.
@@ -16803,6 +16882,100 @@ document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openS
 document.getElementById('editZoneSceneBtnTop').addEventListener('click', ()=> openSceneEditor(editingId));
 document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEditorFull').classList.remove('show');
+});
+
+/* Liste des habitants de la zone (étape 4, 28/08). On lit sceneEditorScenes, c'est-à-dire le
+   travail EN COURS et pas la base : un PNJ qu'on vient de poser sans enregistrer doit y
+   figurer, sinon la liste mentirait sur ce qu'on a sous les yeux. */
+function collecterHabitants(){
+  const groupes = [];
+  (sceneEditorScenes || []).forEach(sc=>{
+    const ajouter = (liste, titre, variantId)=>{
+      const pnjs = (liste || []).filter(pt=> pt.type === 'pnj');
+      if (pnjs.length) groupes.push({ titre, sceneId: sc.id, variantId, pnjs });
+    };
+    ajouter(sc.points, sc.name || 'Scène', null);
+    (sc.variants || []).forEach((v, i)=>
+      ajouter(v.points, (sc.name || 'Scène') + ' · variante ' + (i+1), v.id));
+  });
+  return groupes;
+}
+
+function renderHabitants(){
+  const wrap = document.getElementById('habitantsListe');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const groupes = collecterHabitants();
+  if (!groupes.length){
+    wrap.innerHTML = '<p class="meta">Aucun PNJ n\'est posé dans cette zone pour le moment. Ajoute un point de type PNJ sur une scène.</p>';
+    return;
+  }
+  groupes.forEach(g=>{
+    const titre = document.createElement('div');
+    titre.className = 'field-label';
+    titre.textContent = g.titre;
+    wrap.appendChild(titre);
+
+    g.pnjs.forEach(pt=>{
+      const ligne = document.createElement('div');
+      ligne.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:6px;';
+
+      const ouvrir = document.createElement('button');
+      ouvrir.type = 'button';
+      ouvrir.className = 'btn-secondary';
+      ouvrir.style.cssText = 'flex:1; text-align:left;';
+      ouvrir.textContent = pt.linkedPnjId
+        ? ((pt.linkedPnjEmoji || '👤') + ' ' + (pt.linkedPnjName || 'PNJ'))
+        : '⚠️ Point sans PNJ choisi';
+      if (pt.linkedPnjId) ouvrir.addEventListener('click', ()=> sauterVersPnjDepuisZone(pt.linkedPnjId));
+      else ouvrir.addEventListener('click', ()=> showToast('Choisis d\'abord un PNJ sur ce point'));
+      ligne.appendChild(ouvrir);
+
+      const retirer = document.createElement('button');
+      retirer.type = 'button';
+      retirer.style.cssText = 'background:var(--danger); color:#fff; padding:8px 12px;';
+      retirer.textContent = '✕';
+      retirer.title = 'Retirer de la scène';
+      retirer.addEventListener('click', async ()=>{
+        const nom = pt.linkedPnjName || 'ce point';
+        if (!(await appConfirm('Retirer ' + nom + ' de « ' + g.titre + ' » ? Sa fiche est conservée.'))) return;
+        retirerHabitant(g.sceneId, g.variantId, pt.id);
+      });
+      ligne.appendChild(retirer);
+
+      wrap.appendChild(ligne);
+    });
+  });
+}
+
+/* On retire le POINT, jamais la fiche : c'est ce qu'il a explicitement demandé le 28/08. */
+function retirerHabitant(sceneId, variantId, pointId){
+  const sc = (sceneEditorScenes || []).find(s=> s.id === sceneId);
+  if (!sc) return;
+  const cible = (variantId === null || variantId === undefined)
+    ? sc : (sc.variants || []).find(v=> v.id === variantId);
+  if (!cible || !Array.isArray(cible.points)) return;
+  cible.points = cible.points.filter(p=> p.id !== pointId);
+  /* La scène ouverte a ses points dans un miroir séparé (sceneEditorPoints) : sans cette
+     resynchronisation, le point disparaîtrait de la liste mais resterait affiché sur l'image. */
+  if (sceneId === sceneEditorCurrentSceneId
+      && ((variantId || null) === (sceneEditorCurrentVariantId || null))){
+    sceneEditorPoints = cible.points;
+    if (sceneEditorSelectedPointId === pointId) sceneEditorSelectedPointId = null;
+    renderSceneEditorPoints();
+    renderSceneEditorDetails();
+  }
+  renderHabitants();
+  showToast('Retiré de la scène — la fiche est conservée');
+}
+
+document.getElementById('sceneEditorHabitantsBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();   // la scène ouverte doit être à jour avant d'être lue
+  renderHabitants();
+  document.getElementById('habitantsOverlay').classList.add('show');
+});
+document.getElementById('habitantsCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('habitantsOverlay').classList.remove('show');
 });
 /* Désignation du vaisseau, déplacée le 28/08 de l'éditeur de scène vers Édition → Vaisseaux.
    Le vaisseau n'est pas une propriété de la fiche : c'est un pointeur app_config/ship vers un
