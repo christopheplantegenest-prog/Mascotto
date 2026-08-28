@@ -973,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v438</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v439</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8457,6 +8457,13 @@ document.getElementById('hubItemsBtn').addEventListener('click', ()=>{
   showItemsSection('new');
 });
 document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
+  /* v439 : on n'est pas forcément en train de QUITTER l'éditeur — on peut être arrivé ici
+     depuis une zone d'exploration, auquel cas la croix doit ramener dans la zone et non jeter
+     sur la carte, d'où il faut retrouver sa scène à la main. On délègue à
+     `revenirFichePrecedente`, qui pose lui-même la question du travail non enregistré (et avec
+     l'issue « brouillon » en plus) : traiter le cas ici aurait posé la question deux fois. */
+  const dessus = pileFiches.length ? pileFiches[pileFiches.length - 1] : null;
+  if (dessus && dessus.type === 'zone'){ revenirFichePrecedente(); return; }
   if (ficheEstModifiee()){
     const quoi = await demanderQuoiFaireAvantDeSortir();
     if (quoi === 'rester') return;
@@ -8753,8 +8760,13 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
        donc l'appeler ici détruisait le chemin de retour à l'instant précis où il devenait utile
        — plus de bouton « ← Revenir dans… », et le point jamais posé dans la scène. On garde donc
        la pile le temps du nettoyage du formulaire, puis on revient. resetForm() repose aussi
-       l'empreinte, ce qui évite qu'on redemande d'enregistrer une fiche qu'on vient de sauver. */
-    if (etape && etape.type === 'zone' && etape.placerDans && etape.pnjCree){
+       l'empreinte, ce qui évite qu'on redemande d'enregistrer une fiche qu'on vient de sauver.
+       v439 : la condition ne demandait qu'un PNJ tout juste CRÉÉ (`placerDans` + `pnjCree`).
+       Ouvrir un habitant DÉJÀ posé depuis la liste des habitants empile pourtant la même étape
+       de zone, sans placement en attente — enregistrer laissait alors sur l'éditeur de PNJ. On
+       revient désormais dès que l'étape est une zone ; l'attente d'un `pnjCree` ne vaut que
+       lorsqu'un placement a été promis, pour ne pas rentrer sans avoir de point à poser. */
+    if (etape && etape.type === 'zone' && (!etape.placerDans || etape.pnjCree)){
       const pileGardee = pileFiches.slice();
       resetForm();
       pileFiches = pileGardee;
@@ -15420,8 +15432,36 @@ function resolvePointImageRefJobs(pt, jobs){
   if (!pt.linkedPnjImageUrl && pt.linkedPnjImageRef) jobs.push(internalizeSceneImage(pt.linkedPnjImageRef).then(u=>{ pt.linkedPnjImageUrl = u; }));
 }
 
+/* Un point de scène garde une COPIE du nom, de l'emoji et de l'image du PNJ qu'il désigne : la
+   scène doit pouvoir s'afficher sans que toutes les fiches soient chargées. Mais cette copie
+   était figée à la création du point — modifier la fiche du PNJ plus tard (lui ajouter son
+   image, le renommer) ne changeait plus rien dans la scène. On la rafraîchit donc à chaque
+   chargement de scènes. `pourEditeur` distingue les deux publics : dans l'éditeur on veut voir
+   le brouillon qu'on est en train d'écrire, dans le jeu la version publiée. */
+function rafraichirCopiesPnjDesPoints(scenesArr, pourEditeur){
+  const relire = (pt)=>{
+    if (!pt || pt.type !== 'pnj' || !pt.linkedPnjId) return;
+    const f = pourEditeur ? ficheParId(pt.linkedPnjId) : ficheParIdJouable(pt.linkedPnjId);
+    if (!f) return;   // fiche pas encore chargée, ou en travaux jamais publiée : on garde la copie
+    pt.linkedPnjName = f.name || pt.linkedPnjName || 'PNJ';
+    pt.linkedPnjEmoji = f.emoji || pt.linkedPnjEmoji || '👤';
+    const img = f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+    /* Fiche sans image lisible ici : on ne VIDE pas la copie. Une image stockée par référence
+       peut n'être pas encore résolue au moment où l'on passe, et effacer laisserait un point
+       nu à la place d'un point simplement en retard. */
+    if (img){ pt.linkedPnjImageUrl = img; pt.linkedPnjImageRef = null; }
+  };
+  (scenesArr||[]).forEach(sc=>{
+    (sc.points||[]).forEach(relire);
+    (sc.variants||[]).forEach(v=> (v.points||[]).forEach(relire));
+  });
+}
+
 /* Remplace en place les imageRef par de vraies dataURL (résolution), pour que le reste du code n'ait rien à changer */
-async function resolveImageRefsInScenes(scenesArr){
+async function resolveImageRefsInScenes(scenesArr, pourEditeur){
+  /* AVANT la résolution des références, pas après : une copie rafraîchie doit l'emporter sur
+     l'ancienne référence, et `resolvePointImageRefJobs` ne remplit que ce qui est encore vide. */
+  rafraichirCopiesPnjDesPoints(scenesArr, pourEditeur);
   const jobs = [];
   (scenesArr||[]).forEach(sc=>{
     if (sc.imagePath) sc.imageUrl = resolveMediaPath(sc.imagePath);
@@ -17051,7 +17091,7 @@ function openSceneEditor(creatureId){
   zonesCol.doc(creatureId).get().then(async (doc)=>{
     const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
     const imgCount = countZoneImages(norm.scenes);
-    await resolveImageRefsInScenes(norm.scenes); // résolution normale (peut profiter du cache) pour afficher l'éditeur tout de suite
+    await resolveImageRefsInScenes(norm.scenes, true); // résolution normale (peut profiter du cache) pour afficher l'éditeur tout de suite
     sceneEditorScenes = norm.scenes;
     sceneEditorStartSceneId = norm.startSceneId;
     /* On revient d'un PNJ ouvert depuis cette zone : on retrouve la scène qu'on regardait,
