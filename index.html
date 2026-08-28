@@ -109,8 +109,16 @@
           window.imagesMortes[adrMorte] = 1;
         }
       } catch(e){}
+      /* L'adresse seule ne suffit pas quand elle est vide : elle vaut alors celle de la page,
+         et rien ne dit QUELLE image est en cause. On décrit donc l'élément et son parent. */
+      var qui = '';
+      try {
+        qui = (cible.id ? '#' + cible.id : '') + (cible.className ? '.' + String(cible.className).split(' ').join('.') : '');
+        var p = cible.parentElement;
+        if (p) qui += ' dans ' + String(p.tagName).toLowerCase() + (p.id ? '#' + p.id : '') + (p.className ? '.' + String(p.className).split(' ').join('.') : '');
+      } catch(e2){}
       window.journal('erreur', 'fichier non chargé : <' + String(cible.tagName).toLowerCase() + '>',
-        adresse || '(adresse vide)', true);
+        (adresse || '(adresse vide)') + (qui ? ' · ' + qui : ''), true);
       return;
     }
     var ou = (e.filename ? (String(e.filename).split('/').pop() + ':' + e.lineno + ':' + e.colno) : '');
@@ -965,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v432</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v433</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6798,7 +6806,6 @@ function empreinteFiche(){
 function poserEmpreinteFiche(){
   try { empreinteAuChargement = empreinteFiche(); } catch(e){ empreinteAuChargement = null; }
   ficheModifiee = false;
-  traceDetecteur('empreinte POSÉE', 'fiche=' + editingId);
 }
 /* Cinq images de la fiche (dos, buste, combat, chambre, arène de zone) sont stockées par
    référence et arrivent APRÈS la pose de l'empreinte. Leur arrivée changeait l'empreinte, donc
@@ -6831,14 +6838,10 @@ function majLibelleBoutonEnregistrer(){
   else btn.textContent = editingId ? '📤 Publier le PNJ' : '📤 Créer et publier le PNJ';
 }
 document.addEventListener('input', (e)=>{
-  const dedans = e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]');
-  traceDetecteur('input', (e.target.id || e.target.tagName) + ' · dedans=' + (dedans ? 'oui' : 'NON') + ' · show=' + (document.getElementById('editorOverlay').classList.contains('show') ? 'oui' : 'NON'));
-  if (dedans) marquerFicheModifiee();
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
 }, true);
 document.addEventListener('change', (e)=>{
-  const dedans = e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]');
-  traceDetecteur('change', (e.target.id || e.target.tagName) + ' · dedans=' + (dedans ? 'oui' : 'NON'));
-  if (dedans) marquerFicheModifiee();
+  if (e.target.closest && e.target.closest('#editorOverlay, [data-rubrique-fenetre]')) marquerFicheModifiee();
 }, true);
 
 /* Trois issues, pas deux : enregistrer, sortir quand même, ou revenir en arrière. */
@@ -6939,6 +6942,12 @@ function installerRubriques(){
         <button class="btn-capture" data-valider-rubrique style="width:100%; margin-top:14px;">Terminé</button>
       </div>`;
     const corps = fond.querySelector('[data-corps]');
+    /* Les champs de la fiche sont DÉPLACÉS ici, hors de #editorOverlay. Le détecteur de
+       modifications et l'empreinte cherchent ces fenêtres par cet attribut — il n'était nulle
+       part posé, si bien que TOUT ce qui se tape dans une rubrique (le nom, le métier…) leur
+       était invisible : on pouvait fermer l'éditeur sans être averti et perdre son travail.
+       Défaut constaté le 28/08, longtemps masqué par une fausse alerte permanente. */
+    fond.dataset.rubriqueFenetre = cle;
     contenu.forEach(n2=> corps.appendChild(n2));   // déplacement, pas copie
     document.body.appendChild(fond);
     RUBRIQUES_FENETRES[cle] = fond;
