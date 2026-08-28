@@ -965,7 +965,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v430</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v431</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6795,6 +6795,18 @@ function poserEmpreinteFiche(){
   try { empreinteAuChargement = empreinteFiche(); } catch(e){ empreinteAuChargement = null; }
   ficheModifiee = false;
 }
+/* Cinq images de la fiche (dos, buste, combat, chambre, arène de zone) sont stockées par
+   référence et arrivent APRÈS la pose de l'empreinte. Leur arrivée changeait l'empreinte, donc
+   la fiche se déclarait modifiée sans que l'utilisateur ait rien touché : d'où la fenêtre
+   « enregistrer avant de partir ? » à chaque simple consultation d'une zone (constaté le
+   28/08 — les zones ont une image d'arène, la plupart des PNJ n'en ont pas).
+   On réactualise donc le point de comparaison quand l'image se pose : ce n'est pas du travail
+   de l'utilisateur, il n'y a rien à lui proposer d'enregistrer. */
+function reactualiserEmpreinteApresImage(id){
+  if (editingId !== id) return;          // il est déjà parti sur une autre fiche
+  if (ficheModifiee) return;             // il a modifié quelque chose entre-temps : son travail prime
+  try { empreinteAuChargement = empreinteFiche(); } catch(e){}
+}
 function ficheEstModifiee(){
   if (ficheModifiee) return true;
   if (empreinteAuChargement === null) return false;   // empreinte impossible : on ne bloque pas
@@ -7733,7 +7745,11 @@ function loadForEdit(id){
   document.getElementById('editBackImageFile').value = '';
   renderBackImagePreview();
   if (editBackImageRef){
-    internalizeSceneImage(editBackImageRef).then(url=>{ editBackImageDataUrl = url; renderBackImagePreview(); }).catch(()=>{});
+    internalizeSceneImage(editBackImageRef).then(url=>{
+      if (editingId !== id) return;
+      editBackImageDataUrl = url; renderBackImagePreview();
+      reactualiserEmpreinteApresImage(id);
+    }).catch(()=>{});
   }
   editBustImagePath = d.bustImagePath || null;
   editBustImageDataUrl = editBustImagePath ? resolveMediaPath(editBustImagePath) : null;
@@ -7741,7 +7757,11 @@ function loadForEdit(id){
   document.getElementById('editBustImageFile').value = '';
   renderBustImagePreview();
   if (editBustImageRef){
-    internalizeSceneImage(editBustImageRef).then(url=>{ editBustImageDataUrl = url; renderBustImagePreview(); }).catch(()=>{});
+    internalizeSceneImage(editBustImageRef).then(url=>{
+      if (editingId !== id) return;
+      editBustImageDataUrl = url; renderBustImagePreview();
+      reactualiserEmpreinteApresImage(id);
+    }).catch(()=>{});
   }
   editCombatImagePath = d.combatImagePath || null;
   editCombatImageDataUrl = editCombatImagePath ? resolveMediaPath(editCombatImagePath) : null;
@@ -7749,7 +7769,11 @@ function loadForEdit(id){
   document.getElementById('editCombatImageFile').value = '';
   renderCombatImagePreview();
   if (editCombatImageRef){
-    internalizeSceneImage(editCombatImageRef).then(url=>{ editCombatImageDataUrl = url; renderCombatImagePreview(); renderCombatScalePreview(); }).catch(()=>{});
+    internalizeSceneImage(editCombatImageRef).then(url=>{
+      if (editingId !== id) return;
+      editCombatImageDataUrl = url; renderCombatImagePreview(); renderCombatScalePreview();
+      reactualiserEmpreinteApresImage(id);
+    }).catch(()=>{});
   }
   editCombatScale = (d.combatImageScale == null) ? 100 : d.combatImageScale;
   editCombatOffsetY = (d.combatImageOffsetY == null) ? 0 : d.combatImageOffsetY;
@@ -7765,6 +7789,7 @@ function loadForEdit(id){
       if (editingId !== id) return;
       editRoomImageDataUrl = url;
       renderRoomImagePreview();
+      reactualiserEmpreinteApresImage(id);
     }).catch(()=>{});
   }
   editZoneArenaImagePath = d.combatArenaImagePath || null;
@@ -7777,6 +7802,7 @@ function loadForEdit(id){
       if (editingId !== id) return; // la fiche a changé entre-temps
       editZoneArenaImageDataUrl = url;
       renderZoneArenaImagePreview();
+      reactualiserEmpreinteApresImage(id);
     });
   }
   currentShopItems = Array.isArray(d.shopItems) ? JSON.parse(JSON.stringify(d.shopItems)) : [];
