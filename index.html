@@ -973,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v435</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v436</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3950,16 +3950,24 @@ function creerHabitantDepuisZone(sceneId, variantId, titre){
   if (!zoneId) return;
   const nomZone = (ficheParId(zoneId) && ficheParId(zoneId).name) || 'la zone';
   document.getElementById('sceneEditorSaveBtn').click();
-  pileFiches.push({
-    type:'zone', id: zoneId, nom: nomZone,
-    sceneId, variantId: (variantId || null),
-    placerDans: { sceneId, variantId: (variantId || null), titre: titre || 'la scène' }
-  });
   document.getElementById('sceneEditorFull').classList.remove('show');
   document.getElementById('habitantsOverlay').classList.remove('show');
   document.getElementById('editorOverlay').classList.add('show');
   resetForm();
   showPnjSection('new');
+  /* v436 : l'étape de retour s'empile APRÈS resetForm(), et pas avant. resetForm() fait
+     `pileFiches = []` — la pile était donc vidée dans la seconde qui suivait, la barre
+     « ← Revenir dans… » n'apparaissait jamais, et faute de passer par revenirFichePrecedente
+     le point n'était jamais posé au retour. Un seul défaut expliquait les deux symptômes. */
+  pileFiches.push({
+    type:'zone', id: zoneId, nom: nomZone,
+    sceneId, variantId: (variantId || null),
+    placerDans: { sceneId, variantId: (variantId || null), titre: titre || 'la scène' }
+  });
+  /* On arrive ici depuis la liste des zones : le titre de l'éditeur porte encore
+     « Zones d'exploration », alors qu'on est sur une fiche de PNJ neuve. */
+  const titreEditeur = document.getElementById('editorTitre');
+  if (titreEditeur) titreEditeur.textContent = 'Éditeur de PNJ';
   /* Le « où » est réglé d'office : il crée ce PNJ depuis cette zone, il n'a pas à le redire.
      C'est exactement ce que fait déjà le sélecteur de PNJ quand on rattache une fiche
      existante à un point de zone. */
@@ -7179,6 +7187,75 @@ let pnjChooserZonePrioritaire = null;   // zone en cours de montage, pour le reg
 let uploadedImageDataUrl = null;
 let uploadedImagePath = null; // chemin relatif si l'image est hébergée (voir resolveMediaPath)
 
+/* v436 — CETTE FONCTION MANQUAIT. Elle est appelée à quatre endroits (image principale d'une
+   fiche, icône de vaisseau sur la carte, terminal de missions, flèche de sortie) mais n'était
+   définie nulle part : chaque tentative d'ajouter une image depuis le téléphone levait un
+   « encoderImageSousLimite is not defined » dans le onload, silencieusement — l'image ne se
+   posait jamais et rien ne le disait. Seule la voie « hébergée sur GitHub » fonctionnait.
+
+   Contrat attendu par les appelants : renvoyer une data-URL, ou NULL si l'image ne rentre pas
+   sous la limite d'un document Firestore même après réduction — eux affichent alors le message
+   qui renvoie vers l'hébergement. Même moteur que compressPointImageDataUrl (points de scène),
+   à ceci près qu'ici on rend `null` au lieu de convertir d'autorité en JPEG.
+
+   gardePng : conserver la transparence (personnages détourés, icônes). Si le PNG ne rentre pas
+   même réduit, on tente le JPEG sur fond blanc en dernier recours plutôt que d'échouer — mieux
+   vaut une image opaque qu'une image absente, et on le dit. */
+function encoderImageSousLimite(img, maxSize, gardePng){
+  const FIRESTORE_SAFE_LIMIT = 1000000; // marge sous les ~1 048 487 octets réels
+  function dessiner(taille){
+    let w = img.width, h = img.height;
+    if (!w || !h) return null;
+    if (w > taille || h > taille){
+      if (w > h){ h = Math.round(h * taille/w); w = taille; }
+      else { w = Math.round(w * taille/h); h = taille; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, w); canvas.height = Math.max(1, h);
+    return canvas;
+  }
+  function rendre(taille, png, qualite){
+    const canvas = dessiner(taille);
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    if (!png){
+      /* Le JPEG ne connaît pas la transparence : sans ce fond, les zones transparentes
+         ressortent en noir. */
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return png ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', qualite);
+  }
+  const base = Math.max(60, parseInt(maxSize, 10) || 900);
+  /* Paliers proportionnels à la taille demandée : une flèche de sortie plafonnée à 320
+     ne doit pas repartir de 900. */
+  const paliers = [base, Math.round(base*0.8), Math.round(base*0.6), Math.round(base*0.45), Math.round(base*0.32)];
+  if (gardePng){
+    for (let i = 0; i < paliers.length; i++){
+      const url = rendre(paliers[i], true);
+      if (url && url.length <= FIRESTORE_SAFE_LIMIT) return url;
+    }
+    /* Le PNG ne passe pas : on abandonne la transparence plutôt que l'image. */
+    for (let i = 0; i < paliers.length; i++){
+      const url = rendre(paliers[i], false, 0.85);
+      if (url && url.length <= FIRESTORE_SAFE_LIMIT){
+        showToast('Image trop lourde en PNG : convertie en JPEG (transparence perdue)');
+        return url;
+      }
+    }
+    return null;
+  }
+  const qualites = [0.9, 0.82, 0.7, 0.6];
+  for (let i = 0; i < paliers.length; i++){
+    for (let q = 0; q < qualites.length; q++){
+      const url = rendre(paliers[i], false, qualites[q]);
+      if (url && url.length <= FIRESTORE_SAFE_LIMIT) return url;
+    }
+  }
+  return null;
+}
+
 document.getElementById('editImageFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if (!file) return;
@@ -7987,6 +8064,11 @@ function resetForm(){
   uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
   document.getElementById('imagePreviewWrap').style.display = 'none';
+  /* v436 : masquer l'aperçu ne suffisait pas — l'image de la fiche PRÉCÉDENTE restait dans
+     l'élément, et renderCombatScalePreview s'y replie faute d'image de dos ou de combat.
+     On voyait donc le décor de la zone d'où l'on venait dans l'aperçu de taille en combat
+     d'un PNJ tout neuf. On retire l'attribut plutôt que de poser un `src` vide (règle v426). */
+  document.getElementById('imagePreview').removeAttribute('src');
   document.getElementById('editName').value = '';
   document.getElementById('editMetier').value = '';
   document.getElementById('editVisibilityQuest').value = '';
