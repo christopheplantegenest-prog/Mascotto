@@ -973,7 +973,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v439</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v440</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15702,6 +15702,29 @@ function syncCurrentVariantFromEditorState(){
   }
 }
 
+/* ---------- Le détecteur de modifications d'une ZONE (v440) ----------
+   Jusqu'ici la croix de l'éditeur de scène ne faisait qu'une chose : fermer l'écran. Tout le
+   travail non enregistré (points déplacés, sorties reliées, images posées) partait sans un mot.
+   L'empreinte des FICHES existait depuis la v347, les scènes n'en avaient jamais eu.
+   Même principe qu'à l'époque : on compare un AVANT/APRÈS plutôt que de courir après chaque
+   geste — dans cet éditeur presque tout passe par des boutons, jamais par un `input`, donc un
+   suivi par événements laisserait passer l'essentiel.
+   Les images en base64 sont réduites à leur LONGUEUR : les recopier ferait une empreinte de
+   plusieurs mégaoctets à chaque comparaison. On ne touche qu'aux `data:` — les textes, eux,
+   sont comparés en entier, sinon deux phrases de même longueur passeraient pour identiques. */
+let empreinteZoneAuChargement = null;
+function empreinteZone(){
+  syncCurrentVariantFromEditorState();   // la scène ouverte vit dans un miroir : il doit être reversé d'abord
+  return JSON.stringify(
+    { depart: sceneEditorStartSceneId, scenes: sceneEditorScenes },
+    (cle, val)=> (typeof val === 'string' && val.startsWith('data:')) ? ('data:' + val.length) : val
+  );
+}
+function poserEmpreinteZone(){ empreinteZoneAuChargement = empreinteZone(); }
+function zoneEstModifiee(){
+  return empreinteZoneAuChargement !== null && empreinteZone() !== empreinteZoneAuChargement;
+}
+
 function renderSceneEditorTopLabel(){
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   const label = document.getElementById('sceneEditorCurrentLabel');
@@ -17107,6 +17130,11 @@ function openSceneEditor(creatureId){
       placementVoulu = null;
       poserHabitantCree(p);
     }
+    /* L'empreinte se pose ICI, en toute fin de chargement : les images arrivent en asynchrone
+       et un point peut venir d'être posé au retour d'une création. La figer plus tôt ferait
+       croire à une modification dès l'ouverture — c'est exactement le piège de la v431 sur les
+       fiches, qu'on ne refait pas. */
+    poserEmpreinteZone();
     // Mesure séparée du temps de chargement, TOUJOURS à froid (ignore le cache local ET celui de
     // Firestore) pour donner un chiffre honnête et comparable à chaque fois, même en rouvrant l'éditeur
     // juste après avoir déjà consulté ces mêmes images.
@@ -17164,7 +17192,13 @@ function measureColdZoneLoadTime(scenesArr){
 }
 document.getElementById('editZoneSceneBtn').addEventListener('click', ()=> openSceneEditor(editingId));
 document.getElementById('editZoneSceneBtnTop').addEventListener('click', ()=> openSceneEditor(editingId));
-document.getElementById('sceneEditorCloseBtn').addEventListener('click', ()=>{
+document.getElementById('sceneEditorCloseBtn').addEventListener('click', async ()=>{
+  if (zoneEstModifiee()){
+    const quoi = await demanderQuoiFaireAvantDeSortir();
+    if (quoi === 'rester') return;
+    if (quoi === 'enregistrer'){ enregistrerSceneCourante(true); return; }
+  }
+  empreinteZoneAuChargement = null;   // une empreinte périmée ne doit pas juger la prochaine zone
   document.getElementById('sceneEditorFull').classList.remove('show');
 });
 
@@ -17243,11 +17277,16 @@ function renderHabitants(){
       else ouvrir.addEventListener('click', ()=> showToast('Choisis d\'abord un PNJ sur ce point'));
       ligne.appendChild(ouvrir);
 
+      /* Deux gestes très différents côte à côte, donc deux apparences très différentes : le
+         retrait est réversible (on repose le point), la suppression ne l'est pas. Le rouge est
+         réservé à celle qui détruit vraiment quelque chose, sinon un doigt qui glisse coûte
+         une fiche entière. */
       const retirer = document.createElement('button');
       retirer.type = 'button';
-      retirer.style.cssText = 'background:var(--danger); color:#fff; padding:8px 12px;';
+      retirer.className = 'btn-secondary';
+      retirer.style.cssText = 'padding:8px 12px;';
       retirer.textContent = '✕';
-      retirer.title = 'Retirer de la scène';
+      retirer.title = 'Retirer de la scène (la fiche est conservée)';
       retirer.addEventListener('click', async ()=>{
         const nom = pt.linkedPnjName || 'ce point';
         if (!(await appConfirm('Retirer ' + nom + ' de « ' + g.titre + ' » ? Sa fiche est conservée.'))) return;
@@ -17255,9 +17294,88 @@ function renderHabitants(){
       });
       ligne.appendChild(retirer);
 
+      if (pt.linkedPnjId){
+        const supprimer = document.createElement('button');
+        supprimer.type = 'button';
+        supprimer.style.cssText = 'background:var(--danger); color:#fff; padding:8px 12px;';
+        supprimer.textContent = '🗑️';
+        supprimer.title = 'Supprimer définitivement la fiche';
+        supprimer.addEventListener('click', ()=>
+          supprimerFicheHabitant(pt.linkedPnjId, pt.linkedPnjName || 'ce PNJ'));
+        ligne.appendChild(supprimer);
+      }
+
       wrap.appendChild(ligne);
     });
   });
+}
+
+/* Supprimer une fiche SANS retirer ses points laisserait des points qui désignent un PNJ mort :
+   l'éditeur continuerait d'afficher le nom recopié sur le point, et le jeu sauterait le point
+   SANS RIEN DIRE. C'est exactement la panne muette du 17/08 (l'Odile invisible qui figurait
+   pourtant dans les PNJ actifs). Les deux gestes vont donc ensemble, jamais l'un sans l'autre. */
+function compterPointsDuPnj(pnjId){
+  let n = 0;
+  const compter = (cible)=>{
+    if (cible && Array.isArray(cible.points))
+      n += cible.points.filter(p=> p && p.type === 'pnj' && p.linkedPnjId === pnjId).length;
+  };
+  (sceneEditorScenes||[]).forEach(sc=>{ compter(sc); (sc.variants||[]).forEach(compter); });
+  return n;
+}
+function retirerPointsDuPnj(pnjId){
+  const nettoyer = (cible)=>{
+    if (!cible || !Array.isArray(cible.points)) return;
+    cible.points = cible.points.filter(p=> !(p && p.type === 'pnj' && p.linkedPnjId === pnjId));
+  };
+  (sceneEditorScenes||[]).forEach(sc=>{ nettoyer(sc); (sc.variants||[]).forEach(nettoyer); });
+  /* Le miroir de la scène ouverte doit suivre, sinon les points disparaissent de la liste mais
+     restent affichés sur l'image — même piège que pour le retrait simple. */
+  const sc = (sceneEditorScenes||[]).find(s=> s.id === sceneEditorCurrentSceneId);
+  if (sc){
+    const cible = sceneEditorCurrentVariantId
+      ? (sc.variants||[]).find(v=> v.id === sceneEditorCurrentVariantId)
+      : sc;
+    if (cible && Array.isArray(cible.points)){
+      sceneEditorPoints = cible.points;
+      if (!cible.points.some(p=> p.id === sceneEditorSelectedPointId)) sceneEditorSelectedPointId = null;
+      renderSceneEditorPoints();
+      renderSceneEditorDetails();
+    }
+  }
+}
+
+/* Suppression DÉFINITIVE de la fiche depuis la liste des habitants (30/08, à sa demande).
+   Ordre volontaire : on retire les points et on ENREGISTRE LA SCÈNE D'ABORD, la fiche ensuite.
+   Dans l'autre sens, un échec d'enregistrement laisserait des points orphelins pointant vers une
+   fiche déjà détruite — la panne silencieuse qu'on cherche justement à éviter. */
+async function supprimerFicheHabitant(pnjId, nom){
+  if (!pnjId || !creatureCol) return;
+  syncCurrentVariantFromEditorState();
+  const occurrences = compterPointsDuPnj(pnjId);
+  const oùQuoi = occurrences > 1
+    ? ('ses ' + occurrences + ' points seront retirés de cette zone')
+    : 'son point sera retiré de cette zone';
+  const ok = await appConfirm(
+    'Supprimer définitivement la fiche de ' + nom + ' ? Sa fiche, ses dialogues et tous ses '
+    + 'réglages seront perdus, et ' + oùQuoi + '. Cette action est irréversible.');
+  if (!ok) return;
+  retirerPointsDuPnj(pnjId);
+  const scEnregistree = await enregistrerSceneCourante(false);
+  if (!scEnregistree){
+    /* La scène n'est pas partie : on NE supprime PAS la fiche. Les points sont retirés à
+       l'écran mais pas en base — rien n'est perdu, il peut réessayer. */
+    showToast('Scène non enregistrée — la fiche n\'a pas été supprimée');
+    renderHabitants();
+    return;
+  }
+  try {
+    await creatureCol.doc(pnjId).delete();
+    showToast(nom + ' a été supprimé');
+  } catch(err){
+    showToast('Échec de la suppression : ' + err.message);
+  }
+  renderHabitants();
 }
 
 /* On retire le POINT, jamais la fiche : c'est ce qu'il a explicitement demandé le 28/08. */
@@ -17338,7 +17456,7 @@ document.getElementById('listeChangerVaisseauBtn').addEventListener('click', asy
    refermait sur la carte. On sépare les deux : le bouton ferme, l'enregistrement automatique
    ne ferme pas. */
 async function enregistrerSceneCourante(fermerApres){
-  if (!sceneEditorZoneId || !zonesCol) return;
+  if (!sceneEditorZoneId || !zonesCol) return false;
   syncCurrentVariantFromEditorState();
   try {
     const cleanScenes = await externalizeScenesForSave(sceneEditorScenes);
@@ -17348,8 +17466,15 @@ async function enregistrerSceneCourante(fermerApres){
       updatedAt: Date.now(),
     });
     showToast('Scène enregistrée');
-    if (fermerApres) document.getElementById('sceneEditorFull').classList.remove('show');
-  } catch(err){ showToast('Échec : ' + err.message); }
+    /* Le point de comparaison suit l'enregistrement, sinon la zone resterait « modifiée » juste
+       après avoir été sauvée et la croix redemanderait quoi faire pour rien. */
+    poserEmpreinteZone();
+    if (fermerApres){
+      empreinteZoneAuChargement = null;
+      document.getElementById('sceneEditorFull').classList.remove('show');
+    }
+    return true;
+  } catch(err){ showToast('Échec : ' + err.message); return false; }
 }
 document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
   enregistrerSceneCourante(true);
