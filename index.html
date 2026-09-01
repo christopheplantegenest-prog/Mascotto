@@ -984,6 +984,10 @@
 .combat-hp-wrap.ultime-prete{ animation:ultimePulse 1.4s ease-in-out infinite; }
 @keyframes ultimePulse{ 0%,100%{ box-shadow:0 0 4px 1px rgba(255,213,74,.55); } 50%{ box-shadow:0 0 12px 5px rgba(255,213,74,.95); } }
 .btn-ultime{ font-weight:700; border-color:#e0b84a !important; background:#fff6d6 !important; }
+/* v451 : la fiche d'attaque défile dans le panneau ; le « i » de fiche est celui des éditeurs (aide-i) */
+.combat-fiche{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:6px 6px 2px; font-size:clamp(11px, 3.2vw, 13px); line-height:1.25; }
+.combat-fiche .meta{ font-size:inherit; margin:0; }
+.combat-atk-fiche{ width:18px; height:18px; margin-left:2px; opacity:.7; font-size:11px; }
 .combat-badges{ display:flex; justify-content:center; flex-wrap:wrap; gap:2px; margin-top:2px; }
 .combat-badge{ font-size:clamp(8px, 2.4vw, 11px); background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.35); border-radius:3px; padding:0 3px; color:#fff; line-height:1.3; }
 .combat-atk-sym{ display:flex; gap:6px; width:100%; max-width:100%; overflow:hidden; white-space:nowrap; font-size:var(--attack-desc-font-size, 11px); line-height:1.2; }
@@ -1175,7 +1179,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v450</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v451</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2058,10 +2062,9 @@
 <div class="overlay" id="robotsModelesOverlay">
   <div class="sheet" style="max-height:85vh; overflow-y:auto;">
     <div class="sheet-top">
-      <h3 style="margin-top:0;" id="robotsModelesTitre">Robots</h3>
+      <h3 style="margin-top:0; display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><span id="robotsModelesTitre">Robots</span><button type="button" class="aide-i" id="robotsModelesInfoBtn" title="Qu'est-ce qu'un modèle ?">i</button><span id="robotsModelesStatusTxt" class="meta" style="margin:0; font-weight:400;">Connexion…</span></h3>
       <button class="sheet-x" id="robotsModelesCloseBtn">✕</button>
     </div>
-    <div class="meta" id="robotsModelesStatus" style="display:flex; align-items:center; gap:8px;"><span id="robotsModelesStatusTxt">Connexion…</span><button type="button" class="btn-secondary" id="robotsModelesInfoBtn" style="padding:2px 8px; font-size:12px;" title="Qu'est-ce qu'un modèle ?">ℹ️</button></div>
     <p class="meta" id="robotsModelesInfo" style="display:none; margin:0 0 10px;">Un modèle = un robot du jeu : son vice, son profil de stats, son trait, ses cinq immunités et la liste des attaques qu'il peut apprendre, dont le joueur choisit quatre.</p>
     <div id="robotsModelesNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
       <button class="btn-capture" data-rmsection="new" style="flex:1 1 45%;">Nouveau modèle</button>
@@ -9692,14 +9695,18 @@ document.getElementById('editorCloseBtn').addEventListener('click', async ()=>{
 });
 
 /* ---------- Outil de cadrage du portrait de combat ---------- */
-document.getElementById('editPortraitCropBtn').addEventListener('click', openPortraitCropTool);
-function openPortraitCropTool(){
-  const imgUrl = uploadedImageDataUrl;
+document.getElementById('editPortraitCropBtn').addEventListener('click', ()=> openPortraitCropTool());
+/* v451 : le même outil sert à la fiche robot — `opts` = { imgUrl, crop, onSave(crop), onClose() }.
+   Sans opts, c'est l'usage d'origine (fiche PNJ). */
+function openPortraitCropTool(opts){
+  const pourPnj = !opts;
+  const imgUrl = pourPnj ? uploadedImageDataUrl : opts.imgUrl;
   if (!imgUrl){ showToast('Ce PNJ n\'a pas d\'image enregistrée.'); return; }
-  document.getElementById('editorOverlay').classList.remove('show');
+  if (pourPnj) document.getElementById('editorOverlay').classList.remove('show');
   document.getElementById('portraitCropOverlay').classList.add('show');
 
-  let crop = pendingCombatPortraitCrop ? { ...pendingCombatPortraitCrop } : { cx:0.5, cy:0.28, size:0.5 };
+  const cropDepart = pourPnj ? pendingCombatPortraitCrop : opts.crop;
+  let crop = cropDepart ? { ...cropDepart } : { cx:0.5, cy:0.28, size:0.5 };
   const stage = document.getElementById('cropStage');
   const box = document.getElementById('cropBox');
   const img = document.getElementById('cropStageImg');
@@ -9753,15 +9760,18 @@ function openPortraitCropTool(){
   box.onpointerup = ()=>{ dragging = false; };
   box.onpointercancel = ()=>{ dragging = false; };
 
-  document.getElementById('cropCancelBtn').onclick = ()=>{
+  const refermer = ()=>{
     document.getElementById('portraitCropOverlay').classList.remove('show');
-    document.getElementById('editorOverlay').classList.add('show');
+    if (pourPnj) document.getElementById('editorOverlay').classList.add('show');
+    else if (opts.onClose) opts.onClose();
   };
+  document.getElementById('cropCancelBtn').onclick = refermer;
   document.getElementById('cropSaveBtn').onclick = ()=>{
-    pendingCombatPortraitCrop = { ...crop };
-    document.getElementById('portraitCropOverlay').classList.remove('show');
-    document.getElementById('editorOverlay').classList.add('show');
-    showToast('🎯 Cadrage enregistré — n\'oublie pas de valider avec "Enregistrer le PNJ" pour le sauvegarder.');
+    if (pourPnj) pendingCombatPortraitCrop = { ...crop };
+    else if (opts.onSave) opts.onSave({ ...crop });
+    refermer();
+    showToast(pourPnj ? '🎯 Cadrage enregistré — n\'oublie pas de valider avec "Enregistrer le PNJ" pour le sauvegarder.'
+                      : '🎯 Cadrage enregistré — n\'oublie pas d\'enregistrer le modèle.');
   };
 }
 
@@ -12901,7 +12911,7 @@ let rmBrouillon = null;       // la fiche en cours de saisie
 function robotModeleVierge(vice){
   vice = vice || CLES_VICES[0];
   return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), liste:[], jeu:[],
-    faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0 };
+    faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null };
 }
 /* Les quatre attaques emportées : celles choisies, restreintes à la liste apprenable, sans doublon,
    complétées depuis la liste pour ne jamais partir à moins de quatre (mainDeFiche du proto). */
@@ -12969,12 +12979,10 @@ function renderRobotModeleForm(){
     <div id="rmJeuZone">${htmlJeuModele(f)}</div>
     ${htmlImageModele('face', 'Combat face', 'Le robot vu de face : c\'est lui qu\'on affronte, et son portrait dans la barre des tours.', f)}
     ${htmlImageModele('dos', 'Combat dos', 'Le robot vu de dos, quand il se bat à tes côtés. Sans image de dos, la face sert des deux côtés.', f)}
-    <div class="field-label">Taille en combat (%)</div>
-    <input type="number" id="rmEchelle" class="field-input" value="${f.imageScale == null ? 100 : f.imageScale}" min="20" max="300" step="5">
-    <div style="display:flex; gap:8px;">
-      <div style="flex:1;"><div class="field-label">Décalage face (% haut/bas)</div><input type="number" id="rmOffsetFace" class="field-input" value="${f.offsetFace || 0}" min="-60" max="60"></div>
-      <div style="flex:1;"><div class="field-label">Décalage dos (% haut/bas)</div><input type="number" id="rmOffsetDos" class="field-input" value="${f.offsetDos || 0}" min="-60" max="60"></div>
-    </div>
+    ${htmlApercuCombatModele(f)}
+    <div class="field-label">🎯 Portrait de la barre des tours</div>
+    <button type="button" class="btn-secondary" id="rmPortraitCropBtn" style="width:100%;">🎯 Régler le cadrage visage + buste</button>
+    <p class="meta" style="margin:6px 0 0;">Recadre l'image de FACE pour la vignette de la barre d'ordre des tours. Le même cadrage sert des deux côtés, allié ou adversaire.</p>
     <button class="btn-capture" id="rmSaveBtn" style="width:100%; margin-top:16px;">${editingRobotModeleId ? 'Mettre à jour le modèle' : 'Enregistrer le modèle'}</button>
     ${editingRobotModeleId ? '<button class="btn-secondary" id="rmDeleteBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Supprimer ce modèle</button>' : ''}
     <button class="btn-secondary" id="rmCancelBtn" style="width:100%; margin-top:8px;">Annuler</button>`;
@@ -12992,7 +13000,7 @@ function cablerFormRobotModele(){
     renderRobotModeleForm();
   });
   wrap.querySelector('#rmProfil').addEventListener('change', (e)=>{ document.getElementById('rmProfilResume').textContent = resumeProfil(e.target.value); });
-  cablerImageModele('face'); cablerImageModele('dos');
+  cablerImageModele('face'); cablerImageModele('dos'); cablerApercuCombatModele();
   wrap.querySelectorAll('details[data-rmvice]').forEach(d=> d.addEventListener('toggle', ()=>{ rmOuverts[d.dataset.rmvice] = d.open; }));
   wrap.querySelectorAll('#rmImmunites input[type="checkbox"]').forEach(chk=> chk.addEventListener('change', ()=>{
     const cochees = wrap.querySelectorAll('#rmImmunites input[type="checkbox"]:checked');
@@ -13055,7 +13063,7 @@ function renderRobotsModelesList(){
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), liste:(m.liste||[]).slice(), jeu:(m.jeu||[]).slice(),
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
-      imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0 };
+      imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
     rmViceAvant = rmBrouillon.vice;
     rmOuverts = {};
     showRobotsModelesSection('new');
@@ -13085,7 +13093,7 @@ function showRobotsModelesSection(name){
     document.getElementById('robotsModelesOverlay').classList.remove('show');
   });
 })();
-(function(){ const b = document.getElementById('robotsModelesInfoBtn'); if (b) b.addEventListener('click', ()=>{ const p = document.getElementById('robotsModelesInfo'); p.style.display = p.style.display === 'none' ? '' : 'none'; }); })();
+(function(){ const b = document.getElementById('robotsModelesInfoBtn'); if (b) b.addEventListener('click', ()=>{ const p = document.getElementById('robotsModelesInfo'); const ouvert = p.style.display === 'none'; p.style.display = ouvert ? '' : 'none'; p.classList.toggle('ouvert', ouvert); b.classList.toggle('ouvert', ouvert); }); })();
 function ouvrirRobotsModeles(){
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('robotsModelesOverlay').classList.add('show');
@@ -13388,7 +13396,7 @@ function chargerUltime(f, dmg){
    roue, les défenses, les immunités et les couvertures — comme tout coup. */
 function executerUltime(att, cibleChoisie){
   const u = ultimeDe(att);
-  log(`${u.emoji} ${att.nom} invoque ${u.nom.toUpperCase()} !`);
+  log(`${att.nom} invoque ${u.nom} (ultime) !`);
   particule(att.uid, u.emoji + ' ' + u.nom, 'combat-particle-heal');
   att.ultime = 0; att.ultimePrete = false;
   u.etapes.forEach((e, i)=>{
@@ -13634,7 +13642,7 @@ function frapper(att, cible, attaque, puissance){
   if (!modeSimulation) combat.hitUids.push(cible.uid);
   particule(cible.uid, '-'+dmg, 'combat-particle-dmg');
 
-  let phrase = `${att.nom} inflige ${dmg} à ${cible.nom}`;
+  let phrase = `${att.nom} inflige ${dmg} dégâts à ${cible.nom}`;
   if (mult > 1) phrase += ' — c\'est efficace !';
   else if (mult < 1) phrase += ' — peu efficace…';
   log(phrase + '.');
@@ -13830,7 +13838,7 @@ function executerAttaque(att, attaque, cibleChoisie){
   att.derniereAttaqueUtilisee = attaque;
   /* v19 : LE JOURNAL NOMME L'ATTAQUE. Sans ça un coup à 91 reste un mystère
      (son test du 31/08 : « ce n'était pas affiché le nom de l'attaque »). */
-  if (!attaque.ultime) log(`${att.nom} utilise ${attaque.nom}${(attaque.cout||0) > 0 ? ` (${MOT.manaIcone}${attaque.cout})` : ''}.`);
+  if (!attaque.ultime) log(`${att.nom} utilise ${attaque.nom}${(attaque.cout||0) > 0 ? ` (coût ${MOT.manaIcone}${attaque.cout})` : ''}.`);
 
   // Confusion : une fois sur trois, on se frappe soi-même
   if (att.statuts.confusion && hasard(33)){
@@ -13988,7 +13996,8 @@ function executerAttaque(att, attaque, cibleChoisie){
       const pris = Math.min(c.mana, attaque.mana || 20);
       c.mana -= pris; total += pris;
     });
-    log(total ? `${att.nom} assèche ${total} de mana au camp adverse.` : `${att.nom} ne trouve plus rien à assécher.`);
+    /* v451 : « assèche 40 de mana » se lisait comme des dégâts (son test du 01/09) */
+    log(total ? `${att.nom} retire ${total} ${MOT.manaIcone} à tout le camp adverse.` : `${att.nom} ne trouve plus de ${MOT.manaIcone} à retirer au camp adverse.`);
     return;
   }
   if (t === 'transfert'){
@@ -14592,8 +14601,13 @@ function ficheAttaque(a){
   if (a.type === 'degats_bas') effets.push('×0,6 à pleine vie, jusqu\'à ×2,2 à l\'agonie');
   if (a.type === 'vol_mana' || a.type === 'mana_camp') effets.push(`retire ${a.mana||20} de cristal`);
   if (effets.length) corps += `<div class="meta">Effet : ${effets.join(' · ')}</div>`;
-  panneau.innerHTML = `<div style="padding:6px 4px;">${corps}</div>
-    <div class="combat-action-secondary"><button type="button" id="btnFicheRetour">↩️ Retour</button></div>`;
+  poserFiche(panneau, corps);
+}
+/* v451 : la fiche DÉFILE dans le panneau (hauteur fixe) au lieu de déborder quand le descriptif
+   prend une ligne de plus, et le bouton Retour reste toujours visible en bas. */
+function poserFiche(panneau, corps){
+  panneau.innerHTML = `<div class="combat-fiche">${corps}</div>
+    <div class="combat-action-secondary" style="flex:none;"><button type="button" class="btn-secondary" id="btnFicheRetour">↩️ Retour</button></div>`;
   $('btnFicheRetour').addEventListener('click', ()=> rappelPanneau());
 }
 
@@ -14602,14 +14616,10 @@ function ficheUltime(f){
   const u = ultimeDe(f);
   const panneau = $('combatActionPanel');
   const etapes = u.etapes.map(e=> `<div class="meta">${symbolesAttaque(Object.assign({puissance:0}, e))} ${LIB_TYPES[e.type]||e.type}</div>`).join('');
-  panneau.innerHTML = `<div style="padding:6px 4px;">
-      <div style="font-size:1.05em;"><strong>${u.emoji} ${u.nom}</strong> — ultime de ${f.nom}</div>
+  poserFiche(panneau, `<div style="font-size:1.05em;"><strong>${u.emoji} ${u.nom}</strong> — ultime de ${f.nom}</div>
       <div class="meta" style="margin:4px 0;">${u.desc}</div>
       ${etapes}
-      <div class="meta">Jauge : ${Math.round(f.ultime||0)} % — pleine après ${R.chargeUltime} % de ses PV max encaissés. Gratuite, ne rate jamais.</div>
-    </div>
-    <div class="combat-action-secondary"><button type="button" id="btnFicheRetour">↩️ Retour</button></div>`;
-  $('btnFicheRetour').addEventListener('click', ()=> rappelPanneau());
+      <div class="meta">Jauge : ${Math.round(f.ultime||0)} % — pleine après ${R.chargeUltime} % de ses PV max encaissés. Gratuite, ne rate jamais.</div>`);
 }
 
 
@@ -14737,6 +14747,108 @@ function htmlImageModele(cle, titre, aide, f){
       </div>
     </div>`;
 }
+/* v451 — L'APERÇU DE COMBAT DE LA FICHE ROBOT : le même que celui des PNJ (deux colonnes à la taille
+   réelle, silhouette, trois curseurs). Régler une taille et deux décalages en chiffres, sans rien voir,
+   c'était « estimer à l'aveugle » (son test du 01/09). Les curseurs écrivent dans le brouillon. */
+function htmlApercuCombatModele(f){
+  return `
+    <div class="field-label">📏 Taille en combat</div>
+    <p class="meta" style="margin:0 0 8px;">Aperçu à la taille réelle du combat. Le robot est calé sur le sol : agrandir le fait monter, pas descendre. À gauche tel qu'on l'affronte (face), à droite tel qu'il se bat à tes côtés (dos, ou face s'il n'a pas de dos).</p>
+    <div style="display:flex; gap:14px; align-items:flex-start; justify-content:center; padding:10px; border-radius:10px; background:rgba(0,0,0,.35);">
+      <div style="text-align:center;">
+        <div class="meta" style="font-size:9px; margin-bottom:3px;">ADVERSAIRE</div>
+        <div class="combat-hp-label" style="color:#2ecc71; display:block; margin:0 auto 3px; text-align:center; width:fit-content;">100 / 100 PV</div>
+        <div id="rmApercuBoxFace" style="position:relative; overflow:hidden;">
+          <div class="apercu-silhouette"></div>
+          <img id="rmApercuImgFace" style="position:absolute; left:0; bottom:0; width:100%; height:100%; object-fit:contain; object-position:bottom; transform-origin:bottom center;">
+        </div>
+      </div>
+      <div style="text-align:center;">
+        <div class="meta" style="font-size:9px; margin-bottom:3px;">À TES CÔTÉS</div>
+        <div id="rmApercuBoxDos" style="position:relative; overflow:hidden;">
+          <div class="apercu-silhouette"></div>
+          <img id="rmApercuImgDos" style="position:absolute; left:0; bottom:0; width:100%; height:100%; object-fit:contain; object-position:bottom; transform-origin:bottom center;">
+        </div>
+        <div class="combat-hp-label" style="color:#2ecc71; display:block; margin:3px auto 0; text-align:center; width:fit-content;">100 / 100 PV</div>
+      </div>
+    </div>
+    <div class="field-row" style="align-items:center; margin-top:8px;">
+      <span class="meta" style="flex:0 0 74px;">Taille</span>
+      <input type="range" id="rmEchelle" min="20" max="300" step="5" value="${f.imageScale == null ? 100 : f.imageScale}" style="flex:3;">
+      <span id="rmEchelleVal" class="meta" style="flex:0 0 52px; text-align:right;">${f.imageScale == null ? 100 : f.imageScale} %</span>
+    </div>
+    <div class="field-row" style="align-items:center; margin-top:4px;">
+      <span class="meta" style="flex:0 0 74px;">Haut. adv.</span>
+      <input type="range" id="rmOffsetFace" min="-60" max="60" step="1" value="${f.offsetFace || 0}" style="flex:3;">
+      <span id="rmOffsetFaceVal" class="meta" style="flex:0 0 52px; text-align:right;">${f.offsetFace || 0}</span>
+    </div>
+    <div class="field-row" style="align-items:center; margin-top:4px;">
+      <span class="meta" style="flex:0 0 74px;">Haut. allié</span>
+      <input type="range" id="rmOffsetDos" min="-60" max="60" step="1" value="${f.offsetDos || 0}" style="flex:3;">
+      <span id="rmOffsetDosVal" class="meta" style="flex:0 0 52px; text-align:right;">${f.offsetDos || 0}</span>
+    </div>
+    <button type="button" class="btn-secondary" id="rmEchelleReset" style="width:100%; margin-top:6px;">↺ Revenir au réglage d'origine</button>
+    <p class="meta" style="margin:6px 0 0;">Les lignes « 100 / 100 PV » sont celles du combat : c'est par rapport à elles qu'on cale le robot. AU-DESSUS quand il t'affronte, EN DESSOUS quand il se bat à tes côtés. La silhouette grise est quelqu'un de taille ordinaire. « Hauteur » remonte ou descend le robot.</p>`;
+}
+function urlImageModele(f, cle){
+  return f[cle + 'ImagePath'] ? resolveMediaPath(f[cle + 'ImagePath']) : (f[cle + 'ImageDataUrl'] || '');
+}
+function renderApercuCombatModele(){
+  const f = rmBrouillon; if (!f) return;
+  const boxF = document.getElementById('rmApercuBoxFace'), imgF = document.getElementById('rmApercuImgFace');
+  const boxD = document.getElementById('rmApercuBoxDos'),  imgD = document.getElementById('rmApercuImgDos');
+  if (!boxF || !imgF || !boxD || !imgD) return;
+  const px = getAvatarSizePx();
+  [boxF, boxD].forEach(b=>{ b.style.width = px + 'px'; b.style.height = px + 'px'; });
+  const poser = (el, s)=>{ if (s){ el.src = s; el.style.display = 'block'; } else { el.removeAttribute('src'); el.style.display = 'none'; } };
+  const face = urlImageModele(f, 'face'), dos = urlImageModele(f, 'dos');
+  const echelle = ' scale(' + ((f.imageScale == null ? 100 : f.imageScale) / 100) + ')';
+  poser(imgF, face);
+  imgF.style.transform = 'translateY(' + (f.offsetFace || 0) + '%)' + echelle;
+  /* Même règle qu'en combat : à tes côtés c'est le dos s'il existe (décalage dos), sinon la face (décalage face). */
+  const aDos = !!(dos || f.dosImageRef);
+  poser(imgD, dos || face);
+  imgD.style.transform = 'translateY(' + (aDos ? (f.offsetDos || 0) : (f.offsetFace || 0)) + '%)' + echelle;
+  const v = (id, t)=>{ const el = document.getElementById(id); if (el) el.textContent = t; };
+  v('rmEchelleVal', (f.imageScale == null ? 100 : f.imageScale) + ' %');
+  v('rmOffsetFaceVal', String(f.offsetFace || 0));
+  v('rmOffsetDosVal', String(f.offsetDos || 0));
+  ['rmEchelle','rmOffsetFace','rmOffsetDos'].forEach((id, i)=>{ const el = document.getElementById(id); const val = [f.imageScale == null ? 100 : f.imageScale, f.offsetFace || 0, f.offsetDos || 0][i]; if (el && +el.value !== val) el.value = val; });
+}
+function cablerApercuCombatModele(){
+  const f = rmBrouillon; if (!f) return;
+  const b = (id, fn)=>{ const el = document.getElementById(id); if (el) el.addEventListener('input', (e)=>{ fn(e); renderApercuCombatModele(); }); };
+  b('rmEchelle', e=>{ f.imageScale = Math.max(20, Math.min(300, parseInt(e.target.value, 10) || 100)); });
+  b('rmOffsetFace', e=>{ f.offsetFace = Math.max(-60, Math.min(60, parseInt(e.target.value, 10) || 0)); });
+  b('rmOffsetDos', e=>{ f.offsetDos = Math.max(-60, Math.min(60, parseInt(e.target.value, 10) || 0)); });
+  const reset = document.getElementById('rmEchelleReset');
+  if (reset) reset.addEventListener('click', ()=>{ f.imageScale = 100; f.offsetFace = 0; f.offsetDos = 0; renderApercuCombatModele(); });
+  const crop = document.getElementById('rmPortraitCropBtn');
+  if (crop) crop.addEventListener('click', ()=>{
+    const face = urlImageModele(f, 'face');
+    if (!face){ showToast(f.faceImageRef ? 'L\'image de face se charge encore, réessaie dans un instant' : 'Pose d\'abord une image « Combat face »'); return; }
+    const overlay = document.getElementById('robotsModelesOverlay');
+    overlay.classList.remove('show');
+    openPortraitCropTool({
+      imgUrl: face, crop: f.portraitCrop || null,
+      onSave: (c)=>{ f.portraitCrop = c; },
+      onClose: ()=> overlay.classList.add('show'),
+    });
+  });
+  /* Une image gardée en référence interne n'a pas d'adresse : on la lit pour l'aperçu et la vignette. */
+  ['face','dos'].forEach(cle=>{
+    if (f[cle + 'ImageRef'] && !f[cle + 'ImagePath'] && !f[cle + 'ImageDataUrl']){
+      internalizeSceneImage(f[cle + 'ImageRef']).then(url=>{
+        if (rmBrouillon !== f || !url) return;
+        f[cle + 'ImageDataUrl'] = url;
+        const p = document.getElementById('rm' + cle + 'Preview');
+        if (p) p.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain;">`;
+        renderApercuCombatModele();
+      }).catch(()=>{});
+    }
+  });
+  renderApercuCombatModele();
+}
 /* Un même bloc pour la face et le dos : lit le fichier (600 px max), GitHub, ou vide. */
 function cablerImageModele(cle){
   const f = rmBrouillon;
@@ -14744,6 +14856,7 @@ function cablerImageModele(cle){
     const p = document.getElementById('rm' + cle + 'Preview');
     const url = f[cle + 'ImagePath'] ? resolveMediaPath(f[cle + 'ImagePath']) : (f[cle + 'ImageDataUrl'] || '');
     p.innerHTML = url ? `<img src="${url}" style="width:100%; height:100%; object-fit:contain;">` : (f[cle + 'ImageRef'] ? '🖼️' : '—');
+    renderApercuCombatModele();
   };
   document.getElementById('rm' + cle + 'GithubBtn').addEventListener('click', ()=>{
     openGithubFilePicker(null, (item)=>{
@@ -14782,9 +14895,10 @@ async function champsImagesModele(f){
     if (!path && !ref && f[cle + 'ImageDataUrl']) ref = await externalizeSceneImage(f[cle + 'ImageDataUrl']);
     out[cle + 'ImagePath'] = path; out[cle + 'ImageRef'] = ref;
   }
-  out.imageScale = Math.max(20, Math.min(300, parseInt(document.getElementById('rmEchelle').value, 10) || 100));
-  out.offsetFace = Math.max(-60, Math.min(60, parseInt(document.getElementById('rmOffsetFace').value, 10) || 0));
-  out.offsetDos  = Math.max(-60, Math.min(60, parseInt(document.getElementById('rmOffsetDos').value, 10) || 0));
+  out.imageScale = Math.max(20, Math.min(300, parseInt(f.imageScale, 10) || 100));
+  out.offsetFace = Math.max(-60, Math.min(60, parseInt(f.offsetFace, 10) || 0));
+  out.offsetDos  = Math.max(-60, Math.min(60, parseInt(f.offsetDos, 10) || 0));
+  out.portraitCrop = f.portraitCrop || null;   // v451 : la vignette de la barre des tours
   return out;
 }
 
@@ -14907,6 +15021,7 @@ function ctCombattantDepuisSlot(s, side, variation){
     variation,
     images: img, imageScale: m.imageScale == null ? 100 : m.imageScale,
     offsetFace: m.offsetFace || 0, offsetDos: m.offsetDos || 0,
+    portraitCrop: m.portraitCrop || null,
   };
 }
 async function lancerCombatTest(){
@@ -14934,11 +15049,19 @@ async function lancerCombatTest(){
     f.combatImageRef = deDos ? null : (img.faceRef || null);
     f.combatImageScale = c.imageScale == null ? 100 : c.imageScale;
     f.combatImageOffsetY = deDos ? (c.offsetDos || 0) : (c.offsetFace || 0);
+    f.combatPortraitCrop = c.portraitCrop || null;   // v451 : cadrage de la vignette, sur la face
+    f.faceImageRef = img.faceRef || null;
     f.attacksList = f.main;   // pour le préchargement des effets
   });
   combatZoneContext = null;
   retourDialogueCombat = null;
   await resoudreImagesDeDos(combatState.fighters);
+  /* v451 : un allié vu de dos dont la face est une image interne n'avait pas de faceImageUrl — la
+     vignette de la barre des tours montrait alors son dos. On lit la face à part. */
+  await Promise.all(combatState.fighters.map(async (f)=>{
+    if (f.faceImageUrl || !f.faceImageRef) return;
+    try { const url = await internalizeSceneImage(f.faceImageRef); if (url) f.faceImageUrl = url; } catch(e){}
+  }));
   await allegerImagesDeCombat(combatState.fighters);
   preloadCombatFx(combatState.fighters);
   await playCombatEntryTransition(false);
@@ -15029,7 +15152,7 @@ async function m2Jouer(acteur, choix, cible){
   const cibleReelle = combatState.derniereCible;
   const pourBandeau = attaque ? attaque
     : choix === 'souffle' ? { name:'Souffle' }
-    : choix === 'ultime' ? { name: M2.ultimeDe(acteur).nom }
+    : choix === 'ultime' ? { name: M2.ultimeDe(acteur).nom + ' (ultime)' }
     : (choix && choix.objet) ? { name: M2.OBJETS[choix.objet].nom } : null;
   annoncerAction(acteur, pourBandeau, journalAvant);
   if (attaque && attaque.fxSelf && attaque.fxSelf.image){
@@ -15090,8 +15213,10 @@ function m2PanneauAction(acteur){
     const a = dispo[i];
     if (!a) return `<div class="combat-atk-slot-empty"></div>`;
     const bloquee = !M2.abordable(acteur, a);
+    /* v451 : la fiche complète s'ouvre par le petit « i » à droite de la première ligne (plus d'appui
+       long : il se confondait avec le réglage du rectangle, 600 ms sur la même zone). */
     return `<button type="button" class="btn-secondary combat-action-atk" data-attaque="${i}" ${bloquee ? 'data-bloquee="1" style="opacity:.4;"' : ''}>
-      <strong>${a.emoji ? a.emoji + ' ' : ''}${a.nom}</strong>
+      <span style="display:flex; align-items:center; width:100%; gap:4px;"><strong style="flex:1; min-width:0;">${a.emoji ? a.emoji + ' ' : ''}${a.nom}</strong><span class="aide-i combat-atk-fiche" data-fiche="${i}" title="Fiche complète">i</span></span>
       <span class="combat-atk-sym">${M2.symbolesAttaque(a)}</span>
       ${a.desc ? `<div class="combat-atk-desc">${a.desc}</div>` : ''}
     </button>`;
@@ -15104,34 +15229,31 @@ function m2PanneauAction(acteur){
     : acteur.statuts.entrave && acteur.derniereAttaqueUtilisee ? `<p class="meta" style="padding:5px 8px 0; margin:0; color:var(--danger);">⛓️ Entrave : « ${acteur.derniereAttaqueUtilisee.nom} » est bloquée.</p>` : '';
   panel.innerHTML = note + `<div class="combat-attack-grid">${slots}</div>`
     + `<div class="combat-action-secondary">
-        <button type="button" class="btn-secondary" id="m2SouffleBtn" title="Regagner du cristal et revenir plus vite">😮‍💨 +${REGLAGES_COMBAT.manaSouffle}</button>
-        <button type="button" class="btn-secondary" id="m2ObjetsBtn" ${nbObjets ? '' : 'disabled style="opacity:.5;"'}>🎒 ${nbObjets}</button>
-        ${ultimeDispo ? `<button type="button" class="btn-secondary btn-ultime" id="m2UltimeBtn">${U.emoji} ${U.nom}</button>` : ''}
-        <button type="button" class="btn-secondary" id="m2AnalyseBtn">🔍</button>
-        <button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">⏹️</button>
+        <button type="button" class="btn-secondary" id="m2AnalyseBtn">🔍 Analyse</button>
+        <button type="button" class="btn-secondary" id="m2ObjetsBtn" ${nbObjets ? '' : 'disabled style="opacity:.5;"'}>🎒 Objets (${nbObjets})</button>
+        <button type="button" class="btn-secondary" id="m2SouffleBtn" title="Regagner du cristal et revenir plus vite">⏭️ Passer</button>
+        ${ultimeDispo ? `<button type="button" class="btn-secondary btn-ultime" id="m2UltimeBtn"><span style="display:flex; align-items:center; gap:4px; min-width:0;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">${U.emoji} ${U.nom}</span><span class="aide-i combat-atk-fiche" data-fiche="ultime" title="Fiche de l'ultime">i</span></span></button>` : ''}
+        <button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">⏹️ Quitter</button>
       </div>`;
+  /* v451 : libellés ÉCRITS (Analyse, Objets, Passer, Quitter) plutôt que des icônes seules — sa demande
+     du 01/09 : « c'est plus clair que les icônes ». Plus d'appui long nulle part dans ce panneau. */
   panel.querySelectorAll('[data-attaque]').forEach(b=>{
-    let timer = null;
-    b.addEventListener('click', ()=>{
-      if (b.dataset.fiche){ delete b.dataset.fiche; return; }
+    b.addEventListener('click', (ev)=>{
+      const fiche = ev.target && ev.target.closest && ev.target.closest('.combat-atk-fiche');
+      if (fiche){ ev.stopPropagation(); M2.ficheAttaque(dispo[parseInt(b.dataset.attaque, 10)]); return; }
       if (b.dataset.bloquee){ showToast('Pas assez de cristal, ou attaque bloquée'); return; }
       m2ChoisirAttaque(acteur, dispo[parseInt(b.dataset.attaque, 10)]);
     });
-    const debut = ()=>{ timer = setTimeout(()=>{ timer = null; b.dataset.fiche = '1'; M2.ficheAttaque(dispo[parseInt(b.dataset.attaque, 10)]); }, 420); };
-    const fin = ()=>{ if (timer){ clearTimeout(timer); timer = null; } };
-    b.addEventListener('pointerdown', debut); b.addEventListener('pointerup', fin); b.addEventListener('pointerleave', fin);
-    b.addEventListener('contextmenu', ev=> ev.preventDefault());
   });
-  document.getElementById('m2SouffleBtn').addEventListener('click', ()=> m2Jouer(acteur, 'souffle', null));
+  document.getElementById('m2SouffleBtn').addEventListener('click', ()=> m2ConfirmerSouffle(acteur));
   document.getElementById('m2ObjetsBtn').addEventListener('click', ()=> m2MenuObjets(acteur));
   const bU = document.getElementById('m2UltimeBtn');
   if (bU){
-    bU.addEventListener('click', ()=> m2LancerUltime(acteur));
-    let t = null;
-    bU.addEventListener('pointerdown', ()=>{ t = setTimeout(()=>{ t = null; M2.ficheUltime(acteur); }, 420); });
-    const fin = ()=>{ if (t){ clearTimeout(t); t = null; } };
-    bU.addEventListener('pointerup', fin); bU.addEventListener('pointerleave', fin);
-    bU.addEventListener('contextmenu', ev=> ev.preventDefault());
+    bU.addEventListener('click', (ev)=>{
+      const fiche = ev.target && ev.target.closest && ev.target.closest('.combat-atk-fiche');
+      if (fiche){ ev.stopPropagation(); M2.ficheUltime(acteur); return; }
+      m2LancerUltime(acteur);
+    });
   }
   document.getElementById('m2AnalyseBtn').addEventListener('click', ()=>{
     if (!M2.vivants(acteur.side === 'player' ? 'enemy' : 'player').length){ showToast('Aucune cible à analyser.'); return; }
@@ -15142,36 +15264,75 @@ function m2PanneauAction(acteur){
     if (await appConfirm('Arrêter ce combat de test ?')) m2Quitter();
   });
 }
-/* Le ciblage : on ne demande que quand il y a vraiment un choix (règle du proto). */
+/* v451 : confirmation avant de passer son tour, comme l'ancien « Passer » — pendant qu'elle est ouverte,
+   la barre des tours montre la place que le robot prendrait (jauge à 50), et le gain de cristal est
+   écrit dans une autre couleur pour voir d'un coup les DEUX bénéfices (sa demande du 01/09). */
+function m2ConfirmerSouffle(acteur){
+  const panel = document.getElementById('combatActionPanel');
+  const gain = REGLAGES_COMBAT.manaSouffle;
+  const apres = Math.min(acteur.maxMana, acteur.mana + gain);
+  panel.innerHTML = `
+    <div style="padding:10px 8px; text-align:center;">
+      <p class="meta" style="margin:0 0 4px; font-size:13px;">Passer ton tour ? La jauge repart à ${REGLAGES_COMBAT.jaugeApresSouffle} % (retour plus rapide qu'après une vraie action).</p>
+      <p style="margin:0 0 10px; font-size:14px;">${MOT.manaIcone} ${acteur.mana} → <strong style="color:#1f7fbf;">${apres}</strong> <span style="color:#1f7fbf; font-weight:700;">(+${apres - acteur.mana})</span></p>
+      <div style="display:flex; gap:8px; justify-content:center;">
+        <button type="button" class="btn-secondary" id="m2SouffleOkBtn">✔️ Confirmer</button>
+        <button type="button" class="btn-secondary" id="m2SouffleRetourBtn">↩️ Retour</button>
+      </div>
+    </div>`;
+  combatState.passPreviewUid = acteur.uid;
+  renderCombatTurnOrderBar();
+  document.getElementById('m2SouffleOkBtn').addEventListener('click', ()=>{
+    combatState.passPreviewUid = null;
+    m2Jouer(acteur, 'souffle', null);
+  });
+  document.getElementById('m2SouffleRetourBtn').addEventListener('click', ()=>{
+    combatState.passPreviewUid = null;
+    m2PanneauAction(acteur);
+    renderCombatTurnOrderBar();
+  });
+}
+/* LE CIBLAGE (v451) — règle du JEU, pas du proto : on tape TOUJOURS sur l'image de la cible, même
+   quand elle est seule, et même pour une attaque de groupe (on tape un membre du camp visé, « c'est plus
+   clair »). Seule exception : ce qui ne peut viser que soi-même part directement. Sa décision du 01/09. */
+function m2CampVise(kind){
+  if (kind === 'heal_single' || kind === 'heal_group' || kind === 'item') return 'allie';
+  if (kind === 'self') return 'soi';
+  return 'adverse';   // damage_single, single, damage_group, analyze, ultime
+}
 function m2ChoisirAttaque(acteur, a){
   if (!a) return;
-  if (M2.TYPES_CIBLE_ALLIE.has(a.type)){
-    const allies = M2.vivants(acteur.side);
-    if (allies.length <= 1) return m2Jouer(acteur, a, allies[0]);
-    combatState.pendingAttack = a;
-    return renderCombatTargetingPanel(acteur, `${a.nom} — sur quel allié ?`);
-  }
-  if (!M2.TYPES_CIBLE_UNIQUE.has(a.type)) return m2Jouer(acteur, a, null);
-  const campAdverse = acteur.side === 'player' ? 'enemy' : 'player';
-  let cibles = M2.vivants(campAdverse);
-  const provoc = cibles.filter(c=> c.statuts.taunt);
-  if (provoc.length) cibles = provoc;
-  if (cibles.length <= 1) return m2Jouer(acteur, a, cibles[0]);
+  const camp = m2CampVise(a.kind);
+  if (camp === 'soi') return m2Jouer(acteur, a, null);
+  if (camp === 'allie' && !M2.vivants(acteur.side).length) return m2Jouer(acteur, a, null);
   combatState.pendingAttack = a;
-  renderCombatTargetingPanel(acteur, `${a.nom} — sur qui ?`);
+  const groupe = a.kind === 'damage_group' || a.kind === 'heal_group';
+  renderCombatTargetingPanel(acteur, groupe
+    ? `${a.nom} — tape ${camp === 'allie' ? 'un allié : tout ton camp' : 'un adversaire : tout leur camp'} est visé`
+    : `${a.nom} — ${camp === 'allie' ? 'sur quel allié ?' : 'sur qui ?'}`);
 }
 function m2LancerUltime(acteur){
   if ((acteur.ultime || 0) < 100) return;
-  if (M2.ultimeViseUnAdversaire(acteur)){
-    const campAdverse = acteur.side === 'player' ? 'enemy' : 'player';
-    let cibles = M2.vivants(campAdverse);
-    const provoc = cibles.filter(c=> c.statuts.taunt);
-    if (provoc.length) cibles = provoc;
-    if (cibles.length <= 1) return m2Jouer(acteur, 'ultime', cibles[0]);
-    combatState.pendingAttack = { kind:'damage_single', ultime:true, name: M2.ultimeDe(acteur).nom };
-    return renderCombatTargetingPanel(acteur, `${M2.ultimeDe(acteur).nom} — sur qui ?`);
-  }
-  m2Jouer(acteur, 'ultime', null);
+  const u = M2.ultimeDe(acteur);
+  const e = u.etapes[0] || {};
+  const kind = M2.TYPES_CIBLE_UNIQUE.has(e.type) ? 'damage_single'
+    : M2.TYPES_CAMP_ADVERSE.has(e.type) ? 'damage_group'
+    : M2.TYPES_CAMP_ALLIE.has(e.type) ? 'heal_group'
+    : M2.TYPES_CIBLE_ALLIE.has(e.type) ? 'heal_single' : 'self';
+  if (kind === 'self') return m2Jouer(acteur, 'ultime', null);
+  combatState.pendingAttack = { kind, ultime:true, name: u.nom };
+  const camp = m2CampVise(kind);
+  renderCombatTargetingPanel(acteur, (kind === 'damage_group' || kind === 'heal_group')
+    ? `${u.emoji} ${u.nom} — tape ${camp === 'allie' ? 'un allié : tout ton camp' : 'un adversaire : tout leur camp'} est visé`
+    : `${u.emoji} ${u.nom} — ${camp === 'allie' ? 'sur quel allié ?' : 'sur qui ?'}`);
+}
+/* Pendant le choix d'une cible, les cartes de l'autre camp s'estompent : on voit tout de suite où taper. */
+function m2CarteHorsCible(f, att, acteur){
+  if (!att || !acteur || !combatState || !combatState.moteur2) return false;
+  const camp = m2CampVise(att.kind);
+  if (camp === 'allie') return f.side !== acteur.side;
+  if (camp === 'adverse') return f.side === acteur.side;
+  return false;
 }
 function m2MenuObjets(acteur){
   const panel = document.getElementById('combatActionPanel');
@@ -15189,8 +15350,7 @@ function m2MenuObjets(acteur){
       ? combatState.fighters.filter(x=> x.side === acteur.side && !x.alive && !x.aFui)
       : M2.vivants(acteur.side);
     if (!cibles.length){ showToast(o.nom + ' : personne à réanimer'); return; }
-    if (cibles.length <= 1) return m2Jouer(acteur, action, cibles[0]);
-    combatState.pendingAttack = action;
+    combatState.pendingAttack = action;   // v451 : toujours un tap sur la cible, même seule
     renderCombatTargetingPanel(acteur, `${o.emoji} ${o.nom} — pour qui ?`);
   }));
   document.getElementById('m2ObjetsRetourBtn').addEventListener('click', ()=> m2PanneauAction(acteur));
@@ -15222,8 +15382,22 @@ async function m2ClicCarte(uid){
   }
   if (!cible.alive) return;
   if (att.ultime){
-    if (cible.side === acteur.side){ showToast('Cible ennemie requise'); return; }
-    await m2Jouer(acteur, 'ultime', cible);
+    const camp = m2CampVise(att.kind);
+    if (camp === 'adverse' && cible.side === acteur.side){ showToast('Cible ennemie requise'); return; }
+    if (camp === 'allie' && cible.side !== acteur.side){ showToast('Cible alliée requise'); return; }
+    if (camp === 'adverse' && att.kind === 'damage_single'){
+      const provocateurs = M2.vivants(cible.side).filter(f=> f.statuts.taunt);
+      if (provocateurs.length && !provocateurs.includes(cible)){ showToast('📣 ' + provocateurs.map(f=> f.nom).join(' et ') + ' provoque : impossible de viser quelqu\'un d\'autre'); return; }
+    }
+    await m2Jouer(acteur, 'ultime', (att.kind === 'damage_single' || att.kind === 'heal_single') ? cible : null);
+    return;
+  }
+  /* v451 : une attaque de groupe se lance en tapant un membre du camp visé ; le moteur ignore la cible. */
+  if (att.kind === 'damage_group' || att.kind === 'heal_group'){
+    const camp = m2CampVise(att.kind);
+    if (camp === 'adverse' && cible.side === acteur.side){ showToast('Tape un adversaire'); return; }
+    if (camp === 'allie' && cible.side !== acteur.side){ showToast('Tape un allié'); return; }
+    await m2Jouer(acteur, att, null);
     return;
   }
   const versAllie = M2.TYPES_CIBLE_ALLIE.has(att.type);
@@ -25664,6 +25838,8 @@ function fighterCardHtml(f, idx, arr){
       && f.side !== pendingActorFighter.side && f.alive && !f.statuses.taunt){
     bloqueParProvocation = combatState.fighters.some(x=> x.side === f.side && x.alive && x.statuses.taunt);
   }
+  if (!bloqueParProvocation && pendingAttack && pendingActorFighter && combatState.moteur2 && f.alive
+      && m2CarteHorsCible(f, pendingAttack, pendingActorFighter)) bloqueParProvocation = true;   // v451 : même estompage
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'', f.fleeingOut?'combat-fleeing-out':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
@@ -25822,7 +25998,7 @@ function annoncerAction(acteur, attaque, depuis, estUnComplement){
      Effet voulu : « sur Z » reste TOUJOURS, y compris quand la cible est l'acteur lui-même
      (« Roco · Soin sur Roco : +20 PV »). On ne devine plus qui est visé, on le lit. */
   const debutGeste = (nomActeur && nomAttaque)
-    ? new RegExp('^' + echappe(nomActeur) + '\\s+lance\\s+' + echappe(nomAttaque) + '\\s*', 'i')
+    ? new RegExp('^' + echappe(nomActeur) + '\\s+(?:lance|utilise|invoque)\\s+' + echappe(nomAttaque) + '\\s*', 'i')
     : null;
 
   const consequences = [];
