@@ -994,6 +994,27 @@
    première ligne et rognait symboles + description dans la case à hauteur fixe (test v451). */
 .combat-atk-fiche{ font-size:calc(var(--attack-font-size) * .8); width:1.5em; height:1.5em; margin-left:2px; opacity:.7; }
 .btn-ultime .combat-atk-fiche{ font-size:calc(var(--attack-desc-font-size) * .95); }
+/* v456 : les quatre emplacements de la main de départ, au format des boutons de combat.
+   Une liste déroulante ne montrait qu'un nom : on ne savait pas ce qu'on choisissait. */
+.main-slots{ display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:2px 0 0; }
+.main-slot{
+  display:flex; flex-direction:column; align-items:stretch; gap:2px; width:100%; min-width:0;
+  min-height:66px; padding:5px 6px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card, #fff); color:inherit; text-align:left; font-size:12px; line-height:1.2;
+  overflow:hidden; cursor:pointer; font-family:inherit;
+}
+.main-slot.vide{ border-style:dashed; color:var(--muted); align-items:center; justify-content:center; font-style:italic; }
+.main-slot .ms-nom{ font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.main-slot .ms-sym{ font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.main-slot .ms-desc{
+  font-size:11px; color:var(--muted); opacity:.8; font-style:italic; line-height:1.15;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word;
+}
+/* La fenêtre de choix : grille verticale, deux par ligne, elle défile vers le bas —
+   une liste d'attaques apprenables peut dépasser vingt entrées. */
+.main-grille{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.main-grille .main-slot.posee{ outline:2px solid var(--accent); outline-offset:-2px; }
+.main-slot .ms-i{ float:right; margin-left:4px; }
 .combat-badges{ display:flex; justify-content:center; flex-wrap:wrap; gap:2px; margin-top:2px; }
 .combat-badge{ font-size:clamp(8px, 2.4vw, 11px); background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.35); border-radius:3px; padding:0 3px; color:#fff; line-height:1.3; }
 .combat-atk-sym{ display:flex; gap:6px; width:100%; max-width:100%; overflow:hidden; white-space:nowrap; font-size:var(--attack-desc-font-size, 11px); line-height:1.2; }
@@ -1185,7 +1206,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v455</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v457</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2714,9 +2735,8 @@
           <p class="meta" style="margin:4px 0 0;">Le modèle définit ce qui est commun (vice, profil de stats, trait, immunités, attaques apprenables, images de combat). La fiche ne règle que ce qui est propre à cet exemplaire.</p>
           <div id="combatExemplaireBlock" style="display:none;">
             <div class="field-label">Main de départ (4 attaques, prises dans la liste du modèle)</div>
-            <div class="field-row"><select id="editCombatMain0" class="field-input"></select><select id="editCombatMain1" class="field-input"></select></div>
-            <div class="field-row"><select id="editCombatMain2" class="field-input"></select><select id="editCombatMain3" class="field-input"></select></div>
-            <div id="editCombatMainResume" style="margin:6px 0 0;"></div>
+            <div id="editCombatMainSlots" class="main-slots"></div>
+            <div style="display:none;"><select id="editCombatMain0"></select><select id="editCombatMain1"></select><select id="editCombatMain2"></select><select id="editCombatMain3"></select></div>
             <div class="field-label">Écart de stats par exemplaire</div>
             <select id="editCombatEcart" class="field-input">
               <option value="0">Aucun — stats exactes du profil</option>
@@ -9976,17 +9996,21 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
 
-  /* Une fiche recrutable sans moyen d'être recrutée, ou sans chambre, s'enregistre très bien
-     et ne sert à rien : deux fois de suite il a fallu rouvrir la fiche après coup. On PRÉVIENT
-     sans bloquer — c'est un oubli en cours de route, pas une erreur : la fiche peut très bien
-     être enregistrée maintenant et complétée juste après. Le message part APRÈS le toast de
-     confirmation, sinon celui-ci l'écraserait aussitôt. */
-  let avertissementFiche = null;
+  /* v456 : ces deux manques étaient de simples avertissements en v454 — il ne les a jamais vus
+     au test, et il refuse de toute façon « des vieilles croix partout dans le jeu ». Ils
+     BLOQUENT donc la publication : une recrue sans chambre reste coincée dans le vaisseau (son
+     renvoi passe par la porte de sa chambre), et une fiche recrutable qu'aucune réponse ne
+     recrute ne sert à rien. Les fiches en travaux y échappent, comme pour le buste : elles sont
+     justement là pour être incomplètes. */
   if (interactionType === 'combat' && combatStats.recruitable && !enTravaux){
-    const manque = [];
-    if (!(dialogueSteps || []).some(st=> (st.choices || []).some(c=> c && c.recruit))) manque.push('aucune réponse ne le recrute');
-    if (!editRoomImagePath && !editRoomImageRef && !editRoomImageDataUrl) manque.push('pas d\'image de chambre');
-    if (manque.length) avertissementFiche = '⚠️ Recrutable, mais : ' + manque.join(' · ');
+    if (!(dialogueSteps || []).some(st=> (st.choices || []).some(c=> c && c.recruit))){
+      showToast('Fiche recrutable : il faut une réponse de dialogue qui la recrute (🤝), sinon personne ne pourra la recruter');
+      return;
+    }
+    if (!editRoomImagePath && !editRoomImageRef && !editRoomImageDataUrl){
+      showToast('Fiche recrutable : il manque l\'image de chambre — sans elle la recrue reste coincée dans le vaisseau');
+      return;
+    }
   }
 
   const combatArenaImagePath = editZoneArenaImagePath || null;
@@ -10048,7 +10072,6 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
       etape.pnjImage = imageUrl || '';
     }
     showToast(enTravaux ? '🚧 Brouillon enregistré — les joueurs ne le voient pas' : '📤 PNJ publié');
-    if (avertissementFiche) setTimeout(()=> showToast(avertissementFiche), 1200);
     /* Un enregistrement peut avoir été demandé pour pouvoir PARTIR quelque part : dans ce cas
        on enchaîne au lieu de vider la fiche, sinon le voyage arriverait sur un formulaire neuf. */
     if (apresEnregistrementFiche){
@@ -14846,7 +14869,7 @@ return {
    - les images « combat face » et « combat dos » de la fiche robot,
    - l'écran « Combat de test » (deux équipes composées à partir des fiches robot),
    - le tour de jeu piloté par l'enveloppe (bond, effets, bandeau, particules) autour de M2.
-   Le reste du jeu (zones, recrues, JcJ, dialogues) reste sur l'ancien moteur jusqu'à l'étape 3.
+   Depuis l'étape 3 (v453) puis la 3b (v457), TOUT le jeu tourne sur M2 : l'ancien moteur n'existe plus.
    ===================================================================================== */
 
 /* ---------- LES IMAGES D'UN MODÈLE ---------- */
@@ -15209,21 +15232,108 @@ function majBlocsModele(mainVoulue, garderMain){
   });
   majResumeMain();
 }
-/* Une liste déroulante ne montre qu'un nom : impossible de choisir sa main en connaissance de
-   cause. On redonne sous les quatre sélecteurs ce que le combat affiche déjà — famille, type en
-   clair, puissance, coût 🔷, état posé — par la même fonction, pour qu'il n'y ait qu'un endroit
-   à corriger si le résumé change. */
+/* v456 — LE CHOIX DE LA MAIN DE DÉPART, refait (son constat du test v455 : le récap sous les
+   listes déroulantes montrait bien le contenu, mais il fallait choisir AVANT de voir).
+   Quatre rectangles au format des boutons de combat ; taper un rectangle ouvre la grille des
+   attaques apprenables du modèle. Les <select> d'origine restent, cachés : ils portent la
+   valeur, donc l'enregistrement et le remplissage des options ne changent pas.
+   Le contenu d'un rectangle est celui d'un bouton de combat — nom, symboles, descriptif —
+   pour qu'on choisisse sur ce qu'on verra vraiment en jeu. */
+function htmlContenuAttaque(a, avecI){
+  return `<span class="ms-nom">${avecI ? '<span class="aide-i ms-i" data-fiche="1" title="Fiche complète">i</span>' : ''}${
+    htmlEsc((a.emoji ? a.emoji + ' ' : '') + (a.nom || ''))}</span>
+    <span class="ms-sym">${htmlEsc(resumeAttaque(a))}</span>
+    ${a.desc ? `<span class="ms-desc">${htmlEsc(a.desc)}</span>` : ''}`;
+}
 function majResumeMain(){
-  const box = document.getElementById('editCombatMainResume');
+  const box = document.getElementById('editCombatMainSlots');
   if (!box) return;
-  const lignes = [0,1,2,3].map(i=>{
+  box.innerHTML = [0,1,2,3].map(i=>{
     const s = document.getElementById('editCombatMain' + i);
     const a = s && s.value ? attaqueParId(s.value) : null;
-    if (!a) return '';
-    return `<div class="meta" style="margin:2px 0;"><b>${htmlEsc((a.emoji ? a.emoji + ' ' : '') + (a.nom || ''))}</b> — ${htmlEsc(resumeAttaque(a))}${
-      a.desc ? `<br><span style="opacity:.8;">${htmlEsc(a.desc)}</span>` : ''}</div>`;
-  }).filter(Boolean);
-  box.innerHTML = lignes.length ? lignes.join('') : '<p class="meta" style="margin:0;">Aucune attaque choisie — le jeu par défaut du modèle sera utilisé.</p>';
+    if (!a) return `<button type="button" class="main-slot vide" data-slot="${i}">+ Emplacement ${i + 1}</button>`;
+    return `<button type="button" class="main-slot" data-slot="${i}">${htmlContenuAttaque(a, false)}</button>`;
+  }).join('');
+  box.querySelectorAll('[data-slot]').forEach(b=>{
+    b.addEventListener('click', ()=> ouvrirChoixMain(parseInt(b.dataset.slot, 10)));
+  });
+}
+/* La fiche complète d'une attaque, hors combat : M2.ficheAttaque écrit dans le panneau de
+   combat, qui n'existe pas ici. On redonne les mêmes informations à partir de l'attaque. */
+function corpsFicheAttaque(a){
+  let c = `<div style="font-size:1.05em;"><strong>${htmlEsc((a.emoji ? a.emoji + ' ' : '') + (a.nom || ''))}</strong></div>`;
+  c += `<div class="meta" style="margin:4px 0;">${htmlEsc(a.desc || '')}</div>`;
+  c += `<div class="meta">${htmlEsc(resumeAttaque(a))}</div>`;
+  c += `<div class="meta" style="margin-top:4px;">Coût : ${a.cout ? '🔷 ' + a.cout : 'gratuit'}${
+    a.puissance ? ' · Puissance : ' + a.puissance : ''}${a.preparation ? ' · se prépare ' + a.preparation + ' tour(s)' : ''}</div>`;
+  if (a.statut) c += `<div class="meta">Peut poser : ${htmlEsc(libStatut(a.statut, true))}${
+    a.chanceStatut != null ? ' — ' + a.chanceStatut + ' %' : ''}${a.duree ? ', ' + a.duree + ' tours' : ''}</div>`;
+  if (a.chargesRequises) c += `<div class="meta">Demande ${a.chargesRequises} charge(s).</div>`;
+  if (a.usageUnique) c += `<div class="meta">Une seule fois par combat.</div>`;
+  return c;
+}
+/* Taper une attaque déjà posée la retire : même geste pour poser et pour enlever, comme il l'a
+   demandé. Le petit « i » ouvre la fiche sans rien choisir — pas d'appui long, il ne s'annonce
+   pas et il se confondait avec le réglage du rectangle en combat (leçon de la v451). */
+function ouvrirChoixMain(slot){
+  const sel = document.getElementById('editCombatModele');
+  const m = sel ? ctModele(sel.value) : null;
+  if (!m) return;
+  const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
+  const champ = document.getElementById('editCombatMain' + slot);
+  if (!champ) return;
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '5200';
+  fond.innerHTML = `
+    <div class="sheet" style="max-height:82vh; display:flex; flex-direction:column;">
+      <div class="sheet-top">
+        <h3 style="margin-top:0;">Choisis une attaque pour l'emplacement ${slot + 1}</h3>
+        <button class="sheet-x" data-fermer>✕</button>
+      </div>
+      <div data-corps style="overflow-y:auto; flex:1;"></div>
+    </div>`;
+  document.body.appendChild(fond);
+  const corps = fond.querySelector('[data-corps]');
+  const fermer = ()=> fond.remove();
+  fond.querySelector('[data-fermer]').addEventListener('click', fermer);
+  fond.addEventListener('click', (e)=>{ if (e.target === fond) fermer(); });
+
+  const dessiner = ()=>{
+    if (!permis.length){
+      corps.innerHTML = '<p class="meta">Ce modèle n\'a aucune attaque apprenable.</p>';
+      return;
+    }
+    corps.innerHTML = `<p class="meta" style="margin:0 0 6px;">Retape l\'attaque posée pour la retirer.</p>
+      <div class="main-grille">${permis.map((a, k)=>
+        `<button type="button" class="main-slot${champ.value === a.id ? ' posee' : ''}" data-att="${k}">${
+          htmlContenuAttaque(a, true)}</button>`).join('')}</div>`;
+    corps.querySelectorAll('[data-att]').forEach(b=>{
+      b.addEventListener('click', (ev)=>{
+        const a = permis[parseInt(b.dataset.att, 10)];
+        if (ev.target && ev.target.closest && ev.target.closest('[data-fiche]')){
+          ev.stopPropagation();
+          corps.innerHTML = `<div style="padding:2px;">${corpsFicheAttaque(a)}</div>
+            <button type="button" class="btn-secondary" data-retour style="width:100%; margin-top:8px;">↩️ Retour</button>`;
+          corps.querySelector('[data-retour]').addEventListener('click', dessiner);
+          return;
+        }
+        /* Une attaque déjà placée AILLEURS se déplace ici : la garder deux fois donnerait une
+           main de trois attaques sans le dire. */
+        if (champ.value === a.id) champ.value = '';
+        else {
+          [0,1,2,3].forEach(j=>{
+            const autre = document.getElementById('editCombatMain' + j);
+            if (autre && j !== slot && autre.value === a.id) autre.value = '';
+          });
+          champ.value = a.id;
+        }
+        majResumeMain();
+        fermer();
+      });
+    });
+  };
+  dessiner();
 }
 /* La main de départ d'une fiche : ses choix, restreints à la liste du modèle ; à défaut le jeu du modèle. */
 function mainDeDepartDeFiche(cs, m){
@@ -15445,10 +15555,11 @@ async function startCombatM2(config, arenaBgUrl, opts){
   preloadVictoryMusic();
   libererImagesDeCombat();
   dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
-  combatState = { fighters:[], resolving:true, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[], moteur2:true, test:!!opts.test, isPvp:false, isSpectator:false, passPreviewUid:null, souffleApercuMana:null };
+  combatState = { fighters:[], resolving:true, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[], moteur2:true, test:!!opts.test, isPvp:!!config.pvp, isSpectator:false, passPreviewUid:null, souffleApercuMana:null };
+  if (config.pvp){ combatState.pvp = config.pvp.duelId; combatZoneContext = null; retourDialogueCombat = null; combatAttaquesAutorisees = null; }
   let cfgs = null;
   if (config.reprise){
-    m2Restaurer(combatState, config.reprise);
+    m2Restaurer(combatState, config.reprise, config.pvp ? { role: config.pvp.myRole, garderObjets: false } : null);
   } else {
     M2.demarrer(combatState, { allies: config.allies, ennemis: config.ennemis, objets: config.objets, objetsDef: config.objetsDef });
     cfgs = { player: config.allies, enemy: config.ennemis };
@@ -15494,11 +15605,12 @@ async function startCombatM2(config, arenaBgUrl, opts){
   combatState.resolving = false;
   clearInterval(combatTickTimer);
   combatTickTimer = setInterval(combatTick, 150);
-  if (!opts.test) saveCombatSnapshot();
+  if (!opts.test && !config.pvp) saveCombatSnapshot();
 }
 /* La fuite du joueur sur M2 : même règle que l'ancien moteur (moyenne des chances de fuite des adversaires). */
 async function m2Fuite(acteur){
   if (!combatState || combatState.finished) return;
+  if (combatState.isPvp){ abandonPvpDuel(); return; }   // 3b : pas de fuite en duel, un abandon
   if (combatDeDialogue()){ showToast('Fuite impossible : ce duel doit aller à son terme'); return; }
   if (!(await appConfirm('Fuir ce combat ? Tu perds ta chance de butin.'))) return;
   if (!combatState || combatState.finished || combatState.pendingActor !== acteur.uid) return;
@@ -15547,8 +15659,10 @@ function m2RestaurerCombattant(sf){
   f.attacksList = f.main;
   return f;
 }
-function m2Restaurer(etat, saved){
+function m2Restaurer(etat, saved, duel){
   etat.fighters = (saved.fighters || []).map(m2RestaurerCombattant);
+  /* 3b : en duel, le camp dépend de qui regarde — `owner` est la seule vérité qui voyage */
+  if (duel && duel.role) etat.fighters.forEach(f=>{ f.side = f.owner === duel.role ? 'player' : 'enemy'; });
   etat.fighters.forEach(f=>{
     const ref = f.dernierAttaquant && f.dernierAttaquant.__combattant;
     f.dernierAttaquant = ref ? (etat.fighters.find(x=> x.uid === ref) || null) : null;
@@ -15556,14 +15670,16 @@ function m2Restaurer(etat, saved){
   etat.tour = saved.tour || 0; etat.cycleJoues = saved.cycleJoues || [];
   etat.log = saved.log || []; etat.currentActorUid = null; etat.attenteJoueur = null; etat.derniereCible = null;
   etat.finished = false; etat.vainqueur = null;
-  const sac = m2ObjetsDuJoueur();
-  etat.objets = saved.objets || { player: sac.stock, enemy: {} };
-  etat.objetsDef = Object.assign({}, M2.OBJETS, sac.def);
+  if (!(duel && duel.garderObjets)){
+    const sac = m2ObjetsDuJoueur();
+    etat.objets = (!duel && saved.objets) ? saved.objets : { player: sac.stock, enemy: {} };
+    etat.objetsDef = Object.assign({}, M2.OBJETS, sac.def);
+  }
   M2.combat = etat;
   return etat;
 }
 function m2SauvegarderCombat(){
-  if (!currentUser || !db || !combatState || combatState.finished || combatState.test) return;
+  if (!currentUser || !db || !combatState || combatState.finished || combatState.test || combatState.isPvp) return;
   const data = {
     moteur2: true,
     fighters: combatState.fighters.map(m2SerialiserCombattant),
@@ -15629,7 +15745,7 @@ function ouvrirChoixApprentissageM2(recruit){
    LE TOUR DE JEU — l'enveloppe autour de M2 (bond, effets, bandeau, particules)
    ===================================================================================== */
 function m2Tick(){
-  if (!combatState || combatState.finished || combatState.resolving){
+  if (!combatState || combatState.finished || combatState.resolving || combatState.isSpectator){
     if (!(combatState && combatState.anim)) renderCombat();
     return;
   }
@@ -15637,9 +15753,29 @@ function m2Tick(){
   if (pret) m2TakeTurn(pret);
   renderCombat();
 }
+/* 3b : en duel, le tour d'un robot adverse se joue sur l'AUTRE téléphone — ici on attend son
+   état. Le tour d'un de mes robots commence par réclamer la main (verrou Firestore). */
 async function m2TakeTurn(acteur){
   combatState.resolving = true;
   combatState.currentActorUid = acteur.uid;
+  if (combatState.isPvp){
+    if (acteur.side === 'enemy'){
+      if (!combatState.waitingForOpponentSince) combatState.waitingForOpponentSince = Date.now();
+      renderCombatWaitingPanel(`En attente du coup de ${pvpOpponentPseudo}…`);
+      renderCombat();
+      return;
+    }
+    const aLaMain = await claimPvpTurn();
+    if (!combatState || combatState.finished) return;
+    if (!aLaMain){
+      /* L'adversaire a la main : son état arrivera par le duel et remettra tout d'aplomb. */
+      if (!combatState.waitingForOpponentSince) combatState.waitingForOpponentSince = Date.now();
+      renderCombatWaitingPanel(`En attente du tour de ${pvpOpponentPseudo}…`);
+      renderCombat();
+      return;
+    }
+    combatState.waitingForOpponentSince = null;
+  }
   M2.compterCycle(acteur);
   combatState.hitUids = [];
   const journalAvant = combatState.log.slice();
@@ -15723,6 +15859,7 @@ function m2FinDuTour(){
   renderCombatWaitingPanel();
   renderCombat();
   if (combatState.finished) m2FinDeCombat();
+  else if (combatState.isPvp) syncPvpDuel(true);   // 3b : l'action part chez l'adversaire, la main est libérée
   else if (!combatState.test) saveCombatSnapshot();   // étape 3 : un vrai combat se sauvegarde après chaque action
 }
 function m2FinDeCombat(){
@@ -15781,6 +15918,8 @@ function m2PanneauAction(acteur){
         ${ultimeDispo ? `<button type="button" class="btn-secondary btn-ultime" id="m2UltimeBtn"><span style="display:flex; align-items:center; gap:4px; min-width:0;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">${U.emoji} ${U.nom}</span><span class="aide-i combat-atk-fiche" data-fiche="ultime" title="Fiche de l'ultime">i</span></span></button>` : ''}
         ${combatState.test
           ? '<button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">⏹️ Quitter</button>'
+          : combatState.isPvp
+          ? '<button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">🏳️ Abandonner</button>'
           : (combatDeDialogue()
             ? '<button type="button" class="btn-secondary" id="m2QuitterBtn" disabled style="opacity:.5;">🚫 Fuite impossible</button>'
             : '<button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">🏃 Fuite</button>')}
@@ -15884,7 +16023,7 @@ function m2LancerUltime(acteur){
 }
 /* Pendant le choix d'une cible, les cartes de l'autre camp s'estompent : on voit tout de suite où taper. */
 function m2CarteHorsCible(f, att, acteur){
-  if (!att || !acteur || !combatState || !combatState.moteur2) return false;
+  if (!att || !acteur || !combatState) return false;
   const camp = m2CampVise(att.kind);
   if (camp === 'allie') return f.side !== acteur.side;
   if (camp === 'adverse') return f.side === acteur.side;
@@ -17481,7 +17620,12 @@ function renderRecruitSheet(){
   } else {
     faceEl.style.display = 'none';
   }
-  document.getElementById('recruitSheetMetier').textContent = metier ? metier.name : 'Sans métier';
+  /* v456 : plus de « Sans métier » affiché — depuis la v454 un combattant n'en a pas, et la
+     ligne ne disait donc plus rien. Elle disparaît quand il n'y a pas de métier ; le libellé
+     reste dans le sélecteur de l'éditeur, où il est un vrai choix. */
+  const metierEl = document.getElementById('recruitSheetMetier');
+  metierEl.textContent = metier ? metier.name : '';
+  metierEl.style.display = metier ? 'block' : 'none';
 
   renderRecruitCombatStatsSection(recruit);
   renderRecruitAttacksSection(recruit);
@@ -18288,15 +18432,23 @@ document.getElementById('pvpAcceptBtn').addEventListener('click', async ()=>{
   if (!pvpIncomingChallenge) return;
   if (playerSelfData && playerSelfData.currentZoneId){ showToast('Impossible d\'accepter un défi pendant que tu es en exploration.'); return; }
   const challenge = pvpIncomingChallenge; // on fige la référence : pvpIncomingChallenge peut devenir null pendant les appels ci-dessous
-  const myFighters = buildPvpFighters('B').map(f=> serializePvpFighter(f));
-  const theirFighters = challenge.challengerFighters || [];
-  if (!myFighters.length){ showToast('Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau'); return; }
+  if (!challenge.moteur2 || !Array.isArray(challenge.challengerCfgs)){
+    showToast('Ce défi vient d\'une ancienne version du jeu — demande à ' + challenge.challengerPseudo + ' de mettre à jour');
+    pvpChallengesCol.doc(challenge.id).update({ status:'declined' }).catch(()=>{});
+    document.getElementById('pvpIncomingOverlay').classList.remove('show');
+    pvpIncomingChallenge = null;
+    return;
+  }
+  const mes = m2EquipePourDuel();
+  if (!mes) return;
   try {
+    /* 3b : les combattants sont créés UNE seule fois, ici, puis sérialisés dans le duel ; les deux
+       téléphones repartent ensuite du même état — comme une reprise de session. */
     const duelRef = await pvpDuelsCol.add({
       playerAUid: challenge.challengerUid, playerAPseudo: challenge.challengerPseudo,
       playerBUid: currentUser.uid, playerBPseudo: currentPseudo || 'Joueur',
-      fighters: theirFighters.concat(myFighters),
-      log: [], status: 'active', winnerUid: null,
+      ...m2EtatInitialDuel(challenge.challengerCfgs, mes),
+      status: 'active', winnerUid: null,
       createdAt: Date.now(), lastActionAt: Date.now(),
     });
     await pvpChallengesCol.doc(challenge.id).update({ status:'accepted', duelId: duelRef.id });
@@ -18315,10 +18467,10 @@ document.getElementById('pvpCancelChallengeBtn').addEventListener('click', ()=>{
 function sendPvpChallenge(uid, pseudo){
   if (!pvpChallengesCol || !currentUser){ showToast('Firebase indisponible ici'); return; }
   if (playerSelfData && playerSelfData.currentZoneId){ showToast('Impossible de défier quelqu\'un pendant que tu es en exploration.'); return; }
-  const myFighters = buildPvpFighters('A').map(f=> serializePvpFighter(f));
-  if (!myFighters.length){ showToast('Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau'); return; }
+  const mes = m2EquipePourDuel();
+  if (!mes) return;
   pvpChallengesCol.add({
-    challengerUid: currentUser.uid, challengerPseudo: currentPseudo || 'Joueur', challengerFighters: myFighters,
+    challengerUid: currentUser.uid, challengerPseudo: currentPseudo || 'Joueur', challengerCfgs: mes, moteur2: true,
     challengedUid: uid, challengedPseudo: pseudo, status: 'pending', createdAt: Date.now(),
   }).then(ref=>{
     pvpOutgoingChallengeId = ref.id;
@@ -18328,15 +18480,53 @@ function sendPvpChallenge(uid, pseudo){
   }).catch(err=> showToast('Échec : ' + err.message));
 }
 
-function buildPvpFighters(ownerRole){
-  return buildPlayerFighters().map((f,i)=> ({ ...f, uid: ownerRole+i, owner: ownerRole }));
+/* =====================================================================================
+   3b — LE JcJ SUR LE MOTEUR M2 (02/09).
+   Même architecture qu'avant : chaque téléphone fait tourner les jauges, un verrou Firestore
+   (`activeTurnSide`) décide qui a la main, et après chaque action le joueur actif pousse
+   l'état COMPLET. Ce qui rend ça sûr avec M2 : les jauges avancent sans aucun hasard
+   (incrementJauge = vitesse socle + vitesse du robot), donc deux appareils partis du même
+   état tombent toujours sur le même prochain acteur. Le hasard des coups (précision, états)
+   est tiré par l'appareil qui joue, et le résultat voyage avec l'état.
+   L'état poussé est celui de la reprise de session (m2SerialiserCombattant) : mana, charges,
+   ultime, états, jauges, tour, cycle. Chaque combattant porte `owner` ('A' ou 'B') ; le camp
+   (`side`) est recalculé par chaque appareil selon son propre rôle.
+   Le sac n'est PAS partagé : chaque joueur joue avec ses propres objets.
+   ===================================================================================== */
+/* Mon équipe pour un duel : les configs M2 des recrues à modèle, sans les images (elles peuvent
+   peser des centaines de ko en data: ; l'adversaire les relit sur le modèle, qui est partagé). */
+function m2EquipePourDuel(){
+  const equipe = m2AlliesDepuisEquipe();
+  if (!equipe.cfgs.length){
+    showToast(equipe.sansModele.length
+      ? 'Aucun robot de ton équipe n\'a de modèle (' + equipe.sansModele.join(', ') + ')'
+      : 'Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau');
+    return null;
+  }
+  if (!equipe.cfgs.some(c=> c.hpInit > 0)){ showToast('Toute ton équipe est K.O. — soigne-la au vaisseau avant un duel'); return null; }
+  /* passage par JSON : Firestore refuse les `undefined`, et une config ne doit rien garder de vivant */
+  return JSON.parse(JSON.stringify(equipe.cfgs.map(c=>{ const copie = { ...c }; delete copie.images; return copie; })));
 }
-function serializePvpFighter(f){
-  return { ...serializeFighterForSave(f), owner: f.owner };
+/* L'état de départ du duel, créé par l'acceptant : A = le défiant, B = celui qui accepte.
+   Les uid sont renommés A0/B0… (le moteur nomme p0/e0 selon le camp, or le camp diffère
+   d'un téléphone à l'autre) — l'état est neuf, aucune référence par uid n'existe encore. */
+function m2EtatInitialDuel(cfgsA, cfgsB){
+  const etat = { fighters:[], log:[] };
+  M2.demarrer(etat, { allies: cfgsB, ennemis: cfgsA, objets: { player:{}, enemy:{} }, objetsDef: M2.OBJETS });
+  etat.fighters.forEach(f=>{
+    f.owner = f.side === 'player' ? 'B' : 'A';
+    f.uid = f.owner + f.uid.slice(1);
+  });
+  M2.combat = combatState;   // ne pas laisser le moteur pointer sur cet état de construction
+  return {
+    moteur2: true,
+    fighters: etat.fighters.map(m2SerialiserCombattant),
+    tour: 0, cycleJoues: [], log: (etat.log || []).slice(0, 20),
+    activeTurnSide: null,
+  };
 }
-function deserializePvpFighter(sf, myRole){
-  return { ...deserializeFighterFromSave(sf), owner: sf.owner, side: sf.owner === myRole ? 'player' : 'enemy' };
-}
+let pvpChargementEnCours = false;   // startCombatM2 est asynchrone : un snapshot reçu pendant attend
+let pvpSnapshotEnAttente = null;
 
 function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
   preloadVictoryMusic();
@@ -18345,49 +18535,69 @@ function startPvpDuel(duelId, myRole, opponentUid, opponentPseudo){
   document.getElementById('pvpIncomingOverlay').classList.remove('show');
   document.getElementById('pvpOutgoingOverlay').classList.remove('show');
   if (pvpDuelUnsub) pvpDuelUnsub();
-  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot((doc)=>{
+  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot(async (doc)=>{
     if (!doc.exists) return;
     const d = doc.data();
-    if (!combatState || combatState.pvp !== duelId){
-      // Premier chargement de ce duel : initialise l'écran de combat
-      combatState = {
-        fighters: d.fighters.map(sf=> deserializePvpFighter(sf, myRole)),
-        resolving:false, pendingActor:null, pendingAttack:null, log:(d.log||[]).slice(0,20),
-        finished:false, anim:null, hitUids:[], particles:[],
-        isPvp:true, pvp: duelId,
-      };
-      document.getElementById('combatLog').classList.remove('show');
-      combatLogOpen = false;
-      majDerniereAction(null);
-      document.getElementById('combatFull').classList.add('show');
-      document.getElementById('combatEndOverlay').style.display = 'none';
-      document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${DEFAULT_ARENA_BG})`);
-      renderCombat();
-      clearInterval(combatTickTimer);
-      combatTickTimer = setInterval(combatTick, 150);
-    } else if (d.lastActionByUid !== currentUser.uid){
-      // Mise à jour reçue de l'adversaire : on resynchronise notre état local.
-      // Important : les jauges de vitesse tournent indépendamment sur chaque appareil, donc il arrive
-      // que NOTRE tour soit affiché (boutons d'attaque visibles) pile au moment où l'adversaire termine
-      // son propre tour de son côté. On ne doit surtout pas effacer notre tour en cours de décision
-      // tant qu'il reste valide (notre personnage bien vivant) — sinon le joueur perd son tour sans
-      // avoir pu jouer, avant même d'avoir eu le temps de choisir une attaque.
-      const newFighters = d.fighters.map(sf=> deserializePvpFighter(sf, myRole));
-      const myTurnStillValid = combatState.showingAnalysis || (combatState.pendingActor
-        && newFighters.some(f=> f.uid===combatState.pendingActor && f.side==='player' && f.alive));
-      combatState.fighters = newFighters;
-      combatState.log = (d.log||[]).slice(0,20);
-      if (!myTurnStillValid){
-        combatState.resolving = false;
-        combatState.pendingActor = null;
-        combatState.pendingAttack = null;
-        combatState.waitingForOpponentSince = null;
-        renderCombatWaitingPanel();
-      }
-      checkCombatEnd();
-      renderCombat();
+    if (!d.moteur2){
+      /* Un duel commencé sur l'ancien moteur ne peut plus se jouer : on le clôt proprement. */
+      pvpDuelsCol.doc(duelId).set({ status:'finished', endReason:'Duel d\'une ancienne version du jeu, annulé.' }, { merge:true }).catch(()=>{});
+      cleanupPvpState();
+      showToast('Ce duel venait d\'une ancienne version du jeu : il est annulé.');
+      return;
     }
+    if (!combatState || combatState.pvp !== duelId){
+      if (pvpChargementEnCours) return;
+      pvpChargementEnCours = true;
+      try {
+        await startCombatM2({ reprise: d, pvp: { duelId, myRole } }, DEFAULT_ARENA_BG, { skipTransition:true });   // pas de scène à figer depuis la carte
+      } finally { pvpChargementEnCours = false; }
+      if (combatState && combatState.pvp === duelId){
+        combatState.resolving = false;
+        if (pvpSnapshotEnAttente){ const attente = pvpSnapshotEnAttente; pvpSnapshotEnAttente = null; m2AppliquerEtatDuel(attente); }
+        else if (d.status === 'finished') m2FinDuelRecue(d);
+      }
+      return;
+    }
+    if (pvpChargementEnCours){ pvpSnapshotEnAttente = d; return; }
+    if (d.lastActionByUid !== currentUser.uid) m2AppliquerEtatDuel(d);
+    else if (d.status === 'finished') m2FinDuelRecue(d);
   });
+}
+/* Une mise à jour poussée par l'adversaire : on remplace l'état par le sien, en gardant nos
+   images (elles ne voyagent pas) et notre sac (il n'est pas partagé). */
+function m2AppliquerEtatDuel(d){
+  if (!combatState || combatState.finished) return;
+  const anciens = {}; combatState.fighters.forEach(f=> anciens[f.uid] = f);
+  m2Restaurer(combatState, d, { role: pvpMyRole, garderObjets: true });
+  combatState.fighters.forEach(f=>{
+    const a = anciens[f.uid];
+    if (a) M2_CHAMPS_NON_SAUVES.forEach(k=>{ if (k !== 'statuses' && k !== 'attacksList') f[k] = a[k]; });
+    else m2PoserImages(f, m2CfgAffichageDepuisSource(f));
+  });
+  /* Mon tour en cours reste valide si mon robot est toujours debout — le panneau se redessine
+     sur le NOUVEL objet, sinon les boutons agiraient sur un fantôme. */
+  const acteur = combatState.pendingActor ? combatState.fighters.find(f=> f.uid === combatState.pendingActor && f.side === 'player' && f.alive) : null;
+  if (acteur && !combatState.showingAnalysis){
+    combatState.pendingAttack = null;
+    m2PanneauAction(acteur);
+  } else if (!combatState.showingAnalysis){
+    combatState.resolving = false;
+    combatState.pendingActor = null; combatState.pendingAttack = null;
+    combatState.waitingForOpponentSince = null;
+    renderCombatWaitingPanel();
+  }
+  if (d.status === 'finished') m2FinDuelRecue(d);
+  else checkCombatEnd();
+  renderCombat();
+}
+/* Le duel est fini côté serveur (abandon, forfait, éloignement de l'autre) : on le constate ici. */
+function m2FinDuelRecue(d){
+  if (!combatState || combatState.finished) return;
+  checkCombatEnd();
+  if (!combatState.finished){
+    if (d.endReason) combatState.log.unshift(d.endReason);
+    endCombat(d.winnerUid === currentUser.uid ? 'victory' : (d.winnerUid ? 'defeat' : 'flee'));
+  }
 }
 /* Verrou de tour en JcJ : la simulation de jauge tourne indépendamment sur chaque téléphone, donc les
    deux appareils peuvent parfois conclure en même temps que c'est leur tour. Avant d'afficher son
@@ -18406,9 +18616,11 @@ function claimPvpTurn(){
   }).catch(()=> false);
 }
 function syncPvpDuel(releaseTurn){
-  if (!pvpDuelId || !pvpDuelsCol) return;
+  if (!pvpDuelId || !pvpDuelsCol || !combatState) return;
   const update = {
-    fighters: combatState.fighters.map(f=> serializePvpFighter({ ...f, owner: f.owner || (f.side==='player'?pvpMyRole:(pvpMyRole==='A'?'B':'A')) })),
+    moteur2: true,
+    fighters: combatState.fighters.map(m2SerialiserCombattant),
+    tour: combatState.tour || 0, cycleJoues: (combatState.cycleJoues || []).slice(),
     log: (combatState.log||[]).slice(0,20),
     lastActionAt: Date.now(), lastActionByUid: currentUser.uid,
   };
@@ -18418,16 +18630,19 @@ function syncPvpDuel(releaseTurn){
     update.winnerUid = combatState.result === 'victory' ? currentUser.uid : (combatState.result === 'defeat' ? pvpOpponentUid : null);
     if (combatState.result === 'flee') update.endReason = `${currentPseudo || 'Un joueur'} a abandonné.`;
   }
-  pvpDuelsCol.doc(pvpDuelId).set(update, { merge:true }).catch(()=>{});
+  pvpDuelsCol.doc(pvpDuelId).set(update, { merge:true }).catch((err)=>{
+    journal('erreur', 'synchronisation du duel refusée', (err && err.message) || '', true);
+  });
 }
 async function abandonPvpDuel(){
   if (!(await appConfirm('Abandonner ce duel ? Ce sera une défaite immédiate.'))) return;
+  if (!combatState || combatState.finished) return;
   combatState.fighters.filter(f=>f.side==='player').forEach(f=>{ f.alive = false; f.hp = 0; });
   combatState.log.unshift(`${currentPseudo || 'Tu'} abandonne le duel.`);
+  combatState.pendingActor = null; combatState.pendingAttack = null;
   combatState.resolving = false;
   checkCombatEnd();
   renderCombat();
-  syncPvpDuel(true);
 }
 function cleanupPvpState(){
   if (pvpDuelUnsub){ pvpDuelUnsub(); pvpDuelUnsub = null; }
@@ -18459,28 +18674,51 @@ function renderNearbyDuelsSection(){
     });
   }).catch(()=>{});
 }
+let pvpSpectImages = {};   // les images posées au premier snapshot, recopiées sur les suivants
 function spectatePvpDuel(duelId){
   document.getElementById('nearbyPlayersOverlay').classList.remove('show');
   clearInterval(combatTickTimer);
   pvpSpectating = true;
   pvpDuelId = duelId;
+  pvpSpectImages = {};
   if (pvpDuelUnsub) pvpDuelUnsub();
-  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot((doc)=>{
+  pvpDuelUnsub = pvpDuelsCol.doc(duelId).onSnapshot(async (doc)=>{
     if (!doc.exists){ document.getElementById('combatFull').classList.remove('show','reveal'); cleanupPvpState(); return; }
     const d = doc.data();
+    if (!d.moteur2){ showToast('Ce duel vient d\'une ancienne version du jeu.'); cleanupPvpState(); return; }
     combatState = {
-      fighters: d.fighters.map(sf=> ({ ...deserializeFighterFromSave(sf), side: sf.owner==='A' ? 'player' : 'enemy' })),
-      resolving:true, pendingActor:null, pendingAttack:null, log:(d.log||[]).slice(0,20),
+      fighters:[], resolving:true, pendingActor:null, pendingAttack:null, log:[],
       finished: d.status==='finished', anim:null, hitUids:[], particles:[],
-      isPvp:true, pvp: duelId, isSpectator:true,
+      moteur2:true, test:false, isPvp:true, pvp: duelId, isSpectator:true, passPreviewUid:null, souffleApercuMana:null,
     };
+    m2Restaurer(combatState, d, { role:'A', garderObjets:false });   // le spectateur voit A en bas, B en face
+    combatState.finished = d.status === 'finished';
+    const premiers = [];
+    combatState.fighters.forEach(f=>{
+      if (pvpSpectImages[f.uid]) Object.assign(f, pvpSpectImages[f.uid]);
+      else { m2PoserImages(f, m2CfgAffichageDepuisSource(f)); premiers.push(f); }
+    });
+    if (premiers.length){
+      await resoudreImagesDeDos(premiers);
+      await Promise.all(premiers.map(async (f)=>{
+        if (f.faceImageUrl || !f.faceImageRef) return;
+        try { const url = await internalizeSceneImage(f.faceImageRef); if (url) f.faceImageUrl = url; } catch(e){}
+      }));
+      await allegerImagesDeCombat(premiers);
+      await Promise.all(premiers.map(generateThumbFor)).catch(()=>{});
+      premiers.forEach(f=>{
+        const img = {}; M2_CHAMPS_NON_SAUVES.forEach(k=>{ if (k !== 'statuses' && k !== 'attacksList') img[k] = f[k]; });
+        pvpSpectImages[f.uid] = img;
+      });
+      if (!combatState || combatState.pvp !== duelId) return;
+    }
     document.getElementById('combatFull').classList.add('show');
     document.getElementById('combatEndOverlay').style.display = 'none';
     document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${DEFAULT_ARENA_BG})`);
     if (d.status === 'finished'){
       const winnerPseudo = d.winnerUid === d.playerAUid ? d.playerAPseudo : (d.winnerUid === d.playerBUid ? d.playerBPseudo : null);
       document.getElementById('combatEndTitle').textContent = winnerPseudo ? '🏆 Duel terminé' : '🏳️ Duel terminé';
-      document.getElementById('combatEndDesc').textContent = winnerPseudo ? `${winnerPseudo} remporte le duel !` : 'Le duel s\'est arrêté sans vainqueur.';
+      document.getElementById('combatEndDesc').textContent = winnerPseudo ? `${winnerPseudo} remporte le duel !` : (d.endReason || 'Le duel s\'est arrêté sans vainqueur.');
       document.getElementById('combatEndOverlay').style.display = 'flex';
       renderCombat();
       return;
@@ -18497,7 +18735,6 @@ function spectatePvpDuel(duelId){
     renderCombat();
   });
 }
-
 
 /* ---------- Négociation d'échange (les deux joueurs composent et valident en direct) ---------- */
 const negotiationsCol = (typeof db !== 'undefined') ? db.collection('negotiations') : null;
@@ -22797,10 +23034,16 @@ function markScenePointTaken(pt){
 
 /* Un combattant est apte s'il est recruté, pas parti en mission, et pas à zéro point de vie.
    Sans cette vérification, un joueur dont toute l'équipe est au tapis entrerait dans une zone,
-   déclencherait une rencontre et la perdrait aussitôt, en boucle. */
+   déclencherait une rencontre et la perdrait aussitôt, en boucle.
+   v456 : il faut AUSSI un modèle de robot. Depuis la v453 une recrue sans modèle ne peut plus
+   se battre (m2CfgDepuisRecrue rend null), mais ce garde-fou l'ignorait : le jeu laissait donc
+   sortir du vaisseau avec une équipe qu'il croyait valide, et le combat ne partait pas.
+   Même famille d'oubli que la chambre du blessé en v454 — une règle changée à un endroit,
+   pas reportée partout où elle s'applique. */
 function equipeApteAuCombat(){
   return recruits.some(r=>
     r.recruitType === 'combattant'
+    && r.robotModeleId
     && activeTeamIds.includes(r.id)
     && !recruitIsAway(r)
     && recruitEffectiveHp(r) > 0);
@@ -22837,9 +23080,14 @@ function openSceneView(creature, resumeSceneId, opts){
     if (!sceneViewIsShip && zoneComporteDesCombats(norm) && !equipeApteAuCombat()){
       document.getElementById('sceneViewFull').classList.remove('show');
       const aucun = !recruits.some(r=> r.recruitType === 'combattant');
+      /* v456 : trois cas distincts. Envoyer au Soin quelqu'un dont l'équipe n'a pas de modèle
+         de robot lui fait chercher un problème qui n'existe pas. */
+      const sansModele = recruits.some(r=> r.recruitType === 'combattant' && activeTeamIds.includes(r.id) && !r.robotModeleId);
       showToast(aucun
         ? 'Il te faut au moins un combattant pour entrer ici'
-        : 'Aucun combattant valide — passe au 💚 Soin du vaisseau');
+        : sansModele
+          ? 'Ton équipe n\'a aucun robot à modèle — remplace-la dans les quartiers du vaisseau'
+          : 'Aucun combattant valide — passe au 💚 Soin du vaisseau');
       return;
     }
     sceneViewCreature = creature;
@@ -23903,7 +24151,6 @@ function resolveFighterAttacks(attackIds){
   if (combatAttaquesAutorisees) liste = liste.filter(a=> combatAttaquesAutorisees.includes(a.id));
   return liste;
 }
-function isHealAttack(a){ return a && (a.kind==='heal_single' || a.kind==='heal_group'); }
 
 /* L'image de dos peut être posée sur la recrue (recrutée depuis la v314) ou seulement sur
    sa fiche d'origine (recrue plus ancienne, ou image ajoutée après le recrutement). */
@@ -23938,87 +24185,6 @@ function dosDeLaRecrue(r){
   const source = r.sourceCreatureId && ficheParId(r.sourceCreatureId);
   if (source) return { path: source.backImagePath || null, ref: source.backImageRef || null };
   return { path: null, ref: null };
-}
-
-function buildPlayerFighters(){
-  return activeTeamIds
-    .map(id=> recruits.find(r=>r.id===id))
-    .filter(r=> r && r.recruitType==='combattant')
-    .slice(0,3)
-    .map((r,i)=>{
-      const cs = r.combatStats || {};
-      const maxHp = cs.hp || 1;
-      /* Les PV survivent d'un combat à l'autre. Un combattant K.O. part QUAND MÊME au combat,
-         allongé à 0 PV : c'est ce qui permet de le réanimer en plein combat avec un objet ou
-         une attaque de réanimation, au lieu d'être obligé de rentrer à l'infirmerie. */
-      const startHp = Math.max(0, Math.min(maxHp, recruitEffectiveHp(r)));
-      return {
-        uid:'p'+i, side:'player', sourceId:r.id, name:r.name,
-        /* De dos si le personnage en a une : il fait face à l'ennemi, pas au joueur.
-           Les recrues d'avant la v314 n'ont rien copié : on va alors chercher l'image de dos
-           sur leur fiche d'origine, pour ne pas avoir à les recruter une seconde fois. */
-        /* Ordre de priorité : le dos d'abord, puisqu'il fait face à l'ennemi ; à défaut la
-           pose de combat, qui vaut toujours mieux qu'une image où il est assis ; sinon
-           l'image normale. */
-        imageUrl: (dosDeLaRecrue(r).path ? resolveMediaPath(dosDeLaRecrue(r).path) : '')
-          || (combatDeLaRecrue(r).path ? resolveMediaPath(combatDeLaRecrue(r).path) : '')
-          || r.imageUrl || '',
-        faceImageUrl: (combatDeLaRecrue(r).path ? resolveMediaPath(combatDeLaRecrue(r).path) : '') || r.imageUrl || '',
-        backImageRef: dosDeLaRecrue(r).ref,
-        combatImageRef: dosDeLaRecrue(r).ref ? null : combatDeLaRecrue(r).ref,
-        combatImageScale: echelleDeCombat(r),
-        combatImageOffsetY: decalageDeCombat(r, !!dosDeLaRecrue(r).path || !!dosDeLaRecrue(r).ref),
-        tribe:cs.tribe||'',
-        combatPortraitCrop: r.combatPortraitCrop || null,
-        maxHp:maxHp, hp:startHp,
-        atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
-        precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
-        attacksList: resolveFighterAttacks(r.learnedAttackIds),
-        immunities: [], resistances: [],
-        gauge: Math.random()*30, alive: startHp > 0, statuses:{},
-      };
-    });
-}
-/* Au moins un combattant debout : sinon le combat serait perdu avant d'avoir commencé. */
-function teamHasAnyoneStanding(playerFighters){
-  return (playerFighters || []).some(f=> f.alive);
-}
-function buildEnemyFighters(monsterList){
-  const liste = monsterList.slice(0,3);
-  /* Deux exemplaires du même modèle portent le même nom : sans distinction, le journal
-     de combat et les cibles deviennent illisibles. On numérote seulement ceux qui sont
-     en double — un adversaire unique garde son nom nu. */
-  const compte = {};
-  liste.forEach(c=>{ compte[c.id] = (compte[c.id] || 0) + 1; });
-  const rang = {};
-  return liste.map((c,i)=>{
-    const cs = c.combatStats || {};
-    rang[c.id] = (rang[c.id] || 0) + 1;
-    const nomAffiche = (compte[c.id] > 1) ? ((c.name || '') + ' ' + rang[c.id]) : c.name;
-    return {
-      uid:'e'+i, side:'enemy', sourceId:c.id, name:nomAffiche,
-      /* Il se bat contre toi : sa pose de combat passe avant son image de fiche. */
-      imageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
-      faceImageUrl: (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '',
-      combatImageRef: c.combatImagePath ? null : (c.combatImageRef || null),
-      combatImageScale: (c.combatImageScale == null) ? 100 : c.combatImageScale,
-      combatImageOffsetY: (c.combatImageOffsetY == null) ? 0 : c.combatImageOffsetY,
-      tribe:cs.tribe||'',
-      combatPortraitCrop: c.combatPortraitCrop || null,
-      maxHp:cs.hp||1, hp:cs.hp||1,
-      atk:cs.atk||1, def:cs.def||1, matk:cs.matk||1, mdef:cs.mdef||1, speed:cs.speed||1,
-      precision:cs.precision!=null?cs.precision:90, evasion:cs.evasion!=null?cs.evasion:10,
-      attacksList: (cs.attackIds||[]).map(id=>attacks.find(a=>a.id===id)).filter(Boolean),  // l'adversaire n'est pas restreint
-      immunities: cs.immunities||[], resistances: cs.resistances||[],
-      rewardItemIds: cs.rewardItemIds||[], fleeChance: cs.fleeChance!=null?cs.fleeChance:30,
-      aiPersonality: cs.aiPersonality || 'normal', canFlee: !!cs.canFlee,
-      fleeHpThreshold: cs.fleeHpThreshold!=null?cs.fleeHpThreshold:25, fleeSelfChance: cs.fleeSelfChance!=null?cs.fleeSelfChance:15,
-      stealEasyItemId: cs.stealEasyItemId || null, stealHardItemId: cs.stealHardItemId || null,
-      stolenEasy: false, stolenHard: false,
-      budgetCategory: cs.budgetCategory || 'monstre_commun',
-      gauge: Math.random()*30, alive:true, statuses:{},
-    };
-  });
 }
 
 document.getElementById('testCombatBtn').addEventListener('click', ()=>{
@@ -24303,93 +24469,12 @@ function clearCurrentZoneScene(){
    du joueur la limite d'un mégaoctet de Firestore, et l'écriture était REFUSÉE — donc plus
    aucun combat retrouvé après un rechargement. On ne garde qu'une adresse courte (image
    hébergée), et on retrouve le reste depuis la recrue ou la fiche d'origine à la reprise. */
-function imageLegereOuRien(url){
-  /* On écarte les images en `data:` (trop lourdes pour Firestore) ET les adresses `blob:`.
-     Ces dernières étaient le vrai coupable des portraits manquants : `allegerImagesDeCombat`
-     transforme toutes les images du combat en `blob:` juste avant la sauvegarde, or une
-     adresse `blob:` N'EST VALABLE QUE POUR LA PAGE QUI L'A CRÉÉE. Elle mourait donc au
-     rechargement — mais comme elle ressemblait à une adresse légitime, elle passait le
-     filtre, et `deserializeFighterFromSave` croyait avoir une image : il n'allait jamais la
-     rechercher sur la fiche ou la recrue. Résultat : une feuille de papier des deux côtés.
-     Mieux vaut sauvegarder RIEN, qui déclenche le rattrapage, qu'une adresse morte. */
-  if (typeof url !== 'string' || !url) return '';
-  if (url.slice(0, 5) === 'data:') return '';
-  if (url.slice(0, 5) === 'blob:') return '';
-  return url;
-}
-function serializeFighterForSave(f){
-  return {
-    uid:f.uid, side:f.side, sourceId:f.sourceId||null, name:f.name,
-    imageUrl: imageLegereOuRien(f.imageUrl), faceImageUrl: imageLegereOuRien(f.faceImageUrl), tribe:f.tribe||'',
-    maxHp:f.maxHp, hp:f.hp, atk:f.atk, def:f.def, matk:f.matk, mdef:f.mdef, speed:f.speed,
-    precision:f.precision, evasion:f.evasion,
-    attackIds:(f.attacksList||[]).map(a=>a.id),
-    immunities:f.immunities||[], resistances:f.resistances||[],
-    rewardItemIds:f.rewardItemIds||[], fleeChance:f.fleeChance!=null?f.fleeChance:30,
-    aiPersonality:f.aiPersonality||'normal', canFlee:!!f.canFlee, fled:!!f.fled,
-    fleeHpThreshold:f.fleeHpThreshold!=null?f.fleeHpThreshold:25, fleeSelfChance:f.fleeSelfChance!=null?f.fleeSelfChance:15,
-    stealEasyItemId: f.stealEasyItemId || null, stealHardItemId: f.stealHardItemId || null,
-    stolenEasy: !!f.stolenEasy, stolenHard: !!f.stolenHard,
-    budgetCategory:f.budgetCategory||'monstre_commun',
-    combatPortraitCrop: f.combatPortraitCrop || null,
-    gauge:f.gauge, alive:f.alive, statuses:f.statuses||{},
-  };
-}
-function deserializeFighterFromSave(sf){
-  const f = { ...sf, attacksList: resolveFighterAttacks(sf.attackIds) };
-  /* L'image n'est pas dans la sauvegarde (voir `imageLegereOuRien`) : on la retrouve chez la
-     recrue pour un allié, sur la fiche d'origine pour un adversaire. Si les deux ont disparu,
-     le combat reprend quand même — sans portrait plutôt que pas du tout. */
-  if (!f.imageUrl && f.sourceId){
-    if (f.side === 'player'){
-      const r = (typeof recruits !== 'undefined' ? recruits : []).find(x=> x.id === f.sourceId);
-      if (r){
-        const dos = dosDeLaRecrue(r);
-        f.imageUrl = (dos.path ? resolveMediaPath(dos.path) : '') || r.imageUrl || '';
-        f.backImageRef = dos.ref;
-        if (!f.faceImageUrl) f.faceImageUrl = r.imageUrl || '';
-      }
-    } else {
-      const c = ficheParId(f.sourceId);
-      /* Même ordre de priorité qu'à la création du combattant : sa pose de combat d'abord,
-         sinon il reprenait le combat avec son image de fiche, où il ne se bat pas. */
-      if (c){
-        f.imageUrl = (c.combatImagePath ? resolveMediaPath(c.combatImagePath) : '') || c.imageUrl || '';
-        if (!f.faceImageUrl) f.faceImageUrl = f.imageUrl;
-      }
-    }
-  }
-  return f;
-}
-let sauvegardeCombatSignalee = false;   // un seul avertissement par combat, sinon il reviendrait à chaque tour
+/* 3b : un seul moteur. Un duel se synchronise dans son document, tout autre combat se sauvegarde
+   sur le compte (rien pour un combat de test). */
 function saveCombatSnapshot(releaseTurn){
-  if (combatState && combatState.moteur2) return m2SauvegarderCombat();   // étape 3 : sérialisation complète de l'état M2 (rien pour un test)
-  if (!currentUser || !db || !combatState || combatState.finished) return;
+  if (!combatState) return;
   if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(releaseTurn); return; }
-  const data = {
-    fighters: combatState.fighters.map(serializeFighterForSave),
-    log: (combatState.log||[]).slice(0,20),
-    zoneId: (sceneViewCreature && sceneViewCreature.id) || null,
-    sceneId: sceneViewCurrentSceneId || null,
-    pointId: (combatZoneContext && combatZoneContext.pt && combatZoneContext.pt.id) || null,
-    /* Un combat parti d'une réplique doit RETOURNER à cette réplique. Ces deux réglages ne
-       vivaient qu'en mémoire : après un rechargement, le combat pouvait reprendre mais sa
-       conclusion était perdue, et un duel à thème rendait au joueur tout son arsenal. */
-    retourDialogue: retourDialogueCombat || null,
-    attaquesAutorisees: combatAttaquesAutorisees || null,
-    savedAt: Date.now(),
-  };
-  const charge = JSON.stringify(data);
-  journal('base', 'sauvegarde du combat', Math.round(charge.length / 1024) + ' ko');
-  db.collection('players').doc(currentUser.uid).set({ savedCombat: data }, { merge:true })
-    .catch((err)=>{
-      /* Ne jamais avaler une erreur d'écriture : c'est elle qui décide si le combat sera
-         retrouvé après un rechargement. Silencieuse, on ne l'apprend qu'en perdant sa partie. */
-      journal('erreur', 'sauvegarde du combat refusée', (err && err.message) || '', true);
-      if (sauvegardeCombatSignalee) return;
-      sauvegardeCombatSignalee = true;
-      showToast('⚠️ Sauvegarde du combat impossible : ' + (err && err.message ? err.message : 'erreur inconnue'));
-    });
+  m2SauvegarderCombat();
 }
 /* Repère local (localStorage) en plus du nettoyage Firestore : un enregistrement sur le téléphone est
    instantané et ne peut pas être coupé par une fermeture brutale de l'appli, contrairement à une requête
@@ -24409,10 +24494,11 @@ async function tryResumeSavedCombat(saved){
   combatAttaquesAutorisees = Array.isArray(saved.attaquesAutorisees) && saved.attaquesAutorisees.length
     ? saved.attaquesAutorisees.slice() : null;
   retourDialogueCombat = saved.retourDialogue || null;
-  const playerFighters = (saved.fighters||[]).filter(f=>f.side==='player').map(deserializeFighterFromSave);
-  const enemyFighters = (saved.fighters||[]).filter(f=>f.side==='enemy').map(deserializeFighterFromSave);
-  etapeReprise('combattants reconstruits', playerFighters.length + ' contre ' + enemyFighters.length);
-  if (!playerFighters.length || !enemyFighters.length) return false;
+  /* 3b : une sauvegarde de l'ancien moteur ne peut plus être rejouée — elle est abandonnée sans bruit. */
+  if (!saved.moteur2){ etapeReprise('sauvegarde d\'un ancien moteur, ignorée'); return false; }
+  const nbJ = (saved.fighters||[]).filter(f=>f.side==='player').length, nbE = (saved.fighters||[]).filter(f=>f.side==='enemy').length;
+  etapeReprise('combattants sauvegardés', nbJ + ' contre ' + nbE);
+  if (!nbJ || !nbE) return false;
   let arenaBg = DEFAULT_ARENA_BG;
   if (saved.zoneId && creatureCol && zonesCol){
     try {
@@ -24444,9 +24530,8 @@ async function tryResumeSavedCombat(saved){
     } catch(e){ journal('reprise', 'décor du combat abandonné', (e && e.message) || String(e), true); }
   }
   combatZoneContext = saved.zoneId ? { pt: saved.pointId ? { id: saved.pointId } : null } : null;
-  /* `startCombat` est ASYNCHRONE : depuis la v323 elle attend la résolution des images de dos
-     AVANT de poser `combatState`. Sans ce `await`, la ligne suivante lisait `combatState` encore
-     nul, levait une erreur avalée par le `catch` de l'appelant, et coupait toute la reprise. */
+  /* `startCombatM2` est ASYNCHRONE : elle attend les images AVANT de rendre la main. Sans ce
+     `await`, la suite lirait `combatState` trop tôt (leçon de la v323, avec l'ancien lanceur). */
   /* Si le chien de garde a déjà rendu la main, la sauvegarde a été effacée et les écrans
      libérés : relancer le combat maintenant remettrait le joueur dans une partie que le jeu
      vient officiellement d'abandonner. On s'arrête. */
@@ -24454,20 +24539,10 @@ async function tryResumeSavedCombat(saved){
     etapeReprise('relance annulée', 'la reprise avait déjà été abandonnée');
     return false;
   }
-  if (saved.moteur2){   // étape 3 : un combat M2 repart de son état complet
-    etapeReprise('relance du combat (moteur 2)');
-    await startCombatM2({ reprise: saved }, arenaBg, { skipTransition:true });
-    etapeReprise('combat relancé');
-    if (!combatState) return false;
-    renderCombat();
-    showToast('🔄 Reprise de ton combat en cours…');
-    return true;
-  }
   etapeReprise('relance du combat');
-  await startCombat(playerFighters, enemyFighters, arenaBg, { skipTransition:true });
+  await startCombatM2({ reprise: saved }, arenaBg, { skipTransition:true });
   etapeReprise('combat relancé');
   if (!combatState) return false;
-  combatState.log = saved.log || [];
   renderCombat();
   showToast('🔄 Reprise de ton combat en cours…');
   return true;
@@ -24502,8 +24577,8 @@ const SESSION_RESUME_DELAI = 8000;      // au-delà, on reprend avec ce qu'on a
 const SESSION_RESUME_LIMITE = 15000;    // sans AUCUN progrès pendant ce temps, la reprise est perdue
 
 /* TOUTES les sources que la reconstruction d'un combat sauvegardé va relire. Les images ne
-   partent pas dans la sauvegarde (voir `imageLegereOuRien`) : elles sont retrouvées sur les
-   fiches et sur les recrues au moment de la reprise. L'ancien garde se contentait d'un OU
+   partent pas dans la sauvegarde (M2_CHAMPS_NON_SAUVES) : elles sont retrouvées sur les
+   modèles de robot au moment de la reprise. L'ancien garde se contentait d'un OU
    (`!attacks.length && !creatures.length`), donc l'arrivée du PREMIER instantané suffisait à
    lancer la reprise : le combat repartait complet mais SANS AUCUNE IMAGE, des deux côtés,
    parce que fiches et recrues n'étaient pas encore là. Et comme la reprise ne s'exécute
@@ -25128,406 +25203,12 @@ function playCombatEntryTransition(hasBoss){
     }, 420);
   });
 }
-async function startCombat(playerFighters, enemyFighters, arenaBgUrl, opts){
-  const chrono = journalChrono();
-  journal('combat', 'lancement', playerFighters.length + ' contre ' + enemyFighters.length
-    + (opts && opts.skipTransition ? ' (reprise)' : ''), true);
-  preloadVictoryMusic();
-  libererImagesDeCombat();                     // les adresses du combat précédent n'ont plus d'usage
-  dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
-  /* Les adversaires y passent aussi désormais : leur pose de combat peut être stockée
-     en référence interne, exactement comme une image de dos. */
-  await resoudreImagesDeDos([...playerFighters, ...enemyFighters]);
-  chrono('combat', 'images de dos et de combat résolues');
-  await allegerImagesDeCombat([...playerFighters, ...enemyFighters]);
-  preloadCombatFx([...playerFighters, ...enemyFighters]); // avant la transition : autant de temps gagné
-  chrono('combat', 'effets et sons préchargés');
-  const hasBoss = enemyFighters.some(f=> f.budgetCategory === 'boss');
-  if (opts && opts.skipTransition){
-    playMusicForKey(hasBoss ? 'combat_boss' : 'combat'); // reprise de session : pas de transition, juste la musique
-  } else {
-    await playCombatEntryTransition(hasBoss);
-    chrono('combat', 'transition terminée');
-  }
-  combatState = { fighters: [...playerFighters, ...enemyFighters], resolving:false, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[] };
-  sauvegardeCombatSignalee = false;   // nouveau combat : on redonne sa chance à l'avertissement
-  combatLogOpen = false;
-  majDerniereAction(null);
-  document.getElementById('combatActionPanel').style.display = 'flex';
-  document.getElementById('combatLog').classList.remove('show');
-  document.getElementById('combatLogToggleBtn').textContent = '📜';
-  document.getElementById('combatFull').classList.add('show', 'reveal');
-  document.getElementById('combatEndOverlay').style.display = 'none';
-  document.getElementById('combatArena').style.setProperty('--arena-bg', `url(${arenaBgUrl || DEFAULT_ARENA_BG})`);
-  renderCombatWaitingPanel();
-  renderCombat();
-  chrono('combat', 'écran de combat affiché');
-  const chronoVignettes = journalChrono();
-  Promise.all(combatState.fighters.map(generateThumbFor)).then(async ()=>{
-    chronoVignettes('combat', 'vignettes calculées');
-    /* Même raison que pour les portraits : la barre des tours se redessine à chaque
-       battement d'horloge, et une vignette en base64 y serait relue à chaque fois. */
-    await Promise.all(combatState ? combatState.fighters.map(async (f)=>{
-      f.thumbUrl = await adresseCourtePourImage(f.thumbUrl);
-    }) : []);
-    if (combatState) renderCombatTurnOrderBar();
-  }).catch((err)=> journal('erreur', 'vignettes de combat', err && err.message, true));
-  clearInterval(combatTickTimer);
-  combatTickTimer = setInterval(combatTick, 150);
-  saveCombatSnapshot();
-}
+/* 3b (02/09) : l'ancien moteur de combat (jauge additive, tribus, IA à personnalités, résolution
+   des attaques par `kind`) a été RETIRÉ. Il ne reste que M2 — le moteur du prototype — et
+   l'enveloppe du jeu autour de lui : cartes, effets, particules, journal, transitions, musiques.
+   Le tick n'a plus qu'un chemin. */
+function combatTick(){ return m2Tick(); }
 
-function speedMultiplier(f){
-  let mult = 1;
-  if (f.statuses.haste) mult *= 1 + ((f.statuses.haste.value!=null?f.statuses.haste.value:50)/100);
-  if (f.statuses.slow) mult *= Math.max(0.1, 1 - ((f.statuses.slow.value!=null?f.statuses.slow.value:50)/100));
-  return mult;
-}
-
-function combatTick(){
-  if (combatState && combatState.moteur2) return m2Tick();   // v450 : le moteur du proto
-  if (!combatState || combatState.finished || combatState.resolving){
-    // Pas de redessin pendant qu'une animation d'attaque est en cours : le redessin reconstruit les
-    // cartes des combattants et couperait l'effet visuel en plein vol (sécurité complémentaire —
-    // les images d'effet sont déjà posées dans l'arène, hors de portée du redessin).
-    if (!(combatState && combatState.anim)) renderCombat();
-    return;
-  }
-  let acted = false;
-  combatState.fighters.forEach(f=>{
-    if (!f.alive || acted) return;
-    f.gauge += (f.speed||1) * 0.5 * speedMultiplier(f);
-    if (f.gauge >= 100){
-      acted = true;
-      f.gauge = 0;
-      takeTurn(f);
-    }
-  });
-  renderCombat();
-}
-
-/* Dégâts/soin périodiques (poison, brûlure, régénération) au début du tour du personnage concerné. */
-function tickStatusesAtTurnStart(fighter){
-  ['poison','burn'].forEach(sid=>{
-    const st = fighter.statuses[sid];
-    if (st && fighter.alive){
-      const dmg = Math.max(1, Math.round(fighter.maxHp * (st.value!=null?st.value:8)/100));
-      fighter.hp = Math.max(0, fighter.hp - dmg);
-      combatState.log.unshift(`${fighter.name} subit ${dmg} dégâts (${statusNom(sid)}).`);
-      if (fighter.hp <= 0) fighter.alive = false;
-    }
-  });
-  const rg = fighter.statuses['regen'];
-  if (rg && fighter.alive){
-    const heal = Math.max(1, Math.round(fighter.maxHp * (rg.value!=null?rg.value:8)/100));
-    fighter.hp = Math.min(fighter.maxHp, fighter.hp + heal);
-    combatState.log.unshift(`${fighter.name} récupère ${heal} PV (régénération).`);
-  }
-}
-
-/* Fait passer le tour (étourdi/endormi/paralysé). Renvoie true si le tour est effectivement sauté. */
-function checkTurnSkip(fighter){
-  if (fighter.statuses.stun){
-    combatState.log.unshift(`${fighter.name} est étourdi(e) et ne peut pas agir.`);
-    spawnParticle(fighter.uid, '💫', '');
-    return true;
-  }
-  if (fighter.statuses.sleep){
-    combatState.log.unshift(`${fighter.name} dort profondément.`);
-    spawnParticle(fighter.uid, '😴', '');
-    return true;
-  }
-  if (fighter.statuses.paralysis && Math.random()*100 < 25){
-    combatState.log.unshift(`${fighter.name} est paralysé(e) et ne peut pas agir !`);
-    spawnParticle(fighter.uid, '⚡', '');
-    return true;
-  }
-  return false;
-}
-
-/* Décrémente les états actifs du personnage à la fin de son propre tour, retire ceux qui expirent. */
-function decrementFighterStatuses(fighter){
-  Object.keys(fighter.statuses).forEach(sid=>{
-    const st = fighter.statuses[sid];
-    if (st.turns != null){
-      st.turns -= 1;
-      if (st.turns <= 0) delete fighter.statuses[sid];
-    }
-  });
-}
-
-/* Provocation : un provocateur vivant dans le camp visé force l'attaque sur lui. Cette règle
-   vivait au fond de `resolveAttack`, c'est-à-dire APRÈS l'effet visuel : l'éclair partait sur
-   la cible désignée pendant que les dégâts tombaient ailleurs, et on ne comprenait pas
-   pourquoi. On la résout donc AVANT l'animation, pour que l'effet parte au bon endroit.
-   Ne concerne que le ciblage individuel : une attaque de groupe touche tout le monde. */
-function provocateursDe(camp){
-  return combatState.fighters.filter(f=> f.side === camp && f.alive && f.statuses.taunt);
-}
-function cibleApresProvocation(attacker, attack, target){
-  if (!attack || attack.kind !== 'damage_single' || !target || target.side === attacker.side) return target;
-  const provocateurs = provocateursDe(target.side);
-  if (!provocateurs.length || provocateurs.includes(target)) return target;
-  const force = provocateurs[Math.floor(Math.random() * provocateurs.length)];
-  combatState.log.unshift(`📣 ${force.name} intercepte l'attaque visant ${target.name}.`);
-  combatState.log = combatState.log.slice(0, 20);
-  return force;
-}
-
-/* Même piège que la provocation, et même remède : la confusion se résolvait au fond de
-   `resolveAttack`, donc APRÈS l'effet visuel. L'éclair partait sur la cible désignée pendant
-   que les dégâts tombaient ailleurs. On tire donc le hasard AVANT l'animation, une seule
-   fois, et tout le monde — image, dégâts, statuts — suit la même cible. */
-function cibleApresConfusion(attacker, attack, target){
-  if (!attack || !target) return target;
-  const groupe = attack.kind === 'damage_group' || attack.kind === 'heal_group';
-  const reanime = attack.kind === 'revive_single';
-  if (groupe || reanime) return target;                 // pas de sens sur ces attaques
-  if (!attacker.statuses || !attacker.statuses.confuse) return target;
-  if (Math.random() * 100 >= 33) return target;
-  const vivants = combatState.fighters.filter(f=> f.alive);
-  if (!vivants.length) return target;
-  const auHasard = vivants[Math.floor(Math.random() * vivants.length)];
-  combatState.log.unshift(`${attacker.name} est confus(e) et attaque au hasard !`);
-  combatState.log = combatState.log.slice(0, 20);
-  return auHasard;
-}
-
-/* La cible définitive d'un tour : la confusion d'abord — elle peut envoyer le coup dans
-   n'importe quel camp — puis la provocation, qui ne joue que sur le camp visé. */
-function cibleFinale(attacker, attack, target){
-  return cibleApresProvocation(attacker, attack, cibleApresConfusion(attacker, attack, target));
-}
-
-async function takeTurn(fighter){
-  combatState.currentActorUid = fighter.uid;
-  if (combatState.isPvp && fighter.side === 'enemy' && !combatState.isSpectator){
-    // En JcJ, seul l'appareil du joueur concerné calcule et envoie le résultat de son propre tour.
-    combatState.resolving = true;
-    if (!combatState.waitingForOpponentSince) combatState.waitingForOpponentSince = Date.now();
-    renderCombatWaitingPanel(`En attente du coup de ${pvpOpponentPseudo}…`);
-    renderCombat();
-    return;
-  }
-  combatState.resolving = true;
-  const hpBeforeDot = fighter.hp;
-  tickStatusesAtTurnStart(fighter);
-  if (fighter.hp !== hpBeforeDot){
-    const diff = fighter.hp - hpBeforeDot;
-    spawnParticle(fighter.uid, diff < 0 ? '☠️' : '💚', (diff>0?'+':'')+diff);
-    combatState.hitUids = [fighter.uid];
-    renderCombat();
-    await sleep(500);
-    combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
-    combatState.hitUids = [];
-  }
-  checkCombatEnd();
-  if (combatState.finished){ combatState.resolving = false; renderCombat(); return; }
-  if (!fighter.alive){ decrementFighterStatuses(fighter); combatState.resolving = false; renderCombat(); saveCombatSnapshot(true); return; }
-  if (checkTurnSkip(fighter)){
-    combatState.hitUids = [fighter.uid];
-    renderCombat();
-    await sleep(500);
-    combatState.hitUids = [];
-    combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
-    decrementFighterStatuses(fighter);
-    combatState.resolving = false;
-    renderCombat();
-    saveCombatSnapshot(true);
-    return;
-  }
-  if (fighter.side === 'player'){
-    if (combatState.isPvp && !combatState.isSpectator){
-      const claimed = await claimPvpTurn();
-      if (!claimed){
-        // L'adversaire a déjà la main : on ne prend pas ce tour maintenant, on retentera bientôt
-        // (jauge laissée telle quelle, le prochain passage de gaugeTick réessaiera automatiquement).
-        renderCombatWaitingPanel(`En attente du tour de ${pvpOpponentPseudo}…`);
-        renderCombat();
-        await sleep(300);
-        if (!combatState || combatState.finished) return;
-        combatState.resolving = false;
-        return;
-      }
-    }
-    combatState.pendingActor = fighter.uid;
-    combatState.pendingAttack = null;
-    renderCombatActionButtons(fighter);
-    renderCombat();
-    saveCombatSnapshot();
-  } else {
-    await sleep(250);
-    if (!combatState || combatState.finished) return;
-    const decision = chooseEnemyAiAction(fighter);
-    if (decision.flee){
-      fighter.alive = false;
-      fighter.fleeing = true; // reste vrai pendant TOUTE la fuite (message + glissement) pour éviter la transparence de K.O.
-      combatState.log.unshift(`${fighter.name} prend la fuite !`);
-      combatState.log = combatState.log.slice(0, 20);
-      // Message "Fuite !" affiché sur l'emplacement du fuyard (comme "Raté !"), avant l'animation de sortie.
-      spawnParticle(fighter.uid, '💨', 'Fuite !', 'combat-particle-miss');
-      combatState.hitUids = [fighter.uid];
-      renderCombat();
-      await sleep(700);
-      combatState.particles = combatState.particles.filter(p=>p.uid!==fighter.uid);
-      combatState.hitUids = [];
-      // Glissement complet hors de l'écran (vers le haut) avant disparition totale — plus d'état
-      // semi-transparent laissé sur place comme avant.
-      fighter.fleeingOut = true;
-      renderCombat();
-      await sleep(600);
-      fighter.fleeingOut = false;
-      fighter.fleeing = false;
-      // Marqué maintenant : renderCombat() l'exclura complètement de la ligne d'adversaires,
-      // et les survivants se recentrent automatiquement (le nombre de cartes change).
-      fighter.fled = true;
-    } else if (decision.atk && decision.target){
-      await playTurnAnimation(fighter, decision.atk, cibleFinale(fighter, decision.atk, decision.target));
-    }
-    decrementFighterStatuses(fighter);
-    combatState.resolving = false;
-    checkCombatEnd();
-    renderCombat();
-    if (!combatState.finished) saveCombatSnapshot(true);
-  }
-}
-
-/* IA des monstres/ennemis en combat : petites règles de priorité plutôt qu'un tirage totalement au hasard,
-   ajustées selon la personnalité choisie sur la fiche du monstre. */
-const AI_PERSONALITY_CONFIG = {
-  normal:   { healThreshold:0.45, smartTargetChance:0.75, damagePreference:0.80 },
-  agressif: { healThreshold:0.15, smartTargetChance:1.00, damagePreference:0.95 },
-  defensif: { healThreshold:0.60, smartTargetChance:0.50, damagePreference:0.60 },
-};
-/* Une attaque peut être parfaitement inutile à l'instant où l'on joue : soigner quelqu'un qui
-   est au maximum, réanimer quand personne n'est à terre, reposer une altération déjà en place
-   ou contre laquelle la cible est immunisée, voler ce qui a déjà été volé. Le moteur choisissait
-   au hasard dans TOUTES les attaques connues, d'où des monstres qui se soignaient à pleine vie.
-   On écarte donc d'abord ce qui ne peut rien produire, puis on choisit dans ce qui reste. */
-function attaqueUtileMaintenant(a, mesAllies, adversaires){
-  if (!a) return false;
-  const vivants = mesAllies.filter(f=> f.alive);
-  const aTerre = mesAllies.filter(f=> !f.alive);
-  const se = a.statusEffect;
-  if (a.kind === 'revive_single') return aTerre.length > 0;
-  if (isHealAttack(a)) return vivants.some(f=> f.hp < f.maxHp);
-  if (a.kind === 'steal'){
-    return adversaires.some(f=> f.alive && ((f.stealEasyItemId && !f.stolenEasy) || (f.stealHardItemId && !f.stolenHard)));
-  }
-  if (a.kind === 'boost'){
-    if (!se || !se.id) return true;                       // pas d'état posé : on ne sait pas juger, on laisse passer
-    if (se.id === 'purify') return vivants.some(f=> NEGATIVE_STATUS_IDS.some(sid=> f.statuses[sid]));
-    return vivants.some(f=> !f.statuses[se.id]);
-  }
-  if (a.kind === 'debuff'){
-    if (!se || !se.id) return true;
-    if (se.id === 'purify') return false;                 // purifier un adversaire ne rend service qu'à lui
-    return adversaires.some(f=> f.alive && !f.statuses[se.id] && !(f.immunities || []).includes(se.id));
-  }
-  return true;                                             // dégâts : toujours bon à prendre
-}
-/* Choisir la cible qui rend l'attaque VRAIMENT utile : le plus blessé pour un soin, celui qui
-   est à terre pour une réanimation, celui qui n'a pas encore l'état pour un renfort. */
-function cibleUtilePour(a, mesAllies, adversaires, chanceCiblageMalin){
-  const vivants = mesAllies.filter(f=> f.alive);
-  const se = a.statusEffect;
-  if (a.kind === 'revive_single'){
-    const aTerre = mesAllies.filter(f=> !f.alive);
-    return aTerre.length ? aTerre[0] : null;
-  }
-  if (isHealAttack(a)){
-    const blesses = vivants.filter(f=> f.hp < f.maxHp).sort((x, y)=> (x.hp / x.maxHp) - (y.hp / y.maxHp));
-    return blesses.length ? blesses[0] : (vivants[0] || null);
-  }
-  if (a.kind === 'boost'){
-    if (se && se.id && se.id !== 'purify'){
-      const sansEtat = vivants.filter(f=> !f.statuses[se.id]);
-      if (sansEtat.length) return sansEtat[0];
-    }
-    if (se && se.id === 'purify'){
-      const atteints = vivants.filter(f=> NEGATIVE_STATUS_IDS.some(sid=> f.statuses[sid]));
-      if (atteints.length) return atteints[0];
-    }
-    return vivants.length ? vivants[Math.floor(Math.random() * vivants.length)] : null;
-  }
-  const cibles = adversaires.filter(f=> f.alive);
-  if (!cibles.length) return null;
-  if (a.kind === 'debuff' && se && se.id){
-    const utiles = cibles.filter(f=> !f.statuses[se.id] && !(f.immunities || []).includes(se.id));
-    if (utiles.length) return utiles[Math.floor(Math.random() * utiles.length)];
-  }
-  if (a.kind === 'steal'){
-    const volables = cibles.filter(f=> (f.stealEasyItemId && !f.stolenEasy) || (f.stealHardItemId && !f.stolenHard));
-    if (volables.length) return volables[Math.floor(Math.random() * volables.length)];
-  }
-  // Dégâts : achever le plus bas en PV, plus ou moins souvent selon la personnalité.
-  const tries = [...cibles].sort((x, y)=> (x.hp / x.maxHp) - (y.hp / y.maxHp));
-  return (Math.random() < chanceCiblageMalin) ? tries[0] : cibles[Math.floor(Math.random() * cibles.length)];
-}
-
-function chooseEnemyAiAction(fighter){
-  // Tentative de fuite : uniquement si autorisée sur ce monstre (case à cocher), sous son seuil de PV réglé,
-  // avec sa propre chance par tour réglée (les deux réglables dans l'éditeur, 25%/15% par défaut).
-  if (fighter.canFlee){
-    const threshold = (fighter.fleeHpThreshold!=null?fighter.fleeHpThreshold:25) / 100;
-    const chance = (fighter.fleeSelfChance!=null?fighter.fleeSelfChance:15) / 100;
-    if (fighter.hp/fighter.maxHp <= threshold && Math.random() < chance){
-      return { flee:true };
-    }
-  }
-
-  const mySide = combatState.fighters.filter(f=> f.side===fighter.side);
-  const allyDown = mySide.find(f=> !f.alive);
-  const connues = fighter.statuses.silence ? fighter.attacksList.filter(a=>a.school!=='magic') : fighter.attacksList;
-  if (!connues.length) return { atk:null, target:null };
-  const alivePlayers = combatState.fighters.filter(f=> f.side!==fighter.side && f.alive);
-  if (!alivePlayers.length) return { atk:null, target:null };
-  /* On ne garde que ce qui peut produire un effet maintenant. Si plus rien ne le peut, on
-     retombe sur la liste complète plutôt que de laisser passer le tour sans rien faire. */
-  const utiles = connues.filter(a=> attaqueUtileMaintenant(a, mySide, alivePlayers));
-  const usable = utiles.length ? utiles : connues;
-
-  if (fighter.aiPersonality === 'chaotique'){
-    /* Presque aucune règle : une attaque au hasard. Le hasard, oui — le geste vide, non :
-       il tire dans les attaques qui servent à quelque chose. */
-    const atk = usable[Math.floor(Math.random()*usable.length)];
-    const target = cibleUtilePour(atk, mySide, alivePlayers, 0);
-    if (!target) return { atk:null, target:null };
-    return { atk, target };
-  }
-
-  const cfg = AI_PERSONALITY_CONFIG[fighter.aiPersonality] || AI_PERSONALITY_CONFIG.normal;
-
-  // 1) Réanimer un allié K.O. en priorité absolue.
-  if (allyDown){
-    const reviveAtk = usable.find(a=> a.kind === 'revive_single');
-    if (reviveAtk) return { atk: reviveAtk, target: allyDown };
-  }
-
-  // 2) Se soigner / soigner l'allié le plus affaibli, selon le seuil propre à la personnalité.
-  const woundedAllies = mySide.filter(f=> f.alive && f.hp/f.maxHp <= cfg.healThreshold).sort((a,b)=> (a.hp/a.maxHp) - (b.hp/b.maxHp));
-  if (woundedAllies.length){
-    const healAtk = usable.find(a=> a.kind === 'heal_single' || a.kind === 'heal_group');
-    if (healAtk) return { atk: healAtk, target: woundedAllies[0] };
-  }
-
-  // 3) Sinon, attaquer (avec une chance de plutôt booster/affaiblir, selon la personnalité).
-  const damageAtks = usable.filter(a=> a.kind === 'damage_single' || a.kind === 'damage_group');
-  const otherAtks = usable.filter(a=> a.kind === 'boost' || a.kind === 'debuff');
-  let atk;
-  if (damageAtks.length && (!otherAtks.length || Math.random() < cfg.damagePreference)){
-    atk = damageAtks[Math.floor(Math.random()*damageAtks.length)];
-  } else {
-    atk = usable[Math.floor(Math.random()*usable.length)];
-  }
-
-  const target = cibleUtilePour(atk, mySide, alivePlayers, cfg.smartTargetChance);
-  if (!target) return { atk:null, target:null };
-  return { atk, target };
-}
-
-/* Séquence d'animation d'une action : élan (physique) ou concentration (magique) sur l'attaquant,
-   puis résolution réelle de l'attaque, puis particules de résultat (dégâts/soin) sur les cibles touchées. */
 /* La fanfare de victoire ne partait qu'à `endCombat`, c'est-à-dire APRÈS l'effet visuel du coup
    fatal et les 500 ms de particules — plusieurs secondes après le moment où l'on comprend qu'on
    a gagné. On la lance dès que le dernier adversaire tombe, pendant que l'animation se termine.
@@ -25540,77 +25221,6 @@ function demarrerMusiqueVictoireSiGagne(){
   const adversairesDebout = combatState.fighters.some(f=> f.side === 'enemy' && f.alive && !f.fled);
   if (!joueursDebout || adversairesDebout) return;   // défaite ou combat encore en cours
   playMusicForKey('combat_victory');
-}
-
-async function playTurnAnimation(actor, attack, target){
-  if (!attack){ resolveAttack(actor, attack, target); return; }
-  const hpBefore = {}; const aliveBefore = {};
-  combatState.fighters.forEach(f=>{ hpBefore[f.uid] = f.hp; aliveBefore[f.uid] = f.alive; });
-
-  combatState.anim = { actorUid: actor.uid, kind: (attack.school === 'magic') ? 'magic' : 'physical' };
-  renderCombat();
-  await sleep(attack.school === 'magic' ? 900 : 450);
-
-  const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
-  /* Les dégâts, eux, ne frappent que les VIVANTS (voir resolveAttack). L'effet visuel, lui,
-     partait sur tout le camp, K.O. compris : on voyait l'éclair tomber sur un corps à terre
-     sans que rien ne se passe. Même filtre des deux côtés. */
-  const fxTargets = isGroup ? combatState.fighters.filter(f=> f.side===target.side && f.alive) : [target];
-  combatState.missedUids = []; // rempli par resolveAttackOnTarget en cas de raté sur ce tour
-  combatState.nothingToStealUids = []; // idem, cas "plus rien à voler" sur une tentative de vol
-
-  /* On note où en était le journal AVANT l'action : tout ce qui s'y ajoute ensuite décrit ce
-     seul geste, et sera rassemblé en UNE phrase pour le bandeau. Le journal complet, lui, ne
-     change pas — c'est le document qu'on relit, il a le droit d'être détaillé. */
-  const journalAvant = combatState.log.slice();
-  if (attack.isItem) resolveItemUse(actor, attack, target);
-  else resolveAttack(actor, attack, target);
-  annoncerAction(actor, attack, journalAvant);
-
-  // L'image d'effet (si réglée sur cette attaque) vient s'ajouter PAR-DESSUS le bond/la charge, pas à
-  // la place. On laisse le temps à l'effet de se jouer avant de continuer, sinon le rendu qui suit
-  // reconstruirait le DOM et couperait l'animation en cours.
-  // Effet sur le LANCEUR (concentration magique, etc.) : se joue en premier, avant que l'attaque
-  // n'atteigne la cible. Vide = rien, comportement inchangé.
-  if (!attack.isItem && attack.fxSelf && attack.fxSelf.image){
-    clearStrayFxImages();
-    await withTimeout(playAttackFx(actor.uid, [actor.uid], attack.fxSelf), 4000);
-    clearStrayFxImages();
-  }
-  if (!attack.isItem && attack.fx && attack.fx.image){
-    clearStrayFxImages(); // au cas où un effet précédent aurait laissé un reste
-    await withTimeout(playAttackFx(actor.uid, fxTargets.map(t=>t.uid), attack.fx), 4000);
-    clearStrayFxImages();
-  }
-
-  combatState.anim = null;
-  combatState.particles = [];
-  /* Ici, et pas plus tôt : l'effet visuel du coup fatal vient de se terminer. Lancer la
-     fanfare pendant l'effet la faisait démarrer par-dessus lui. On gagne quand même les
-     500 ms de particules qui suivent, et l'écran de fin ne la redémarre pas. */
-  demarrerMusiqueVictoireSiGagne();
-  const hitUids = [];
-  combatState.fighters.forEach(f=>{
-    const diff = f.hp - hpBefore[f.uid];
-    if (diff < 0){ spawnParticle(f.uid, '', String(-diff), 'combat-particle-dmg'); hitUids.push(f.uid); }
-    else if (diff > 0){ spawnParticle(f.uid, '', String(diff), 'combat-particle-heal'); hitUids.push(f.uid); }
-    else if ((combatState.missedUids||[]).includes(f.uid)){ spawnParticle(f.uid, '', 'Raté !', 'combat-particle-miss'); hitUids.push(f.uid); }
-    else if ((combatState.nothingToStealUids||[]).includes(f.uid)){ spawnParticle(f.uid, '', 'Rien à voler !', 'combat-particle-miss'); hitUids.push(f.uid); }
-    if (aliveBefore[f.uid] && !f.alive){ spawnParticle(f.uid, '💀', ''); hitUids.push(f.uid); }
-    else if (!aliveBefore[f.uid] && f.alive){ hitUids.push(f.uid); }
-  });
-  combatState.hitUids = hitUids;
-  /* Les mises à terre sont inscrites au journal APRÈS la résolution : la ligne du bandeau était
-     donc déjà posée sans elles, et un K.O. passait à la trappe. On la complète maintenant. */
-  completerAction(journalAvant);
-  renderCombat();
-  /* v414 — le temps de lecture s'adapte à ce qu'il y a à lire, et un appui le raccourcit.
-     Remplace le `sleep(900)` fixe, qui était trop court pour une attaque de groupe et trop
-     long pour un coup simple. */
-  await attendreLecture();
-  combatState.particles = [];
-  combatState.hitUids = [];
-  renderCombat();
 }
 
 function renderCombatWaitingPanel(msg){
@@ -25626,7 +25236,7 @@ function renderCombatTargetingPanel(actor, promptText){
   let mentionProvocation = '';
   const att = combatState && combatState.pendingAttack;
   if (att && att.kind === 'damage_single' && actor){
-    const provocateurs = provocateursDe(actor.side === 'player' ? 'enemy' : 'player');
+    const provocateurs = M2.vivants(actor.side === 'player' ? 'enemy' : 'player').filter(f=> f.statuts && f.statuts.taunt);
     if (provocateurs.length){
       mentionProvocation = `<p class="meta" style="margin:0 0 12px; font-size:12px; color:var(--danger);">📣 ${provocateurs.map(f=> f.name).join(' et ')} provoque : les autres ne peuvent pas être visés.</p>`;
     }
@@ -25641,204 +25251,12 @@ function renderCombatTargetingPanel(actor, promptText){
   document.getElementById('combatTargetBackBtn').addEventListener('click', ()=>{
     const wasItem = combatState.pendingAttack && combatState.pendingAttack.kind === 'item';
     combatState.pendingAttack = null;
-    if (wasItem) renderCombatItemMenu(actor); else renderCombatActionButtons(actor);
+    if (wasItem) m2MenuObjets(actor); else m2PanneauAction(actor);
   });
 }
-function renderCombatActionButtons(fighter){
-  if (combatState && combatState.moteur2) return m2PanneauAction(fighter);   // v450
-  const panel = document.getElementById('combatActionPanel');
-  const silencedNote = fighter.statuses.silence ? '<p class="meta" style="padding:5px 8px 0; margin:0; color:var(--danger);">🔇 Réduit au silence : attaques magiques indisponibles.</p>' : '';
-  /* Quatre emplacements : c'est le nombre d'attaques qu'un combattant peut porter. La grille
-     a deux colonnes, donc toujours DEUX lignes remplies, quelle que soit la fiche. */
-  const slots = [0,1,2,3].map(i=>{
-    const a = fighter.attacksList[i];
-    if (!a) return `<div class="combat-atk-slot-empty"></div>`;
-    const disabled = fighter.statuses.silence && a.school === 'magic';
-    return `<button type="button" class="btn-secondary combat-action-atk" data-idx="${i}" ${disabled?'disabled style="opacity:.4;"':''}>
-      <strong>${a.emoji||'✨'} ${a.name}</strong>${a.description ? `<div class="combat-atk-desc">${a.description}</div>` : ''}
-    </button>`;
-  }).join('');
-  panel.innerHTML = silencedNote + `<div class="combat-attack-grid">${slots}</div>`
-    + `<div class="combat-action-secondary">
-        <button type="button" class="btn-secondary" id="combatAnalyzeBtn">🔍 Analyse</button>
-        <button type="button" class="btn-secondary" id="combatItemBtn">🎒 Objet</button>
-        <button type="button" class="btn-secondary" id="combatPassBtn">⏭️ Passer</button>
-        ${combatDeDialogue()
-          ? `<button type="button" class="btn-secondary" disabled style="opacity:.5; color:var(--muted);">🚫 Fuite impossible</button>`
-          : `<button type="button" class="btn-secondary" id="combatFleeBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">${combatState.isPvp ? '🏳️ Abandonner' : '🏃 Fuir'}</button>`}
-      </div>`;
-  panel.querySelectorAll('.combat-action-atk').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      combatState.pendingAttack = fighter.attacksList[parseInt(btn.dataset.idx,10)];
-      renderCombatTargetingPanel(fighter, 'Choisis une cible ' + (isHealAttack(combatState.pendingAttack) || combatState.pendingAttack.kind==='boost' || combatState.pendingAttack.kind==='revive_single' ? 'alliée' : 'ennemie'));
-    });
-  });
-  /* En duel, le bouton Fuir est remplacé par un bouton grisé SANS identifiant : chercher
-     `combatFleeBtn` renvoyait alors null, l'erreur interrompait la suite du code, et Analyse,
-     Objet et Passer ne recevaient plus leur écouteur. D'où trois boutons morts. */
-  const btnFuite = document.getElementById('combatFleeBtn');
-  if (btnFuite) btnFuite.addEventListener('click', combatState.isPvp ? abandonPvpDuel : attemptFlee);
-  document.getElementById('combatAnalyzeBtn').addEventListener('click', ()=>{
-    const enemyPool = combatState.fighters.filter(f=>f.side!==fighter.side && f.alive);
-    if (!enemyPool.length){ showToast('Aucune cible à analyser.'); return; }
-    combatState.pendingAttack = { kind:'analyze' };
-    renderCombatTargetingPanel(fighter, 'Choisis une cible ennemie à analyser');
-  });
-  document.getElementById('combatPassBtn').addEventListener('click', ()=> renderCombatPassConfirmPanel(fighter));
-  document.getElementById('combatItemBtn').addEventListener('click', ()=> renderCombatItemMenu(fighter));
-}
-/* Confirmation avant de passer son tour, dans le rectangle d'attaques : montre en même temps, dans la
-   barre des tours, la position que le personnage prendrait dans la file s'il passait (jauge à 50). */
-function renderCombatPassConfirmPanel(fighter){
-  const panel = document.getElementById('combatActionPanel');
-  panel.innerHTML = `
-    <div style="padding:14px 8px; text-align:center;">
-      <p class="meta" style="margin:0 0 12px; font-size:13px;">Passer ton tour ? La jauge repart à 50% (retour plus rapide qu'après une vraie action).</p>
-      <div style="display:flex; gap:8px; justify-content:center;">
-        <button type="button" class="btn-secondary" id="combatPassConfirmBtn">✔️ Confirmer</button>
-        <button type="button" class="btn-secondary" id="combatPassBackBtn">↩️ Retour</button>
-      </div>
-    </div>
-  `;
-  combatState.passPreviewUid = fighter.uid;
-  renderCombatTurnOrderBar();
-  document.getElementById('combatPassConfirmBtn').addEventListener('click', ()=>{
-    combatState.passPreviewUid = null;
-    passCombatTurn(fighter);
-  });
-  document.getElementById('combatPassBackBtn').addEventListener('click', ()=>{
-    combatState.passPreviewUid = null;
-    renderCombatActionButtons(fighter);
-    renderCombatTurnOrderBar();
-  });
-}
-/* Liste des objets consommables utilisables en combat présents dans le sac, avec un retour vers les attaques. */
-function renderCombatItemMenu(fighter){
-  if (combatState && combatState.moteur2) return m2MenuObjets(fighter);   // v450
-  const panel = document.getElementById('combatActionPanel');
-  const available = items.filter(it=> it.type==='consommable' && it.combatUse && it.combatUse.enabled && (baseResources[it.id]||0) > 0);
-  const slots = available.length ? available.map(it=>{
-    const qty = baseResources[it.id]||0;
-    return `<button type="button" class="btn-secondary combat-action-item" data-itemid="${it.id}">
-      <strong>${itemThumbHtml(it, 16)} ${it.name} <span class="meta">(x${qty})</span></strong>${it.description ? `<div class="combat-atk-desc">${it.description}</div>` : ''}
-    </button>`;
-  }).join('') : '<p class="meta" style="padding:8px; text-align:center;">Aucun objet utilisable en combat dans le sac.</p>';
-  panel.innerHTML = `<div class="combat-attack-grid" style="max-height:118px; overflow-y:auto;">${slots}</div>`
-    + `<button type="button" class="btn-secondary" id="combatItemBackBtn" style="width:calc(100% - 6px); margin:0 3px 3px;">↩️ Retour</button>`;
-  panel.querySelectorAll('.combat-action-item').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const it = available.find(i=>i.id===btn.dataset.itemid);
-      if (!it) return;
-      const cu = it.combatUse;
-      const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost' || cu.mode === 'revive';
-      combatState.pendingAttack = { kind:'item', isItem:true, itemId:it.id, name:it.name, emoji:it.emoji, combatUse:cu, statusEffect: cu.statusEffect||null };
-      renderCombatTargetingPanel(fighter, 'Choisis une cible ' + (friendly ? 'alliée' : 'ennemie'));
-    });
-  });
-  document.getElementById('combatItemBackBtn').addEventListener('click', ()=> renderCombatActionButtons(fighter));
-}
-/* Passer son tour : la jauge repart à 50 (pas 0) — revient plus vite qu'après une vraie action. */
-function passCombatTurn(fighter){
-  fighter.gauge = 50;
-  combatState.log.unshift(`${fighter.name} passe son tour (reviendra plus vite).`);
-  combatState.pendingActor = null;
-  combatState.pendingAttack = null;
-  decrementFighterStatuses(fighter);
-  combatState.resolving = false;
-  renderCombatWaitingPanel();
-  checkCombatEnd();
-  renderCombat();
-  if (!combatState.finished) saveCombatSnapshot(true);
-}
-/* Texte d'analyse : tribu (faible/fort contre), point fort/faible statistique, états actifs. */
-function combatAnalysisLines(target){
-  const parts = [];
-  if (target.tribe){
-    const weakAgainst = Object.keys(TRIBE_STRONG_AGAINST).find(k=>TRIBE_STRONG_AGAINST[k]===target.tribe);
-    const strongAgainst = TRIBE_STRONG_AGAINST[target.tribe];
-    parts.push(`Tribu : ${TRIBE_LABELS[target.tribe] || target.tribe}`);
-    if (weakAgainst) parts.push(`Faible contre ${TRIBE_LABELS[weakAgainst] || weakAgainst}`);
-    if (strongAgainst) parts.push(`Fort contre ${TRIBE_LABELS[strongAgainst] || strongAgainst}`);
-  } else {
-    parts.push('Aucune tribu (neutre)');
-  }
-  const statPairs = [['Attaque',target.atk],['Défense',target.def],['Att. magique',target.matk],['Déf. magique',target.mdef],['Vitesse',target.speed]];
-  const strongest = statPairs.reduce((a,b)=> b[1]>a[1]?b:a);
-  const weakest = statPairs.reduce((a,b)=> b[1]<a[1]?b:a);
-  parts.push(`Point fort : ${strongest[0]} (${strongest[1]})`);
-  parts.push(`Point faible : ${weakest[0]} (${weakest[1]})`);
-  const activeStatuses = Object.keys(target.statuses||{});
-  if (activeStatuses.length) parts.push(`États actifs : ${activeStatuses.map(sid=> (STATUS_META[sid]&&STATUS_META[sid].label) || sid).join(', ')}`);
-  if (target.side === 'enemy'){
-    const personalityLabels = { normal:'Normal', agressif:'Agressif', defensif:'Défensif', chaotique:'Chaotique' };
-    parts.push(`Personnalité : ${personalityLabels[target.aiPersonality] || 'Normal'}`);
-    const stealBits = [];
-    if (target.stealEasyItemId && !target.stolenEasy){
-      const it = items.find(i=>i.id===target.stealEasyItemId);
-      if (it) stealBits.push(it.name);
-    }
-    if (target.stealHardItemId && !target.stolenHard){
-      const it = items.find(i=>i.id===target.stealHardItemId);
-      if (it) stealBits.push(it.name);
-    }
-    if (stealBits.length) parts.push(`Objet(s) volable(s) : ${stealBits.join(', ')}`);
-  }
-  return parts;
-}
-/* Affiche la fiche d'analyse dans le panneau d'action. Le temps reste en pause (resolving=true) jusqu'à la fermeture. */
-function renderCombatAnalysisPanel(actor, target){
-  const panel = document.getElementById('combatActionPanel');
-  const lines = combatAnalysisLines(target);
-  panel.innerHTML = `
-    <div style="display:flex; gap:8px; padding:6px; align-items:stretch; height:96px;">
-      <div style="flex:none; width:90px; height:90px; border-radius:10px; overflow:hidden; background:#eef3ee; display:flex; align-items:center; justify-content:center; font-size:40px;">
-        ${target.imageUrl ? `<img src="${target.imageUrl}" style="width:100%;height:100%;object-fit:contain;">` : (target.side==='player'?'🧑':'👾')}
-      </div>
-      <div style="flex:1; font-size:11px; line-height:1.5; height:90px; overflow-y:auto; text-align:left;">
-        <strong style="font-size:13px;">${target.name}</strong><br>
-        ${lines.join('<br>')}
-      </div>
-    </div>
-    <button type="button" class="btn-secondary" id="combatCloseAnalysisBtn" style="width:calc(100% - 6px); margin:0 3px 3px;">Fermer</button>
-  `;
-  document.getElementById('combatCloseAnalysisBtn').addEventListener('click', ()=>{
-    decrementFighterStatuses(actor);
-    combatState.resolving = false;
-    combatState.showingAnalysis = false;
-    checkCombatEnd();
-    renderCombatWaitingPanel();
-    renderCombat();
-    if (!combatState.finished) saveCombatSnapshot(true);
-  });
-}
-/* Simule l'avancement des jauges pour prévoir l'ordre des n prochains tours (même logique que combatTick).
-   previewUid : si fourni, simule la jauge de ce combattant à 50 (comme après un "Passer son tour"), pour
-   montrer sa future position dans la file sans rien changer réellement tant que ce n'est pas confirmé. */
 function computeCombatTurnOrder(n, previewUid){
   if (!combatState) return [];
-  if (combatState.moteur2) return M2.ordrePrevisionnel(n, previewUid);   // v450 : la jauge du proto
-  const all = combatState.fighters.filter(f=>f.alive);
-  if (!all.length) return [];
-  const sim = all.map(f=>({ ref:f, gauge: (previewUid && f.uid===previewUid) ? 50 : f.gauge }));
-  const queue = [];
-  for (let i=0; i<n; i++){
-    let minTicks = Infinity;
-    sim.forEach(s=>{
-      const inc = Math.max(0.5, (s.ref.speed||1) * speedMultiplier(s.ref)) * 0.5;
-      const needed = (100 - s.gauge) / inc;
-      if (needed < minTicks) minTicks = needed;
-    });
-    if (!isFinite(minTicks)) break;
-    sim.forEach(s=>{
-      const inc = Math.max(0.5, (s.ref.speed||1) * speedMultiplier(s.ref)) * 0.5;
-      s.gauge += inc * minTicks;
-    });
-    const readyIdx = sim.findIndex(s=> s.gauge >= 99.9);
-    if (readyIdx === -1) break;
-    queue.push(sim[readyIdx].ref);
-    sim[readyIdx].gauge = 0;
-  }
-  return queue;
+  return M2.ordrePrevisionnel(n, previewUid);
 }
 function renderCombatTurnOrderBar(){
   const bar = document.getElementById('combatTurnOrderBar');
@@ -25880,368 +25298,11 @@ function identifyCombatFighter(uid){
 
 async function onFighterCardClick(uid){
   if (!combatState) return;
-  if (combatState.moteur2) return m2ClicCarte(uid);   // v450
-  if (!combatState.pendingAttack){
-    // Avant d'avoir choisi une attaque, cliquer sur un personnage dans l'arène sert juste à
-    // repérer son portrait correspondant dans la barre d'ordre des tours (utile en cas de doublon visuel).
-    identifyCombatFighter(uid);
-    return;
-  }
-  if (!combatState.pendingActor) return;
-  const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
-  const attack = combatState.pendingAttack;
-  const target = combatState.fighters.find(f=>f.uid===uid);
-  if (!actor || !target) return;
-  const isReviveAction = attack.kind === 'revive_single' || (attack.kind === 'item' && attack.combatUse && attack.combatUse.mode === 'revive');
-  if (isReviveAction){
-    if (target.side !== actor.side){ showToast('Cible alliée requise'); return; }
-    if (target.alive){ showToast('Ce personnage n\'est pas K.O.'); return; }
-  } else if (!target.alive){
-    return;
-  }
-  if (attack.kind === 'analyze'){
-    if (target.side === actor.side){ showToast('Cible ennemie requise'); return; }
-    combatState.pendingActor = null;
-    combatState.pendingAttack = null;
-    combatState.showingAnalysis = true; // protège la fiche : on ne doit pas l'effacer tant qu'elle n'est pas fermée manuellement
-    actor.gauge = 0;
-    combatState.log.unshift(`🔍 ${actor.name} analyse ${target.name}.`);
-    renderCombatAnalysisPanel(actor, target);
-    renderCombat();
-    return;
-  }
-  if (attack.kind === 'item'){
-    const cu = attack.combatUse;
-    const friendly = cu.mode === 'heal' || cu.mode === 'purify' || cu.mode === 'status_boost' || cu.mode === 'revive';
-    if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
-    if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
-    combatState.pendingActor = null;
-    combatState.pendingAttack = null;
-    await playTurnAnimation(actor, attack, target);
-    decrementFighterStatuses(actor);
-    combatState.resolving = false;
-    checkCombatEnd();
-    renderCombat();
-    if (!combatState.finished) saveCombatSnapshot(true);
-    return;
-  }
-  const friendly = isHealAttack(attack) || attack.kind === 'boost' || attack.kind === 'revive_single';
-  if (friendly && target.side !== actor.side){ showToast('Cible alliée requise'); return; }
-  if (!friendly && target.side === actor.side){ showToast('Cible ennemie requise'); return; }
-  /* On REFUSE le choix au lieu de le détourner en silence. C'est ce qui fait comprendre la
-     provocation : sans message, on croit avoir visé quelqu'un et on voit l'attaque tomber
-     ailleurs sans savoir pourquoi. */
-  if (attack.kind === 'damage_single'){
-    const provocateurs = provocateursDe(target.side).filter(f=> f.uid !== target.uid);
-    if (provocateurs.length && !provocateursDe(target.side).includes(target)){
-      const noms = provocateurs.map(f=> f.name).join(' et ');
-      showToast('📣 ' + noms + ' provoque : impossible de viser quelqu\'un d\'autre');
-      return;
-    }
-  }
-  combatState.pendingActor = null;
-  combatState.pendingAttack = null;
-  renderCombatWaitingPanel();
-  await playTurnAnimation(actor, attack, target);
-  decrementFighterStatuses(actor);
-  combatState.resolving = false;
-  checkCombatEnd();
-  renderCombat();
-  if (!combatState.finished) saveCombatSnapshot(true);
+  return m2ClicCarte(uid);
 }
 
-function tribeMultiplier(attackerTribe, defenderTribe){
-  if (!attackerTribe || !defenderTribe || attackerTribe===defenderTribe) return 1;
-  if (TRIBE_STRONG_AGAINST[attackerTribe] === defenderTribe) return 1.5;
-  if (TRIBE_STRONG_AGAINST[defenderTribe] === attackerTribe) return 0.5;
-  return 1;
-}
-
-/* Applique un état à une cible (chance, immunité/résistance, non-cumul avec lui-même — réapplique juste sa durée). */
-function applyStatus(target, statusId, chance, duration, value){
-  if (!target.alive) return;
-  if (statusId === 'purify'){
-    if (Math.random()*100 < chance){
-      let removed = false;
-      NEGATIVE_STATUS_IDS.forEach(sid=>{ if (target.statuses[sid]){ delete target.statuses[sid]; removed = true; } });
-      combatState.log.unshift(removed ? `${target.name} est purifié(e) de ses altérations négatives.` : `${target.name} n'avait aucune altération à purifier.`);
-    }
-    return;
-  }
-  if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.immunities||[]).includes(statusId)){
-    combatState.log.unshift(`${target.name} est immunisé(e) contre ${statusNom(statusId)}.`);
-    return;
-  }
-  let effChance = chance;
-  if (NEGATIVE_STATUS_IDS.includes(statusId) && (target.resistances||[]).includes(statusId)) effChance = effChance / 2;
-  if (Math.random()*100 >= effChance) return;
-  target.statuses[statusId] = { turns: duration, value: value };
-  combatState.log.unshift(`${target.name} ${STATUS_META[statusId] && STATUS_META[statusId].negative ? 'subit' : 'gagne'} ${statusNom(statusId)} !`);
-}
-function applyAttackStatusEffect(attacker, attack, target){
-  const se = attack.statusEffect;
-  if (!se || !se.id || !target.alive) return;
-  applyStatus(target, se.id, se.chance!=null?se.chance:100, se.duration||3, se.value!=null?se.value:10);
-}
-/* Résout l'usage d'un objet consommable en combat (soin flat / réanimation / purification / état) et le retire du sac. */
-function resolveItemUse(actor, attack, target){
-  if (!target) return;
-  const cu = attack.combatUse;
-  if (cu.mode === 'revive'){
-    if (target.alive) return; // ne peut viser qu'un allié K.O.
-    const pct = Math.max(1, Math.min(100, cu.revivePercent || 30));
-    target.alive = true;
-    target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
-    combatState.log.unshift(`${actor.name} lance ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
-    combatState.log = combatState.log.slice(0, 20);
-  } else if (!target.alive){
-    return;
-  } else if (cu.mode === 'heal'){
-    const healAmount = cu.healPower || 1;
-    target.hp = Math.min(target.maxHp, target.hp + healAmount);
-    combatState.log.unshift(`${actor.name} lance ${attack.name} sur ${target.name} : +${healAmount} PV`);
-    combatState.log = combatState.log.slice(0, 20);
-  } else if (cu.mode === 'purify'){
-    applyStatus(target, 'purify', 100, 1, 0);
-  } else {
-    applyAttackStatusEffect(actor, attack, target);
-  }
-  if (playerDocRef){
-    playerDocRef.set({ inventory: { [attack.itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true });
-  }
-}
-
-function resolveAttack(attacker, attack, target){
-  if (!target) return;
-  const isRevive = attack && attack.kind === 'revive_single';
-  if (isRevive){
-    if (target.alive) return; // ne peut viser qu'un allié K.O.
-  } else if (!target.alive){
-    return;
-  }
-  if (!attack){
-    combatState.log.unshift(`${attacker.name} n'a aucune attaque à utiliser.`);
-    return;
-  }
-
-  const isGroup = attack.kind === 'damage_group' || attack.kind === 'heal_group';
-
-  /* La confusion N'EST PLUS tirée ici : elle l'est dans `cibleFinale`, avant l'animation.
-     La tirer une seconde fois enverrait les dégâts sur une cible encore différente de celle
-     que l'effet visuel vient de frapper — exactement le bug qu'on corrige. */
-
-  // Attaque de groupe : on applique l'effet à tous les vivants du même camp que la cible visée
-  // (tous les ennemis pour des dégâts de groupe, tous les alliés pour un soin de groupe).
-  if (isGroup){
-    const groupTargets = combatState.fighters.filter(f=> f.side === target.side && f.alive);
-    groupTargets.forEach(t=> resolveAttackOnTarget(attacker, attack, t));
-    return;
-  }
-
-  resolveAttackOnTarget(attacker, attack, target);
-}
-
-/* Applique l'attaque à une seule cible précise (utilisé directement pour le ciblage individuel,
-   et une fois par cible pour les attaques de groupe). */
-function resolveAttackOnTarget(attacker, attack, target){
-  if (!target) return;
-  const isRevive = attack.kind === 'revive_single';
-  if (isRevive){
-    if (target.alive) return;
-  } else if (!target.alive){
-    return;
-  }
-
-  const isDamageKind = attack.kind === 'damage_single' || attack.kind === 'damage_group';
-  /* Filet de sécurité : la provocation est normalement résolue AVANT l'animation
-     (`cibleApresProvocation`), pour que l'effet visuel parte sur la bonne cible. Si un chemin
-     l'a contournée, on rattrape ici — sans écrire de message, il aurait déjà été écrit. */
-  if (attack.kind === 'damage_single' && target.side !== attacker.side){
-    const taunters = combatState.fighters.filter(f=> f.side===target.side && f.alive && f.statuses.taunt);
-    if (taunters.length && !taunters.includes(target)){
-      target = taunters[Math.floor(Math.random()*taunters.length)];
-    }
-  }
-
-  const isMagic = attack.school === 'magic';
-  const heal = isHealAttack(attack);
-  const isBoostOrDebuff = attack.kind === 'boost' || attack.kind === 'debuff';
-
-  if (attacker.statuses.silence && isMagic){
-    combatState.log.unshift(`${attacker.name} est réduit(e) au silence et ne peut pas lancer ${attack.name} !`);
-    return;
-  }
-
-  if (heal){
-    const power = attack.power || 10;
-    const healAmount = Math.round(power * (1 + (isMagic ? (attacker.matk||1) : (attacker.atk||1))/50));
-    target.hp = Math.min(target.maxHp, target.hp + healAmount);
-    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name} : +${healAmount} PV`);
-    combatState.log = combatState.log.slice(0, 20);
-    applyAttackStatusEffect(attacker, attack, target);
-    return;
-  }
-
-  if (isBoostOrDebuff){
-    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}.`);
-    combatState.log = combatState.log.slice(0, 20);
-    applyAttackStatusEffect(attacker, attack, target);
-    return;
-  }
-
-  if (isRevive){
-    const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
-    if (Math.random()*100 >= hitChance){
-      combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}... raté !`);
-      combatState.log = combatState.log.slice(0, 20);
-      combatState.missedUids = combatState.missedUids || [];
-      combatState.missedUids.push(target.uid);
-      return;
-    }
-    const pct = Math.max(1, Math.min(100, attack.power || 30));
-    target.alive = true;
-    target.hp = Math.max(1, Math.round(target.maxHp * pct / 100));
-    combatState.log.unshift(`${attacker.name} lance ${attack.name} et réanime ${target.name} (+${target.hp} PV) !`);
-    combatState.log = combatState.log.slice(0, 20);
-    return;
-  }
-
-  if (attack.kind === 'steal'){
-    // Tente toujours l'objet "facile" en premier tant qu'il n'a pas déjà été volé, puis le "difficile".
-    const tryHard = !(!target.stolenEasy && target.stealEasyItemId);
-    const itemId = tryHard ? target.stealHardItemId : target.stealEasyItemId;
-    if (!itemId || (tryHard && target.stolenHard)){
-      combatState.log.unshift(`${attacker.name} essaie de voler ${target.name}... il n'y a plus rien à voler !`);
-      combatState.log = combatState.log.slice(0, 20);
-      // Comme pour le raté, affiche un message dédié sur la cible plutôt que rien du tout.
-      combatState.nothingToStealUids = combatState.nothingToStealUids || [];
-      combatState.nothingToStealUids.push(target.uid);
-      return;
-    }
-    const baseChance = Math.max(5, Math.min(95, attack.power || 50));
-    const stealChance = tryHard ? Math.max(5, baseChance - 30) : baseChance;
-    if (Math.random()*100 >= stealChance){
-      combatState.log.unshift(`${attacker.name} essaie de voler ${target.name}... raté !`);
-      combatState.log = combatState.log.slice(0, 20);
-      combatState.missedUids = combatState.missedUids || [];
-      combatState.missedUids.push(target.uid);
-      return;
-    }
-    if (tryHard) target.stolenHard = true; else target.stolenEasy = true;
-    const stolenItem = items.find(it=>it.id===itemId);
-    combatState.log.unshift(`${attacker.name} vole ${stolenItem ? (stolenItem.emoji||'📦')+' '+stolenItem.name : 'un objet'} !`);
-    combatState.log = combatState.log.slice(0, 20);
-    if (playerDocRef){
-      playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
-    }
-    showToast(`Volé : ${stolenItem ? (stolenItem.emoji||'📦')+' '+stolenItem.name : 'un objet'}`);
-    return;
-  }
-
-  const hitChance = Math.max(5, Math.min(95, (attacker.precision||90) - (target.evasion||10) + 50 - (attacker.statuses.blind?30:0)));
-  if (Math.random()*100 >= hitChance){
-    combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name}... raté !`);
-    combatState.log = combatState.log.slice(0, 20);
-    // Mémorise le raté pour que playTurnAnimation affiche "Raté !" sur la cible (les PV n'ayant pas
-    // bougé, rien ne le distinguerait sinon d'un tour sans aucun effet).
-    combatState.missedUids = combatState.missedUids || [];
-    combatState.missedUids.push(target.uid);
-    return;
-  }
-
-  // Réflexion : la cible renvoie l'attaque à l'attaquant au lieu de la subir (consomme l'état).
-  if (target.statuses.reflect){
-    delete target.statuses.reflect;
-    combatState.log.unshift(`${target.name} réfléchit l'attaque !`);
-    const swapped = attacker; attacker = target; target = swapped;
-  }
-
-  const atkStat = isMagic ? (attacker.matk||1) : (attacker.atk||1);
-  const defStat = isMagic ? (target.mdef||1) : (target.def||1);
-  const mult = tribeMultiplier(attack.tribe || attacker.tribe, target.tribe);
-  let dmg = Math.max(1, Math.round(((attack.power||10) + atkStat) - defStat*0.6));
-  dmg = Math.round(dmg * mult);
-
-  // Bouclier : absorbe les dégâts avant les PV.
-  if (target.statuses.shield && target.statuses.shield.value > 0){
-    const shield = target.statuses.shield;
-    const absorbed = Math.min(shield.value, dmg);
-    shield.value -= absorbed;
-    dmg -= absorbed;
-    combatState.log.unshift(`Le bouclier de ${target.name} absorbe ${absorbed} dégâts.`);
-    if (shield.value <= 0) delete target.statuses.shield;
-  }
-
-  target.hp = Math.max(0, target.hp - dmg);
-  const bonus = mult > 1 ? ' (efficace !)' : (mult < 1 ? ' (peu efficace...)' : '');
-  combatState.log.unshift(`${attacker.name} lance ${attack.name} sur ${target.name} : -${dmg} PV${bonus}`);
-  combatState.log = combatState.log.slice(0, 20);
-
-  // Sommeil : se réveille en cas de dégâts.
-  if (target.statuses.sleep && dmg > 0){
-    delete target.statuses.sleep;
-    combatState.log.unshift(`${target.name} se réveille sous le choc !`);
-  }
-
-  if (target.hp <= 0){
-    if (target.statuses.revive){
-      delete target.statuses.revive;
-      target.hp = Math.max(1, Math.round(target.maxHp * 0.5));
-      combatState.log.unshift(`${target.name} renaît de ses cendres !`);
-    } else {
-      target.alive = false;
-      /* Personne n'écrivait cette ligne : le journal ne disait jamais qu'un combattant tombait,
-         et le bandeau ne pouvait donc pas l'annoncer. */
-      combatState.log.unshift(`${target.name} est K.O. !`);
-    }
-  }
-
-  // Contre-attaque : la cible riposte immédiatement si elle a survécu.
-  if (target.alive && target.statuses.counter){
-    const counterDmg = Math.max(1, Math.round((target.atk||1) - (attacker.def||1)*0.6));
-    attacker.hp = Math.max(0, attacker.hp - counterDmg);
-    combatState.log.unshift(`${target.name} contre-attaque ${attacker.name} : -${counterDmg} PV`);
-    if (attacker.hp <= 0){
-      if (attacker.statuses.revive){
-        delete attacker.statuses.revive;
-        attacker.hp = Math.max(1, Math.round(attacker.maxHp * 0.5));
-        combatState.log.unshift(`${attacker.name} renaît de ses cendres !`);
-      } else {
-        attacker.alive = false;
-        combatState.log.unshift(`${attacker.name} est K.O. !`);
-      }
-    }
-  }
-
-  applyAttackStatusEffect(attacker, attack, target);
-}
-
-/* Un combat né d'un dialogue est un duel : quelqu'un t'a provoqué, on ne s'en va pas.
-   Et techniquement, fuir laissait le dialogue en suspens sans issue prévue. */
 function combatDeDialogue(){
   return !!retourDialogueCombat;
-}
-
-async function attemptFlee(){
-  if (combatDeDialogue()){ showToast('Fuite impossible : ce duel doit aller à son terme'); return; }
-  if (!(await appConfirm('Fuir ce combat ? Tu perds ta chance de butin.'))) return;
-  const enemyFighters = combatState.fighters.filter(f=>f.side==='enemy' && f.alive);
-  const avgFlee = enemyFighters.length ? enemyFighters.reduce((s,f)=> s+(f.fleeChance!=null?f.fleeChance:30), 0)/enemyFighters.length : 50;
-  const success = Math.random()*100 < avgFlee;
-  renderCombatWaitingPanel();
-  const actor = combatState.fighters.find(f=>f.uid===combatState.pendingActor);
-  combatState.pendingActor = null;
-  combatState.pendingAttack = null;
-  if (actor) decrementFighterStatuses(actor);
-  combatState.resolving = false;
-  if (success){
-    combatState.log.unshift('Fuite réussie !');
-    endCombat('flee');
-  } else {
-    combatState.log.unshift('Fuite ratée !');
-    renderCombat();
-    saveCombatSnapshot();
-  }
 }
 
 function checkCombatEnd(){
@@ -26370,17 +25431,7 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
   clearSavedCombat(); // pas d'attente ici : la confirmation se fait en arrière-plan, les 3 sorties de zone servent de filet de sécurité si elle est coupée par une actualisation
 });
 
-function statusBadgesHtml(f){
-  if (combatState && combatState.moteur2) return m2Badges(f);   // v450
-  const ids = Object.keys(f.statuses);
-  return `<div style="display:flex; justify-content:center; flex-wrap:wrap; gap:1px; margin-top:2px; min-height:13px;">` +
-    ids.map(sid=>{
-      const meta = STATUS_META[sid] || {};
-      const emoji = (meta.label||'').split(' ')[0] || '❔';
-      const turns = f.statuses[sid].turns;
-      return `<span style="font-size:clamp(8px, 2.4vw, 11px); background:rgba(0,0,0,.5); border-radius:3px; padding:0 2px; color:#fff;" title="${meta.label||sid}">${emoji}${turns!=null?turns:''}</span>`;
-    }).join('') + `</div>`;
-}
+function statusBadgesHtml(f){ return m2Badges(f); }
 
 function particlesHtml(f){
   const mine = (combatState.particles||[]).filter(p=>p.uid===f.uid);
@@ -26448,16 +25499,13 @@ function fighterCardHtml(f, idx, arr){
       && f.side !== pendingActorFighter.side && f.alive && !f.statuses.taunt){
     bloqueParProvocation = combatState.fighters.some(x=> x.side === f.side && x.alive && x.statuses.taunt);
   }
-  if (!bloqueParProvocation && pendingAttack && pendingActorFighter && combatState.moteur2 && f.alive
+  if (!bloqueParProvocation && pendingAttack && pendingActorFighter && f.alive
       && m2CarteHorsCible(f, pendingAttack, pendingActorFighter)) bloqueParProvocation = true;   // v451 : même estompage
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'', f.fleeingOut?'combat-fleeing-out':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
-  const infoHtml = combatState.moteur2 ? m2InfoCarte(f, hpColor) : `
-    <div class="combat-hp-label" style="color:${hpColor};">${Math.max(0,f.hp)} / ${f.maxHp} PV</div>
-    ${statusBadgesHtml(f)}
-  `;
+  const infoHtml = m2InfoCarte(f, hpColor);
   // Chevauchement des portraits vers le centre du groupe (2-3 adversaires) : on réduit la largeur de la
   // carte elle-même pour que 3 cartes tiennent sur une seule ligne, et on décale l'image ET le texte
   // ENSEMBLE (même bloc) pour qu'ils restent alignés l'un sur l'autre, quel que soit le décalage.
