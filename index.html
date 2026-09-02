@@ -792,8 +792,11 @@
   20%{ transform:translate(-4px,0); } 40%{ transform:translate(4px,0); }
   60%{ transform:translate(-3px,0); } 80%{ transform:translate(3px,0); }
 }
+/* v455 : l'opacité tombait dès la première image, sur 1 s — « +1 charge » était déjà pâle à
+   mi-course et illisible. Elle reste PLEINE jusqu'aux deux tiers, et la montée est plus lente. */
 @keyframes combatParticleFloat{
   0%{ opacity:1; transform:translate(-50%,0); }
+  70%{ opacity:1; transform:translate(-50%,-20px); }
   100%{ opacity:0; transform:translate(-50%,-32px); }
 }
 .combat-anim-lunge{ animation:combatLunge .45s ease-in-out; }
@@ -871,7 +874,7 @@
 .combat-particle{
   position:absolute; left:50%; top:-6px; transform:translate(-50%,0);
   font-size:13px; font-weight:700; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8);
-  animation:combatParticleFloat 1s ease-out forwards; pointer-events:none; white-space:nowrap;
+  animation:combatParticleFloat 1.2s ease-out forwards; pointer-events:none; white-space:nowrap;
 }
 .combat-particle-dmg{ color:#ff4d4d; }
 .combat-particle-heal{ color:#4dd67a; }
@@ -1182,7 +1185,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v453</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v455</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2713,6 +2716,7 @@
             <div class="field-label">Main de départ (4 attaques, prises dans la liste du modèle)</div>
             <div class="field-row"><select id="editCombatMain0" class="field-input"></select><select id="editCombatMain1" class="field-input"></select></div>
             <div class="field-row"><select id="editCombatMain2" class="field-input"></select><select id="editCombatMain3" class="field-input"></select></div>
+            <div id="editCombatMainResume" style="margin:6px 0 0;"></div>
             <div class="field-label">Écart de stats par exemplaire</div>
             <select id="editCombatEcart" class="field-input">
               <option value="0">Aucun — stats exactes du profil</option>
@@ -5034,12 +5038,14 @@ function renderDialogueBuilder(){
 
     const recruitSelect = document.createElement('select');
     recruitSelect.className = 'field-input';
-    let recruitOpts = '<option value="">Ne recrute pas</option>';
+    let recruitOpts = '<option value="">Ne recrute pas</option><option value="__aucun">🤖 Recrute sans métier</option>';
     metiers.forEach(m=>{ recruitOpts += '<option value="' + m.id + '">' + m.name + '</option>'; });
     recruitSelect.innerHTML = recruitOpts;
-    recruitSelect.value = (choice.recruit && choice.recruit.metierId) || '';
+    /* Trois états, pas deux : ne recrute pas · recrute sans métier · recrute avec un métier.
+       Le vide gardait son sens d'origine (« ne recrute pas »), d'où le sentinelle. */
+    recruitSelect.value = choice.recruit ? (choice.recruit.metierId || '__aucun') : '';
     recruitSelect.addEventListener('change', ()=>{
-      choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value } : null;
+      choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value === '__aucun' ? null : recruitSelect.value } : null;
     });
     row.appendChild(recruitSelect);
 
@@ -5246,12 +5252,18 @@ function fenetreEffetsReponse(ch){
       ouvrirSelecteur({ titre:'Quelle quête valider ?', items: quests.map(q=> ({ id:q.id, label:q.name, emoji:'✅' })),
         selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.questValidate = { questId: ids[0] }; dessiner(); } });
     });
-    const nomMetier = (m)=> (metiers.find(x=> x.id === m) || {}).name || 'métier supprimé';
+    const nomMetier = (m)=> !m ? 'sans métier' : ((metiers.find(x=> x.id === m) || {}).name || 'métier supprimé');
     ligne('🤝 Le recruter', ch.recruit ? nomMetier(ch.recruit.metierId) : 'non', ()=>{
       if (ch.recruit){ ch.recruit = null; dessiner(); return; }
-      if (!metiers.length){ showToast('Aucun métier créé pour l\'instant'); return; }
-      ouvrirSelecteur({ titre:'Recruté comme…', items: metiers.map(m=> ({ id:m.id, label:m.name, emoji:m.emoji || '🤝' })),
-        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] }; dessiner(); } });
+      /* « Sans métier » est une option à part entière depuis le portage : un combattant tient
+         tout de son MODÈLE DE ROBOT. Le métier ne sert plus qu'au craft (recettes autorisées),
+         aux bonus de mission et aux effets d'objets — l'imposer pour recruter un robot obligeait
+         à en inventer un au hasard. Le sentinelle '__aucun' est nécessaire : le sélecteur ignore
+         un identifiant vide, qui veut déjà dire « rien choisi ». */
+      const items = [{ id:'__aucun', label:'Sans métier (combattant)', emoji:'🤖' }]
+        .concat(metiers.map(m=> ({ id:m.id, label:m.name, emoji:m.emoji || '🤝' })));
+      ouvrirSelecteur({ titre:'Recruté comme…', items,
+        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] === '__aucun' ? null : ids[0] }; dessiner(); } });
     });
 
     /* --- conditions : ce que le joueur a déjà dit, ici ou ailleurs. Elles se CUMULENT :
@@ -9950,15 +9962,32 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      un emplacement bidon pour tout ce qui n'a pas à être quelque part. */
   if (pendingLat === null && !pendingAssignedZoneId && !pendingReserve){ showToast('Choisis un emplacement, une zone d\'exploration, ou mets la fiche en réserve'); return; }
   if (interactionType === 'combat' && !combatStats.robotModeleId && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
-  /* L'image de buste devient obligatoire : sans elle, le dialogue retombait sur l'image en
+  /* L'image de buste est obligatoire : sans elle, le dialogue retombait sur l'image en
      pied et affichait le personnage debout en pleine conversation. Une règle claire vaut
      mieux qu'un repli silencieux. Les fiches en travaux échappent au contrôle : elles sont
-     justement là pour être incomplètes. */
-  if (!enTravaux && interactionType !== 'zone' && !editBustImageDataUrl && !editBustImagePath && !editBustImageRef){
+     justement là pour être incomplètes.
+     v454 : elle n'est exigée que s'il Y A un dialogue. Un monstre de rencontre aléatoire n'ouvre
+     jamais la bouche — lui réclamer un buste bloquait l'enregistrement au nom d'un écran qu'il
+     ne verra jamais, et obligeait à recopier l'image d'un autre personnage pour s'en sortir. */
+  const aUnDialogue = (dialogueSteps || []).some(st=> (st.text && st.text.trim()) || (st.choices || []).length);
+  if (!enTravaux && interactionType !== 'zone' && aUnDialogue && !editBustImageDataUrl && !editBustImagePath && !editBustImageRef){
     showToast('Il manque l\'image de buste (💬) — c\'est elle qui s\'affiche pendant les dialogues');
     return;
   }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+
+  /* Une fiche recrutable sans moyen d'être recrutée, ou sans chambre, s'enregistre très bien
+     et ne sert à rien : deux fois de suite il a fallu rouvrir la fiche après coup. On PRÉVIENT
+     sans bloquer — c'est un oubli en cours de route, pas une erreur : la fiche peut très bien
+     être enregistrée maintenant et complétée juste après. Le message part APRÈS le toast de
+     confirmation, sinon celui-ci l'écraserait aussitôt. */
+  let avertissementFiche = null;
+  if (interactionType === 'combat' && combatStats.recruitable && !enTravaux){
+    const manque = [];
+    if (!(dialogueSteps || []).some(st=> (st.choices || []).some(c=> c && c.recruit))) manque.push('aucune réponse ne le recrute');
+    if (!editRoomImagePath && !editRoomImageRef && !editRoomImageDataUrl) manque.push('pas d\'image de chambre');
+    if (manque.length) avertissementFiche = '⚠️ Recrutable, mais : ' + manque.join(' · ');
+  }
 
   const combatArenaImagePath = editZoneArenaImagePath || null;
   let combatArenaImageRef = combatArenaImagePath ? null : (editZoneArenaImageRef || null);
@@ -10019,6 +10048,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
       etape.pnjImage = imageUrl || '';
     }
     showToast(enTravaux ? '🚧 Brouillon enregistré — les joueurs ne le voient pas' : '📤 PNJ publié');
+    if (avertissementFiche) setTimeout(()=> showToast(avertissementFiche), 1200);
     /* Un enregistrement peut avoir été demandé pour pouvoir PARTIR quelque part : dans ce cas
        on enchaîne au lieu de vider la fiche, sinon le voyage arriverait sur un formulaire neuf. */
     if (apresEnregistrementFiche){
@@ -15177,6 +15207,23 @@ function majBlocsModele(mainVoulue, garderMain){
     s.value = base[i] || '';
     if (s.value !== (base[i] || '')) s.value = '';
   });
+  majResumeMain();
+}
+/* Une liste déroulante ne montre qu'un nom : impossible de choisir sa main en connaissance de
+   cause. On redonne sous les quatre sélecteurs ce que le combat affiche déjà — famille, type en
+   clair, puissance, coût 🔷, état posé — par la même fonction, pour qu'il n'y ait qu'un endroit
+   à corriger si le résumé change. */
+function majResumeMain(){
+  const box = document.getElementById('editCombatMainResume');
+  if (!box) return;
+  const lignes = [0,1,2,3].map(i=>{
+    const s = document.getElementById('editCombatMain' + i);
+    const a = s && s.value ? attaqueParId(s.value) : null;
+    if (!a) return '';
+    return `<div class="meta" style="margin:2px 0;"><b>${htmlEsc((a.emoji ? a.emoji + ' ' : '') + (a.nom || ''))}</b> — ${htmlEsc(resumeAttaque(a))}${
+      a.desc ? `<br><span style="opacity:.8;">${htmlEsc(a.desc)}</span>` : ''}</div>`;
+  }).filter(Boolean);
+  box.innerHTML = lignes.length ? lignes.join('') : '<p class="meta" style="margin:0;">Aucune attaque choisie — le jeu par défaut du modèle sera utilisé.</p>';
 }
 /* La main de départ d'une fiche : ses choix, restreints à la liste du modèle ; à défaut le jeu du modèle. */
 function mainDeDepartDeFiche(cs, m){
@@ -15398,13 +15445,18 @@ async function startCombatM2(config, arenaBgUrl, opts){
   preloadVictoryMusic();
   libererImagesDeCombat();
   dernierRenduArene = { ennemis:null, joueurs:null, journal:null };
-  combatState = { fighters:[], resolving:true, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[], moteur2:true, test:!!opts.test, isPvp:false, isSpectator:false };
+  combatState = { fighters:[], resolving:true, pendingActor:null, pendingAttack:null, log:[], finished:false, anim:null, hitUids:[], particles:[], moteur2:true, test:!!opts.test, isPvp:false, isSpectator:false, passPreviewUid:null, souffleApercuMana:null };
   let cfgs = null;
   if (config.reprise){
     m2Restaurer(combatState, config.reprise);
   } else {
     M2.demarrer(combatState, { allies: config.allies, ennemis: config.ennemis, objets: config.objets, objetsDef: config.objetsDef });
     cfgs = { player: config.allies, enemy: config.ennemis };
+  }
+  /* `log.push` et non `unshift` : le journal se lit du plus récent en haut, ces lignes sont donc
+     les plus anciennes du combat. Jamais à la reprise — le journal sauvegardé les contient déjà. */
+  if (!config.reprise && config.avertissements && config.avertissements.length){
+    config.avertissements.forEach(t=> combatState.log.push(t));
   }
   if (!opts.test) m2PoserLiensCompte(combatState);
   combatState.fighters.forEach(f=>{
@@ -15567,6 +15619,10 @@ function ouvrirChoixApprentissageM2(recruit){
 (function(){
   const sel = document.getElementById('editCombatModele');
   if (sel) sel.addEventListener('change', ()=>{ sel.dataset.voulu = sel.value; majBlocsModele(null); });
+  [0,1,2,3].forEach(i=>{
+    const s = document.getElementById('editCombatMain' + i);
+    if (s) s.addEventListener('change', majResumeMain);
+  });
 })();
 
 /* =====================================================================================
@@ -15593,7 +15649,7 @@ async function m2TakeTurn(acteur){
     combatState.hitUids = combatState.particles.map(p=> p.uid);
     completerAction(journalAvant);
     renderCombat();
-    await sleep(600);
+    await sleep(1200);   // v455 : même durée que le plancher de lecture, sinon la particule est coupée
     if (!combatState) return;
     combatState.particles = []; combatState.hitUids = [];
     m2FinDuTour();
@@ -15768,23 +15824,28 @@ function m2ConfirmerSouffle(acteur){
   const apres = Math.min(acteur.maxMana, acteur.mana + gain);
   panel.innerHTML = `
     <div style="padding:10px 8px; text-align:center;">
-      <p class="meta" style="margin:0 0 4px; font-size:13px;">Passer ton tour ? La jauge repart à ${REGLAGES_COMBAT.jaugeApresSouffle} % (retour plus rapide qu'après une vraie action).</p>
-      <p style="margin:0 0 10px; font-size:14px;">${M2.MOT.manaIcone} ${acteur.mana} → <strong style="color:#1f7fbf;">${apres}</strong> <span style="color:#1f7fbf; font-weight:700;">(+${apres - acteur.mana})</span></p>
+      <p class="meta" style="margin:0 0 10px; font-size:13px;">Passer ton tour ? La jauge repart à ${REGLAGES_COMBAT.jaugeApresSouffle} % (retour plus rapide qu'après une vraie action). Le gain de cristal s'affiche sur sa carte.</p>
       <div style="display:flex; gap:8px; justify-content:center;">
         <button type="button" class="btn-secondary" id="m2SouffleOkBtn">✔️ Confirmer</button>
         <button type="button" class="btn-secondary" id="m2SouffleRetourBtn">↩️ Retour</button>
       </div>
     </div>`;
+  /* v455 : le gain de cristal se lit maintenant SUR la carte du robot, à l'endroit exact où
+     le chiffre va changer — sa demande. Le panneau ne répète plus l'information. */
   combatState.passPreviewUid = acteur.uid;
+  combatState.souffleApercuMana = apres;
   renderCombatTurnOrderBar();
+  renderCombat();
+  const refermer = ()=>{ combatState.passPreviewUid = null; combatState.souffleApercuMana = null; };
   document.getElementById('m2SouffleOkBtn').addEventListener('click', ()=>{
-    combatState.passPreviewUid = null;
+    refermer();
     m2Jouer(acteur, 'souffle', null);
   });
   document.getElementById('m2SouffleRetourBtn').addEventListener('click', ()=>{
-    combatState.passPreviewUid = null;
+    refermer();
     m2PanneauAction(acteur);
     renderCombatTurnOrderBar();
+    renderCombat();
   });
 }
 /* LE CIBLAGE (v451) — règle du JEU, pas du proto : on tape TOUJOURS sur l'image de la cible, même
@@ -15949,6 +16010,16 @@ function m2Badges(f){
   Object.keys(f.statuts).forEach(k=>{ html += `<span class="combat-badge" title="${NOM_STATUTS[k] || k}">${LIB_STATUTS[k] || '?'}${f.statuts[k].tours != null ? f.statuts[k].tours : ''}</span>`; });
   return `<div class="combat-badges" style="min-height:13px;">${html}</div>`;
 }
+/* Le cristal, et l'aperçu du souffle quand on hésite à passer son tour : « 🔷12 → 42 », en
+   vert, sur la carte de CE robot seulement. */
+function m2BadgeMana(f){
+  const apercu = (combatState.passPreviewUid === f.uid && combatState.souffleApercuMana != null)
+    ? combatState.souffleApercuMana : null;
+  if (apercu != null && apercu !== f.mana){
+    return `<span class="combat-badge" style="border-color:#4dd67a; color:#4dd67a; font-weight:700;">🔷${f.mana} → ${apercu}</span>`;
+  }
+  return `<span class="combat-badge" style="border-color:#4fc3f7; color:#9fdcff;">🔷${f.mana}/${f.maxMana}</span>`;
+}
 function m2InfoCarte(f, hpColor){
   const V = VICES[f.vice] || {};
   const ult = Math.max(0, Math.min(100, f.ultime || 0));
@@ -15959,7 +16030,7 @@ function m2InfoCarte(f, hpColor){
       <svg class="combat-ult-ring" aria-hidden="true"><rect class="ult-fond" x="0" y="0" width="100%" height="100%" rx="6" pathLength="100"/><rect class="ult-trait" x="0" y="0" width="100%" height="100%" rx="6" pathLength="100"/></svg>
       <div class="combat-hp-label" style="color:${hpColor};">${Math.max(0,f.hp)} / ${f.maxHp} PV</div>
     </div>
-    <div class="combat-badges"><span class="combat-badge" style="border-color:${V.couleur || '#fff'};">${V.emoji || ''}</span><span class="combat-badge" style="border-color:#4fc3f7; color:#9fdcff;">🔷${f.mana}/${f.maxMana}</span></div>
+    <div class="combat-badges"><span class="combat-badge" style="border-color:${V.couleur || '#fff'};">${V.emoji || ''}</span>${m2BadgeMana(f)}</div>
     ${m2Badges(f)}`;
 }
 
@@ -19765,6 +19836,11 @@ function recruitStateBadge(r){
   /* Rentré mais pas encore débriefé : il est là, sa porte s'ouvre, et l'étiquette invite à
      aller le voir plutôt que d'annoncer une absence. */
   if (recruitJustBack(r))  return { texte:'📬 À débriefer',   couleur:'var(--accent)', ouvert:true };
+  /* v454 : un combattant d'avant le portage n'a pas de modèle de robot, donc il ne peut plus se
+     battre. Il l'apprenait au lancement du combat, dans un message noyé par la transition. Il
+     l'apprend maintenant en regardant ses quartiers, avant même de partir. Sa porte reste
+     ouverte : il est à bord, et c'est de sa chambre qu'on le renvoie. */
+  if (r.recruitType === 'combattant' && !r.robotModeleId) return { texte:'⚠️ Sans modèle', couleur:'var(--danger)', ouvert:true };
   if (recruitIsKo(r))      return { texte:'💀 Dans le coma',  couleur:'var(--danger)' };
   if (r.recruitType === 'combattant' && recruitEffectiveHp(r) < recruitMaxHp(r)){
     return { texte:'🩹 Blessé', couleur:'#8e6b2f' };
@@ -19928,8 +20004,13 @@ function renderQuartersList(){
       if (isGhostTap()) return; // reste du geste qui vient d'ouvrir cet écran
       const r = recruits.find(x=> x.id === b.dataset.quartersOpen);
       if (!r) return;
-      const etat = recruitStateBadge(r);
-      if (etat && !etat.ouvert){ showToast(r.name + ' est ' + etat.texte.replace(/^\S+\s/, '').toLowerCase() + ' — sa chambre est fermée'); return; }
+      /* Seule l'ABSENCE ferme une porte. La règle « une étiquette sans le drapeau ouvert »
+         refermait aussi les chambres des 🩹 Blessés et des 💀 Dans le coma, qui sont pourtant à
+         bord — c'est justement chez eux qu'on va les soigner. La VIGNETTE avait été corrigée en
+         son temps (elle teste `recruitIsAway`), ce clic-ci ne l'avait jamais été : le demi-
+         correctif n'a laissé aucune trace visible tant que personne n'a essayé d'ouvrir la porte
+         d'un blessé. Les deux testent désormais la même chose. */
+      if (recruitIsAway(r)){ showToast(r.name + ' est en mission — sa chambre est fermée'); return; }
       openRecruitRoom(r);
     });
   });
@@ -24622,14 +24703,19 @@ async function launchZoneCombat(enemyCreatureList, pt, opts){
     else if (pt) showToast('Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau');
     return;
   }
-  if (equipe.sansModele.length) showToast('Sans modèle de robot, laissé au vaisseau : ' + equipe.sansModele.join(', '));
+  /* Ces avertissements partaient en toast juste avant la transition d'entrée, qui les couvrait
+     aussitôt : illisibles, et arrivés trop tard de toute façon. Ils descendent dans le JOURNAL du
+     combat, où ils restent consultables tout du long. Le vrai signal en amont, c'est le badge
+     « ⚠️ Sans modèle » des quartiers. */
+  const avertissementsCombat = [];
+  if (equipe.sansModele.length) avertissementsCombat.push('🏠 Resté(s) au vaisseau, sans modèle de robot : ' + equipe.sansModele.join(', ') + '.');
   if (!equipe.cfgs.some(c=> c.hpInit > 0)){
     showToast('Toute ton équipe est K.O. — un objet de réanimation, ou rentre au vaisseau');
     return;
   }
   const adv = m2EnnemisDepuisFiches(enemyCreatureList);
   if (!adv.cfgs.length){ showToast('Ce combat est impossible : aucun adversaire n\'a de modèle de robot (' + adv.sansModele.join(', ') + ')'); return; }
-  if (adv.sansModele.length) showToast('Sans modèle de robot, ignoré : ' + adv.sansModele.join(', '));
+  if (adv.sansModele.length) avertissementsCombat.push('👻 Adversaire(s) sans modèle de robot, absent(s) du combat : ' + adv.sansModele.join(', ') + '.');
   let arenaBg = DEFAULT_ARENA_BG;
   if (sceneViewCreature && sceneViewCreature.combatArenaImagePath){
     arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
@@ -24638,7 +24724,7 @@ async function launchZoneCombat(enemyCreatureList, pt, opts){
   }
   combatZoneContext = (opts && opts.sansContexte) ? null : { pt: pt || null };   // le test des Outils part de la carte, sans zone
   const sac = m2ObjetsDuJoueur();
-  await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock }, objetsDef: Object.assign({}, M2.OBJETS, sac.def) }, arenaBg, {});
+  await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock }, objetsDef: Object.assign({}, M2.OBJETS, sac.def), avertissements: avertissementsCombat }, arenaBg, {});
 }
 async function startZoneBossCombat(bossCreature, pt){
   await launchZoneCombat([bossCreature], pt);
@@ -26299,7 +26385,10 @@ function statusBadgesHtml(f){
 function particlesHtml(f){
   const mine = (combatState.particles||[]).filter(p=>p.uid===f.uid);
   if (!mine.length) return '';
-  return mine.map(p=>`<div class="combat-particle ${p.colorClass||''}">${p.emoji}${(p.emoji && p.text) ? ' ' : ''}${p.text||''}</div>`).join('');
+  /* v455 : elles étaient toutes posées au MÊME endroit (left:50%, top:-6px) et se
+     superposaient — un tour qui inflige des dégâts ET donne une charge en affichait deux
+     l'une sur l'autre, illisibles. On les empile vers le haut, dans leur ordre d'arrivée. */
+  return mine.map((p, i)=>`<div class="combat-particle ${p.colorClass||''}" style="top:${-6 - i*17}px;">${p.emoji}${(p.emoji && p.text) ? ' ' : ''}${p.text||''}</div>`).join('');
 }
 
 function getAvatarSizePx(side){
@@ -26446,7 +26535,10 @@ function poserLignesRecit(){
 function attendreLecture(){
   const el = elementRecitActif();
   const texte = el ? (el.textContent || '') : '';
-  const duree = Math.max(900, Math.min(5000, 700 + texte.length * 22));
+  /* v455 : plancher relevé de 900 à 1200 ms — c'est ce délai qui décide de la durée de vie
+     réelle d'une particule (le redessin qui suit les efface), donc une animation de 1,6 s
+     était coupée en pleine course sur les actions à texte court. */
+  const duree = Math.max(1200, Math.min(5000, 700 + texte.length * 22));
   return new Promise(resolve=>{
     let fini = false;
     const finir = ()=>{
@@ -26613,21 +26705,29 @@ function afficherProchaineAction(){
 }
 /* Remplace les noms des combattants par leur portrait dans une ligne de journal. Les noms
    les plus longs d'abord : sinon « Robot 1 » serait déjà mangé par « Robot ». On ne touche
-   qu'aux noms exacts, et seulement si le portrait est prêt. */
+   qu'aux noms exacts, et seulement si le portrait est prêt.
+
+   v455 — LE BUG DU HTML QUI FUYAIT (« inflige 44 dégâts à image », « title = » en clair) :
+   la version d'avant remplaçait UN NOM À LA FOIS, en boucle. Le premier passage insérait
+   `<img … alt="Nom" title="Nom">` ; le passage SUIVANT relisait ce qu'on venait d'insérer,
+   retrouvait le nom À L'INTÉRIEUR de l'attribut alt, et le remplaçait par une deuxième
+   balise — la première éclatait, et ses attributs se retrouvaient affichés en texte. Il
+   suffisait de deux combattants du même nom (son cas), ou d'un nom contenu dans un autre.
+   Un SEUL passage règle la classe entière du problème : la regex parcourt la ligne une fois,
+   ce qu'elle écrit n'est jamais relu. Les noms sont dédoublonnés et échappés — un nom portant
+   un guillemet cassait l'attribut de la même façon. */
 function texteAvecPortraits(ligne){
   if (!combatState || !combatState.fighters) return ligne;
-  const noms = combatState.fighters
-    .filter(f=> f.name && (f.thumbUrl || f.faceImageUrl || f.imageUrl))
-    .slice()
-    .sort((a,b)=> (b.name || '').length - (a.name || '').length);
-  let out = ligne;
-  noms.forEach(f=>{
+  const parNom = new Map();
+  combatState.fighters.forEach(f=>{
     const url = f.thumbUrl || f.faceImageUrl || f.imageUrl;
-    const motif = f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    out = out.replace(new RegExp(motif, 'g'),
-      '<img class="log-face" src="' + url + '" alt="' + f.name + '" title="' + f.name + '">');
+    if (f.name && url && !parNom.has(f.name)) parNom.set(f.name, url);
   });
-  return out;
+  const noms = Array.from(parNom.keys()).sort((a,b)=> b.length - a.length);
+  if (!noms.length) return ligne;
+  const motif = noms.map(nm=> nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return ligne.replace(new RegExp(motif, 'g'), (nm)=>
+    '<img class="log-face" src="' + htmlEsc(parNom.get(nm)) + '" alt="' + htmlEsc(nm) + '" title="' + htmlEsc(nm) + '">');
 }
 
 function majDerniereAction(log){
