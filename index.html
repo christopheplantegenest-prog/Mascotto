@@ -1206,7 +1206,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v457</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v460</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2096,7 +2096,8 @@
     <div id="robotsModelesNav" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
       <button class="btn-capture" data-rmsection="new" style="flex:1 1 45%;">Nouveau modèle</button>
       <button class="btn-secondary" data-rmsection="list" style="flex:1 1 45%;">Liste des modèles</button>
-      <button class="btn-secondary" data-rmsection="test" style="flex:1 1 100%;">⚔️ Combat de test</button>
+      <button class="btn-secondary" data-rmsection="test" style="flex:1 1 45%;">⚔️ Combat de test</button>
+      <button class="btn-secondary" data-rmsection="simu" style="flex:1 1 45%;">🧪 Simulateur</button>
     </div>
     <div class="robots-modeles-section" id="rmsection-new" style="display:none;">
       <div id="rmForm"></div>
@@ -2106,6 +2107,9 @@
     </div>
     <div class="robots-modeles-section" id="rmsection-test" style="display:none;">
       <div id="rmTest"></div>
+    </div>
+    <div class="robots-modeles-section" id="rmsection-simu" style="display:none;">
+      <div id="rmSimu"></div>
     </div>
   </div>
 </div>
@@ -6838,15 +6842,20 @@ function reprendreDialogueApresCombat(resultat){
   const retour = retourDialogueCombat;
   retourDialogueCombat = null;
   combatAttaquesAutorisees = null;
-  if (!retour) return false;
+  if (!retour){ journal('dialogue', 'pas de mot de la fin', 'aucun combat de dialogue en cours', true); return false; }
   /* La victoire se retient AVANT tout le reste : elle vaut même si l'auteur n'a prévu
      aucune réplique de victoire, sinon la condition « je l'ai déjà battu » ne se
      déclencherait que dans les dialogues bien remplis. */
   if (resultat === 'victory') marquerCombatGagne(retour.creatureId);
   const c = ficheParId(retour.creatureId);
-  if (!c) return false;
+  if (!c){ journal('dialogue', 'pas de mot de la fin', 'fiche introuvable : ' + retour.creatureId, true); return false; }
   const cible = (resultat === 'victory') ? retour.victoire : retour.defaite;
-  if (cible === null || isNaN(cible)) return false;
+  if (cible === null || isNaN(cible)){
+    journal('dialogue', 'pas de mot de la fin',
+      'aucune réplique de ' + (resultat === 'victory' ? 'victoire' : 'défaite') + ' sur la fiche ' + (c.name || c.id), true);
+    return false;
+  }
+  journal('dialogue', 'mot de la fin', (c.name || c.id) + ' → réplique n°' + cible, true);
   /* Si l'on revient dans une zone d'exploration, la scène est au plan 4000 : sans ce
      relèvement, la fenêtre de dialogue s'ouvrait DERRIÈRE le décor — invisible, alors
      qu'elle avait bien été ouverte. Même valeur que pour un dialogue lancé d'un point. */
@@ -13190,6 +13199,7 @@ function showRobotsModelesSection(name){
     renderRobotModeleForm();
   }
   if (name === 'test') renderCombatTest();
+  if (name === 'simu') renderSimulateur();
 }
 (function installerRobotsModeles(){
   document.getElementById('robotsModelesTitre').textContent = '🤖 ' + LIBELLE_ROBOTS;
@@ -14855,6 +14865,7 @@ function battre(){
 return {
   get combat(){ return combat; }, set combat(c){ combat = c; },
   set rappelPanneau(fn){ rappelPanneau = fn; },
+  get simulation(){ return modeSimulation; }, set simulation(v){ modeSimulation = !!v; },   // étape 4 : le simulateur coupe particules et hitUids
   OBJETS, PLATS, MOT, CIBLES, TYPES_CIBLE_UNIQUE, TYPES_CIBLE_ALLIE, TYPES_CAMP_ALLIE, TYPES_CAMP_ADVERSE,
   creerCombattant, demarrer, battre, compterCycle, preTour, choixIA, actionDuTour, verifierFin,
   vivants, statsEffectives, attaquesDe, abordable, cibleDe, ultimeDe, ultimeViseUnAdversaire,
@@ -15184,6 +15195,303 @@ async function lancerCombatTest(){
   if (combatState && !combatState.finished){ showToast('Un combat est déjà en cours'); return; }
   /* étape 3 : le lancement commun (startCombatM2) sert au test comme aux vrais combats */
   await startCombatM2({ allies, ennemis }, DEFAULT_ARENA_BG, { test:true });
+}
+
+/* =====================================================================================
+   ÉTAPE 4 DU PORTAGE (02/09) — 🧪 LE SIMULATEUR D'ÉQUILIBRAGE (lot 1)
+   Robots → 🧪 Simulateur. Le moteur M2 joue des combats SANS RIEN DESSINER, IA des deux
+   côtés, sur les vrais modèles du catalogue avec leur main de départ (le jeu du modèle).
+   - grille TOUS CONTRE TOUS : chaque case = N combats, taux de victoire de la ligne ;
+   - A contre B au choix ;
+   - le TABLEAU DES INCOHÉRENCES : on ne signale pas des « déséquilibres » mais ce qui
+     CONTREDIT la roue des vices (avantage de roue et pourtant 50/50), un miroir qui ne fait
+     pas 50/50 (= le moteur favorise un camp), une case triviale, un combat interminable,
+     une ultime jamais atteinte ;
+   - le COMPTEUR DE DOUBLES TOURS (le même combattant deux fois de suite, hors souffle).
+   RÈGLE : le simulateur ne tourne jamais pendant un vrai combat (il partage M2.combat).
+   ===================================================================================== */
+const SIMU_LIMITE_TICKS = 4000;   // un combat qui n'a pas fini en 4000 battements est déclaré nul
+let simuEnCours = false;           // vrai pendant une grille : le bouton devient « Arrêter »
+let simuStop = false;
+let simuDernier = null;            // { type:'grille'|'duel', ... } — pour les détails au tap
+
+function simuSlotDepuisModele(m){
+  return { modele: m.id, main: (m.jeu || []).slice(0, 4), arme:null, armure:null, accessoire:null, ia:'normal' };
+}
+/* La configuration d'un modèle pour la simulation : celle du Combat de test, SANS les images
+   (elles ne servent à rien ici et pèsent des centaines de ko chacune). */
+function simuCfg(m, side){
+  const cfg = ctCombattantDepuisSlot(simuSlotDepuisModele(m), side, 0);
+  if (!cfg) return null;
+  delete cfg.images; delete cfg.portraitCrop;
+  return cfg;
+}
+/* Une copie fraîche pour chaque combat : le moteur pose ses propres champs sur les objets
+   attaque (usages, préparation…), on ne veut rien traîner d'un combat à l'autre. */
+function simuCopie(cfg){
+  return Object.assign({}, cfg, { main: (cfg.main || []).map(a=> Object.assign({}, a)), equipement: Object.assign({}, cfg.equipement || {}) });
+}
+/* Joue UN combat headless. Rend le vainqueur et les mesures utiles à l'équilibrage. */
+function simuUnCombat(allies, ennemis){
+  const etat = { fighters:[], log:[], finished:false, hitUids:[], particles:[] };
+  const res = { vainqueur:'nul', tours:0, ticks:0, actions:0, doubles:0, doublesHorsSouffle:0,
+                souffles:{ player:0, enemy:0 }, ultimes:{ player:0, enemy:0 }, attaques:{},
+                pvRestant:{ player:0, enemy:0 } };
+  M2.simulation = true;
+  try {
+    M2.demarrer(etat, { allies, ennemis, objets:{ player:{}, enemy:{} }, objetsDef: M2.OBJETS });
+    let dernierUid = null, dernierChoix = null;
+    while (!etat.finished && res.ticks < SIMU_LIMITE_TICKS){
+      res.ticks++;
+      const pret = M2.battre();
+      if (!pret) continue;
+      M2.compterCycle(pret);
+      const deuxCamps = M2.vivants('player').length && M2.vivants('enemy').length;
+      if (dernierUid === pret.uid && deuxCamps){
+        res.doubles++;
+        if (dernierChoix !== 'souffle') res.doublesHorsSouffle++;
+      }
+      dernierUid = pret.uid; dernierChoix = null;
+      res.actions++;
+      const pre = M2.preTour(pret);
+      if (pre){ dernierChoix = 'pre'; continue; }
+      const choix = M2.choixIA(pret);
+      if (choix === 'ultime') res.ultimes[pret.side]++;
+      else if (choix === 'souffle'){ res.souffles[pret.side]++; dernierChoix = 'souffle'; }
+      else if (choix && choix.nom){ const k = pret.side + '|' + choix.nom; res.attaques[k] = (res.attaques[k] || 0) + 1; }
+      M2.actionDuTour(pret, choix, null);
+    }
+    res.vainqueur = etat.finished ? (etat.vainqueur || 'nul') : 'nul';
+    res.tours = etat.tour || 0;
+    ['player','enemy'].forEach(s=>{
+      const camp = etat.fighters.filter(f=> f.side === s);
+      const max = camp.reduce((t,f)=> t + f.maxHp, 0) || 1;
+      res.pvRestant[s] = Math.round(100 * camp.reduce((t,f)=> t + Math.max(0, f.hp), 0) / max);
+    });
+  } finally {
+    M2.simulation = false;
+    M2.combat = combatState || null;   // on rend la main au vrai combat, s'il y en a un
+  }
+  return res;
+}
+/* N combats entre deux configurations, agrégés. */
+function simuSerie(cfgA, cfgB, n){
+  const agg = { n, victoiresA:0, victoiresB:0, nuls:0, tours:0, actions:0, ticks:0, doubles:0, doublesHorsSouffle:0,
+                ultimesA:0, ultimesB:0, soufflesA:0, soufflesB:0, attaques:{}, pvA:0, pvB:0, toursMax:0, toursMin:Infinity };
+  for (let i = 0; i < n; i++){
+    /* chaque combat repart de configurations FRAÎCHES : creerCombattant tire la jauge de
+       départ et l'écart de stats, et les objets attaque sont clonés par attaquePourCombat */
+    const r = simuUnCombat([simuCopie(cfgA)], [simuCopie(cfgB)]);
+    if (r.vainqueur === 'player') agg.victoiresA++; else if (r.vainqueur === 'enemy') agg.victoiresB++; else agg.nuls++;
+    agg.tours += r.tours; agg.actions += r.actions; agg.ticks += r.ticks; agg.doubles += r.doubles; agg.doublesHorsSouffle += r.doublesHorsSouffle;
+    agg.ultimesA += r.ultimes.player; agg.ultimesB += r.ultimes.enemy;
+    agg.soufflesA += r.souffles.player; agg.soufflesB += r.souffles.enemy;
+    agg.pvA += r.pvRestant.player; agg.pvB += r.pvRestant.enemy;
+    agg.toursMax = Math.max(agg.toursMax, r.tours); agg.toursMin = Math.min(agg.toursMin, r.tours);
+    Object.keys(r.attaques).forEach(k=> agg.attaques[k] = (agg.attaques[k] || 0) + r.attaques[k]);
+  }
+  agg.taux = Math.round(100 * agg.victoiresA / Math.max(1, n));
+  agg.toursMoy = Math.round(10 * agg.tours / Math.max(1, n)) / 10;
+  agg.actionsMoy = Math.round(10 * agg.actions / Math.max(1, n)) / 10;   // plus lisible que les cycles : « plié en 3 coups »
+  agg.pvAMoy = Math.round(agg.pvA / Math.max(1, n)); agg.pvBMoy = Math.round(agg.pvB / Math.max(1, n));
+  if (!isFinite(agg.toursMin)) agg.toursMin = 0;
+  return agg;
+}
+/* Ce que la ROUE prédit pour A contre B. */
+function simuAttenteRoue(vA, vB){
+  if (!vA || !vB) return 'neutre';
+  if (vA === vB) return 'miroir';
+  if (VICES[vA] && VICES[vA].bat === vB) return 'avantage';
+  if (VICES[vB] && VICES[vB].bat === vA) return 'desavantage';
+  return 'neutre';
+}
+/* LES INCOHÉRENCES d'une case. Rend une liste de { grav:1|2, txt }. */
+function simuIncoherences(a, b, agg){
+  const inc = [];
+  const att = simuAttenteRoue(a.vice, b.vice);
+  const t = agg.taux;
+  if (att === 'avantage'){
+    if (t < 50) inc.push({ grav:2, txt:`ROUE INVERSÉE : ${a.nom} bat ${b.nom} sur la roue et perd (${t} %)` });
+    else if (t < 60) inc.push({ grav:2, txt:`ROUE CONTREDITE : ${a.nom} bat ${b.nom} sur la roue et ne fait que ${t} %` });
+  }
+  if (att === 'desavantage'){
+    if (t > 50) inc.push({ grav:2, txt:`ROUE INVERSÉE : ${b.nom} bat ${a.nom} sur la roue et pourtant ${a.nom} gagne (${t} %)` });
+    else if (t > 40) inc.push({ grav:2, txt:`ROUE CONTREDITE : ${b.nom} bat ${a.nom} sur la roue et ${a.nom} tient à ${t} %` });
+  }
+  if (att === 'miroir' && a.id === b.id && Math.abs(t - 50) > 15){
+    inc.push({ grav:2, txt:`MIROIR FAUSSÉ : ${a.nom} contre lui-même donne ${t} % pour le camp du haut — le moteur favorise un camp` });
+  }
+  if (att === 'neutre' && (t >= 90 || t <= 10)){
+    inc.push({ grav:1, txt:`TRIVIAL : ${a.nom} contre ${b.nom} (${t} %) sans avantage de roue` });
+  }
+  if (agg.nuls > 0) inc.push({ grav:1, txt:`${agg.nuls} combat(s) nul(s) ${a.nom}/${b.nom} — personne ne finit l'autre` });
+  if (agg.actionsMoy > 80) inc.push({ grav:1, txt:`INTERMINABLE : ${a.nom}/${b.nom}, ${agg.actionsMoy} coups en moyenne` });
+  if (agg.actionsMoy > 0 && agg.actionsMoy < 4) inc.push({ grav:1, txt:`ÉCLAIR : ${a.nom}/${b.nom} plié en ${agg.actionsMoy} coups — personne n'a le temps de jouer` });
+  if (agg.doublesHorsSouffle > 0) inc.push({ grav:2, txt:`DOUBLE TOUR : ${agg.doublesHorsSouffle} fois le même combattant deux fois de suite (hors souffle) dans ${a.nom}/${b.nom}` });
+  return inc;
+}
+function simuCouleur(att, taux){
+  if (att === 'miroir') return Math.abs(taux - 50) > 15 ? '#e53935' : '#78909c';
+  if (att === 'avantage') return taux >= 60 ? '#43a047' : '#e53935';
+  if (att === 'desavantage') return taux <= 40 ? '#43a047' : '#e53935';
+  return (taux >= 90 || taux <= 10) ? '#fb8c00' : '#546e7a';
+}
+function simuDetailHtml(a, b, agg){
+  const att = simuAttenteRoue(a.vice, b.vice);
+  const libAtt = { avantage:'A bat B sur la roue', desavantage:'B bat A sur la roue', miroir:'même vice', neutre:'sans lien de roue' }[att];
+  const top = (side)=> Object.keys(agg.attaques).filter(k=> k.startsWith(side + '|'))
+    .map(k=> ({ nom:k.slice(k.indexOf('|') + 1), n:agg.attaques[k] })).sort((x,y)=> y.n - x.n).slice(0, 4)
+    .map(x=> `${x.nom} ×${x.n}`).join(', ') || '—';
+  const inc = simuIncoherences(a, b, agg);
+  return `
+    <div style="border:1px solid #ddd; border-radius:10px; padding:8px; margin-top:8px; font-size:12px; line-height:1.5;">
+      <div><strong>${(VICES[a.vice]||{}).emoji||''} ${a.nom}</strong> contre <strong>${(VICES[b.vice]||{}).emoji||''} ${b.nom}</strong> <span class="meta">— ${libAtt} · ${agg.n} combats</span></div>
+      <div style="font-size:20px; font-weight:700; color:${simuCouleur(att, agg.taux)};">${agg.taux} % <span style="font-size:12px; font-weight:400;">de victoires pour ${a.nom}</span></div>
+      <div>${agg.victoiresA} victoires · ${agg.victoiresB} défaites · ${agg.nuls} nuls</div>
+      <div>Durée : ${agg.actionsMoy} coups en moyenne, soit ${agg.toursMoy} tours (${agg.toursMin} à ${agg.toursMax})</div>
+      <div>PV restants du vainqueur : ${a.nom} ${agg.pvAMoy} % · ${b.nom} ${agg.pvBMoy} %</div>
+      <div>Ultimes lancées : ${a.nom} ${agg.ultimesA} · ${b.nom} ${agg.ultimesB}${(agg.ultimesA + agg.ultimesB) === 0 ? ' <span style="color:#fb8c00;">— jamais atteinte</span>' : ''}</div>
+      <div>Souffles : ${a.nom} ${agg.soufflesA} · ${b.nom} ${agg.soufflesB}</div>
+      <div>Doubles tours : ${agg.doubles} dont <strong>${agg.doublesHorsSouffle} hors souffle</strong></div>
+      <div>Attaques de ${a.nom} : ${top('player')}</div>
+      <div>Attaques de ${b.nom} : ${top('enemy')}</div>
+      ${inc.length ? `<div style="margin-top:6px;">${inc.map(i=> `<div style="color:${i.grav === 2 ? '#e53935' : '#fb8c00'};">⚠️ ${i.txt}</div>`).join('')}</div>`
+                   : `<div style="margin-top:6px; color:#43a047;">✅ Rien d'incohérent sur cette case.</div>`}
+    </div>`;
+}
+function renderSimulateur(){
+  const wrap = document.getElementById('rmSimu');
+  if (!wrap) return;
+  const opt = (choisi)=> robotsModeles.map(m=> `<option value="${m.id}" ${choisi === m.id ? 'selected' : ''}>${(VICES[m.vice]||{}).emoji||'🤖'} ${m.nom}</option>`).join('');
+  const optN = (choisi)=> [20, 50, 100, 200, 500].map(n=> `<option value="${n}" ${choisi === n ? 'selected' : ''}>${n} combats</option>`).join('');
+  wrap.innerHTML = `
+    <p class="meta" style="margin:0 0 8px;">Le moteur joue des combats sans rien dessiner, IA des deux côtés, chaque modèle avec son jeu de départ. Le tableau ne cherche pas des déséquilibres mais des <strong>incohérences</strong> : ce que la roue prédit et que le combat ne fait pas.</p>
+    ${robotsModeles.length < 1 ? `<p class="meta">Aucun modèle dans le catalogue.</p>` : ''}
+    <div class="field-label">Grille — tous les modèles contre tous</div>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <select class="field-input" id="simuGrilleN" style="flex:1;">${optN(100)}</select>
+      <button class="btn-capture" id="simuGrilleBtn" style="flex:1;">▶️ Lancer la grille</button>
+    </div>
+    <div id="simuProgress" class="meta" style="margin-top:4px;"></div>
+    <div id="simuGrille" style="margin-top:8px;"></div>
+    <div id="simuIncoherences" style="margin-top:8px;"></div>
+    <div id="simuDetail"></div>
+    <div class="field-label" style="margin-top:14px;">Un duel — A contre B</div>
+    <select class="field-input" id="simuA">${opt(robotsModeles[0] && robotsModeles[0].id)}</select>
+    <select class="field-input" id="simuB" style="margin-top:4px;">${opt((robotsModeles[1] || robotsModeles[0] || {}).id)}</select>
+    <div style="display:flex; gap:6px; align-items:center; margin-top:4px;">
+      <select class="field-input" id="simuDuelN" style="flex:1;">${optN(200)}</select>
+      <button class="btn-secondary" id="simuDuelBtn" style="flex:1;">▶️ Simuler</button>
+    </div>
+    <div id="simuDuelDetail"></div>`;
+  document.getElementById('simuGrilleBtn').addEventListener('click', ()=>{
+    if (simuEnCours){ simuStop = true; return; }
+    simuLancerGrille(parseInt(document.getElementById('simuGrilleN').value, 10) || 100);
+  });
+  document.getElementById('simuDuelBtn').addEventListener('click', ()=>{
+    const a = ctModele(document.getElementById('simuA').value), b = ctModele(document.getElementById('simuB').value);
+    if (!a || !b){ showToast('Choisis deux modèles'); return; }
+    if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
+    const n = parseInt(document.getElementById('simuDuelN').value, 10) || 200;
+    const agg = simuSerie(simuCfg(a, 'player'), simuCfg(b, 'enemy'), n);
+    document.getElementById('simuDuelDetail').innerHTML = simuDetailHtml(a, b, agg);
+    journal('simulateur', 'duel', `${a.nom} vs ${b.nom} : ${agg.taux} % sur ${n}, ${agg.toursMoy} tours, doubles hors souffle ${agg.doublesHorsSouffle}`, true);
+  });
+  if (simuDernier && simuDernier.type === 'grille') simuAfficherGrille(simuDernier);
+}
+async function simuLancerGrille(n){
+  if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
+  const modeles = robotsModeles.slice();
+  if (modeles.length < 1){ showToast('Aucun modèle'); return; }
+  const btn = document.getElementById('simuGrilleBtn'), prog = document.getElementById('simuProgress');
+  simuEnCours = true; simuStop = false;
+  btn.textContent = '⏹️ Arrêter';
+  const cfgs = modeles.map(m=> ({ p: simuCfg(m, 'player'), e: simuCfg(m, 'enemy') }));
+  const cases = {};
+  const total = modeles.length * modeles.length;
+  let fait = 0;
+  const t0 = performance.now();
+  try {
+    for (let i = 0; i < modeles.length && !simuStop; i++){
+      for (let j = 0; j < modeles.length && !simuStop; j++){
+        cases[modeles[i].id + '|' + modeles[j].id] = simuSerie(cfgs[i].p, cfgs[j].e, n);
+        fait++;
+        prog.textContent = `Case ${fait}/${total} — ${Math.round((performance.now() - t0) / 1000)} s`;
+        await new Promise(r=> setTimeout(r, 0));   // on rend la main à l'écran entre deux cases
+      }
+    }
+  } catch(e){
+    journal('erreur', 'simulateur : grille interrompue', (e && e.message) || String(e), true);
+    showToast('Le simulateur a planté : ' + ((e && e.message) || e));
+  }
+  simuEnCours = false;
+  btn.textContent = '▶️ Lancer la grille';
+  const duree = Math.round((performance.now() - t0) / 1000);
+  prog.textContent = `${fait} case(s) × ${n} combats en ${duree} s${simuStop ? ' — arrêté' : ''}.`;
+  simuDernier = { type:'grille', n, modeles, cases, duree };
+  simuAfficherGrille(simuDernier);
+  const nbInc = Object.keys(cases).reduce((t,k)=>{ const [ia, ib] = k.split('|'); return t + simuIncoherences(ctModele(ia), ctModele(ib), cases[k]).length; }, 0);
+  journal('simulateur', 'grille', `${modeles.length} modèles, ${n} combats par case, ${duree} s, ${nbInc} incohérence(s)`, true);
+}
+function simuAfficherGrille(d){
+  const g = document.getElementById('simuGrille'), incWrap = document.getElementById('simuIncoherences'), det = document.getElementById('simuDetail');
+  if (!g) return;
+  const M = d.modeles, C = d.cases;
+  const court = (m)=> (VICES[m.vice] || {}).emoji || '🤖';
+  let html = `<div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:11px;">
+    <tr><th style="position:sticky; left:0; background:#fff; text-align:left; padding:2px 4px;">↓ contre →</th>${M.map(m=> `<th title="${m.nom}" style="padding:2px; min-width:34px;">${court(m)}</th>`).join('')}</tr>`;
+  M.forEach(a=>{
+    html += `<tr><th style="position:sticky; left:0; background:#fff; text-align:left; padding:2px 4px; white-space:nowrap; max-width:110px; overflow:hidden; text-overflow:ellipsis;">${court(a)} ${a.nom}</th>`;
+    M.forEach(b=>{
+      const agg = C[a.id + '|' + b.id];
+      if (!agg){ html += `<td style="padding:2px; text-align:center; color:#bbb;">·</td>`; return; }
+      const att = simuAttenteRoue(a.vice, b.vice);
+      html += `<td data-simu-case="${a.id}|${b.id}" style="padding:0; text-align:center; cursor:pointer;">
+        <div style="margin:1px; border-radius:6px; background:${simuCouleur(att, agg.taux)}; color:#fff; font-weight:700; padding:6px 2px;">${agg.taux}</div></td>`;
+    });
+    html += '</tr>';
+  });
+  html += `</table></div>
+    <p class="meta" style="margin:6px 0 0;">Chaque case = % de victoires de la LIGNE contre la colonne, sur ${d.n} combats. Vert : conforme à la roue. Rouge : la contredit, ou miroir faussé. Orange : trivial sans raison de roue. Gris : neutre. Tape une case pour le détail.</p>`;
+  g.innerHTML = html;
+  g.querySelectorAll('[data-simu-case]').forEach(td=> td.addEventListener('click', ()=>{
+    const [ia, ib] = td.dataset.simuCase.split('|');
+    det.innerHTML = simuDetailHtml(ctModele(ia), ctModele(ib), C[td.dataset.simuCase]);
+    det.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  }));
+  /* le tableau des incohérences, du plus grave au moins grave */
+  const inc = [];
+  let doubles = 0, doublesHS = 0;
+  Object.keys(C).forEach(k=>{
+    const [ia, ib] = k.split('|');
+    simuIncoherences(ctModele(ia), ctModele(ib), C[k]).forEach(x=> inc.push(Object.assign({ cle:k }, x)));
+    doubles += C[k].doubles; doublesHS += C[k].doublesHorsSouffle;
+  });
+  /* une ultime jamais atteinte, par modèle, toutes cases confondues */
+  M.forEach(m=>{
+    let u = 0;
+    M.forEach(b=>{ const c1 = C[m.id + '|' + b.id], c2 = C[b.id + '|' + m.id]; if (c1) u += c1.ultimesA; if (c2) u += c2.ultimesB; });
+    if (u === 0 && Object.keys(C).length) inc.push({ grav:1, txt:`ULTIME JAMAIS ATTEINTE : ${m.nom} n'a lancé aucune ultime sur toute la grille`, cle:m.id + '|' + m.id });
+  });
+  /* le BIAIS DE CAMP : chaque miroir pris seul peut rester dans la marge, mais si TOUS les
+     miroirs penchent du même côté, c'est le moteur qui favorise un camp (ordre des égalités,
+     IA, réglage propre à un côté…) — au banc du 02/09, six miroirs sur sept donnaient 59 à
+     75 % au camp du haut. */
+  const miroirs = M.map(m=> C[m.id + '|' + m.id]).filter(Boolean);
+  if (miroirs.length >= 3){
+    const moy = Math.round(miroirs.reduce((t,c)=> t + c.taux, 0) / miroirs.length);
+    if (Math.abs(moy - 50) > 8) inc.push({ grav:2, txt:`BIAIS DE CAMP : sur ${miroirs.length} miroirs, le camp du haut gagne ${moy} % en moyenne — le moteur n'est pas symétrique`, cle: M[0].id + '|' + M[0].id });
+  }
+  inc.sort((x,y)=> y.grav - x.grav);
+  incWrap.innerHTML = `
+    <div class="field-label">Incohérences — ${inc.length}</div>
+    <div class="meta" style="margin-bottom:4px;">Doubles tours sur toute la grille : ${doubles}, dont <strong>${doublesHS} hors souffle</strong>.</div>
+    ${inc.length ? inc.map(i=> `<div data-simu-inc="${i.cle}" style="font-size:12px; padding:4px 6px; border-left:3px solid ${i.grav === 2 ? '#e53935' : '#fb8c00'}; margin-bottom:3px; background:#fafafa; cursor:pointer;">${i.txt}</div>`).join('')
+                 : `<div style="color:#43a047; font-size:12px;">✅ Aucune incohérence sur cette grille.</div>`}`;
+  incWrap.querySelectorAll('[data-simu-inc]').forEach(el=> el.addEventListener('click', ()=>{
+    const k = el.dataset.simuInc; const [ia, ib] = k.split('|');
+    if (C[k]){ det.innerHTML = simuDetailHtml(ctModele(ia), ctModele(ib), C[k]); det.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
+  }));
 }
 
 /* =====================================================================================
@@ -15669,6 +15977,9 @@ function m2Restaurer(etat, saved, duel){
   });
   etat.tour = saved.tour || 0; etat.cycleJoues = saved.cycleJoues || [];
   etat.log = saved.log || []; etat.currentActorUid = null; etat.attenteJoueur = null; etat.derniereCible = null;
+  /* v458 : le dernier acteur survit à la restauration — sinon le contour doré s'éteignait à
+     chaque état reçu de l'adversaire, et les deux téléphones n'épinglaient pas le même. */
+  etat.dernierActeurUid = saved.dernierActeurUid || etat.dernierActeurUid || null;
   etat.finished = false; etat.vainqueur = null;
   if (!(duel && duel.garderObjets)){
     const sac = m2ObjetsDuJoueur();
@@ -15758,6 +16069,19 @@ function m2Tick(){
 async function m2TakeTurn(acteur){
   combatState.resolving = true;
   combatState.currentActorUid = acteur.uid;
+  combatState.dernierActeurUid = acteur.uid;   // v458 : sert à garder le contour doré entre deux tours
+  /* v459 : TRACE POUR LE DOUBLE TOUR. On note à chaque tour qui joue, et l'état de TOUS les
+     combattants juste avant que la jauge du joueur ne retombe. Deux choses à y lire :
+     - une vitesse effective qui n'est pas celle de la fiche (équipement, état, variante) ;
+     - une jauge qui dépasse 100 de façon très inégale entre les deux combattants, ce qui
+       trahirait une désynchronisation des jauges entre les deux téléphones.
+     À retirer une fois la cause trouvée. */
+  try {
+    journal('jauges', 'tour de ' + acteur.nom,
+      combatState.fighters.map(f=> f.nom + ' ' + (f.alive ? '' : '(K.O.) ')
+        + 'jauge ' + Math.round(f.jauge) + ' · vitesse ' + M2.statsEffectives(f).speed
+        + (f.uid === acteur.uid ? ' ←' : '')).join('  |  '), true);
+  } catch(e){}
   if (combatState.isPvp){
     if (acteur.side === 'enemy'){
       if (!combatState.waitingForOpponentSince) combatState.waitingForOpponentSince = Date.now();
@@ -18622,6 +18946,7 @@ function syncPvpDuel(releaseTurn){
     fighters: combatState.fighters.map(m2SerialiserCombattant),
     tour: combatState.tour || 0, cycleJoues: (combatState.cycleJoues || []).slice(),
     log: (combatState.log||[]).slice(0,20),
+    dernierActeurUid: combatState.dernierActeurUid || null,   // v458 : les deux téléphones épinglent le même acteur
     lastActionAt: Date.now(), lastActionByUid: currentUser.uid,
   };
   if (releaseTurn) update.activeTurnSide = null; // action terminée : on libère la main pour l'adversaire
@@ -24719,6 +25044,20 @@ async function tryResumeSession(forcer){
         if (ok) return;
       }
     }
+    /* v458 : le duel passe AVANT la zone. Il est plus urgent qu'une position d'exploration —
+       l'adversaire attend, et le forfait tombe au bout d'une minute. La requête ne peut plus
+       bloquer la reprise (une seule condition + chrono), ce qui était la raison de son renvoi
+       en dernier. */
+    if (pvpDuelsCol && !combatState){
+      etapeReprise('recherche d\'un duel');
+      const duel = await chercherMonDuelActif();
+      if (duel){
+        startPvpDuel(duel.id, duel.role, duel.oppUid, duel.oppPseudo);
+        showToast('🔄 Reprise de ton duel en cours…');
+        return;
+      }
+      etapeReprise('pas de duel en cours');
+    }
     if (pd.currentZoneId && creatureCol){
       const zoneClearedAt = parseInt(localStorage.getItem('mascotto_zone_cleared_at') || '0', 10);
       if (pd.zoneSavedAt && pd.zoneSavedAt <= zoneClearedAt){
@@ -24742,18 +25081,7 @@ async function tryResumeSession(forcer){
        quinze secondes — le combat sauvegardé n'avait jamais eu sa chance. Elle est donc
        reléguée après le combat et l'exploration : c'est le cas le plus rare, il ne doit pas
        passer devant les autres. */
-    const dejaRepris = combatState
-      || document.getElementById('sceneViewFull').classList.contains('show');
-    if (pvpDuelsCol && !dejaRepris){
-      etapeReprise('recherche d\'un duel');
-      const duel = await chercherMonDuelActif();
-      if (duel){
-        startPvpDuel(duel.id, duel.role, duel.oppUid, duel.oppPseudo);
-        showToast('🔄 Reprise de ton duel en cours…');
-        return;
-      }
-      etapeReprise('pas de duel en cours');
-    }
+    /* (v458 : la recherche de duel est remontée plus haut, avant la zone.) */
   } catch(e){
     /* Ce `catch` était TOTALEMENT SILENCIEUX. Une reprise qui échouait en cours de route
        laissait le joueur devant un écran figé, sans un mot pour l'expliquer — et nous sans
@@ -25265,7 +25593,12 @@ function renderCombatTurnOrderBar(){
   // Emplacement du haut FIXE : toujours le combattant en train de jouer, jamais déplacé par la
   // simulation ci-dessous. En dessous, la file glissante des prochains tours (là, les portraits
   // changent de position d'un rendu à l'autre, pas le rectangle doré qui reste en haut).
-  const currentFighter = combatState.fighters.find(f=> f.uid===combatState.currentActorUid && f.alive);
+  /* v458 : entre deux actions `currentActorUid` est null (finirAction) et il l'est aussi à
+     chaque état reçu de l'adversaire (m2Restaurer). Sans repli, l'emplacement épinglé
+     disparaissait : plus de contour doré, et la file remontait d'un cran. On garde donc le
+     dernier acteur connu jusqu'à ce que le suivant prenne la main. */
+  const acteurAffiche = combatState.currentActorUid || combatState.dernierActeurUid || null;
+  const currentFighter = combatState.fighters.find(f=> f.uid===acteurAffiche && f.alive);
   const queue = computeCombatTurnOrder(9, previewUid);
   let html = '';
   if (currentFighter){
