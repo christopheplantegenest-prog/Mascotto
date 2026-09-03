@@ -1206,7 +1206,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v460</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v461</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15215,13 +15215,14 @@ let simuEnCours = false;           // vrai pendant une grille : le bouton devien
 let simuStop = false;
 let simuDernier = null;            // { type:'grille'|'duel', ... } — pour les détails au tap
 
-function simuSlotDepuisModele(m){
-  return { modele: m.id, main: (m.jeu || []).slice(0, 4), arme:null, armure:null, accessoire:null, ia:'normal' };
+function simuSlotDepuisModele(m, main){
+  return { modele: m.id, main: (main || m.jeu || []).slice(0, 4), arme:null, armure:null, accessoire:null, ia:'normal' };
 }
 /* La configuration d'un modèle pour la simulation : celle du Combat de test, SANS les images
-   (elles ne servent à rien ici et pèsent des centaines de ko chacune). */
-function simuCfg(m, side){
-  const cfg = ctCombattantDepuisSlot(simuSlotDepuisModele(m), side, 0);
+   (elles ne servent à rien ici et pèsent des centaines de ko chacune).
+   `main` (lot 2) : une main imposée à la place du jeu du modèle. */
+function simuCfg(m, side, main){
+  const cfg = ctCombattantDepuisSlot(simuSlotDepuisModele(m, main), side, 0);
   if (!cfg) return null;
   delete cfg.images; delete cfg.portraitCrop;
   return cfg;
@@ -15383,7 +15384,22 @@ function renderSimulateur(){
       <select class="field-input" id="simuDuelN" style="flex:1;">${optN(200)}</select>
       <button class="btn-secondary" id="simuDuelBtn" style="flex:1;">▶️ Simuler</button>
     </div>
-    <div id="simuDuelDetail"></div>`;
+    <div id="simuDuelDetail"></div>
+    <div class="field-label" style="margin-top:14px;">🃏 Constructeur de mains</div>
+    <p class="meta" style="margin:0 0 6px;">Pour un modèle, essaie des mains de 4 attaques prises dans sa liste apprenable, chacune jouée contre tous les autres modèles avec leur jeu actuel (moitié en haut, moitié en bas, pour annuler le biais de camp). Rien n'est appliqué sans ton accord.</p>
+    <select class="field-input" id="simuMainsModele"><option value="*">🤖 Tous les modèles</option>${opt(robotsModeles[0] && robotsModeles[0].id)}</select>
+    <div style="display:flex; gap:6px; align-items:center; margin-top:4px;">
+      <select class="field-input" id="simuMainsN" style="flex:1;">${[10, 20, 30, 50].map(n=> `<option value="${n}" ${n === 20 ? 'selected' : ''}>${n} combats par adversaire</option>`).join('')}</select>
+      <button class="btn-capture" id="simuMainsBtn" style="flex:1;">🃏 Chercher</button>
+    </div>
+    <div id="simuMainsProgress" class="meta" style="margin-top:4px;"></div>
+    <div id="simuMainsResultat"></div>`;
+  document.getElementById('simuMainsBtn').addEventListener('click', ()=>{
+    if (simuMainsEnCours){ simuStop = true; return; }
+    const sel = document.getElementById('simuMainsModele').value;
+    simuChercherMains(sel === '*' ? robotsModeles.slice() : [ctModele(sel)].filter(Boolean), parseInt(document.getElementById('simuMainsN').value, 10) || 20);
+  });
+  if (simuDernierMains) simuAfficherMains(simuDernierMains);
   document.getElementById('simuGrilleBtn').addEventListener('click', ()=>{
     if (simuEnCours){ simuStop = true; return; }
     simuLancerGrille(parseInt(document.getElementById('simuGrilleN').value, 10) || 100);
@@ -15401,6 +15417,7 @@ function renderSimulateur(){
 }
 async function simuLancerGrille(n){
   if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
+  if (simuMainsEnCours){ showToast('Le constructeur de mains tourne — attends la fin ou arrête-le'); return; }
   const modeles = robotsModeles.slice();
   if (modeles.length < 1){ showToast('Aucun modèle'); return; }
   const btn = document.getElementById('simuGrilleBtn'), prog = document.getElementById('simuProgress');
@@ -15491,6 +15508,204 @@ function simuAfficherGrille(d){
   incWrap.querySelectorAll('[data-simu-inc]').forEach(el=> el.addEventListener('click', ()=>{
     const k = el.dataset.simuInc; const [ia, ib] = k.split('|');
     if (C[k]){ det.innerHTML = simuDetailHtml(ctModele(ia), ctModele(ib), C[k]); det.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
+  }));
+}
+
+/* -------------------------------------------------------------------------------------
+   LOT 2 (03/09) — 🃏 LE CONSTRUCTEUR DE MAINS
+   Pour un modèle, on cherche la meilleure main de 4 attaques dans sa liste apprenable.
+   - le PANEL : tous les autres modèles, chacun avec son jeu actuel ; chaque main joue
+     contre chaque adversaire N fois, MOITIÉ en camp du haut, MOITIÉ en camp du bas — le
+     moteur favorise un camp (miroir colère à 10 % au test du 03/09), on annule ça ;
+   - le SCORE d'une main = son taux de victoires moyen sur le panel ; à égalité, les PV
+     restants moyens ;
+   - les DOUBLONS : pas deux attaques de même type ET même état posé dans une main ;
+   - liste courte (≤ SIMU_MAINS_EXHAUSTIF mains possibles) : on essaie TOUT ;
+     liste longue : recherche locale — on part de la main actuelle, on échange une attaque
+     à la fois en gardant ce qui améliore, puis deux redémarrages depuis une main tirée au
+     hasard ; chaque main n'est jouée qu'une fois (cache) ;
+   - à la fin, les 5 meilleures sont REJOUÉES avec trois fois plus de combats, pour que le
+     classement final ne soit pas un coup de chance ;
+   - rien n'est écrit sur la fiche sans le bouton « Appliquer », qui ne change que `jeu`.
+   ------------------------------------------------------------------------------------- */
+const SIMU_MAINS_EXHAUSTIF = 330;    // C(11,4) : au-delà, recherche locale
+const SIMU_MAINS_RESTARTS = 2;
+const SIMU_MAINS_TOP = 5;
+let simuMainsEnCours = false;
+let simuDernierMains = null;         // { n, resultats:[ { modele, actuelle, meilleures:[...], nbMains, mode, duree } ] }
+
+function simuCleMain(ids){ return ids.slice().sort().join('+'); }
+/* Deux attaques « pareilles » pour une main : même type et même état posé. */
+function simuCleDoublon(a){ return a.type + '|' + (a.statut || ''); }
+function simuMainValide(atts){
+  const vues = new Set();
+  for (const a of atts){ const k = simuCleDoublon(a); if (vues.has(k)) return false; vues.add(k); }
+  return true;
+}
+/* Toutes les mains de 4 sans doublon, parmi la liste apprenable. Rend des tableaux d'ids. */
+function simuToutesLesMains(permis){
+  const out = [];
+  const L = permis.length;
+  for (let a = 0; a < L; a++) for (let b = a + 1; b < L; b++) for (let c = b + 1; c < L; c++) for (let d = c + 1; d < L; d++){
+    const atts = [permis[a], permis[b], permis[c], permis[d]];
+    if (simuMainValide(atts)) out.push(atts.map(x=> x.id));
+  }
+  return out;
+}
+function simuNbMainsPossibles(L){ return L < 4 ? 0 : (L * (L - 1) * (L - 2) * (L - 3)) / 24; }
+/* Une main jouée contre tout le panel. Rend { score, pv, parAdversaire:{ id:{taux, n} }, combats }. */
+function simuEvaluerMain(m, ids, panel, n){
+  const cfgHaut = simuCfg(m, 'player', ids), cfgBas = simuCfg(m, 'enemy', ids);
+  const res = { score:0, pv:0, parAdversaire:{}, combats:0 };
+  let victoires = 0, total = 0, pv = 0;
+  panel.forEach(p=>{
+    const nHaut = Math.ceil(n / 2), nBas = n - nHaut;
+    const h = simuSerie(cfgHaut, p.bas, nHaut);
+    const b = nBas ? simuSerie(p.haut, cfgBas, nBas) : null;
+    const v = h.victoiresA + (b ? b.victoiresB : 0);
+    const nn = nHaut + nBas;
+    res.parAdversaire[p.m.id] = { taux: Math.round(100 * v / Math.max(1, nn)), n: nn };
+    victoires += v; total += nn;
+    pv += h.pvA + (b ? b.pvB : 0);   // pvA / pvB sont déjà des sommes sur les combats joués
+  });
+  res.score = Math.round(1000 * victoires / Math.max(1, total)) / 10;
+  res.pv = Math.round(pv / Math.max(1, total));
+  res.combats = total;
+  return res;
+}
+function simuMieux(x, y){ return x.score > y.score || (x.score === y.score && x.pv > y.pv); }
+
+async function simuChercherMains(modeles, n){
+  if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
+  if (simuEnCours){ showToast('La grille tourne — attends la fin ou arrête-la'); return; }
+  if (!modeles.length){ showToast('Aucun modèle'); return; }
+  const btn = document.getElementById('simuMainsBtn'), prog = document.getElementById('simuMainsProgress');
+  simuMainsEnCours = true; simuStop = false;
+  btn.textContent = '⏹️ Arrêter';
+  const t0 = performance.now();
+  const resultats = [];
+  let combatsTotal = 0;
+  const souffler = ()=> new Promise(r=> setTimeout(r, 0));
+  try {
+    for (const m of modeles){
+      if (simuStop) break;
+      const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
+      if (permis.length < 4){ resultats.push({ modele:m, erreur:'moins de quatre attaques apprenables' }); continue; }
+      /* le panel : les autres modèles avec leur jeu actuel ; seul au catalogue → contre lui-même */
+      let autres = robotsModeles.filter(x=> x.id !== m.id);
+      if (!autres.length) autres = [m];
+      const panel = autres.map(p=> ({ m:p, haut: simuCfg(p, 'player'), bas: simuCfg(p, 'enemy') })).filter(p=> p.haut && p.bas);
+      const actuelleIds = mainDeModele(m, m.jeu).map(a=> a.id);
+      const cache = {};
+      let joues = 0;
+      const evaluer = (ids)=>{
+        const k = simuCleMain(ids);
+        if (!cache[k]){ cache[k] = Object.assign({ ids: ids.slice() }, simuEvaluerMain(m, ids, panel, n)); joues++; combatsTotal += cache[k].combats; }
+        return cache[k];
+      };
+      const nbPossibles = simuNbMainsPossibles(permis.length);
+      const mode = nbPossibles <= SIMU_MAINS_EXHAUSTIF ? 'exhaustif' : 'local';
+      const tm0 = performance.now();
+      const actuelle = evaluer(actuelleIds);
+      if (mode === 'exhaustif'){
+        const toutes = simuToutesLesMains(permis);
+        for (let i = 0; i < toutes.length && !simuStop; i++){
+          evaluer(toutes[i]);
+          if (i % 5 === 0){ prog.textContent = `${m.nom} — main ${i + 1}/${toutes.length} · ${Math.round((performance.now() - t0) / 1000)} s`; await souffler(); }
+        }
+      } else {
+        /* recherche locale : depuis la main actuelle, puis depuis des mains tirées au hasard */
+        const departs = [actuelleIds];
+        for (let r = 0; r < SIMU_MAINS_RESTARTS; r++){
+          let essai = 0, tirage = null;
+          while (essai++ < 50){
+            const mel = permis.slice().sort(()=> Math.random() - 0.5).slice(0, 4);
+            if (simuMainValide(mel)){ tirage = mel.map(a=> a.id); break; }
+          }
+          if (tirage) departs.push(tirage);
+        }
+        for (let d = 0; d < departs.length && !simuStop; d++){
+          let courante = evaluer(departs[d]);
+          let ameliore = true;
+          while (ameliore && !simuStop){
+            ameliore = false;
+            for (let pos = 0; pos < 4 && !ameliore && !simuStop; pos++){
+              for (const a of permis){
+                if (simuStop) break;
+                if (courante.ids.includes(a.id)) continue;
+                const ids = courante.ids.slice(); ids[pos] = a.id;
+                if (!simuMainValide(ids.map(attaqueParId))) continue;
+                const cand = evaluer(ids);
+                prog.textContent = `${m.nom} — départ ${d + 1}/${departs.length}, ${joues} mains jouées, meilleure ${courante.score} % · ${Math.round((performance.now() - t0) / 1000)} s`;
+                await souffler();
+                if (simuMieux(cand, courante)){ courante = cand; ameliore = true; break; }
+              }
+            }
+          }
+        }
+      }
+      /* les meilleures, rejouées avec trois fois plus de combats pour confirmer le classement */
+      let classees = Object.values(cache).sort((x,y)=> simuMieux(x, y) ? -1 : (simuMieux(y, x) ? 1 : 0)).slice(0, SIMU_MAINS_TOP);
+      if (!simuStop){
+        prog.textContent = `${m.nom} — confirmation des ${classees.length} meilleures…`;
+        await souffler();
+        classees = classees.map(c=>{ const conf = simuEvaluerMain(m, c.ids, panel, n * 3); combatsTotal += conf.combats; return Object.assign({}, c, conf, { confirme:true }); })
+                           .sort((x,y)=> simuMieux(x, y) ? -1 : (simuMieux(y, x) ? 1 : 0));
+      }
+      const actuelleConfirmee = classees.find(c=> simuCleMain(c.ids) === simuCleMain(actuelleIds)) || actuelle;
+      resultats.push({ modele:m, actuelle: actuelleConfirmee, meilleures:classees, nbMains:joues, nbPossibles, mode, panel: panel.map(p=> p.m), duree: Math.round((performance.now() - tm0) / 1000) });
+    }
+  } catch(e){
+    journal('erreur', 'simulateur : constructeur de mains interrompu', (e && e.message) || String(e), true);
+    showToast('Le constructeur a planté : ' + ((e && e.message) || e));
+  }
+  simuMainsEnCours = false;
+  btn.textContent = '🃏 Chercher';
+  const duree = Math.round((performance.now() - t0) / 1000);
+  prog.textContent = `${resultats.length} modèle(s), ${combatsTotal} combats en ${duree} s${simuStop ? ' — arrêté' : ''}.`;
+  simuDernierMains = { n, resultats, duree };
+  simuAfficherMains(simuDernierMains);
+  journal('simulateur', 'mains', resultats.map(r=> r.erreur ? `${r.modele.nom} : ${r.erreur}` : `${r.modele.nom} : ${r.actuelle.score} % → ${r.meilleures[0] ? r.meilleures[0].score : '?'} % (${r.mode}, ${r.nbMains} mains)`).join(' · '), true);
+}
+function simuAfficherMains(d){
+  const wrap = document.getElementById('simuMainsResultat');
+  if (!wrap) return;
+  const nomAtt = (id)=> { const a = attaqueParId(id); return a ? `${a.nom} <span class="meta" style="font-size:10px;">${iconeFamille(a)}${(a.cout||0) ? '🔷' + a.cout : ''}</span>` : id; };
+  const ligneMain = (r, c, rang)=>{
+    const estActuelle = simuCleMain(c.ids) === simuCleMain(r.actuelle.ids);
+    const vsPanel = r.panel.map(p=> { const x = c.parAdversaire[p.id]; return x ? `${(VICES[p.vice]||{}).emoji||'🤖'} ${x.taux}` : ''; }).filter(Boolean).join(' · ');
+    return `
+      <div style="border:1px solid ${rang === 0 ? '#43a047' : '#ddd'}; border-radius:10px; padding:6px 8px; margin-top:6px; font-size:12px; line-height:1.45;">
+        <div><strong>${rang === 0 ? '🏆 ' : ''}${c.score} %</strong> <span class="meta">· PV restants ${c.pv} % · ${c.combats} combats${estActuelle ? ' · <strong>c\'est la main actuelle</strong>' : ''}</span></div>
+        <div>${c.ids.map(nomAtt).join(' · ')}</div>
+        <div class="meta" style="font-size:11px;">contre : ${vsPanel}</div>
+        ${estActuelle ? '' : `<button class="btn-secondary" data-simu-appliquer="${r.modele.id}" data-simu-main="${c.ids.join(',')}" style="margin-top:4px; width:100%;">✅ Appliquer cette main au modèle</button>`}
+      </div>`;
+  };
+  wrap.innerHTML = d.resultats.map(r=>{
+    if (r.erreur) return `<div style="margin-top:10px; font-size:12px;"><strong>${(VICES[r.modele.vice]||{}).emoji||'🤖'} ${r.modele.nom}</strong> — ${r.erreur}.</div>`;
+    const meilleure = r.meilleures[0];
+    const gain = meilleure ? Math.round(10 * (meilleure.score - r.actuelle.score)) / 10 : 0;
+    return `
+      <div style="margin-top:12px;">
+        <div class="field-label" style="margin-top:0;">${(VICES[r.modele.vice]||{}).emoji||'🤖'} ${r.modele.nom}</div>
+        <div class="meta">Main actuelle : <strong>${r.actuelle.score} %</strong> · meilleure trouvée : <strong style="color:${gain > 0 ? '#43a047' : '#78909c'};">${meilleure ? meilleure.score : '?'} %</strong> (${gain > 0 ? '+' : ''}${gain}) · ${r.mode === 'exhaustif' ? `toutes les ${r.nbMains} mains essayées` : `recherche locale, ${r.nbMains} mains sur ${Math.round(r.nbPossibles)} possibles`} · ${r.duree} s</div>
+        <div class="meta" style="font-size:11px;">Actuelle : ${r.actuelle.ids.map(nomAtt).join(' · ')}</div>
+        ${r.meilleures.map((c, i)=> ligneMain(r, c, i)).join('')}
+      </div>`;
+  }).join('') + `<p class="meta" style="margin:8px 0 0;">Le score = victoires moyennes contre le panel, moitié en camp du haut, moitié en camp du bas. Les 5 meilleures ont été rejouées avec ${d.n * 3} combats par adversaire ; les écarts de moins de 3 points sont dans le bruit.</p>`;
+  wrap.querySelectorAll('[data-simu-appliquer]').forEach(b=> b.addEventListener('click', async ()=>{
+    const m = ctModele(b.dataset.simuAppliquer);
+    const ids = b.dataset.simuMain.split(',').filter(Boolean);
+    if (!m || ids.length !== 4){ showToast('Main introuvable'); return; }
+    if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
+    const noms = ids.map(id=> (attaqueParId(id) || {}).nom || id).join(', ');
+    if (!(await appConfirm(`Remplacer le jeu de départ de ${m.nom} par : ${noms} ?`))) return;
+    try {
+      await robotsModelesCol.doc(m.id).set({ jeu: ids, updatedAt: Date.now() }, { merge:true });
+      showToast(`Jeu de ${m.nom} mis à jour`);
+      journal('simulateur', 'main appliquée', `${m.nom} : ${noms}`, true);
+    } catch(err){ showToast('Échec : ' + err.message); }
   }));
 }
 
