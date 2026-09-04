@@ -1,4 +1,5 @@
-const CACHE_NAME = "parcours-v1";
+const CACHE_NAME = "parcours-v2";
+const TUILES_CACHE = "parcours-tuiles"; // rempli par l'appli (Options → Préparer la carte hors connexion) et par le premier passage
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,7 +11,10 @@ const ASSETS = [
    - la page passe en « réseau d'abord » (dernière version quand la connexion est là, cache sinon) ;
    - TOUT le reste — Leaflet, tuiles de carte, images hébergées — est gardé en cache dès le
      premier passage. Les tuiles vues pendant le premier tour avec du réseau restent donc
-     disponibles ensuite. (Le préchargement systématique d'une zone viendra à l'étape 4.) */
+     disponibles ensuite.
+   - v3 : les tuiles ont leur propre cache (TUILES_CACHE), que l'appli remplit d'avance
+     pour tout le rectangle du parcours. La clé ignore le sous-domaine a/b/c d'OpenStreetMap,
+     sans quoi une tuile déjà en cache pouvait être redemandée au réseau. */
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -26,7 +30,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== TUILES_CACHE).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
@@ -62,6 +66,23 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE_NAME).then((c) => c.put(req, copie));
         return rep;
       }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  /* Tuiles de carte : cache dédié, clé sans sous-domaine, réseau seulement si elle manque. */
+  if (/(^|\.)tile\.openstreetmap\.org$/.test(url.hostname)) {
+    const cle = "https://tile.openstreetmap.org" + url.pathname;
+    event.respondWith(
+      caches.open(TUILES_CACHE).then((cache) =>
+        cache.match(cle).then((cached) => {
+          if (cached) return cached;
+          return fetch(req).then((rep) => {
+            if (rep && (rep.ok || rep.type === "opaque")) cache.put(cle, rep.clone());
+            return rep;
+          });
+        })
+      )
     );
     return;
   }
