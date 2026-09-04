@@ -1146,7 +1146,8 @@
       </div>
       <div class="field-label" style="margin-top:16px;">Parcours</div>
       <p class="meta" id="optionsParcoursInfo">—</p>
-      <button class="btn-secondary" id="optionsResetProgressBtn" style="width:100%; margin-top:16px; color:var(--danger); border-color:rgba(192,57,43,.4);">🔄 Recommencer le parcours depuis le début</button>
+      <button class="btn-secondary" id="optionsResetProgressBtn" style="width:100%; margin-top:16px; color:var(--danger); border-color:rgba(192,57,43,.4);">🔄 Remettre ma progression à zéro (sac, objectifs, position)</button>
+      <p class="meta" style="margin:6px 0 0;">Le parcours lui-même reste sur l'appareil : tu repars du début avec les mêmes lieux et personnages.</p>
     </div>
   </div>
 
@@ -1155,7 +1156,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v1</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v2</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1303,6 +1304,8 @@
     <button class="btn-secondary" id="parcoursImportBtn" style="width:100%; margin-bottom:6px; height:42px;">📥 Importer un fichier de parcours</button>
     <div id="parcoursImportReport" style="margin-top:4px; font-size:12px; line-height:1.5;"></div>
     <p class="meta" id="parcoursStockageInfo" style="margin:6px 0 0;"></p>
+    <button class="btn-secondary" id="parcoursEffacerToutBtn" style="width:100%; margin-top:10px; color:var(--danger); border-color:rgba(192,57,43,.4);">🗑️ Effacer tout le parcours de cet appareil</button>
+    <p class="meta" style="margin:4px 0 0;">Supprime lieux, personnages, objets, objectifs, images et réglages, et remet la progression à zéro. Le nom du joueur est conservé. Exporte d'abord si tu veux garder ce parcours.</p>
 
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-secondary" id="freeModeToggleBtn" style="width:100%; margin-bottom:6px;">🧭 Activer le mode libre (test sans GPS)</button>
@@ -12087,7 +12090,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
    LE JOUEUR — un seul, local. Sa progression (sac, objectifs, choix mémorisés, position
    dans un lieu) vit dans players/local, comme avant dans Firestore.
    ===================================================================================== */
-const parcoursEtat = { reglages: {}, introVue: false, finVue: false, finDejaAffichee: false };
+const parcoursEtat = { reglages: {}, introVue: false, finVue: false, finDejaAffichee: false, queteFinTerminee: null };
 
 function watchPlayerQuests(uid){
   db.collection('players').doc(uid).onSnapshot((doc)=>{
@@ -12097,7 +12100,7 @@ function watchPlayerQuests(uid){
     playerCombatsWon = (doc.exists && doc.data().combatsWon) || {};
     parcoursEtat.introVue = !!(doc.exists && doc.data().introVue);
     parcoursEtat.finVue = !!(doc.exists && doc.data().finVue);
-    try { verifierFinDuParcours(); } catch(e){ journal('erreur', 'fin de parcours', e.message, true); }
+    try { verifierFinDuParcours(true); } catch(e){ journal('erreur', 'fin de parcours', e.message, true); }
     try { redessinerCarte(); } catch(e){ journal('erreur', 'carte après fiche joueur', e.message, true); }
     const questsListSection = document.getElementById('questsection-list');
     if (questsListSection && questsListSection.style.display === 'block') renderQuestsListView();
@@ -12148,10 +12151,11 @@ async function remettreLaProgressionAZero(){
   try { localStorage.removeItem('mascotto_zone_cleared_at'); } catch(e){}
   document.getElementById('sceneViewFull').classList.remove('show');
   parcoursEtat.finDejaAffichee = false;
+  parcoursEtat.queteFinTerminee = null;
   showToast('Progression remise à zéro');
 }
 document.getElementById('optionsResetProgressBtn').addEventListener('click', async ()=>{
-  if (!(await appConfirm('Recommencer le parcours depuis le début ? Ton sac, tes objectifs et tes conversations seront oubliés.'))) return;
+  if (!(await appConfirm('Remettre ta progression à zéro ? Ton sac, tes objectifs, tes conversations et ta position seront oubliés. Le parcours reste sur l\'appareil.'))) return;
   await remettreLaProgressionAZero();
   document.getElementById('optionsOverlay').classList.remove('show');
   afficherIntroSiBesoin(true);
@@ -12215,7 +12219,7 @@ db.collection('app_config').doc('parcours').onSnapshot((doc)=>{
   const v = document.getElementById('voileDemarrageTitre');
   if (v && parcoursEtat.reglages.titre) v.textContent = parcoursEtat.reglages.titre;
   if (parcoursEtat.reglages.titre) document.title = parcoursEtat.reglages.titre;
-  verifierFinDuParcours();
+  verifierFinDuParcours(false);
 });
 function afficherIntroSiBesoin(forcer){
   const r = parcoursEtat.reglages;
@@ -12229,11 +12233,21 @@ document.getElementById('parcoursIntroBtn').addEventListener('click', ()=>{
   document.getElementById('parcoursIntroOverlay').classList.remove('show');
   db.collection('players').doc(currentUser.uid).set({ introVue: true }, { merge:true }).catch(()=>{});
 });
-function verifierFinDuParcours(){
+/* L'écran de fin ne s'ouvre que quand la quête de fin PASSE à « terminée » pendant le jeu
+   (v2). Un changement de réglages (`parLeJeu` = false) ne fait qu'enregistrer l'état : au test
+   du 04/09, désigner comme quête de fin une quête déjà terminée ouvrait l'écran depuis le hub.
+   Hub ouvert = concepteur au travail : on n'affiche jamais rien par-dessus. */
+function verifierFinDuParcours(parLeJeu){
   const r = parcoursEtat.reglages;
-  if (!r.queteFinId) return;
-  if (playerQuestsState[r.queteFinId] !== 'completed') return;
+  if (!r.queteFinId){ parcoursEtat.queteFinTerminee = null; return; }
+  const terminee = playerQuestsState[r.queteFinId] === 'completed';
+  const avant = parcoursEtat.queteFinTerminee;
+  parcoursEtat.queteFinTerminee = terminee;
+  if (!terminee || !parLeJeu) return;
+  if (avant === true) return;                       // déjà terminée avant ce changement : pas un passage
   if (parcoursEtat.finVue || parcoursEtat.finDejaAffichee) return;
+  const hub = document.getElementById('editHubOverlay');
+  if (hub && hub.classList.contains('show')) return;
   parcoursEtat.finDejaAffichee = true;
   afficherLaFin();
 }
@@ -12280,12 +12294,25 @@ document.getElementById('parcoursTitreSaveBtn').addEventListener('click', ()=>{
 
 /* =====================================================================================
    FICHIER DE PARCOURS — tout le contenu (hors joueur) dans un seul .json, images comprises.
+   Format versionné (v2) : `formatVersion` dit ce que le fichier contient, `appVersion` qui l'a
+   écrit. Un fichier plus ancien passe par `migrerFichierParcours` ; un fichier plus récent
+   que ce que l'appli sait lire est refusé avec un message clair.
    ===================================================================================== */
 const PARCOURS_COLLECTIONS = ['creature_types','exploration_zones','items','pickups','quests','scene_images','app_config'];
+const PARCOURS_FORMAT = 1;   // à incrémenter quand la structure du fichier change ; ajouter la migration en face
+function versionDeLAppli(){ return ((document.getElementById('appVersionLabel') || {}).textContent || '').trim() || '?'; }
 function fabriquerFichierParcours(){
   const collections = {};
   PARCOURS_COLLECTIONS.forEach(c=>{ collections[c] = bl_clone(bl_col(c)); });
-  return { format:'parcours-v1', titre: parcoursEtat.reglages.titre || '', exporteLe: new Date().toISOString(), version: (parcoursEtat.reglages.updatedAt || Date.now()), collections };
+  return { format:'parcours-v1', formatVersion: PARCOURS_FORMAT, appVersion: versionDeLAppli(), titre: parcoursEtat.reglages.titre || '', exporteLe: new Date().toISOString(), version: (parcoursEtat.reglages.updatedAt || Date.now()), collections };
+}
+/* Fait passer un fichier d'un format ancien au format courant. Chaque palier s'ajoute ici :
+   `if (v < 2){ … ; v = 2; }`. Un fichier sans formatVersion est un fichier de la v1 (format 1). */
+function migrerFichierParcours(fichier){
+  let v = Number(fichier.formatVersion) || 1;
+  // (aucune migration pour l'instant : format 1 = format courant)
+  fichier.formatVersion = v;
+  return fichier;
 }
 function majInfoStockage(){
   const el = document.getElementById('parcoursStockageInfo');
@@ -12293,25 +12320,128 @@ function majInfoStockage(){
   try {
     const taille = JSON.stringify(fabriquerFichierParcours()).length;
     const n = PARCOURS_COLLECTIONS.reduce((s, c)=> s + Object.keys(bl_col(c)).length, 0);
-    el.textContent = n + ' élément(s) · fichier d\'environ ' + (taille > 1048576 ? (taille/1048576).toFixed(1) + ' Mo' : Math.round(taille/1024) + ' Ko');
+    const hebergees = compterImagesHebergees(bl_col);
+    el.textContent = n + ' élément(s) · fichier d\'environ ' + (taille > 1048576 ? (taille/1048576).toFixed(1) + ' Mo' : Math.round(taille/1024) + ' Ko')
+      + (hebergees ? ' · ' + hebergees + ' image(s) hébergée(s) à rapatrier à l\'export' : '');
   } catch(e){ el.textContent = ''; }
 }
-document.getElementById('parcoursExportBtn').addEventListener('click', ()=>{
-  const fichier = fabriquerFichierParcours();
-  const nom = (fichier.titre || 'parcours').toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'parcours';
-  const blob = new Blob([JSON.stringify(fichier)], { type:'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = nom + '.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=> URL.revokeObjectURL(url), 5000);
-  showToast('Parcours exporté');
+
+/* ---------- Rapatriement des images hébergées (v2) ----------
+   Le fichier doit être AUTONOME : un parcours se joue deux heures sans réseau fiable, donc
+   rien ne doit dépendre d'une adresse extérieure. À l'export, chaque image désignée par un
+   chemin (« 📁 Image hébergée ») est téléchargée et rangée dans le fichier sous la forme que
+   le reste du code sait déjà lire :
+   - fiche PNJ `imagePath` et objet `imagePath` → `imageUrl` en base64 (lus tels quels partout) ;
+   - `exitArrowPath` (flèche de sortie) → `exitArrowImage` ;
+   - tout autre `…ImagePath` (buste, dos, arène, chambre, scènes, points, variantes)
+     → un document de scene_images + `…ImageRef`, comme une image importée du téléphone.
+   Le rapatriement travaille sur la COPIE exportée, jamais sur la base de l'appareil. */
+function estUnCheminDImage(cle, valeur){
+  if (typeof valeur !== 'string' || !valeur.trim()) return false;
+  if (/^data:/i.test(valeur)) return false;
+  return cle === 'exitArrowPath' || /[iI]magePath$/.test(cle);
+}
+function compterImagesHebergees(lireCol){
+  let n = 0;
+  const marcher = (o)=>{
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)){ o.forEach(marcher); return; }
+    Object.keys(o).forEach(k=>{ if (estUnCheminDImage(k, o[k])) n++; else marcher(o[k]); });
+  };
+  PARCOURS_COLLECTIONS.forEach(c=> marcher(lireCol(c)));
+  return n;
+}
+function telechargerEnDataUrl(url){
+  return fetch(url, { cache:'force-cache' }).then((rep)=>{
+    if (!rep.ok) throw new Error('réponse ' + rep.status);
+    return rep.blob();
+  }).then((blob)=> new Promise((res, rej)=>{
+    const r = new FileReader();
+    r.onload = ()=> res(r.result);
+    r.onerror = ()=> rej(new Error('lecture impossible'));
+    r.readAsDataURL(blob);
+  }));
+}
+async function rapatrierLesImagesHebergees(fichier, avancement){
+  const col = fichier.collections;
+  const manquantes = [];
+  const cache = {};   // chemin -> dataUrl (une image partagée n'est téléchargée qu'une fois)
+  let faites = 0, total = compterImagesHebergees((c)=> col[c] || {});
+  if (!total) return { rapatriees: 0, manquantes };
+  const obtenir = async (chemin)=>{
+    if (cache[chemin]) return cache[chemin];
+    const url = resolveMediaPath(chemin);
+    const dataUrl = await telechargerEnDataUrl(url);
+    cache[chemin] = dataUrl;
+    return dataUrl;
+  };
+  const enRef = (dataUrl)=>{
+    const ref = 'img_' + hashImageString(dataUrl) + '_' + dataUrl.length;
+    col.scene_images = col.scene_images || {};
+    if (!col.scene_images[ref]) col.scene_images[ref] = { dataUrl, updatedAt: Date.now() };
+    return ref;
+  };
+  const traiter = async (o, nomCol, niveauDoc)=>{
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)){ for (const e of o) await traiter(e, nomCol, false); return; }
+    for (const k of Object.keys(o)){
+      const val = o[k];
+      if (!estUnCheminDImage(k, val)){ await traiter(val, nomCol, false); continue; }
+      faites++;
+      if (avancement) avancement(faites, total);
+      let dataUrl;
+      try { dataUrl = await obtenir(val); }
+      catch(e){ manquantes.push(val + ' (' + (e && e.message || 'erreur') + ')'); continue; }
+      if (k === 'exitArrowPath'){ o.exitArrowImage = dataUrl; o.exitArrowPath = null; continue; }
+      const base = k.slice(0, -4);                     // "bustImage", "bigImage", "image"…
+      const lecture = (niveauDoc && (nomCol === 'creature_types' || nomCol === 'items') && k === 'imagePath') ? 'url' : 'ref';
+      if (lecture === 'url'){ o[base + 'Url'] = dataUrl; }
+      else { o[base + 'Ref'] = enRef(dataUrl); if (base + 'Url' in o) o[base + 'Url'] = ''; }
+      o[k] = null;
+    }
+  };
+  for (const c of Object.keys(col)){
+    for (const id of Object.keys(col[c] || {})) await traiter(col[c][id], c, true);
+  }
+  return { rapatriees: faites - manquantes.length, manquantes };
+}
+
+document.getElementById('parcoursExportBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('parcoursExportBtn');
+  const rapport = document.getElementById('parcoursImportReport');
+  btn.disabled = true;
+  try {
+    const fichier = fabriquerFichierParcours();
+    if (rapport) rapport.textContent = '';
+    const bilan = await rapatrierLesImagesHebergees(fichier, (n, total)=>{ btn.textContent = '⏳ Images ' + n + '/' + total + '…'; });
+    if (bilan.manquantes.length){
+      await appAlert('Export impossible : ' + bilan.manquantes.length + ' image(s) hébergée(s) n\'ont pas pu être téléchargées, le fichier serait incomplet. Vérifie la connexion et réessaie.\n\n' + bilan.manquantes.join('\n'));
+      return;
+    }
+    const nom = (fichier.titre || 'parcours').toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'parcours';
+    const blob = new Blob([JSON.stringify(fichier)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nom + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=> URL.revokeObjectURL(url), 5000);
+    showToast('Parcours exporté' + (bilan.rapatriees ? ' — ' + bilan.rapatriees + ' image(s) hébergée(s) intégrée(s)' : ''));
+    journal('base', 'parcours exporté', nom + '.json — ' + (blob.size > 1048576 ? (blob.size/1048576).toFixed(1) + ' Mo' : Math.round(blob.size/1024) + ' Ko'), true);
+  } catch(err){
+    showToast('Échec de l\'export : ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 Exporter le parcours (.json)';
+  }
 });
 async function importerFichierParcours(fichier, rapport, silencieux){
-  if (!fichier || fichier.format !== 'parcours-v1' || !fichier.collections) throw new Error('Ce fichier n\'est pas un parcours');
+  if (!fichier || (fichier.format !== 'parcours-v1' && !fichier.formatVersion) || !fichier.collections) throw new Error('Ce fichier n\'est pas un parcours');
+  const formatFichier = Number(fichier.formatVersion) || 1;
+  if (formatFichier > PARCOURS_FORMAT) throw new Error('Ce fichier a été fait avec une version plus récente de l\'appli (format ' + formatFichier + (fichier.appVersion ? ', appli ' + fichier.appVersion : '') + ') — celle-ci lit jusqu\'au format ' + PARCOURS_FORMAT + '. Mets l\'appli à jour puis réessaie.');
+  fichier = migrerFichierParcours(fichier);
   const total = Object.keys(fichier.collections).reduce((s, c)=> s + Object.keys(fichier.collections[c]).length, 0);
   if (!silencieux){
-    const ok = await appConfirm('Importer « ' + (fichier.titre || 'sans titre') + ' » (' + total + ' éléments) ?\n\nLe contenu actuel de cet appareil sera remplacé. La progression du joueur est conservée.');
+    const ok = await appConfirm('Importer « ' + (fichier.titre || 'sans titre') + ' » (' + total + ' éléments' + (fichier.appVersion ? ', fait avec l\'appli ' + fichier.appVersion : '') + ') ?\n\nLe contenu actuel de cet appareil sera remplacé. La progression du joueur est conservée.');
     if (!ok) return false;
   }
   if (rapport) rapport.textContent = 'Import en cours…';
@@ -12327,7 +12457,7 @@ async function importerFichierParcours(fichier, rapport, silencieux){
   }
   bl_notifier(null);
   if (rapport) rapport.textContent = n + ' élément(s) importé(s).';
-  journal('base', 'parcours importé', (fichier.titre || '') + ' — ' + n + ' documents', true);
+  journal('base', 'parcours importé', (fichier.titre || '') + ' — ' + n + ' documents (format ' + formatFichier + ')', true);
   return true;
 }
 document.getElementById('parcoursImportBtn').addEventListener('click', async ()=>{
@@ -12341,6 +12471,19 @@ document.getElementById('parcoursImportBtn').addEventListener('click', async ()=
   try {
     if (await importerFichierParcours(fichier, rapport, false)){ showToast('Import terminé'); majInfoStockage(); }
   } catch(err){ rapport.innerHTML = '<span style="color:#e66;">' + err.message + '</span>'; }
+});
+/* Tout effacer (v2) — pour repartir d'un appareil vierge, par exemple pour tester un import
+   à blanc. Le joueur (nom) est gardé, sa progression est remise à zéro, puis la page est
+   rechargée : c'est le seul moyen sûr de remettre en-tête, titre et caches à l'état neuf. */
+document.getElementById('parcoursEffacerToutBtn').addEventListener('click', async ()=>{
+  if (!(await appConfirm('Effacer TOUT le parcours de cet appareil ? Lieux, personnages, objets, objectifs, images et réglages seront supprimés. Cette action est irréversible — exporte d\'abord si tu veux le garder.'))) return;
+  if (!(await appConfirm('Vraiment tout effacer ?'))) return;
+  try {
+    await bl_toutEffacer(true);
+    await remettreLaProgressionAZero();
+    showToast('Parcours effacé — rechargement…');
+    setTimeout(()=> location.reload(), 600);
+  } catch(err){ showToast('Échec : ' + err.message); }
 });
 
 /* Chargement automatique depuis l'adresse (le lien du QR code) : ?parcours=https://…/mon-parcours.json
