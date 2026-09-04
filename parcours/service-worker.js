@@ -1,4 +1,4 @@
-const CACHE_NAME = "parcours-v6";
+const CACHE_NAME = "parcours-v7";
 const TUILES_CACHE = "parcours-tuiles"; // rempli par l'appli (Options → Préparer la carte hors connexion) et par le premier passage
 const ASSETS = [
   "./",
@@ -44,6 +44,11 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
+
+  /* v8 : les appels à Firestore (statistiques) ne passent JAMAIS par le cache — la règle
+     « cache d'abord » ci-dessous figeait la première réponse (liste vide) pour toujours. */
+  if (/(^|\.)googleapis\.com$/.test(url.hostname)) return;
+
   const estLaPage = req.mode === "navigate"
     || (url.origin === self.location.origin && (url.pathname.endsWith("/") || url.pathname.endsWith("/index.html")));
 

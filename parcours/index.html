@@ -1177,7 +1177,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v7</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v8</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4855,6 +4855,15 @@ function fermerDialogue(){
   apresFermetureDialogue = null;
   if (typeof suite === 'function'){
     try { suite(); } catch(e){ /* une conséquence ratée ne doit pas bloquer la fermeture */ }
+  }
+  /* v8 : l'écran de fin mis en attente pendant le dialogue s'ouvre maintenant — sauf si la
+     suite du dialogue en a rouvert un autre, auquel cas on attend sa fermeture à lui. */
+  if (parcoursEtat.finEnAttente && !document.getElementById('overlay').classList.contains('show')
+      && !parcoursEtat.finVue && !parcoursEtat.finDejaAffichee){
+    parcoursEtat.finEnAttente = false;
+    parcoursEtat.finDejaAffichee = true;
+    setTimeout(afficherLaFin, 350);
+    return;
   }
   /* Un deuxième agresseur peut attendre son tour : on lui laisse le temps que la fenêtre
      se referme avant de le lancer, sinon les deux dialogues se chevauchent. */
@@ -10784,7 +10793,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
    LE JOUEUR — un seul, local. Sa progression (sac, objectifs, choix mémorisés, position
    dans un lieu) vit dans players/local, comme avant dans Firestore.
    ===================================================================================== */
-const parcoursEtat = { reglages: {}, introVue: false, finVue: false, finDejaAffichee: false, queteFinTerminee: null };
+const parcoursEtat = { reglages: {}, introVue: false, finVue: false, finDejaAffichee: false, finEnAttente: false, queteFinTerminee: null };
 
 function watchPlayerQuests(uid){
   db.collection('players').doc(uid).onSnapshot((doc)=>{
@@ -10846,6 +10855,7 @@ async function remettreLaProgressionAZero(){
   try { localStorage.removeItem('mascotto_zone_cleared_at'); } catch(e){}
   document.getElementById('sceneViewFull').classList.remove('show');
   parcoursEtat.finDejaAffichee = false;
+  parcoursEtat.finEnAttente = false;
   parcoursEtat.queteFinTerminee = null;
   showToast('Progression remise à zéro');
 }
@@ -10960,6 +10970,10 @@ function verifierFinDuParcours(parLeJeu){
   if (parcoursEtat.finVue || parcoursEtat.finDejaAffichee) return;
   const hub = document.getElementById('editHubOverlay');
   if (hub && hub.classList.contains('show')) return;
+  /* v8 : si un dialogue est ouvert (la dernière réplique du PNJ, typiquement), on laisse le
+     joueur la lire — l'écran de fin s'ouvrira à la fermeture du dialogue (voir fermerDialogue). */
+  const dialogue = document.getElementById('overlay');
+  if (dialogue && dialogue.classList.contains('show')){ parcoursEtat.finEnAttente = true; return; }
   parcoursEtat.finDejaAffichee = true;
   afficherLaFin();
 }
@@ -11101,7 +11115,7 @@ async function chargerTousLesReleves(projet){
   const tous = [];
   let token = '';
   for (let page = 0; page < 10; page++){
-    const rep = await fetch(urlStatistiques(projet) + '?pageSize=300' + (token ? '&pageToken=' + encodeURIComponent(token) : ''));
+    const rep = await fetch(urlStatistiques(projet) + '?pageSize=300' + (token ? '&pageToken=' + encodeURIComponent(token) : ''), { cache:'no-store' });   // v8 : jamais relu depuis un cache
     if (!rep.ok) throw new Error('lecture refusée (' + rep.status + ') — vérifier les règles Firestore et le nom du projet');
     const data = await rep.json();
     (data.documents || []).forEach(d=> tous.push(depuisChampsFirestore(d)));
