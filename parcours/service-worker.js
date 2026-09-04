@@ -1,4 +1,4 @@
-const CACHE_NAME = "parcours-v8";
+const CACHE_NAME = "parcours-v9";
 const TUILES_CACHE = "parcours-tuiles"; // rempli par l'appli (Options → Préparer la carte hors connexion) et par le premier passage
 const ASSETS = [
   "./",
