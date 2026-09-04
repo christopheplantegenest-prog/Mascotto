@@ -221,6 +221,17 @@
   .icon-btn .dot.err{ background:var(--danger); }
   .icon-btn .dot.pulse{ animation:pulse 1.4s infinite; }
   .acc-pill .dot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  /* v9 : pastille de guidage (en bas à droite, face à la pastille de précision) */
+  .guidage-pill{
+    position:absolute; bottom:max(14px, env(safe-area-inset-bottom)); right:14px; z-index:1000;
+    max-width:62%; background:rgba(255,255,255,.94); border:1px solid var(--accent);
+    padding:6px 8px 6px 12px; border-radius:999px; font-size:12px; color:var(--text);
+    display:flex; align-items:center; gap:8px; box-shadow:0 2px 10px rgba(0,0,0,.12);
+  }
+  .guidage-pill .fleche{ display:inline-block; color:var(--accent); font-size:16px; line-height:1; transform-origin:50% 50%; flex-shrink:0; }
+  .guidage-pill .texte{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .guidage-pill .texte small{ display:block; font-size:10px; color:var(--muted); }
+  .guidage-pill button{ border:none; background:var(--line); color:var(--text); width:24px; height:24px; border-radius:50%; font-size:13px; line-height:24px; padding:0; flex-shrink:0; }
   .acc-pill .dot.ok{ background:var(--accent); }
   .acc-pill .dot.err{ background:var(--danger); }
   .acc-pill .dot.pulse{ animation:pulse 1.4s infinite; }
@@ -1177,7 +1188,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v8</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v9</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1199,6 +1210,11 @@
   <div class="map-wrap">
     <div id="map"></div>
     <div class="acc-pill" id="accPill" style="display:none;"><span class="dot" id="statusDot"></span><span id="accPillText"></span></div>
+    <div class="guidage-pill" id="guidagePill" style="display:none;">
+      <span class="fleche" id="guidageFleche">➤</span>
+      <span class="texte" id="guidageTexte"></span>
+      <button id="guidageStopBtn" title="Arrêter le guidage">✕</button>
+    </div>
   </div>
 
 </div>
@@ -1524,6 +1540,11 @@
         <option value="any">Un seul suffit</option>
       </select>
 
+
+      <div class="field-label">Lieu à rejoindre (optionnel — ajoute un bouton « Aller là-bas » dans le suivi des quêtes)</div>
+      <select id="questDestination" class="field-input">
+        <option value="">Aucun</option>
+      </select>
 
       <div class="field-label">Quête suivante (optionnel — débloquée automatiquement une fois celle-ci validée)</div>
       <select id="questNextQuest" class="field-input">
@@ -4967,9 +4988,14 @@ function renderQuestTracker(){
     }).join(' · ');
     const renderGroup = (list, emptyMsg, showJournalBtn)=> list.length ? list.map(q=>{
       const hasJournal = showJournalBtn && q.showInJournal !== false && (journals[q.id]||[]).length;
+      /* v9 : bouton de guidage si la quête désigne un lieu qui a une position */
+      const lieu = showJournalBtn && q.destinationId ? ficheParIdJouable(q.destinationId) : null;
+      const guidable = lieu && typeof lieu.lat === 'number' && typeof lieu.lng === 'number';
+      const enRoute = guidable && guidage.cibleId === q.destinationId;
       return `
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
+        ${guidable ? `<button class="${enRoute ? 'btn-secondary' : 'btn-capture'}" data-guider="${q.destinationId}" data-guider-quete="${q.id}" style="width:100%; margin-top:6px;">${enRoute ? '✕ Arrêter le guidage' : '🧭 Aller là-bas — ' + (lieu.name || 'le lieu')}</button>` : ''}
         ${hasJournal ? `<button class="btn-secondary" data-open-journal="${q.id}" style="width:100%; margin-top:6px;">📖 Voir le journal</button>` : ''}
       </div>
     `;
@@ -4982,6 +5008,12 @@ function renderQuestTracker(){
     `;
     wrap.querySelectorAll('[data-open-journal]').forEach(btn=>{
       btn.addEventListener('click', ()=> openQuestJournal(btn.dataset.openJournal, journals[btn.dataset.openJournal]||[]));
+    });
+    wrap.querySelectorAll('[data-guider]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if (guidage.cibleId === btn.dataset.guider){ arreterGuidage(); renderQuestTracker(); return; }
+        if (guiderVers(btn.dataset.guider, btn.dataset.guiderQuete)) document.getElementById('questTrackerOverlay').classList.remove('show');
+      });
     });
   });
 }
@@ -5000,7 +5032,7 @@ function openQuestJournal(questId, entries){
       if (npc && typeof npc.lat === 'number' && playerPos){
         const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
         distLabel = `<span class="meta" style="display:block;">${npc.name || 'PNJ'} à ${dist} m</span>`;
-        itineraryBtn = `<button class="btn-secondary" data-jitin-lat="${npc.lat}" data-jitin-lng="${npc.lng}" style="margin-top:6px;">🧭 Itinéraire</button>`;
+        itineraryBtn = `<button class="btn-secondary" data-jitin="${npc.id}" data-jitin-quete="${questId}" style="margin-top:6px;">🧭 Aller là-bas</button>`;
       }
     }
     return `
@@ -5012,10 +5044,10 @@ function openQuestJournal(questId, entries){
       </div>
     `;
   }).join('') : '<p class="meta">Rien noté pour l\'instant.</p>';
-  stepsEl.querySelectorAll('[data-jitin-lat]').forEach(btn=>{
+  stepsEl.querySelectorAll('[data-jitin]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${btn.dataset.jitinLat},${btn.dataset.jitinLng}`;
-      window.open(url, '_blank');
+      /* v9 : guidage dans le jeu, plus d'ouverture de Google Maps */
+      if (guiderVers(btn.dataset.jitin, btn.dataset.jitinQuete)) document.getElementById('questJournalOverlay').classList.remove('show');
     });
   });
   document.getElementById('questTrackerOverlay').classList.remove('show');
@@ -7525,6 +7557,7 @@ function onPosition(pos){
 
   updateCreatureVisuals();
   if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  try { guidageMettreAJour(); } catch(e){ journal('erreur', 'guidage', e.message, true); }
   setStatus('ok', false);
   accPill.style.display = 'block';
   accPillText.textContent = `± ${Math.round(accuracy)} m`;
@@ -7544,6 +7577,7 @@ function onFreeModeClick(e){
   if (accCircle){ map.removeLayer(accCircle); accCircle = null; }
   updateCreatureVisuals();
   if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  try { guidageMettreAJour(); } catch(e){ journal('erreur', 'guidage', e.message, true); }
   accPill.style.display = 'block';
   accPillText.textContent = 'Mode libre';
 }
@@ -7564,6 +7598,136 @@ document.getElementById('freeModeToggleBtn').addEventListener('click', ()=>{
   }
   document.getElementById('editHubOverlay').classList.remove('show');
 });
+
+/* =====================================================================================
+   GUIDAGE VERS UN LIEU (v9) — un tracé sur la carte jusqu'à un PNJ ou une zone.
+   Avec du réseau : le vrai itinéraire piéton par les rues (service OSRM). Sans réseau, ou si
+   le service ne répond pas : une ligne droite pointillée, la distance à vol d'oiseau et une
+   flèche. Le guidage reste affiché jusqu'à l'arrivée (moins de GUIDAGE_ARRIVEE_M mètres) ou
+   jusqu'au ✕ de la pastille ; il survit à un rechargement (localStorage) et s'arrête tout seul
+   quand la quête qui l'a lancé est terminée.
+   NOTE : le serveur public d'OSRM est un service de démonstration, sans garantie — pour un
+   vrai festival, prévoir un fournisseur d'itinéraires (même chantier que les tuiles, étape 5).
+   ===================================================================================== */
+const GUIDAGE_SERVICE = 'https://router.project-osrm.org/route/v1/foot/';
+const GUIDAGE_ARRIVEE_M = 20;        // en dessous : « tu es arrivé »
+const GUIDAGE_RECALCUL_M = 30;       // on redemande l'itinéraire quand on s'est écarté d'autant du point de départ du tracé
+const GUIDAGE_RECALCUL_MS = 90000;   // … ou au plus tard toutes les 90 s
+const guidage = { cibleId:null, questId:null, nom:'', lat:null, lng:null, trace:null, ligne:null, origineTrace:null, dateTrace:0, distanceTrace:null, enCours:false, restaure:false };
+
+function guidageActif(){ return !!guidage.cibleId; }
+function guiderVers(ficheId, questId, silencieux){
+  const f = ficheParIdJouable(ficheId);
+  if (!f || typeof f.lat !== 'number' || typeof f.lng !== 'number'){ if (!silencieux) showToast('Ce lieu n\'a pas de position sur la carte'); return false; }
+  if (guidage.cibleId && guidage.cibleId !== ficheId) guidageEffacerTraces();
+  guidage.cibleId = ficheId; guidage.questId = questId || null;
+  guidage.nom = f.name || 'le lieu'; guidage.lat = f.lat; guidage.lng = f.lng;
+  guidage.origineTrace = null; guidage.dateTrace = 0; guidage.distanceTrace = null;
+  try { localStorage.setItem('parcours_guidage', JSON.stringify({ cibleId: ficheId, questId: questId || null })); } catch(e){}
+  if (!silencieux) showToast('🧭 En route vers ' + guidage.nom);
+  guidageMettreAJour(true);
+  return true;
+}
+function guidageEffacerTraces(){
+  try { if (guidage.trace && map) map.removeLayer(guidage.trace); } catch(e){}
+  try { if (guidage.ligne && map) map.removeLayer(guidage.ligne); } catch(e){}
+  guidage.trace = null; guidage.ligne = null;
+}
+function arreterGuidage(silencieux){
+  const etait = guidageActif();
+  guidageEffacerTraces();
+  guidage.cibleId = null; guidage.questId = null; guidage.nom = ''; guidage.lat = null; guidage.lng = null;
+  guidage.origineTrace = null; guidage.dateTrace = 0; guidage.distanceTrace = null;
+  try { localStorage.removeItem('parcours_guidage'); } catch(e){}
+  const pill = document.getElementById('guidagePill');
+  if (pill) pill.style.display = 'none';
+  if (etait && !silencieux) showToast('Guidage arrêté');
+}
+/* Au rechargement : on reprend le guidage en cours dès qu'on a une position et que la fiche est là. */
+function guidageRestaurerSiBesoin(){
+  if (guidage.restaure || guidageActif()) return;
+  let memo = null;
+  try { memo = JSON.parse(localStorage.getItem('parcours_guidage') || 'null'); } catch(e){}
+  if (!memo || !memo.cibleId) { guidage.restaure = true; return; }
+  if (!ficheParIdJouable(memo.cibleId)) return;      // les fiches ne sont pas encore chargées : on réessaiera
+  guidage.restaure = true;
+  if (memo.questId && playerQuestsState[memo.questId] === 'completed'){ try { localStorage.removeItem('parcours_guidage'); } catch(e){} return; }
+  guiderVers(memo.cibleId, memo.questId, true);
+}
+function guidageCap(lat1, lon1, lat2, lon2){
+  const y = Math.sin(toRad(lon2-lon1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function guidageMettreAJour(force){
+  guidageRestaurerSiBesoin();
+  if (!guidageActif() || !playerPos || typeof map === 'undefined' || !map) return;
+  const dist = haversineDist(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng);
+  if (dist <= GUIDAGE_ARRIVEE_M){
+    showToast('🎯 Tu es arrivé : ' + guidage.nom);
+    arreterGuidage(true);
+    return;
+  }
+  /* La ligne droite est toujours tenue à jour ; elle n'est visible que sans tracé par les rues. */
+  const bouts = [[playerPos.lat, playerPos.lng], [guidage.lat, guidage.lng]];
+  if (!guidage.ligne) guidage.ligne = L.polyline(bouts, { color:'#0f8a52', weight:4, opacity:.7, dashArray:'8 10', interactive:false }).addTo(map);
+  else guidage.ligne.setLatLngs(bouts);
+  if (guidage.trace){
+    /* le tracé existe : on le laisse tant qu'on n'a pas trop dérivé de son point de départ */
+    const derive = guidage.origineTrace ? haversineDist(playerPos.lat, playerPos.lng, guidage.origineTrace.lat, guidage.origineTrace.lng) : Infinity;
+    if (derive > GUIDAGE_RECALCUL_M || Date.now() - guidage.dateTrace > GUIDAGE_RECALCUL_MS) force = true;
+  } else force = true;
+  guidagePastille(dist);
+  if (force && (typeof navigator === 'undefined' || navigator.onLine !== false)) guidageDemanderTrace();
+}
+function guidagePastille(distVol){
+  const pill = document.getElementById('guidagePill');
+  if (!pill) return;
+  const parLesRues = !!guidage.trace;
+  const metres = Math.round(parLesRues && guidage.distanceTrace ? guidage.distanceTrace : distVol);
+  const lisible = metres >= 1000 ? (metres/1000).toFixed(1).replace('.0','') + ' km' : metres + ' m';
+  document.getElementById('guidageTexte').innerHTML = `<b>${guidage.nom}</b> · ${lisible}<small>${parLesRues ? 'par les rues' : 'à vol d\'oiseau' + (navigator.onLine === false ? ' — hors connexion' : '')}</small>`;
+  const cap = playerPos ? guidageCap(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng) : 0;
+  document.getElementById('guidageFleche').style.transform = 'rotate(' + Math.round(cap - 90) + 'deg)';
+  pill.style.display = 'flex';
+}
+async function guidageDemanderTrace(){
+  if (guidage.enCours || !playerPos) return;
+  guidage.enCours = true;
+  const cible = guidage.cibleId;
+  const origine = { lat: playerPos.lat, lng: playerPos.lng };
+  try {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const minuteur = ctrl ? setTimeout(()=> ctrl.abort(), 7000) : null;
+    const url = GUIDAGE_SERVICE + origine.lng + ',' + origine.lat + ';' + guidage.lng + ',' + guidage.lat + '?overview=full&geometries=geojson';
+    const rep = await fetch(url, { cache:'no-store', signal: ctrl ? ctrl.signal : undefined });
+    if (minuteur) clearTimeout(minuteur);
+    if (!rep.ok) throw new Error('HTTP ' + rep.status);
+    const data = await rep.json();
+    const route = data && data.routes && data.routes[0];
+    if (!route || !route.geometry || !route.geometry.coordinates) throw new Error('pas d\'itinéraire');
+    if (guidage.cibleId !== cible) return;                    // le guidage a changé pendant la requête
+    const points = route.geometry.coordinates.map(c=> [c[1], c[0]]);
+    points.unshift([origine.lat, origine.lng]);
+    points.push([guidage.lat, guidage.lng]);
+    if (!guidage.trace) guidage.trace = L.polyline(points, { color:'#0f8a52', weight:5, opacity:.85, interactive:false }).addTo(map);
+    else guidage.trace.setLatLngs(points);
+    if (guidage.ligne){ try { map.removeLayer(guidage.ligne); } catch(e){} guidage.ligne = null; }
+    guidage.origineTrace = origine; guidage.dateTrace = Date.now(); guidage.distanceTrace = route.distance;
+  } catch(e){
+    /* pas de réseau ou service muet : on garde la ligne droite, et on réessaiera au prochain déplacement */
+    if (guidage.cibleId === cible){
+      guidage.origineTrace = origine; guidage.dateTrace = Date.now() - GUIDAGE_RECALCUL_MS + 20000;   // nouvel essai dans ~20 s
+      if (guidage.trace){ try { map.removeLayer(guidage.trace); } catch(e2){} guidage.trace = null; guidage.distanceTrace = null; }
+      journal('carte', 'itinéraire indisponible', (e && e.message) || String(e));
+    }
+  } finally {
+    guidage.enCours = false;
+    if (guidageActif() && playerPos) guidagePastille(haversineDist(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng));
+  }
+}
+document.getElementById('guidageStopBtn').addEventListener('click', ()=> arreterGuidage());
+window.addEventListener('online', ()=>{ try { guidageMettreAJour(true); } catch(e){} });
 
 function startWatch(){
   if (!('geolocation' in navigator)){
@@ -7710,6 +7874,16 @@ function renderQuestNextSelect(){
     .map(q=>`<option value="${q.id}">${q.name}</option>`).join('');
   if (current) sel.value = current;
 }
+/* v9 : les lieux qu'une quête peut désigner — toute fiche publiée posée sur la carte (PNJ ou zone). */
+function renderQuestDestinationSelect(){
+  const sel = document.getElementById('questDestination');
+  if (!sel) return;
+  const current = sel.value;
+  const lieux = toutesLesFiches().map(f=> ({ id:f.id, j: ficheJouable(f) })).filter(x=> x.j && typeof x.j.lat === 'number' && typeof x.j.lng === 'number');
+  lieux.sort((a,b)=> (a.j.name||'').localeCompare(b.j.name||''));
+  sel.innerHTML = '<option value="">Aucun</option>' + lieux.map(x=>`<option value="${x.id}">${x.j.interactionType === 'zone' ? '🗺️' : '👤'} ${x.j.name || '(sans nom)'}</option>`).join('');
+  if (current) sel.value = current;
+}
 function renderPnjVisibilityQuestSelect(){
   const sel = document.getElementById('editVisibilityQuest');
   if (!sel) return;
@@ -7803,6 +7977,8 @@ function loadQuestForEdit(id){
   document.getElementById('questShowInJournal').checked = q.showInJournal !== false;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = q.nextQuestId || '';
+  renderQuestDestinationSelect();
+  document.getElementById('questDestination').value = q.destinationId || '';
   document.getElementById('questSaveBtn').textContent = 'Mettre à jour la quête';
   document.getElementById('questCancelBtn').style.display = 'block';
 }
@@ -7816,6 +7992,8 @@ function resetQuestForm(){
   document.getElementById('questShowInJournal').checked = true;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = '';
+  renderQuestDestinationSelect();
+  document.getElementById('questDestination').value = '';
   document.getElementById('questSaveBtn').textContent = 'Enregistrer la quête';
   document.getElementById('questCancelBtn').style.display = 'none';
 }
@@ -7829,12 +8007,13 @@ document.getElementById('questSaveBtn').addEventListener('click', ()=>{
   const rewards = [];
   const nextQuestId = document.getElementById('questNextQuest').value || null;
   const showInJournal = document.getElementById('questShowInJournal').checked;
+  const destinationId = document.getElementById('questDestination').value || null;
 
   if (!name){ showToast('Donne un nom à la quête'); return; }
   if (!objectives.length){ showToast('Ajoute au moins un objectif'); return; }
   if (!questsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, updatedAt: Date.now() };
+  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, destinationId, updatedAt: Date.now() };
   const op = editingQuestId ? questsCol.doc(editingQuestId).set(data) : questsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingQuestId ? 'Quête mise à jour' : 'Quête ajoutée'); resetQuestForm(); showQuestsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
@@ -10804,6 +10983,7 @@ function watchPlayerQuests(uid){
     parcoursEtat.introVue = !!(doc.exists && doc.data().introVue);
     parcoursEtat.finVue = !!(doc.exists && doc.data().finVue);
     try { verifierFinDuParcours(true); } catch(e){ journal('erreur', 'fin de parcours', e.message, true); }
+    try { if (guidage.questId && playerQuestsState[guidage.questId] === 'completed') arreterGuidage(true); } catch(e){}
     try { redessinerCarte(); } catch(e){ journal('erreur', 'carte après fiche joueur', e.message, true); }
     const questsListSection = document.getElementById('questsection-list');
     if (questsListSection && questsListSection.style.display === 'block') renderQuestsListView();
@@ -10857,6 +11037,7 @@ async function remettreLaProgressionAZero(){
   parcoursEtat.finDejaAffichee = false;
   parcoursEtat.finEnAttente = false;
   parcoursEtat.queteFinTerminee = null;
+  try { arreterGuidage(true); } catch(e){}
   showToast('Progression remise à zéro');
 }
 document.getElementById('optionsResetProgressBtn').addEventListener('click', async ()=>{

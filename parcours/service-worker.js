@@ -1,4 +1,4 @@
-const CACHE_NAME = "parcours-v7";
+const CACHE_NAME = "parcours-v8";
 const TUILES_CACHE = "parcours-tuiles"; // rempli par l'appli (Options → Préparer la carte hors connexion) et par le premier passage
 const ASSETS = [
   "./",
@@ -46,8 +46,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
 
   /* v8 : les appels à Firestore (statistiques) ne passent JAMAIS par le cache — la règle
-     « cache d'abord » ci-dessous figeait la première réponse (liste vide) pour toujours. */
-  if (/(^|\.)googleapis\.com$/.test(url.hostname)) return;
+     « cache d'abord » ci-dessous figeait la première réponse (liste vide) pour toujours.
+     v9 : même chose pour le service d'itinéraires (guidage). Règle générale : toute API
+     interrogée par l'appli doit être listée ici. */
+  if (/(^|\.)(googleapis\.com|project-osrm\.org)$/.test(url.hostname)) return;
 
   const estLaPage = req.mode === "navigate"
     || (url.origin === self.location.origin && (url.pathname.endsWith("/") || url.pathname.endsWith("/index.html")));
