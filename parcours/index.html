@@ -1168,7 +1168,8 @@
   #collectionEcran.show{ display:flex; }
   .coll-corps{ flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
   .coll-pied{ flex:0 0 auto; padding:4px 16px calc(6px + env(safe-area-inset-bottom)); }
-  .coll-nom{ display:inline-flex; align-items:center; gap:6px; background:none; border:none; color:#dfeee2; font-size:12px; opacity:.78; padding:2px 0; }
+  /* v16 : le prénom seul, sous « Mon carnet », toujours modifiable au crayon */
+  .coll-nom{ display:inline-flex; align-items:center; gap:6px; background:none; border:none; color:#dfeee2; font-size:15px; opacity:.9; padding:2px 0; }
   .coll-nom-edit{ display:none; gap:6px; margin-top:4px; }
   .coll-nom-edit.show{ display:flex; }
   .coll-nom-edit input{ flex:1; height:32px; font-size:13px; }
@@ -1193,8 +1194,8 @@
     aspect-ratio:2/3; border-radius:12px; border:2px dashed var(--line); background:var(--panel); cursor:pointer;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; color:var(--muted);
   }
-  .case-ajout .plus{ font-size:34px; line-height:1; color:var(--accent); }
-  .case-ajout .lib{ font-size:10px; }
+  .case-ajout .plus{ font-size:42px; line-height:1; color:var(--accent); font-weight:300; }
+  .case-ajout .lib{ font-size:11px; text-align:center; line-height:1.2; padding:0 6px; }
   #ajoutVolet{ z-index:4700; }
   #ajoutVolet .sheet h3{ margin:0 0 10px; font-size:16px; }
   .carte-collector.mini{ width:100%; aspect-ratio:2/3; border-radius:12px; box-shadow:0 6px 16px rgba(0,0,0,.35); cursor:pointer; }
@@ -1294,7 +1295,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v15</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v16</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11484,6 +11485,7 @@ async function demarrerLeParcours(){
   messageDeDemarrage('Lecture du parcours…');
   await bl_quandPrete();
   await chargerParcoursDepuisLAdresse();
+  afficherMessageEnAttente();                                // v16
   await verifierExpirationsAuDemarrage();
   /* v13 : sans parcours actif (premier lancement, ou parcours retiré), l'appli s'ouvre sur la
      collection. Le prénom n'est demandé qu'en entrant dans un parcours. */
@@ -13625,6 +13627,11 @@ async function chargerParcoursDepuisLAdresse(){
     if (!url && p) url = adresseDuScenario(slugDuParcours(p));
   } catch(e){}
   if (!url || !pid) return;
+  /* v16 : le parcours actif d'avant (localStorage n'a pas encore été écrasé) — pour y revenir
+     si le téléchargement échoue sur un parcours qui n'existe pas encore sur l'appareil. */
+  let precedent = null;
+  try { precedent = localStorage.getItem('parcours_actif') || null; } catch(e){}
+  if (precedent === pid) precedent = null;
   /* v13 : le parcours visé est déjà le parcours actif — bl_charger l'a lu dans l'adresse. On le
      mémorise, et l'adresse est nettoyée après coup pour qu'un rechargement ne le réimpose pas
      par-dessus un autre parcours choisi dans la collection. */
@@ -13633,7 +13640,7 @@ async function chargerParcoursDepuisLAdresse(){
   messageDeDemarrage('Téléchargement du parcours…');
   try {
     const rep = await fetch(url, { cache:'no-store' });
-    if (!rep.ok) throw new Error('réponse ' + rep.status);
+    if (!rep.ok){ const err = new Error('réponse ' + rep.status); err.statut = rep.status; throw err; }
     const fichier = await rep.json();
     const dejaLa = bl_col('app_config').parcours;
     const dejaVersion = dejaLa ? (dejaLa.updatedAt || 0) : 0;
@@ -13646,9 +13653,25 @@ async function chargerParcoursDepuisLAdresse(){
     nettoyerAdresse();
   } catch(e){
     journal('base', 'téléchargement du parcours impossible', (e && e.message) || String(e), true);
-    if (!Object.keys(bl_col('creature_types')).length) showToast('Impossible de télécharger le parcours — vérifie la connexion');
     nettoyerAdresse();
+    const vide = !Object.keys(bl_col('creature_types')).length && !gl_lire('parcours', pid);
+    if (!vide) return;
+    const introuvable = e && (e.statut === 404 || e.statut === 403 || e.statut === 410);
+    const msg = introuvable ? ('Aucun parcours ne correspond au code « ' + pid + ' »') : 'Impossible de télécharger le parcours — vérifie la connexion';
+    /* v16 : rien n'a été chargé → on revient au parcours d'avant (ou au carnet) au lieu de rester
+       sur un parcours fantôme sans bouton de retour. Le message est affiché après le rechargement. */
+    parcoursEtat.arriveeParQr = null;
+    parcoursMemoriserActif(precedent);
+    try { sessionStorage.setItem('parcours_message', msg); } catch(e2){}
+    location.replace(location.pathname);
+    await new Promise(()=>{});   // on attend le rechargement
   }
+}
+/* v16 : un message laissé par la page précédente (ex. code introuvable), affiché au démarrage. */
+function afficherMessageEnAttente(){
+  let msg = null;
+  try { msg = sessionStorage.getItem('parcours_message'); sessionStorage.removeItem('parcours_message'); } catch(e){}
+  if (msg) setTimeout(()=> showToast(msg), 700);
 }
 function nettoyerAdresse(){ try { history.replaceState(null, '', location.pathname); } catch(e){} }
 
@@ -13885,7 +13908,7 @@ function rendreCollection(){
   const esc = (t)=> String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const now = Date.now();
   const j = gl_lire('joueur', 'local') || {};
-  document.getElementById('collectionSousTitre').textContent = (j.pseudo ? 'de ' + j.pseudo : 'Mon nom') + ' ✎';
+  document.getElementById('collectionSousTitre').textContent = (j.pseudo ? j.pseudo : 'Mon nom') + ' ✎';   // v16 : sans « de »
   document.getElementById('carnetNomEdit').classList.remove('show');
   const fermer = document.getElementById('collectionFermerBtn');
   fermer.style.display = (baseLocale.pid && parcoursExisteLocalement(baseLocale.pid)) ? '' : 'none';
@@ -13911,7 +13934,7 @@ function rendreCollection(){
     cases.push('<div class="case-parcours' + (etat === 'avenir' ? ' avenir' : '') + '" data-ouvrir="' + esc(e.pid) + '"><div class="cp-titre">' + esc(e.titre || e.pid) + '</div><div><div class="cp-etat' + (niveau ? ' ' + niveau : '') + '">' + esc(texte) + '</div><div class="cp-btn">' + (etat === 'avenir' ? '🔒 Bientôt' : (actif ? '← Reprendre' : '▶ Jouer')) + '</div></div></div>');
   }
   cartes.forEach(c=> cases.push(htmlCarte(c, 'mini', c.pid)));
-  cases.push('<div class="case-ajout" id="collectionAjoutCase"><div class="plus">+</div><div class="lib">Ajouter un parcours</div></div>');
+  cases.push('<div class="case-ajout" id="collectionAjoutCase"><div class="plus">+</div><div class="lib">Ajouter</div></div>');
   const grille = document.getElementById('collectionCartes');
   grille.innerHTML = cases.join('');
   document.getElementById('collectionCartesVide').style.display = cartes.length ? 'none' : '';
@@ -13957,11 +13980,33 @@ document.getElementById('collectionFermerBtn').addEventListener('click', fermerC
 /* ---------- ajouter un parcours ---------- */
 /* Un code de parcours = le slug du QR. S'il est déjà là et ouvert, on l'ouvre ; sinon on passe
    par l'adresse `?p=`, qui télécharge, importe, prépare la carte et propose l'installation. */
-function ajouterParcoursParCode(code){
+async function ajouterParcoursParCode(code){
   const slug = slugDuParcours((code || '').trim());
   if (!slug || slug === 'parcours'){ showToast('Écris le code du parcours'); return; }
   if (parcoursExisteLocalement(slug)){ ouvrirParcours(slug); return; }
+  /* v16 : on vérifie d'abord que le fichier existe, sans quitter le carnet. Avant, un code faux
+     rechargeait la page sur un parcours vide et laissait le joueur dans un carnet sans sortie. */
+  const btn = document.getElementById('collectionCodeBtn');
+  const libelle = btn ? btn.textContent : '';
+  if (btn){ btn.disabled = true; btn.textContent = 'Vérification…'; }
+  let verdict;
+  try { verdict = await verifierCodeDeParcours(slug); }
+  finally { if (btn){ btn.disabled = false; btn.textContent = libelle; } }
+  if (verdict === 'introuvable'){ showToast('Aucun parcours ne correspond au code « ' + slug + ' »'); return; }
+  if (verdict === 'reseau'){ showToast('Impossible de vérifier ce code — vérifie la connexion'); return; }
   location.href = location.pathname + '?p=' + encodeURIComponent(slug);
+}
+/* v16 : le fichier scenarios/<code>.json existe-t-il ? 'ok' / 'introuvable' / 'reseau'.
+   HEAD d'abord (léger : le fichier contient les images) ; si l'hébergeur refuse HEAD, GET. */
+async function verifierCodeDeParcours(slug){
+  const url = adresseDuScenario(slug);
+  try {
+    let rep = await fetch(url, { method:'HEAD', cache:'no-store' });
+    if (rep.status === 405 || rep.status === 501) rep = await fetch(url, { cache:'no-store' });
+    if (rep.ok) return 'ok';
+    if (rep.status === 404 || rep.status === 403 || rep.status === 410) return 'introuvable';
+    return 'reseau';
+  } catch(e){ return 'reseau'; }
 }
 document.getElementById('collectionCodeBtn').addEventListener('click', ()=> ajouterParcoursParCode(document.getElementById('collectionCodeInput').value));
 document.getElementById('collectionCodeInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') document.getElementById('collectionCodeBtn').click(); });
@@ -13979,7 +14024,7 @@ function traiterContenuQr(texte){
     if (/^[\p{L}\p{N}\-_ ]{2,80}$/u.test(texte)) slug = slugDuParcours(texte);
   }
   if (!slug){ showToast('Ce QR code n\'est pas un parcours'); return; }
-  ajouterParcoursParCode(slug);
+  return ajouterParcoursParCode(slug);   // v16 : promesse (vérification du code avant rechargement)
 }
 /* Fichier .json ajouté depuis la collection : il va sous son propre pid (le slug de son titre). */
 async function ajouterParcoursDepuisFichier(fichier){
