@@ -1188,7 +1188,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v11</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v12</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1555,6 +1555,11 @@
         <input type="checkbox" id="questShowInJournal" style="width:auto;" checked>
         <label for="questShowInJournal" style="margin:0;">Afficher dans le journal de suivi</label>
       </div>
+      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="questShowObjectives" style="width:auto;">
+        <label for="questShowObjectives" style="margin:0;">Afficher les objets à trouver dans le suivi (ex. : 0/3)</label>
+      </div>
+      <p class="meta" style="margin:2px 0 0 26px;">À cocher seulement quand le personnage annonce lui-même la collecte — sinon le suivi révèle des objets que le joueur n'est pas censé connaître.</p>
 
       <button class="btn-capture" id="questSaveBtn" style="width:100%; margin-top:16px;">Enregistrer la quête</button>
       <button class="btn-secondary" id="questCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
@@ -5004,6 +5009,8 @@ function renderQuestTracker(){
     const journals = (doc.exists && doc.data().questJournals) || {};
     const active = quests.filter(q=> playerQuestsState[q.id] === 'active');
     const completed = quests.filter(q=> playerQuestsState[q.id] === 'completed');
+    /* v12 : la liste des objets à trouver n'apparaît que si la quête le demande (case dans l'éditeur),
+       sinon elle divulguait des objets que le joueur ne connaît pas encore (« Photo du conteneur : 0/1 »). */
     const describeObjectives = (q)=> (q.objectives||[]).map(o=>{
       const it = items.find(i=>i.id===o.itemId);
       const have = inv[o.itemId] || 0;
@@ -5017,7 +5024,7 @@ function renderQuestTracker(){
       const enRoute = guidable && guidage.cibleId === lieu.id;
       return `
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
-        <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
+        <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${(q.showObjectives === true && describeObjectives(q)) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
         ${guidable ? `<button class="${enRoute ? 'btn-secondary' : 'btn-capture'}" data-guider="${lieu.id}" data-guider-quete="${q.id}" style="width:100%; margin-top:6px;">${enRoute ? '✕ Arrêter le guidage' : '🧭 Aller là-bas — ' + (lieu.name || 'le lieu')}</button>` : ''}
         ${hasJournal ? `<button class="btn-secondary" data-open-journal="${q.id}" style="width:100%; margin-top:6px;">📖 Voir le journal</button>` : ''}
       </div>
@@ -8050,6 +8057,7 @@ function loadQuestForEdit(id){
   renderQuestObjectivesBuilder();
   document.getElementById('questObjectiveMode').value = q.objectiveMode || 'all';
   document.getElementById('questShowInJournal').checked = q.showInJournal !== false;
+  document.getElementById('questShowObjectives').checked = q.showObjectives === true;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = q.nextQuestId || '';
   renderQuestDestinationSelect();
@@ -8065,6 +8073,7 @@ function resetQuestForm(){
   renderQuestObjectivesBuilder();
   document.getElementById('questObjectiveMode').value = 'all';
   document.getElementById('questShowInJournal').checked = true;
+  document.getElementById('questShowObjectives').checked = false;
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = '';
   renderQuestDestinationSelect();
@@ -8082,13 +8091,14 @@ document.getElementById('questSaveBtn').addEventListener('click', ()=>{
   const rewards = [];
   const nextQuestId = document.getElementById('questNextQuest').value || null;
   const showInJournal = document.getElementById('questShowInJournal').checked;
+  const showObjectives = document.getElementById('questShowObjectives').checked;   // v12
   const destinationId = document.getElementById('questDestination').value || null;
 
   if (!name){ showToast('Donne un nom à la quête'); return; }
   if (!objectives.length){ showToast('Ajoute au moins un objectif'); return; }
   if (!questsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, destinationId, updatedAt: Date.now() };
+  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, showObjectives, destinationId, updatedAt: Date.now() };
   const op = editingQuestId ? questsCol.doc(editingQuestId).set(data) : questsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingQuestId ? 'Quête mise à jour' : 'Quête ajoutée'); resetQuestForm(); showQuestsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
