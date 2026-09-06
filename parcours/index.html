@@ -1305,7 +1305,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v19</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v22</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1540,6 +1540,23 @@
     <button class="btn-capture" id="boiteNoireBtn" style="width:100%; margin-bottom:6px;">🧾 Boîte noire</button>
     <p class="meta">Tout ce que l'appli a fait juste avant un souci : erreurs, écritures refusées, temps de chargement. Le journal survit à un rechargement.</p>
 
+    <div class="field-label" style="margin-top:14px;">Contrôle du parcours (v20)</div>
+    <p class="meta" style="margin:0 0 6px;">Analyse tout le parcours sans rien modifier : références cassées, objets impossibles à obtenir, quêtes sans issue, zones sans sortie… Touche un élément signalé pour ouvrir sa fiche.</p>
+    <button class="btn-capture" id="ctrlVerifierBtn" style="width:100%; margin-bottom:6px; height:42px;">🔎 Vérifier le parcours</button>
+    <button class="btn-capture" id="ctrlSimulerBtn" style="width:100%; margin-bottom:6px; height:42px;">▶️ Simuler le parcours</button>
+    <button class="btn-secondary" id="ctrlArbreBtn" style="width:100%; margin-bottom:6px; height:42px;">🌳 Arbre du parcours</button>
+    <div style="display:flex; gap:8px;">
+      <div style="flex:1;">
+        <div class="field-label" style="margin-top:0;">Plafond d'états</div>
+        <input type="number" inputmode="numeric" id="ctrlPlafondInput" class="field-input" min="100" step="1000" placeholder="10000">
+      </div>
+      <div style="flex:1;">
+        <div class="field-label" style="margin-top:0;">Instant simulé (vide = milieu de la période)</div>
+        <input type="datetime-local" id="ctrlInstantInput" class="field-input">
+      </div>
+    </div>
+    <p class="meta" style="margin:4px 0 6px;">La simulation rejoue toutes les suites d'actions possibles sur un joueur imaginaire (dialogues, choix, objets, quêtes, zones, coffres, portes) sans toucher à ta progression. Elle cherche les blocages, les éléments inaccessibles et les fins atteignables. Elle n'est pas une preuve : un test humain reste nécessaire.</p>
+    <div id="ctrlPanneau" style="display:none; margin-top:6px;"></div>
     <div class="field-label" style="margin-top:14px;">Statistiques (v7)</div>
     <p class="meta" style="margin:0 0 6px;">Chaque téléphone envoie un petit relevé anonyme quand une partie commence et quand elle se termine (parcours joué, durée, indices, objectifs — jamais de nom). Les parties jouées en mode concepteur sont marquées « test ».</p>
     <button class="btn-capture" id="statsAfficherBtn" style="width:100%; margin-bottom:6px; height:42px;">📊 Afficher les statistiques</button>
@@ -2665,8 +2682,10 @@ function haversineDist(lat1, lon1, lat2, lon2){
 }
 
 /* ---------- Visibilité selon date / heure ---------- */
-function isActiveNow(d){
-  const now = new Date();
+function isActiveNow(d){ return isActiveAt(d, new Date()); }
+/* v21 : même règle à un instant quelconque (simulateur) */
+function isActiveAt(d, now){
+  if (!d) return true;
   if (Array.isArray(d.daysOfWeek) && d.daysOfWeek.length > 0){
     if (!d.daysOfWeek.includes(now.getDay())) return false;
   }
@@ -2685,7 +2704,7 @@ function isActiveNow(d){
   const creneaux = (Array.isArray(d.timeRanges) && d.timeRanges.length)
     ? d.timeRanges.filter(c=> c && (c.start || c.end))
     : ((!d.startDate && !d.endDate) ? normaliserCreneaux(d) : []);
-  if (creneaux.length && !heureDansCreneaux(creneaux)) return false;
+  if (creneaux.length && !heureDansCreneaux(creneaux, now)) return false;
   return true;
 }
 
@@ -2706,9 +2725,9 @@ function statutFiche(d){
 /* Vrai pour l'instant présent si l'heure tombe dans l'un des créneaux.
    Partagé par les fiches (zones, PNJ, monstres, boutiques) et par les portes d'une scène :
    une seule règle d'horaire dans tout le jeu, passage de minuit compris. */
-function heureDansCreneaux(creneaux){
+function heureDansCreneaux(creneaux, date){
   if (!creneaux || !creneaux.length) return true;
-  const now = new Date();
+  const now = date || new Date();
   const pad = n=> String(n).padStart(2,'0');
   const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
   return creneaux.some(c=>{
@@ -3497,7 +3516,7 @@ function renderDialogueBuilder(){
 
         const stSel = document.createElement('select');
         stSel.className = 'field-input';
-        stSel.innerHTML = '<option value="active">en cours</option><option value="completed">terminée</option><option value="not_active">pas commencée</option>';
+        stSel.innerHTML = '<option value="active">en cours</option><option value="completed">terminée</option><option value="not_started">jamais commencée</option><option value="not_active">pas en cours (jamais commencée ou terminée)</option>';
         stSel.value = variant.state || 'active';
         variant.state = stSel.value;
         stSel.style.flex = '1';
@@ -3677,7 +3696,7 @@ function renderDialogueBuilder(){
 
       const stSel = document.createElement('select');
       stSel.className = 'field-input';
-      stSel.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_active">n\'est pas (encore) en cours</option>';
+      stSel.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_started">n\'a jamais été commencée</option><option value="not_active">n\'est pas en cours (jamais commencée ou terminée)</option>';
       stSel.value = choice.showIf.state || 'active';
       choice.showIf.state = stSel.value;
       stSel.style.flex = '2';
@@ -3753,7 +3772,8 @@ function renderDialogueBuilder(){
         choice.itemGrant = null;
         qtyInput.style.display = 'none';
       } else {
-        choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
+        const objChoisi = items.find(i=> i.name === itemSelect.value);
+        choice.itemGrant = { itemId: objChoisi ? objChoisi.id : null, itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };   // v20a A1
         qtyInput.style.display = 'block';
       }
     });
@@ -3897,14 +3917,14 @@ function fenetreEffetsReponse(ch){
       : ('« ' + extraitReplique(v, 34) + ' »');
 
     /* --- objet donné --- */
-    const it = ch.itemGrant && items.find(x=> x.name === ch.itemGrant.itemName);
+    const it = objetPourDon(ch.itemGrant);   // v20a A1 : par identifiant, nom en repli
     ligne('🎁 Donner un objet', ch.itemGrant ? (it ? it.name : ch.itemGrant.itemName) : 'aucun', ()=>{
       if (ch.itemGrant){ ch.itemGrant = null; dessiner(); return; }
       if (!items.length){ showToast('Aucun objet créé pour l\'instant'); return; }
       ouvrirSelecteur({ titre:'Quel objet ?', items: itemsPourSelecteur(), selectionnes: [], max:1,
         onChoisir:(ids)=>{
           const obj = items.find(x=> x.id === ids[0]);
-          if (obj) ch.itemGrant = { itemName: obj.name, quantity: 1 };
+          if (obj) ch.itemGrant = { itemId: obj.id, itemName: obj.name, quantity: 1 };   // v20a A1
           dessiner();
         } });
     });
@@ -4690,12 +4710,17 @@ let latestSnap = null;
    sans attendre le réseau. La liste est corrigée dès l'arrivée du vrai instantané. */
 let expiredCreatureIds = new Set(); // PNJ dont la condition n'est plus remplie ET le joueur a quitté son rayon (ou disparition immédiate activée)
 
-function creatureConditionMet(d){
-  if (!d.visibilityCondition || !d.visibilityCondition.questId) return true;
-  const state = playerQuestsState[d.visibilityCondition.questId] || 'none';
+function creatureConditionMet(d, quetes){
+  if (!d || !d.visibilityCondition || !d.visibilityCondition.questId) return true;
+  const state = etatQuete(quetes || playerQuestsState, d.visibilityCondition.questId);
   if (d.visibilityCondition.state === 'completed') return state === 'completed';
   return state !== 'completed'; // 'not_completed' par défaut
 }
+/* v20a A5 : un PNJ dont la condition est fausse n'est affiché que s'il a déjà été vu, condition
+   vraie, pendant CETTE session (il s'en va quand on s'éloigne — au lieu de disparaître sous les
+   yeux du joueur). Au chargement, personne n'a été vu : la condition est stricte, et un
+   rechargement ne fait plus réapparaître un personnage exclu. */
+let pnjVusConditionVraie = new Set();
 
 /* Tous les monstres du jeu, y compris ceux qui ne sont posés nulle part sur la carte.
    ATTENTION : ne jamais utiliser `creatures` pour ça — c'est la liste des marqueurs
@@ -4783,7 +4808,9 @@ function renderAllCreatures(snap){
     if (ferme && d.interactionType !== 'zone') return;
     if (d.interactionType === 'zone' && d.explorable && !playerDiscoveredZoneIds.has(doc.id)) return; // zone découvrable pas encore trouvée par l'explorateur
     const conditionOk = creatureConditionMet(d);
+    if (conditionOk) pnjVusConditionVraie.add(doc.id);
     if (!conditionOk && (d.hideOnExitRadius || expiredCreatureIds.has(doc.id))) return; // condition expirée : exclu définitivement
+    if (!conditionOk && !pnjVusConditionVraie.has(doc.id)) return;   // v20a A5 : jamais vu avec sa condition vraie → pas affiché
     creatures.push({ id: doc.id, ...d, marker:null, active: true, _conditionOk: conditionOk, _closed: ferme });
   });
   renderCreatureMarkers();
@@ -5083,7 +5110,9 @@ function majChoixReferencesPartout(){
   choixReferencesPartout = ids;
 }
 function shouldRememberChoice(ch){
-  return !!ch.once || !!(ch.id && (activeReferencedChoiceIds.has(ch.id) || choixReferencesPartout.has(ch.id)));
+  /* v20a A8 : dans Parcours la base est locale, on mémorise TOUT choix — une condition posée
+     plus tard sur un choix déjà pris fonctionne. (L'ancienne économie visait Firestore.) */
+  return true;
 }
 function markChoiceUsed(key){
   playerUsedChoices[key] = true; // effet immédiat, sans attendre le retour du serveur
@@ -5111,28 +5140,128 @@ function resoudreMarqueurs(texte){
   return String(texte).replace(/\{(agence|joueur|vaisseau)\}/g, (tout, cle)=> valeurs[cle]);
 }
 
-function resolveStepText(step, creatureId){
-  /* « Ce qu'il dit les fois suivantes » : même réplique, mêmes réponses, autre texte. C'est
-     la façon simple de ne pas se présenter deux fois — sans couper le dialogue en deux
-     entrées, ce qui obligeait à recopier les réponses des deux côtés. */
-  if (step.textApres && !dialoguePremiereRencontre && playerUsedChoices[cleRencontre(creatureId)]){
-    return resoudreMarqueurs(step.textApres);
+/* =====================================================================================
+   v20a — RÈGLES PURES DU MOTEUR. Le jeu ET le simulateur (« Simuler le parcours ») passent
+   par ces fonctions : une seule vérité. Elles ne lisent aucune variable globale du joueur ;
+   tout arrive par `etat` = { inventaire, quetes, choix, combats, premiereRencontre }.
+   ===================================================================================== */
+function etatJoueurCourant(){
+  return {
+    inventaire: (playerSelfData && playerSelfData.inventory) || {},
+    quetes: playerQuestsState || {},
+    choix: playerUsedChoices || {},
+    combats: playerCombatsWon || {},
+    premiereRencontre: !!dialoguePremiereRencontre,
+  };
+}
+/* États de quête : 'active' | 'completed' | 'none'. Règles :
+     active      → en cours
+     completed   → terminée
+     not_started → jamais commencée (v20a, B1)
+     not_active  → pas en cours : jamais commencée OU terminée (ancien libellé trompeur, gardé tel quel) */
+function etatQuete(quetes, questId){ return (quetes && questId && quetes[questId]) || 'none'; }
+function etatQueteCorrespond(regle, etat){
+  if (regle === 'active') return etat === 'active';
+  if (regle === 'completed') return etat === 'completed';
+  if (regle === 'not_started') return etat === 'none';
+  if (regle === 'not_active') return etat !== 'active';
+  return true;
+}
+/* A1 : un don d'objet se résout par l'IDENTIFIANT, le nom n'est qu'un repli (anciens fichiers). */
+function objetPourDon(grant, listeObjets){
+  if (!grant) return null;
+  const liste = listeObjets || items || [];
+  let it = grant.itemId ? liste.find(i=> i && i.id === grant.itemId) : null;
+  if (!it && grant.itemName) it = liste.find(i=> i && i.name === grant.itemName) || null;
+  return it || null;
+}
+/* Validation d'une quête sur un inventaire : satisfaite ? et quels objectifs consommer.
+   A7 : une quête sans objectif est toujours satisfaite (« va parler à X »). */
+function resultatValidation(quete, inventaire){
+  const inv = inventaire || {};
+  const mode = (quete && quete.objectiveMode) || 'all';
+  const objectifs = ((quete && quete.objectives) || []).filter(o=> o && o.itemId);
+  if (!objectifs.length) return { satisfait: true, aDeduire: [] };
+  if (mode === 'any'){
+    const met = objectifs.find(o=> (inv[o.itemId] || 0) >= (o.qty || 1));
+    return { satisfait: !!met, aDeduire: met ? [met] : [] };
   }
-  const variants = step.textVariants || [];
-  for (const v of variants){
+  const ok = objectifs.every(o=> (inv[o.itemId] || 0) >= (o.qty || 1));
+  return { satisfait: ok, aDeduire: ok ? objectifs.slice() : [] };
+}
+/* Texte d'une étape avant remplacement des marqueurs : « les fois suivantes », puis la
+   PREMIÈRE variante vraie dans l'ordre de la liste, sinon le texte de base. */
+function texteEtapeBrut(step, creatureId, etat){
+  if (!step) return '';
+  const choix = (etat && etat.choix) || {};
+  const quetes = (etat && etat.quetes) || {};
+  if (step.textApres && !(etat && etat.premiereRencontre) && choix[cleRencontre(creatureId)]) return step.textApres;
+  for (const v of (step.textVariants || [])){
+    if (!v) continue;
     if (v.kind === 'choice'){
       if (!v.choiceId) continue;
-      const taken = !!playerUsedChoices[choiceUsedKey(creatureId, v.choiceId)];
-      if (v.taken === 'no'){ if (!taken) return resoudreMarqueurs(v.text); }
-      else if (taken) return resoudreMarqueurs(v.text);
+      const taken = !!choix[choiceUsedKey(v.creatureId || creatureId, v.choiceId)];
+      if (v.taken === 'no'){ if (!taken) return v.text; }
+      else if (taken) return v.text;
       continue;
     }
-    const state = playerQuestsState[v.questId] || 'none';
-    if (v.state === 'active' && state === 'active') return resoudreMarqueurs(v.text);
-    if (v.state === 'completed' && state === 'completed') return resoudreMarqueurs(v.text);
-    if (v.state === 'not_active' && state !== 'active') return resoudreMarqueurs(v.text);
+    if (etatQueteCorrespond(v.state, etatQuete(quetes, v.questId))) return v.text;
   }
-  return resoudreMarqueurs(step.text);
+  return step.text || '';
+}
+/* Un choix est-il proposé au joueur ? Reprend exactement les règles du jeu :
+   - « une fois » déjà pris → non ; « confier » une quête déjà prise/terminée → non ;
+   - « valider » une quête pas en cours → non ; A2 : objectifs pas dans le sac → non ;
+   - conditions cumulées (ET) : objet possédé / absent, choix pris ici ou ailleurs, combat, état de quête. */
+function choixVisible(ch, key, creatureId, etat, listeQuetes){
+  if (!ch) return false;
+  const choix = (etat && etat.choix) || {};
+  const quetes = (etat && etat.quetes) || {};
+  const inv = (etat && etat.inventaire) || {};
+  const combats = (etat && etat.combats) || {};
+  const lq = listeQuetes || quests || [];
+  if (ch.once && choix[key]) return false;
+  if (ch.questGive){
+    const st = etatQuete(quetes, ch.questGive.questId);
+    if (st === 'active' || st === 'completed') return false;
+  }
+  if (ch.questValidate){
+    if (etatQuete(quetes, ch.questValidate.questId) !== 'active') return false;
+    const q = lq.find(x=> x && x.id === ch.questValidate.questId);
+    if (!q || !resultatValidation(q, inv).satisfait) return false;   // v20a A2
+  }
+  const conditions = (ch.showIfList || []).concat(
+    (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'item')) ? [ch.showIf] : []);
+  for (const cond of conditions){
+    if (!cond) continue;
+    if (cond.kind === 'item'){
+      const possede = (inv[cond.itemId] || 0) > 0;
+      if (cond.has === 'no'){ if (possede) return false; }
+      else if (!possede) return false;
+      continue;
+    }
+    if (cond.kind === 'combat'){
+      const dejaBattu = !!combats[cond.creatureId || creatureId];
+      if (cond.state === 'not_won'){ if (dejaBattu) return false; }
+      else if (!dejaBattu) return false;
+      continue;
+    }
+    if (!cond.choiceId) continue;
+    const taken = !!choix[choiceUsedKey(cond.creatureId || creatureId, cond.choiceId)];
+    if (cond.taken === 'no'){ if (taken) return false; }
+    else if (!taken) return false;
+  }
+  if (ch.showIf && ch.showIf.kind === 'combat'){
+    const gagne = !!combats[ch.showIf.creatureId || creatureId];
+    if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
+    else if (!gagne) return false;
+  } else if (ch.showIf && ch.showIf.kind !== 'choice' && ch.showIf.kind !== 'item' && ch.showIf.questId){
+    if (!etatQueteCorrespond(ch.showIf.state, etatQuete(quetes, ch.showIf.questId))) return false;
+  }
+  return true;
+}
+function resolveStepText(step, creatureId){
+  return resoudreMarqueurs(texteEtapeBrut(step, creatureId, etatJoueurCourant()));
 }
 function renderSheet(){
   const c = activeCreature;
@@ -5168,61 +5297,10 @@ function renderSheet(){
     logToActiveQuestJournals(resolvedText, c.id);
   }
 
-  const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) })).filter(({ ch, key })=>{
-    if (ch.once && playerUsedChoices[key]) return false; // choix à usage unique déjà pris
-    if (ch.questGive){
-      const state = playerQuestsState[ch.questGive.questId];
-      if (state === 'active' || state === 'completed') return false; // déjà acceptée ou terminée : ne plus proposer
-    }
-    if (ch.questValidate){
-      const state = playerQuestsState[ch.questValidate.questId];
-      if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
-    }
-    const conditionsChoix = (ch.showIfList || []).concat(
-      (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'item')) ? [ch.showIf] : []);
-    for (const cond of conditionsChoix){
-      if (!cond) continue;
-      if (cond.kind === 'item'){
-        const inv = (playerSelfData && playerSelfData.inventory) || {};
-        const possede = (inv[cond.itemId] || 0) > 0;
-        if (cond.has === 'no'){ if (possede) return false; }
-        else if (!possede) return false;
-        continue;
-      }
-      /* Une condition de combat peut se cumuler avec des conditions de phrase : on la
-         traite ici aussi, sinon elle serait silencieusement ignorée dans la liste. */
-      if (cond.kind === 'combat'){
-        const contreQui = cond.creatureId || c.id;
-        const dejaBattu = !!playerCombatsWon[contreQui];
-        if (cond.state === 'not_won'){ if (dejaBattu) return false; }
-        else if (!dejaBattu) return false;
-        continue;
-      }
-      if (!cond.choiceId) continue;
-      /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
-         Renseigné, il désigne un autre personnage. */
-      const chezQui = cond.creatureId || c.id;
-      const taken = !!playerUsedChoices[choiceUsedKey(chezQui, cond.choiceId)];
-      if (cond.taken === 'no'){ if (taken) return false; }
-      else if (!taken) return false;
-    }
-    if (ch.showIf && ch.showIf.kind === 'choice'){
-      /* déjà traité ci-dessus */
-    } else if (ch.showIf && ch.showIf.kind === 'combat'){
-      /* Sans personnage précisé, la condition porte sur CELUI qui parle : c'est le cas
-         courant — un rival qui provoque tant qu'il n'a pas perdu. */
-      const contre = ch.showIf.creatureId || c.id;
-      const gagne = !!playerCombatsWon[contre];
-      if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
-      else if (!gagne) return false;
-    } else if (ch.showIf && ch.showIf.questId){
-      const state = playerQuestsState[ch.showIf.questId] || 'none';
-      if (ch.showIf.state === 'active' && state !== 'active') return false;
-      if (ch.showIf.state === 'completed' && state !== 'completed') return false;
-      if (ch.showIf.state === 'not_active' && state === 'active') return false;
-    }
-    return true;
-  });
+  /* v20a : la règle de visibilité est partagée avec le simulateur (choixVisible) */
+  const etatCourant = etatJoueurCourant();
+  const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) }))
+    .filter(({ ch, key })=> choixVisible(ch, key, c.id, etatCourant));
 
   if (visibleChoices.length === 0){
     const btn = document.createElement('button');
@@ -5238,16 +5316,25 @@ function renderSheet(){
     btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
     btn.addEventListener('click', ()=>{
+      if (btn.disabled) return;
+      btn.disabled = true;   // un appui = un effet, même si l'écriture prend quelques ms
       if (shouldRememberChoice(ch)) markChoiceUsed(key);
-      if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
-      if (ch.questGive) giveQuestToPlayer(ch.questGive.questId);
-      if (ch.questValidate) validateQuestForPlayer(ch.questValidate.questId);
-      if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
-        fermerDialogue();
-      } else {
-        currentStepIdx = ch.next;
-        renderSheet();
-      }
+      const suite = ()=>{
+        if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
+          fermerDialogue();
+        } else {
+          currentStepIdx = ch.next;
+          renderSheet();
+        }
+      };
+      /* v20a A3 : les effets s'ENCHAÎNENT (don d'objet, puis quête, puis validation) — la
+         validation relit l'inventaire APRÈS que le don est écrit, plus de course. */
+      Promise.resolve()
+        .then(()=> ch.itemGrant ? grantItemToPlayer(ch.itemGrant) : null)
+        .then(()=> ch.questGive ? giveQuestToPlayer(ch.questGive.questId) : null)
+        .then(()=> ch.questValidate ? validateQuestForPlayer(ch.questValidate.questId) : null)
+        .catch((e)=> journal('erreur', 'effets du choix', (e && e.message) || String(e), true))
+        .then(suite);
     });
     choicesEl.appendChild(btn);
   });
@@ -5284,11 +5371,15 @@ function fermerDialogue(){
 }
 
 let retourDialogueCombat = null;
-function grantItemToPlayer(itemName, quantity){
-  if (!currentUser || !db) return;
-  const it = items.find(i=>i.name === itemName);
-  if (!it){ showToast('Objet "' + itemName + '" introuvable'); return; }
-  db.collection('players').doc(currentUser.uid).set({
+function grantItemToPlayer(grant, quantiteAncienne){
+  /* v20a A1 : accepte { itemId, itemName, quantity } (identifiant d'abord, nom en repli)
+     ou, pour l'ancien appel, (nom, quantité). Renvoie une promesse. */
+  const g = (typeof grant === 'string') ? { itemName: grant, quantity: quantiteAncienne } : (grant || {});
+  const quantity = parseInt(g.quantity, 10) || 1;
+  if (!currentUser || !db) return Promise.resolve();
+  const it = objetPourDon(g);
+  if (!it){ showToast('Objet "' + (g.itemName || g.itemId || '?') + '" introuvable'); return Promise.resolve(); }
+  return db.collection('players').doc(currentUser.uid).set({
     inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
   }, { merge: true })
     .then(()=> showToast(`+${quantity} ${it.name}`, it.imageUrl || ITEM_PLACEHOLDER_IMG))
@@ -5305,11 +5396,11 @@ let playerExplorerMissionZoneId = null; // zone tirée au départ de la mission 
 let playerExplorerPendingReport = null;
 let coinsBackfillDone = false;
 function giveQuestToPlayer(questId){
-  if (!currentUser || !db) return;
+  if (!currentUser || !db) return Promise.resolve();
   const quest = quests.find(q=>q.id===questId);
-  if (!quest) return;
-  if (playerQuestsState[questId]){ showToast('Quête déjà en cours ou terminée'); return; }
-  db.collection('players').doc(currentUser.uid).set({
+  if (!quest) return Promise.resolve();
+  if (playerQuestsState[questId]){ showToast('Quête déjà en cours ou terminée'); return Promise.resolve(); }
+  return db.collection('players').doc(currentUser.uid).set({
     quests: { [questId]: 'active' }
   }, { merge: true })
     .then(()=> showToast(`Nouvelle quête : ${quest.name}`))
@@ -5317,40 +5408,31 @@ function giveQuestToPlayer(questId){
 }
 
 function validateQuestForPlayer(questId){
-  if (!currentUser || !db) return;
+  if (!currentUser || !db) return Promise.resolve();
   const quest = quests.find(q=>q.id===questId);
-  if (!quest){ showToast('Quête introuvable'); return; }
-  if (playerQuestsState[questId] !== 'active'){ showToast('Cette quête n\'est pas active pour toi'); return; }
+  if (!quest){ showToast('Quête introuvable'); return Promise.resolve(); }
+  if (playerQuestsState[questId] !== 'active'){ showToast('Cette quête n\'est pas active pour toi'); return Promise.resolve(); }
 
-  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+  return db.collection('players').doc(currentUser.uid).get().then((doc)=>{
     const inventory = (doc.exists && doc.data().inventory) || {};
-    const mode = quest.objectiveMode || 'all';
-    const objectives = quest.objectives || [];
-    let satisfied;
-    let toDeduct = [];
-    if (mode === 'any'){
-      const met = objectives.find(o => (inventory[o.itemId]||0) >= o.qty);
-      satisfied = !!met;
-      if (met) toDeduct = [met];
-    } else {
-      satisfied = objectives.every(o => (inventory[o.itemId]||0) >= o.qty);
-      if (satisfied) toDeduct = objectives;
-    }
-    if (!satisfied){ showToast('Objectif pas encore rempli'); return; }
+    /* v20a : même règle que le simulateur (A7 : sans objectif, toujours satisfaite) */
+    const res = resultatValidation(quest, inventory);
+    if (!res.satisfait){ showToast('Objectif pas encore rempli'); return; }
 
     const deltas = {};
-    toDeduct.forEach(o=>{ deltas[o.itemId] = (deltas[o.itemId]||0) - o.qty; });
+    res.aDeduire.forEach(o=>{ deltas[o.itemId] = (deltas[o.itemId]||0) - (o.qty || 1); });
     (quest.rewards||[]).forEach(r=>{ deltas[r.itemId] = (deltas[r.itemId]||0) + r.qty; });
     const inc = {};
     Object.keys(deltas).forEach(k=>{ inc[k] = firebase.firestore.FieldValue.increment(deltas[k]); });
 
     const questsUpdate = { [questId]: 'completed' };
-    if (quest.nextQuestId) questsUpdate[quest.nextQuestId] = 'active';
+    /* v20a A4 : la quête suivante ne s'ouvre que si elle n'a encore aucun état — une quête
+       déjà terminée ne redevient pas active. */
+    if (quest.nextQuestId && !playerQuestsState[quest.nextQuestId]) questsUpdate[quest.nextQuestId] = 'active';
 
-    db.collection('players').doc(currentUser.uid).set({
-      inventory: inc,
-      quests: questsUpdate,
-    }, { merge: true }).then(()=>{
+    const maj = { quests: questsUpdate };
+    if (Object.keys(inc).length) maj.inventory = inc;
+    return db.collection('players').doc(currentUser.uid).set(maj, { merge: true }).then(()=>{
       showToast(`Quête terminée : ${quest.name} !`);
     }).catch((err)=> showToast('Échec : ' + err.message));
   });
@@ -8507,7 +8589,7 @@ document.getElementById('questSaveBtn').addEventListener('click', ()=>{
   const destinationId = document.getElementById('questDestination').value || null;
 
   if (!name){ showToast('Donne un nom à la quête'); return; }
-  if (!objectives.length){ showToast('Ajoute au moins un objectif'); return; }
+  /* v20a A7 : une quête sans objectif est permise (« va parler à X ») ; sa validation est toujours satisfaite. */
   if (!questsCol){ showToast('Firebase indisponible ici'); return; }
 
   const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, showObjectives, destinationId, updatedAt: Date.now() };
@@ -10767,6 +10849,8 @@ async function renderSceneViewCurrentScene(){
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
     if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
     if (pt.type === 'pnj' && !isScenePointAvailable(pt)) return;
+    /* v20a A6 : la condition d'apparition de la fiche vaut aussi dans une zone (strictement) */
+    if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.fiches[pt.linkedPnjId] && !creatureConditionMet(infoPnj.fiches[pt.linkedPnjId])) return;
 
     const el = document.createElement('div');
     el.className = 'scene-point';
@@ -12059,6 +12143,980 @@ document.getElementById('parcoursReglagesSaveBtn').addEventListener('click', ()=
 });
 document.getElementById('parcoursTitreSaveBtn').addEventListener('click', ()=>{
   enregistrerReglagesParcours().then(()=> showToast('Titre enregistré')).catch((e)=> showToast('Échec : ' + e.message));
+});
+
+
+/* =====================================================================================
+   v20 — CONTRÔLE DU PARCOURS : le VÉRIFICATEUR (analyse statique, aucune écriture).
+   Il lit un instantané des collections locales, le normalise (ctrlModele), relève pour
+   chaque objet ses SOURCES et ses BESOINS, puis applique une série de contrôles classés
+   ERREUR / AVERTISSEMENT / INFORMATION. Chaque constat vise un élément cliquable.
+   Il ne prétend jamais qu'un parcours est sans défaut.
+   ===================================================================================== */
+const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
+const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
+
+function ctrlEtapesDe(f){
+  return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
+}
+function ctrlEstDataUrlImage(u){ return typeof u === 'string' && /^data:image\//.test(u); }
+function ctrlPositionnee(f){ return f && typeof f.lat === 'number' && typeof f.lng === 'number'; }
+
+/* Le modèle : un instantané normalisé de tout le parcours. */
+function ctrlModele(){
+  const fiches = [];
+  const bruts = bl_col('creature_types') || {};
+  Object.keys(bruts).forEach(id=>{
+    const d = ficheJouable(bruts[id]);
+    if (!d) return;
+    fiches.push({ id, ...bl_clone(d), _steps: bl_clone(ctrlEtapesDe(d)) });
+  });
+  const objets = Object.keys(bl_col('items') || {}).map(id=> ({ id, ...bl_clone(bl_col('items')[id]) }));
+  const quetes = Object.keys(bl_col('quests') || {}).map(id=> ({ id, ...bl_clone(bl_col('quests')[id]) }));
+  const ramassages = Object.keys(bl_col('pickups') || {}).map(id=> ({ id, ...bl_clone(bl_col('pickups')[id]) }));
+  const zonesDocs = bl_col('exploration_zones') || {};
+  const zones = fiches.filter(f=> f.interactionType === 'zone').map(f=>{
+    const doc = zonesDocs[f.id];
+    const norm = doc ? normalizeZoneScenes(bl_clone(doc)) : null;
+    return { fiche: f, doc: doc || null, scenes: norm ? norm.scenes : [], startSceneId: norm ? norm.startSceneId : null };
+  });
+  const M = {
+    fiches, objets, quetes, ramassages, zones,
+    imagesScene: new Set(Object.keys(bl_col('scene_images') || {})),
+    reglages: (bl_col('app_config') || {}).parcours || {},
+    ficheParId: {}, objetParId: {}, objetParNom: {}, queteParId: {}, zoneParId: {},
+  };
+  fiches.forEach(f=>{ M.ficheParId[f.id] = f; });
+  objets.forEach(o=>{ M.objetParId[o.id] = o; M.objetParNom[o.name] = o; });
+  quetes.forEach(q=>{ M.queteParId[q.id] = q; });
+  zones.forEach(z=>{ M.zoneParId[z.fiche.id] = z; });
+  return M;
+}
+/* Tous les points d'une zone (scènes et variantes), avec leur scène. */
+function ctrlPointsDeZone(z){
+  const out = [];
+  z.scenes.forEach(sc=>{
+    (sc.points || []).forEach(pt=> out.push({ sc, pt, variante: null }));
+    (sc.variants || []).forEach((v, i)=> (v.points || []).forEach(pt=> out.push({ sc, pt, variante: i + 1 })));
+  });
+  return out;
+}
+function ctrlNomScene(sc, variante){ return (sc.name || 'Scène') + (variante ? ' · variante ' + variante : ''); }
+
+/* Cibles cliquables : { type:'pnj'|'objet'|'quete'|'zone'|'reglages', id, pointId } */
+function ctrlCible(type, id, pointId){ return { type, id: id || null, pointId: pointId || null }; }
+
+/* Sources et besoins de chaque objet. */
+function ctrlIndexObjets(M){
+  const sources = {}, besoins = {}, consommations = {};
+  const ajouter = (dict, itemId, entree)=>{ if (!itemId) return; (dict[itemId] = dict[itemId] || []).push(entree); };
+  M.fiches.forEach(f=>{
+    f._steps.forEach((st, iSt)=>{
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const ou = (f.name || 'PNJ') + ' · étape ' + iSt + ' · choix ' + (iCh + 1);
+        if (ch.itemGrant){
+          const it = objetPourDon(ch.itemGrant, M.objets);
+          ajouter(sources, it ? it.id : ('?' + (ch.itemGrant.itemName || '')), { genre:'choix', ou, cible: ctrlCible('pnj', f.id), once: !!ch.once, renouvelable: !ch.once, conditions: ctrlConditionsDe(ch), pnjId: f.id, choix: ch, etape: iSt });
+        }
+        ctrlConditionsDe(ch).forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') ajouter(besoins, c.itemId, { genre:'condition', ou, cible: ctrlCible('pnj', f.id), pnjId: f.id, choix: ch }); });
+      });
+    });
+  });
+  M.ramassages.forEach(p=> ajouter(sources, p.itemId, { genre:'ramassage', ou: 'Objet posé sur la carte', cible: ctrlCible('objet', p.itemId), once: true, renouvelable: false, conditions: [] }));
+  M.zones.forEach(z=>{
+    ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{
+      const ou = (z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante);
+      const cible = ctrlCible('zone', z.fiche.id, pt.id);
+      if (pt.type === 'objet') ajouter(sources, pt.itemId, { genre:'point', ou, cible, once: pt.resetMode !== 'unlimited', renouvelable: pt.resetMode === 'unlimited', conditions: [], zoneId: z.fiche.id, sceneId: sc.id });
+      if (pt.type === 'coffre') (pt.loot || []).forEach(l=>{ if (l && l.itemId) ajouter(sources, l.itemId, { genre:'coffre', ou, cible, once: pt.resetMode !== 'unlimited', renouvelable: pt.resetMode === 'unlimited', chance: (l.chance == null || l.chance === '') ? 100 : +l.chance, verrou: pt.lockType, verrouObjet: pt.lockItemId, conditions: [], zoneId: z.fiche.id, sceneId: sc.id }); });
+      if (pt.type === 'action'){
+        if (pt.reqItemId){ ajouter(besoins, pt.reqItemId, { genre:'action', ou, cible }); ajouter(consommations, pt.reqItemId, { genre:'action', ou, cible, qty: pt.reqQty || 1 }); }
+        if (pt.resultType === 'give' && pt.resultItemId) ajouter(sources, pt.resultItemId, { genre:'action', ou, cible, once: pt.resetMode !== 'unlimited', renouvelable: pt.resetMode === 'unlimited', conditions: [], requiert: pt.reqItemId, zoneId: z.fiche.id, sceneId: sc.id });
+      }
+      if ((pt.type === 'sortie' || pt.type === 'coffre') && pt.lockType === 'item' && pt.lockItemId) ajouter(besoins, pt.lockItemId, { genre:'verrou', ou, cible });
+    });
+  });
+  M.quetes.forEach(q=>{
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId){ ajouter(besoins, o.itemId, { genre:'objectif', ou: 'Quête « ' + q.name + ' »', cible: ctrlCible('quete', q.id), queteId: q.id }); ajouter(consommations, o.itemId, { genre:'objectif', ou: 'Quête « ' + q.name + ' »', cible: ctrlCible('quete', q.id), queteId: q.id, qty: o.qty || 1 }); } });
+  });
+  return { sources, besoins, consommations };
+}
+function ctrlConditionsDe(ch){
+  const l = (ch.showIfList || []).slice();
+  if (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'item' || ch.showIf.kind === 'combat')) l.push(ch.showIf);
+  else if (ch.showIf && ch.showIf.questId) l.push({ kind:'quest', questId: ch.showIf.questId, state: ch.showIf.state });
+  return l.filter(Boolean);
+}
+
+/* Les quêtes : qui les confie, qui les valide, chaîne des suivantes, atteignabilité. */
+function ctrlIndexQuetes(M){
+  const confiee = {}, validee = {};
+  M.fiches.forEach(f=>{
+    f._steps.forEach((st, iSt)=>{
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const ou = (f.name || 'PNJ') + ' · étape ' + iSt + ' · choix ' + (iCh + 1);
+        if (ch.questGive && ch.questGive.questId) (confiee[ch.questGive.questId] = confiee[ch.questGive.questId] || []).push({ pnjId: f.id, ou, choix: ch, conditions: ctrlConditionsDe(ch) });
+        if (ch.questValidate && ch.questValidate.questId) (validee[ch.questValidate.questId] = validee[ch.questValidate.questId] || []).push({ pnjId: f.id, ou, choix: ch, conditions: ctrlConditionsDe(ch), partApresDialogue: false });
+      });
+    });
+  });
+  const atteignables = new Set();
+  const aVoir = Object.keys(confiee).filter(id=> M.queteParId[id]);
+  while (aVoir.length){
+    const id = aVoir.pop();
+    if (atteignables.has(id)) continue;
+    atteignables.add(id);
+    const q = M.queteParId[id];
+    if (q && q.nextQuestId && M.queteParId[q.nextQuestId] && !atteignables.has(q.nextQuestId)) aVoir.push(q.nextQuestId);
+  }
+  const precedentes = {};
+  M.quetes.forEach(q=>{ if (q.nextQuestId) (precedentes[q.nextQuestId] = precedentes[q.nextQuestId] || []).push(q.id); });
+  return { confiee, validee, atteignables, precedentes };
+}
+
+/* Un PNJ est « indispensable » s'il confie ou valide une quête, ou donne un objet requis. */
+function ctrlPnjIndispensables(M, IO, IQ){
+  const ens = new Set();
+  Object.values(IQ.confiee).forEach(l=> l.forEach(e=> ens.add(e.pnjId)));
+  Object.values(IQ.validee).forEach(l=> l.forEach(e=> ens.add(e.pnjId)));
+  Object.keys(IO.sources).forEach(itemId=>{
+    if (!IO.besoins[itemId]) return;
+    IO.sources[itemId].forEach(src=>{ if (src.genre === 'choix') ens.add(src.pnjId); });
+  });
+  return ens;
+}
+
+/* ---------- Le vérificateur ---------- */
+function verifierParcours(modele){
+  const M = modele || ctrlModele();
+  const IO = ctrlIndexObjets(M);
+  const IQ = ctrlIndexQuetes(M);
+  const indispensables = ctrlPnjIndispensables(M, IO, IQ);
+  const constats = [];
+  const dire = (niveau, cible, ou, message)=> constats.push({ niveau, cible, ou, message });
+  const nomObjet = (id)=> (M.objetParId[id] ? '« ' + M.objetParId[id].name + ' »' : 'objet ' + id);
+  const nomQuete = (id)=> (M.queteParId[id] ? '« ' + M.queteParId[id].name + ' »' : 'quête ' + id);
+  const nomPnj = (id)=> (M.ficheParId[id] ? '« ' + (M.ficheParId[id].name || 'sans nom') + ' »' : 'personnage ' + id);
+  const r = M.reglages;
+
+  /* ===== Réglages du parcours ===== */
+  if (!r.queteFinId) dire('erreur', ctrlCible('reglages'), 'Réglages', 'Aucune quête de fin réglée : l\'écran de fin ne s\'affichera jamais.');
+  else if (!M.queteParId[r.queteFinId]) dire('erreur', ctrlCible('reglages'), 'Réglages', 'La quête de fin réglée n\'existe plus.');
+  else if (!IQ.atteignables.has(r.queteFinId)) dire('erreur', ctrlCible('quete', r.queteFinId), 'Réglages', 'La quête de fin ' + nomQuete(r.queteFinId) + ' n\'est jamais confiée (ni par un choix, ni comme suite d\'une quête confiée).');
+  if (!r.codeConcepteur) dire('avert', ctrlCible('reglages'), 'Réglages', 'Pas de code concepteur : n\'importe quel joueur peut ouvrir l\'éditeur par 7 appuis sur le titre.');
+  if (!r.codeFin) dire('avert', ctrlCible('reglages'), 'Réglages', 'Pas de code de fin : rien à présenter au stand.');
+  if (typeof r.periodeFin !== 'number') dire('avert', ctrlCible('reglages'), 'Réglages', 'Pas de date de fin : le parcours ne se retire jamais et le chrono ne s\'affiche pas.');
+  if (!r.dureeMin) dire('info', ctrlCible('reglages'), 'Réglages', 'Pas de durée estimée : le joueur ne peut pas comparer le temps restant à la durée du parcours.');
+  if (!r.carteImage) dire('info', ctrlCible('reglages'), 'Réglages', 'Pas de carte souvenir : rien n\'entre dans le carnet à la fin.');
+  if (!r.titre) dire('avert', ctrlCible('reglages'), 'Réglages', 'Le parcours n\'a pas de titre.');
+
+  /* ===== Objets ===== */
+  M.objets.forEach(o=>{
+    if (o.consultable && !o.imageGrande && !o.imageUrl) dire('avert', ctrlCible('objet', o.id), o.name, 'Objet consultable sans image : la visionneuse n\'aura rien à montrer.');
+    if (!o.imageUrl) dire('info', ctrlCible('objet', o.id), o.name, 'Objet sans image (icône par défaut).');
+    else if (!ctrlEstDataUrlImage(o.imageUrl) && !/^https?:/.test(o.imageUrl)) dire('avert', ctrlCible('objet', o.id), o.name, 'Image d\'objet mal formée.');
+    const srcs = IO.sources[o.id] || [], bes = IO.besoins[o.id] || [], cons = IO.consommations[o.id] || [];
+    if (bes.length && !srcs.length) dire('erreur', ctrlCible('objet', o.id), o.name, 'Objet requis (' + bes.map(b=> b.ou).join(' ; ') + ') mais donné nulle part : aucun choix, aucun point, aucun coffre, aucun objet posé ne le fournit.');
+    if (!bes.length && !cons.length) dire('info', ctrlCible('objet', o.id), o.name, 'Objet jamais utilisé (ni objectif, ni condition, ni verrou, ni action) : décoratif, ou oubli.');
+    const plusieurs = srcs.filter(s=> s.genre === 'choix' || s.genre === 'point' || s.genre === 'ramassage');
+    if (plusieurs.length > 1) dire('info', ctrlCible('objet', o.id), o.name, 'Donné à ' + plusieurs.length + ' endroits (' + plusieurs.map(s=> s.ou).join(' ; ') + ') : doublons possibles dans le sac.');
+    srcs.forEach(src=>{ if (src.genre === 'choix' && !src.once) dire(cons.length ? 'avert' : 'info', src.cible, src.ou, 'Le choix qui donne ' + nomObjet(o.id) + ' n\'est pas « une seule fois » : le joueur peut le reprendre à chaque visite' + (cons.length ? ', et l\'objet est consommé quelque part — le doublon peut fausser la progression.' : '.')); });
+    const hasard = srcs.filter(s=> s.genre === 'coffre' && s.chance < 100);
+    if (hasard.length && bes.length){
+      const sures = srcs.filter(s=> !(s.genre === 'coffre' && s.chance < 100));
+      dire(sures.length ? 'info' : 'avert', hasard[0].cible, hasard[0].ou, nomObjet(o.id) + ' est requis mais sort d\'un coffre à ' + hasard[0].chance + ' % de chance' + (sures.length ? ' (une autre source existe).' : ' et c\'est sa seule source : selon le hasard, certains joueurs ne l\'auront jamais.'));
+    }
+    if (cons.length && bes.length){
+      const autresBesoins = bes.filter(b=> !(b.genre === 'objectif' && cons.some(c=> c.genre === 'objectif' && c.queteId === b.queteId)) && !(b.genre === 'action' && cons.some(c=> c.genre === 'action' && c.cible.pointId === b.cible.pointId)));
+      if (autresBesoins.length){
+        const renouvelable = srcs.some(s=> s.renouvelable);
+        dire(renouvelable ? 'info' : 'avert', ctrlCible('objet', o.id), o.name, nomObjet(o.id) + ' est consommé (' + cons.map(c=> c.ou).join(' ; ') + ') alors qu\'il est aussi exigé ailleurs (' + autresBesoins.map(b=> b.ou).join(' ; ') + ')' + (renouvelable ? ' — une source renouvelable existe.' : ' — sans source renouvelable, l\'ordre de jeu peut le faire perdre définitivement.'));
+      }
+    }
+  });
+  Object.keys(IO.sources).forEach(k=>{ if (k.charAt(0) === '?') IO.sources[k].forEach(src=> dire('erreur', src.cible, src.ou, 'Ce choix donne un objet qui n\'existe pas (nom « ' + k.slice(1) + ' ») : il a sans doute été renommé ou supprimé.')); });
+
+  /* ===== Quêtes ===== */
+  const finId = r.queteFinId;
+  M.quetes.forEach(q=>{
+    const cq = ctrlCible('quete', q.id);
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId && !M.objetParId[o.itemId]) dire('erreur', cq, q.name, 'Un objectif vise un objet supprimé.'); });
+    if (q.nextQuestId && !M.queteParId[q.nextQuestId]) dire('erreur', cq, q.name, 'La quête suivante réglée n\'existe plus.');
+    if (q.destinationId && !ctrlPositionnee(M.ficheParId[q.destinationId])) dire('avert', cq, q.name, 'Le lieu à rejoindre n\'existe plus ou n\'a pas de position : le guidage retombera sur le personnage qui valide.');
+    const donneurs = IQ.confiee[q.id] || [], prec = IQ.precedentes[q.id] || [];
+    if (!donneurs.length && !prec.length) dire('erreur', cq, q.name, 'Quête jamais confiée : aucun choix ne la confie et aucune quête ne la désigne comme suivante.');
+    else if (!IQ.atteignables.has(q.id)) dire('erreur', cq, q.name, 'Quête inatteignable : elle n\'est la suite que de quêtes elles-mêmes jamais confiées.');
+    if (donneurs.length && prec.length) dire('info', cq, q.name, 'Confiée par un choix ET suite d\'une autre quête : double source (le choix est masqué si elle est déjà en cours).');
+    const valideurs = IQ.validee[q.id] || [];
+    if (!valideurs.length) dire('erreur', cq, q.name, 'Aucun choix ne valide cette quête : elle ne peut jamais se terminer' + (q.id === finId ? ' — et c\'est la quête de fin.' : '.'));
+    valideurs.forEach(v=>{
+      v.conditions.forEach(c=>{
+        if (c.kind === 'item' && c.has === 'no' && (q.objectives || []).some(o=> o && o.itemId === c.itemId)) dire('erreur', ctrlCible('pnj', v.pnjId), v.ou, 'Le choix qui valide ' + nomQuete(q.id) + ' exige de NE PAS avoir ' + nomObjet(c.itemId) + ', qui en est pourtant un objectif : jamais affiché.');
+        if (c.kind === 'quest' && c.questId === q.id && c.state !== 'active') dire('erreur', ctrlCible('pnj', v.pnjId), v.ou, 'Le choix qui valide ' + nomQuete(q.id) + ' exige qu\'elle ne soit pas en cours : contradiction.');
+      });
+    });
+    if ((q.objectiveMode || 'all') === 'any' && (q.objectives || []).length <= 1) dire('info', cq, q.name, '« Un seul suffit » avec un seul objectif : sans effet.');
+    if (!(q.objectives || []).length) dire('info', cq, q.name, 'Quête sans objectif : validée dès que le choix qui la valide est pris.');
+    if (q.showObjectives && (q.objectives || []).length) dire('info', cq, q.name, 'Les objets à trouver sont affichés au joueur : vérifie qu\'aucun n\'est un indice à découvrir.');
+  });
+
+  /* ===== Personnages et dialogues ===== */
+  const positionnes = M.fiches.filter(f=> ctrlPositionnee(f) && (f.interactionType === 'dialogue' || f.interactionType === 'zone' || !f.interactionType));
+  M.fiches.forEach(f=>{
+    const cf = ctrlCible('pnj', f.id);
+    const nom = f.name || 'sans nom';
+    const enZone = M.zones.some(z=> ctrlPointsDeZone(z).some(({ pt })=> pt.type === 'pnj' && pt.linkedPnjId === f.id));
+    if (f.interactionType !== 'zone' && !ctrlPositionnee(f) && !enZone && f._steps.length){
+      dire(indispensables.has(f.id) ? 'erreur' : 'info', cf, nom, indispensables.has(f.id) ? 'Personnage indispensable (il confie, valide ou donne quelque chose) sans position sur la carte et absent de toute zone : le joueur ne peut jamais lui parler.' : 'Personnage en réserve (ni sur la carte, ni dans une zone).');
+    }
+    if (f.interactionType === 'zone' && !ctrlPositionnee(f)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
+    if (f.visibilityCondition && f.visibilityCondition.questId){
+      const vq = f.visibilityCondition.questId;
+      if (!M.queteParId[vq]) dire('erreur', cf, nom, 'Condition d\'apparition sur une quête supprimée : le personnage est traité comme toujours visible.');
+      else {
+        const valideIci = (IQ.validee[vq] || []).some(v=> v.pnjId === f.id);
+        if (f.visibilityCondition.state === 'completed' && valideIci) dire('erreur', cf, nom, 'N\'apparaît qu\'une fois ' + nomQuete(vq) + ' terminée, mais c\'est lui qui la valide : il n\'est jamais visible pour le faire.');
+        if (f.visibilityCondition.state !== 'completed' && indispensables.has(f.id) && (IQ.validee[vq] || []).length && !valideIci){
+          dire('info', cf, nom, 'Disparaît quand ' + nomQuete(vq) + ' est terminée : tout ce qu\'il donne ou valide doit avoir été fait avant.');
+        }
+        if (!f.hideOnExitRadius) dire('info', cf, nom, 'Condition d\'apparition sans « disparition immédiate » : une fois vu, le personnage reste abordable tant que le joueur ne s\'éloigne pas.');
+      }
+    }
+    if (!f.imageUrl && !f.imagePath && !f.imageRef) dire('info', cf, nom, f.interactionType === 'zone' ? 'Zone sans image (icône par défaut).' : 'Personnage sans portrait (emoji par défaut).');
+    else if (f.imageUrl && !ctrlEstDataUrlImage(f.imageUrl) && !/^https?:/.test(f.imageUrl)) dire('avert', cf, nom, 'Portrait mal formé.');
+    if (f.imagePath) dire('info', cf, nom, 'Portrait hébergé à l\'extérieur (' + f.imagePath + ') : non vérifiable hors ligne.');
+    if (f.bustImageRef && !M.imagesScene.has(f.bustImageRef)) dire('erreur', cf, nom, 'Image de buste absente de la base (référence cassée).');
+    if (f.interactionType !== 'zone' && f._steps.length && !f.bustImagePath && !f.bustImageRef) dire('info', cf, nom, 'Pas d\'image de buste : le portrait en pied servira dans les dialogues.');
+    if (Array.isArray(f.daysOfWeek) && f.daysOfWeek.length && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité à certains jours (' + f.daysOfWeek.length + '/7) : absent les autres jours.');
+    if ((f.startDate || f.endDate) && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité par des dates : vérifie qu\'elles couvrent toute la période du parcours.');
+    if (Array.isArray(f.timeRanges) && f.timeRanges.some(c=> c && (c.start || c.end)) && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité à des créneaux horaires : absent en dehors.');
+
+    /* --- structure du dialogue --- */
+    const steps = f._steps;
+    if (!steps.length && f.interactionType !== 'zone') dire('avert', cf, nom, 'Personnage sans dialogue.');
+    const atteintes = new Set();
+    if (steps.length){
+      const aVoir = [0];
+      if (steps[0].firstOnly){ const t = parseInt(steps[0].thenStep, 10); if (!isNaN(t) && t >= 0 && t < steps.length) aVoir.push(t); else if (steps[0].thenStep != null) dire('avert', cf, nom, 'Étape de reprise « les fois suivantes » hors limites : le dialogue reprendra à l\'étape 0.'); }
+      while (aVoir.length){ const i = aVoir.pop(); if (atteintes.has(i) || !steps[i]) continue; atteintes.add(i); (steps[i].choices || []).forEach(ch=>{ if (ch && ch.next !== null && ch.next !== undefined && !isNaN(ch.next) && ch.next >= 0 && ch.next < steps.length) aVoir.push(+ch.next); }); }
+    }
+    steps.forEach((st, i)=>{
+      const ou = nom + ' · étape ' + i;
+      if (!atteintes.has(i)) dire('avert', cf, ou, 'Étape inaccessible : aucun choix n\'y mène.');
+      const choix = (st.choices || []).filter(Boolean);
+      if (!choix.length && i !== steps.length - 1) dire('info', cf, ou, 'Étape sans choix : seul « Fermer » est proposé.');
+      if (choix.length && choix.every(ch=> ctrlConditionsDe(ch).length || ch.questValidate || ch.questGive)) dire('info', cf, ou, 'Tous les choix de cette étape sont conditionnels : quand aucun n\'est vrai, le joueur ne voit que « Fermer ».');
+      (st.textVariants || []).forEach(v=>{
+        if (!v) return;
+        if (v.kind === 'choice'){
+          const chez = v.creatureId ? M.ficheParId[v.creatureId] : f;
+          if (!chez || !chez._steps.some(s2=> (s2.choices || []).some(c2=> c2 && c2.id === v.choiceId))) dire('erreur', cf, ou, 'Variante de texte sur un choix introuvable' + (v.creatureId ? ' chez ' + nomPnj(v.creatureId) : ' dans ce dialogue') + '.');
+        } else if (v.questId && !M.queteParId[v.questId]) dire('erreur', cf, ou, 'Variante de texte sur une quête supprimée.');
+        else if (v.state === 'not_active') dire('info', cf, ou, 'Variante « pas en cours » : vraie aussi quand la quête est terminée (pour « jamais commencée », choisir l\'autre option).');
+      });
+      if (/\{(vaisseau|agence)\}/.test((st.text || '') + (st.textApres || '') + (st.textVariants || []).map(v=> v && v.text).join(''))) dire('info', cf, ou, 'Le texte contient {vaisseau} ou {agence}, marqueurs du jeu d\'origine.');
+      choix.forEach((ch, iCh)=>{
+        const ouc = ou + ' · choix ' + (iCh + 1) + (ch.label ? ' « ' + ch.label + ' »' : '');
+        if (ch.next !== null && ch.next !== undefined && (isNaN(ch.next) || ch.next < 0 || ch.next >= steps.length)) dire('avert', cf, ouc, '« Ensuite » vise l\'étape ' + ch.next + ' qui n\'existe pas : le dialogue se fermera.');
+        if (!ch.label) dire('info', cf, ouc, 'Choix sans texte de bouton.');
+        if (ch.questGive && ch.questGive.questId && !M.queteParId[ch.questGive.questId]) dire('erreur', cf, ouc, 'Confie une quête supprimée.');
+        if (ch.questValidate && ch.questValidate.questId && !M.queteParId[ch.questValidate.questId]) dire('erreur', cf, ouc, 'Valide une quête supprimée.');
+        if (ch.questValidate && ch.questGive && ch.questValidate.questId === ch.questGive.questId) dire('erreur', cf, ouc, 'Confie et valide la même quête dans un seul choix : jamais affiché (elle n\'est pas en cours au moment de la confier).');
+        if (ch.itemGrant && ch.questValidate){
+          const it = objetPourDon(ch.itemGrant, M.objets); const q = M.queteParId[ch.questValidate.questId];
+          if (it && q && (q.objectives || []).some(o=> o && o.itemId === it.id)) dire('info', cf, ouc, 'Donne ' + nomObjet(it.id) + ' et valide la quête qui le consomme : l\'objet est donné puis repris aussitôt.');
+        }
+        ctrlConditionsDe(ch).forEach(c=>{
+          if (c.kind === 'item'){ if (!M.objetParId[c.itemId]) dire('erreur', cf, ouc, 'Condition sur un objet supprimé.'); }
+          else if (c.kind === 'quest'){ if (!M.queteParId[c.questId]) dire('erreur', cf, ouc, 'Condition sur une quête supprimée.'); else if (c.state === 'not_active') dire('info', cf, ouc, 'Condition « pas en cours » : vraie aussi quand la quête est terminée.'); }
+          else if (c.kind === 'combat') dire('avert', cf, ouc, 'Condition de combat (fonction du jeu d\'origine, sans combat dans Parcours) : jamais vraie.');
+          else if (c.choiceId){
+            const chez = c.creatureId ? M.ficheParId[c.creatureId] : f;
+            if (!chez) dire('erreur', cf, ouc, 'Condition sur le choix d\'un personnage supprimé.');
+            else if (!chez._steps.some(s2=> (s2.choices || []).some(c2=> c2 && c2.id === c.choiceId))) dire('erreur', cf, ouc, 'Condition sur un choix qui n\'existe plus' + (c.creatureId ? ' chez ' + nomPnj(c.creatureId) : ' dans ce dialogue') + '.');
+            else if ((c.taken || 'yes') !== 'no' && chez.id === f.id && ch.id === c.choiceId) dire('erreur', cf, ouc, 'Ce choix exige d\'avoir déjà été pris lui-même : jamais affiché.');
+          }
+        });
+        const condsQuete = ctrlConditionsDe(ch).filter(c=> c.kind === 'quest');
+        if (condsQuete.length && ch.questGive && condsQuete.some(c=> c.questId === ch.questGive.questId && (c.state === 'active' || c.state === 'completed'))) dire('erreur', cf, ouc, 'Confie une quête en exigeant qu\'elle soit déjà en cours ou terminée : jamais affiché.');
+      });
+    });
+    /* Une étape d'où aucun chemin ne mène à « Fin » : le joueur ne sort que par la croix. */
+    if (steps.length){
+      const versFin = new Set();
+      let change = true;
+      steps.forEach((st, i)=>{ if ((st.choices || []).some(ch=> ch && (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= steps.length))) versFin.add(i); if (!(st.choices || []).filter(Boolean).length) versFin.add(i); });
+      while (change){ change = false; steps.forEach((st, i)=>{ if (!versFin.has(i) && (st.choices || []).some(ch=> ch && versFin.has(+ch.next))){ versFin.add(i); change = true; } }); }
+      steps.forEach((st, i)=>{ if (atteintes.has(i) && !versFin.has(i)) dire('avert', cf, nom + ' · étape ' + i, 'Boucle sans issue : aucun chemin de choix ne mène à « Fin de la conversation ».'); });
+    }
+  });
+  /* Distances entre points interactifs */
+  const pts = positionnes.map(f=> ({ id: f.id, nom: f.name || 'sans nom', lat: f.lat, lng: f.lng, cible: ctrlCible('pnj', f.id) }))
+    .concat(M.ramassages.filter(p=> ctrlPositionnee(p)).map(p=> ({ id: 'pickup:' + p.id, nom: 'objet posé ' + nomObjet(p.itemId), lat: p.lat, lng: p.lng, cible: ctrlCible('objet', p.itemId) })));
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++){
+    const d = Math.round(haversineDist(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng));
+    if (d < CTRL_DIST_MIN_M) dire('avert', pts[i].cible, pts[i].nom + ' / ' + pts[j].nom, 'À ' + d + ' m l\'un de l\'autre (moins de ' + CTRL_DIST_MIN_M + ' m) : avec 40 m de rayon d\'interaction et l\'imprécision du GPS, les deux seront atteignables au même endroit.');
+    else if (d < CTRL_DIST_CONSEIL_M) dire('info', pts[i].cible, pts[i].nom + ' / ' + pts[j].nom, 'À ' + d + ' m l\'un de l\'autre : l\'espacement conseillé est de ' + CTRL_DIST_CONSEIL_M + ' m.');
+  }
+  M.ramassages.forEach(p=>{ if (!M.objetParId[p.itemId]) dire('erreur', ctrlCible('objet', p.itemId), 'Objet posé sur la carte', 'Point de ramassage sur un objet supprimé.'); if (!ctrlPositionnee(p)) dire('erreur', ctrlCible('objet', p.itemId), 'Objet posé sur la carte', 'Point de ramassage sans position.'); });
+
+  /* ===== Zones d'exploration ===== */
+  M.zones.forEach(z=>{
+    const nomZ = z.fiche.name || 'Zone';
+    const cz = ctrlCible('zone', z.fiche.id);
+    if (!z.doc || !z.scenes.length){ dire('erreur', cz, nomZ, 'Zone sans aucune scène enregistrée.'); return; }
+    if (!z.scenes.find(sc=> sc.id === z.startSceneId)) dire('erreur', cz, nomZ, 'La scène de départ n\'existe pas.');
+    z.scenes.forEach(sc=>{
+      if (!sc.imageUrl && !sc.imageRef && !sc.imagePath) dire('erreur', ctrlCible('zone', z.fiche.id), nomZ + ' · ' + ctrlNomScene(sc), 'Scène sans image de fond : elle s\'affichera vide.');
+      if (sc.imageRef && !M.imagesScene.has(sc.imageRef)) dire('erreur', ctrlCible('zone', z.fiche.id), nomZ + ' · ' + ctrlNomScene(sc), 'Image de fond absente de la base (référence cassée).');
+      (sc.variants || []).forEach((v, i)=>{ if (v.imageRef && !M.imagesScene.has(v.imageRef)) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc, i + 1), 'Image de variante absente de la base.'); });
+    });
+    const pointsZ = ctrlPointsDeZone(z);
+    if (!pointsZ.some(({ pt })=> pt.type === 'sortie_zone')) dire('erreur', cz, nomZ, 'Aucune porte « Sortie de zone » : le joueur ne pourra pas ressortir.');
+    /* atteignabilité des scènes depuis le départ, portes verrouillées comprises (statique : on suppose les verrous ouvrables) */
+    const atteintes = new Set(); const aVoir = [z.startSceneId];
+    while (aVoir.length){ const id = aVoir.pop(); if (!id || atteintes.has(id)) continue; atteintes.add(id); pointsZ.filter(({ sc, pt })=> sc.id === id && pt.type === 'sortie' && pt.targetSceneId).forEach(({ pt })=> aVoir.push(pt.targetSceneId)); }
+    z.scenes.forEach(sc=>{
+      const n = nomZ + ' · ' + ctrlNomScene(sc);
+      if (!atteintes.has(sc.id)){ dire('avert', cz, n, 'Scène non reliée au départ : le joueur ne peut pas y arriver.'); return; }
+      const ptsSc = pointsZ.filter(x=> x.sc.id === sc.id);
+      if (!ptsSc.some(({ pt })=> (pt.type === 'sortie' && pt.targetSceneId) || pt.type === 'sortie_zone')) dire('erreur', cz, n, 'Aucune porte dans cette scène : le joueur y sera enfermé.');
+    });
+    pointsZ.forEach(({ sc, pt, variante })=>{
+      const n = nomZ + ' · ' + ctrlNomScene(sc, variante) + ' · ' + (pt.type || 'point');
+      const cp = ctrlCible('zone', z.fiche.id, pt.id);
+      if (pt.imageRef && !M.imagesScene.has(pt.imageRef)) dire('erreur', cp, n, 'Image du point absente de la base.');
+      if (pt.type === 'pnj'){
+        if (!pt.linkedPnjId) dire('erreur', cp, n, 'Point PNJ sans personnage choisi.');
+        else if (!M.ficheParId[pt.linkedPnjId]) dire('erreur', cp, n, 'Point PNJ lié à une fiche supprimée (« ' + (pt.linkedPnjName || '?') + ' ») : il n\'apparaît pas en jeu.');
+        else {
+          const fp = M.ficheParId[pt.linkedPnjId];
+          if (pt.partApresDialogue && fp._steps.some(st=> (st.choices || []).some(ch=> ch && (ch.questValidate || ch.questGive)))) dire('avert', cp, n, nomPnj(fp.id) + ' disparaît après son dialogue alors qu\'il confie ou valide une quête : si ce n\'est pas fait à la première visite, ce ne sera plus possible ici.');
+          if (pt.autoTrigger) dire('info', cp, n, 'Le dialogue de ' + nomPnj(fp.id) + ' s\'ouvre tout seul à l\'entrée de la scène.');
+        }
+      }
+      if (pt.type === 'sortie'){
+        if (!pt.targetSceneId) dire('info', cp, n, 'Porte qui ferme la zone (pas de scène cible).');
+        else if (!z.scenes.some(x=> x.id === pt.targetSceneId)) dire('erreur', cp, n, 'Porte vers une scène supprimée.');
+        if ((pt.openRanges || []).some(c=> c && (c.start || c.end))) dire('info', cp, n, 'Porte à créneaux horaires : fermée en dehors, même avec la clé.');
+      }
+      if (pt.type === 'sortie' || pt.type === 'coffre'){
+        if (pt.lockType === 'item'){
+          if (!pt.lockItemId) dire('avert', cp, n, 'Verrou « objet requis » sans objet choisi : la porte / le coffre s\'ouvre librement.');
+          else if (!M.objetParId[pt.lockItemId]) dire('erreur', cp, n, 'Verrou sur un objet supprimé.');
+          else if (!(IO.sources[pt.lockItemId] || []).length) dire('erreur', cp, n, 'Verrou exigeant ' + nomObjet(pt.lockItemId) + ', que rien ne donne : impossible à ouvrir.');
+          else {
+            /* l'objet du verrou n'est-il obtenable que derrière ce verrou ? */
+            const srcs = IO.sources[pt.lockItemId] || [];
+            const derriere = pt.type === 'sortie' ? (pt.targetSceneId ? ctrlScenesDerriere(z, pointsZ, pt.targetSceneId, sc.id) : new Set()) : new Set();
+            const toutesDerriere = srcs.length && srcs.every(s=> s.zoneId === z.fiche.id && (derriere.has(s.sceneId) || (pt.type === 'coffre' && s.cible.pointId === pt.id)));
+            if (toutesDerriere) dire('erreur', cp, n, nomObjet(pt.lockItemId) + ' ouvre ce verrou mais ne s\'obtient que derrière lui : cercle vicieux.');
+          }
+        }
+        if (pt.lockType === 'code' && !(pt.lockCode || '').trim()) dire('erreur', cp, n, 'Verrou « code » sans code réglé : impossible à ouvrir.');
+        if (pt.lockType === 'code' && (pt.lockCode || '').trim()) dire('info', cp, n, 'Code numérique « ' + pt.lockCode + ' » : vérifie qu\'un indice le donne au joueur.');
+      }
+      if (pt.type === 'coffre'){
+        if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
+        if (pt.openImageRef && !M.imagesScene.has(pt.openImageRef)) dire('erreur', cp, n, 'Image de coffre ouvert absente de la base.');
+        const loot = (pt.loot || []).filter(l=> l && l.itemId);
+        if (!loot.length && !pt.message) dire('avert', cp, n, 'Coffre vide, sans message : il dira « il n\'y a rien à l\'intérieur ».');
+        loot.forEach(l=>{ if (!M.objetParId[l.itemId]) dire('erreur', cp, n, 'Coffre contenant un objet supprimé.'); });
+        if (pt.chestReclosable) dire('info', cp, n, 'Coffre refermable.');
+      }
+      if (pt.type === 'objet'){
+        if (!pt.itemId) dire('erreur', cp, n, 'Point objet sans objet choisi.');
+        else if (!M.objetParId[pt.itemId]) dire('erreur', cp, n, 'Point objet sur un objet supprimé.');
+      }
+      if (pt.type === 'action'){
+        if (!pt.reqItemId) dire('erreur', cp, n, 'Action sans objet demandé : inutilisable.');
+        else if (!M.objetParId[pt.reqItemId]) dire('erreur', cp, n, 'Action demandant un objet supprimé.');
+        if (pt.resultType === 'give' && (!pt.resultItemId || !M.objetParId[pt.resultItemId])) dire('erreur', cp, n, 'Action « donne un objet » sans objet valide.');
+        if (pt.resultType !== 'give' && !pt.resultMessage) dire('info', cp, n, 'Action sans message de résultat.');
+      }
+      if (pt.type === 'image' && !pt.bigImageUrl && !pt.bigImagePath && !pt.bigImageRef) dire('avert', cp, n, 'Point « image en grand » sans image.');
+      if (pt.type === 'image' && pt.bigImageRef && !M.imagesScene.has(pt.bigImageRef)) dire('erreur', cp, n, 'Image en grand absente de la base.');
+      if (pt.type === 'dialogue' && !pt.text) dire('avert', cp, n, 'Point dialogue sans texte.');
+      if (['soin','infirmerie','explorateur','missions','chambre'].includes(pt.type)) dire('avert', cp, n, 'Type de point du jeu d\'origine, sans effet dans Parcours.');
+      if (pt.imagePath || pt.bigImagePath || pt.openImagePath) dire('info', cp, n, 'Image hébergée à l\'extérieur : non vérifiable hors ligne.');
+    });
+    /* objet indispensable dans une scène non reliée */
+    pointsZ.forEach(({ sc, pt })=>{
+      if (atteintes.has(sc.id)) return;
+      const ids = pt.type === 'objet' ? [pt.itemId] : pt.type === 'coffre' ? (pt.loot || []).map(l=> l && l.itemId) : pt.type === 'action' && pt.resultType === 'give' ? [pt.resultItemId] : [];
+      ids.filter(Boolean).forEach(id=>{ if ((IO.besoins[id] || []).length) dire('erreur', ctrlCible('zone', z.fiche.id, pt.id), nomZ + ' · ' + ctrlNomScene(sc), nomObjet(id) + ' est requis mais se trouve dans une scène inaccessible.'); });
+    });
+    /* zone hors horaires à l'instant présent : information */
+    if (!isActiveNow(z.fiche)) dire('info', cz, nomZ, 'Zone fermée en ce moment (horaires) : le message de fermeture s\'affiche.');
+  });
+
+  /* ===== Dépendances circulaires (graphe objet/quête → ce qu'il faut pour l'obtenir) ===== */
+  const graphe = {};
+  const lier = (a, b)=>{ if (!a || !b || a === b) return; (graphe[a] = graphe[a] || new Set()).add(b); };
+  Object.keys(IO.sources).forEach(itemId=>{
+    IO.sources[itemId].forEach(src=>{
+      (src.conditions || []).forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('o:' + itemId, 'o:' + c.itemId); if (c.kind === 'quest' && (c.state === 'completed' || c.state === 'active')) lier('o:' + itemId, 'q:' + c.questId); });
+      if (src.requiert) lier('o:' + itemId, 'o:' + src.requiert);
+      if (src.verrou === 'item' && src.verrouObjet) lier('o:' + itemId, 'o:' + src.verrouObjet);
+      if (src.genre === 'choix' && src.choix && src.choix.questValidate) lier('o:' + itemId, 'q:' + src.choix.questValidate.questId);
+    });
+  });
+  M.quetes.forEach(q=>{
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId) lier('q:' + q.id, 'o:' + o.itemId); });
+    (IQ.validee[q.id] || []).forEach(v=> v.conditions.forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('q:' + q.id, 'o:' + c.itemId); if (c.kind === 'quest' && c.questId !== q.id && (c.state === 'completed' || c.state === 'active')) lier('q:' + q.id, 'q:' + c.questId); }));
+    (IQ.confiee[q.id] || []).forEach(g=> g.conditions.forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('q:' + q.id, 'o:' + c.itemId); if (c.kind === 'quest' && (c.state === 'completed' || c.state === 'active')) lier('q:' + q.id, 'q:' + c.questId); }));
+    (IQ.precedentes[q.id] || []).forEach(p=> lier('q:' + q.id, 'q:' + p));
+  });
+  const couleur = {}; const cyclesVus = new Set();
+  const libelle = (n)=> n.charAt(0) === 'o' ? nomObjet(n.slice(2)) : nomQuete(n.slice(2));
+  const visiter = (n, pile)=>{
+    couleur[n] = 'gris'; pile.push(n);
+    (graphe[n] || new Set()).forEach(m=>{
+      if (couleur[m] === 'gris'){
+        const cycle = pile.slice(pile.indexOf(m)).concat([m]);
+        const cle = cycle.slice().sort().join('|');
+        if (!cyclesVus.has(cle)){ cyclesVus.add(cle); const n0 = cycle[0]; dire('avert', n0.charAt(0) === 'o' ? ctrlCible('objet', n0.slice(2)) : ctrlCible('quete', n0.slice(2)), 'Dépendances', 'Dépendance circulaire : ' + cycle.map(libelle).join(' → ') + '. Si aucune autre source ne casse le cercle, c\'est un blocage (la simulation le confirmera).'); }
+      } else if (!couleur[m]) visiter(m, pile);
+    });
+    pile.pop(); couleur[n] = 'noir';
+  };
+  Object.keys(graphe).forEach(n=>{ if (!couleur[n]) visiter(n, []); });
+
+  const ordre = { erreur: 0, avert: 1, info: 2 };
+  constats.sort((a, b)=> ordre[a.niveau] - ordre[b.niveau]);
+  return { constats, resume: { erreurs: constats.filter(c=> c.niveau === 'erreur').length, avertissements: constats.filter(c=> c.niveau === 'avert').length, informations: constats.filter(c=> c.niveau === 'info').length }, modele: M, index: { IO, IQ } };
+}
+/* Scènes atteignables depuis `depuis` sans passer par `sansPasserPar` (pour le cercle vicieux d'un verrou). */
+function ctrlScenesDerriere(z, pointsZ, depuis, sansPasserPar){
+  const vues = new Set(); const aVoir = [depuis];
+  while (aVoir.length){ const id = aVoir.pop(); if (!id || vues.has(id) || id === sansPasserPar) continue; vues.add(id); pointsZ.filter(({ sc, pt })=> sc.id === id && pt.type === 'sortie' && pt.targetSceneId).forEach(({ pt })=> aVoir.push(pt.targetSceneId)); }
+  return vues;
+}
+
+/* ---------- Affichage dans le hub ---------- */
+function ctrlEchap(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, c=> ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function ctrlHtmlConstats(constats){
+  if (!constats.length) return '';
+  const groupes = { erreur: [], avert: [], info: [] };
+  constats.forEach(c=> groupes[c.niveau].push(c));
+  const couleurs = { erreur: 'var(--danger)', avert: '#e0a526', info: 'var(--muted)' };
+  return ['erreur', 'avert', 'info'].map(niv=>{
+    if (!groupes[niv].length) return '';
+    return '<div class="field-label" style="margin-top:10px; color:' + couleurs[niv] + ';">' + CTRL_LIBELLES[niv] + ' (' + groupes[niv].length + ')</div>' + groupes[niv].map(c=>{
+      const cible = c.cible || {};
+      const attr = ' data-ctrl-type="' + ctrlEchap(cible.type || '') + '" data-ctrl-id="' + ctrlEchap(cible.id || '') + '" data-ctrl-point="' + ctrlEchap(cible.pointId || '') + '"';
+      return '<div style="border-left:3px solid ' + couleurs[niv] + '; padding:4px 8px; margin:4px 0; font-size:12px;"><b' + attr + ' style="text-decoration:underline; cursor:pointer;">' + ctrlEchap(c.ou) + '</b><br>' + ctrlEchap(c.message) + '</div>';
+    }).join('');
+  }).join('');
+}
+function ctrlOuvrirCible(type, id, pointId){
+  try {
+    if (type === 'pnj' && id){ document.getElementById('editHubOverlay').classList.remove('show'); openCreatureEditFromMap(id); }
+    else if (type === 'objet' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('itemsEditorOverlay').classList.add('show'); loadItemForEdit(id); showItemsSection('new'); }
+    else if (type === 'quete' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('questsEditorOverlay').classList.add('show'); loadQuestForEdit(id); showQuestsSection('new'); }
+    else if (type === 'zone' && id){ document.getElementById('editHubOverlay').classList.remove('show'); openSceneEditor(id); if (pointId) setTimeout(()=>{ try { const p = sceneEditorPoints.find(x=> x.id === pointId); if (p) selectScenePoint(pointId); else { const sc = sceneEditorScenes.find(s=> (s.points || []).some(x=> x.id === pointId)); if (sc){ loadSceneIntoEditorState(sc.id); renderSceneEditorPoints(); selectScenePoint(pointId); } } } catch(e){} }, 600); }
+    else if (type === 'reglages'){ const el = document.getElementById('parcoursTitreInput'); if (el && el.scrollIntoView) el.scrollIntoView({ block:'center' }); }
+  } catch(e){ journal('erreur', 'ouverture depuis le contrôle', e.message, true); }
+}
+document.getElementById('ctrlVerifierBtn').addEventListener('click', ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Analyse…</p>';
+  setTimeout(()=>{
+    try {
+      const res = verifierParcours();
+      const r = res.resume;
+      const titre = r.erreurs === 0 && r.avertissements === 0 && r.informations === 0
+        ? 'Aucune incohérence détectée automatiquement. Un test de simulation et un test humain restent recommandés.'
+        : (r.erreurs + ' erreur' + (r.erreurs > 1 ? 's' : '') + ' bloquante' + (r.erreurs > 1 ? 's' : '') + ' — ' + r.avertissements + ' avertissement' + (r.avertissements > 1 ? 's' : '') + ' — ' + r.informations + ' information' + (r.informations > 1 ? 's' : '')) + (r.erreurs === 0 ? '<br><span class="meta">Aucune erreur bloquante détectée automatiquement. Un test de simulation et un test humain restent recommandés.</span>' : '');
+      el.innerHTML = '<p style="margin:0 0 6px; font-size:13px;"><b>' + titre + '</b></p>' + ctrlHtmlConstats(res.constats);
+    } catch(e){ el.innerHTML = '<p class="meta" style="color:var(--danger);">Vérification impossible : ' + ctrlEchap(e.message) + '</p>'; journal('erreur', 'vérificateur', e.message, true); }
+  }, 30);
+});
+document.getElementById('ctrlPanneau').addEventListener('click', (ev)=>{
+  const b = ev.target && ev.target.closest ? ev.target.closest('[data-ctrl-type]') : null;
+  if (!b) return;
+  ctrlOuvrirCible(b.dataset.ctrlType, b.dataset.ctrlId, b.dataset.ctrlPoint);
+});
+
+/* =====================================================================================
+   v21 — CONTRÔLE DU PARCOURS : le SIMULATEUR. Un moteur VIRTUEL rejoue les règles du jeu
+   (les mêmes fonctions pures : choixVisible, texteEtapeBrut, resultatValidation,
+   creatureConditionMet, isActiveAt) sur un état de joueur imaginaire, et explore en largeur
+   tous les états atteignables, en fusionnant ceux qui sont identiques. Aucune écriture.
+   Il ne dit jamais « validé » : il dit ce qu'il a exploré et ce qu'il a trouvé.
+   ===================================================================================== */
+const SIM_PLAFOND_DEFAUT = 10000;
+const SIM_TRANCHE = 150;   // états par tranche avant de rendre la main à l'interface
+
+function simCloner(e){ return { inv: { ...e.inv }, quetes: { ...e.quetes }, choix: { ...e.choix }, ramasses: { ...e.ramasses }, pris: { ...e.pris }, fin: !!e.fin, piege: e.piege || null }; }
+function simEtatInitial(){ return { inv: {}, quetes: {}, choix: {}, ramasses: {}, pris: {}, fin: false }; }
+
+/* Préparation : ce qui compte dans l'état (choix cités, quantités utiles), les PNJ, les zones. */
+function simPreparer(M, options){
+  const IO = ctrlIndexObjets(M);
+  const instant = (options && options.instant) ? new Date(options.instant) : simInstantParDefaut(M);
+  /* quantité maximale utile d'un objet : au-delà, l'état est équivalent */
+  const maxUtile = {};
+  Object.keys(IO.besoins).forEach(id=>{ maxUtile[id] = 1; });
+  Object.keys(IO.consommations).forEach(id=>{ IO.consommations[id].forEach(c=>{ maxUtile[id] = Math.max(maxUtile[id] || 1, c.qty || 1); }); });
+  /* choix qui influencent la suite : « une fois », ou cités comme condition/variante quelque part */
+  const cites = new Set();
+  M.fiches.forEach(f=>{
+    f._steps.forEach(st=>{
+      (st.textVariants || []).forEach(v=>{ if (v && v.kind === 'choice' && v.choiceId) cites.add((v.creatureId || f.id) + '__' + v.choiceId); });
+      (st.choices || []).forEach(ch=>{ if (!ch) return; ctrlConditionsDe(ch).forEach(c=>{ if (c.choiceId) cites.add((c.creatureId || f.id) + '__' + c.choiceId); }); });
+    });
+  });
+  const pertinents = (cle, ch)=> !!(ch && ch.once) || cites.has(cle);
+  const queteFin = M.reglages.queteFinId || null;
+  return { M, IO, instant, maxUtile, pertinents, queteFin };
+}
+function simInstantParDefaut(M){
+  const r = M.reglages || {};
+  if (typeof r.periodeDebut === 'number' && typeof r.periodeFin === 'number') return new Date((r.periodeDebut + r.periodeFin) / 2);
+  if (typeof r.periodeDebut === 'number') return new Date(r.periodeDebut + 3600000);
+  return new Date();
+}
+function simCle(P, e){
+  const inv = Object.keys(e.inv).filter(k=> e.inv[k] > 0).sort().map(k=> k + ':' + Math.min(e.inv[k], Math.max(1, P.maxUtile[k] || 1))).join(',');
+  const q = Object.keys(e.quetes).sort().map(k=> k + ':' + e.quetes[k].charAt(0)).join(',');
+  const c = Object.keys(e.choix).sort().join(',');
+  const r = Object.keys(e.ramasses).sort().join(',');
+  const p = Object.keys(e.pris).sort().join(',');
+  return (e.fin ? 'F|' : '') + (e.piege ? 'P:' + e.piege + '|' : '') + inv + '|' + q + '|' + c + '|' + r + '|' + p;
+}
+function simEtatPourRegles(e, premiereRencontre){ return { inventaire: e.inv, quetes: e.quetes, choix: e.choix, combats: {}, premiereRencontre: !!premiereRencontre }; }
+
+/* ---------- le moteur virtuel : effets d'un choix ---------- */
+function simAppliquerChoix(P, e, f, ch, key, couverture){
+  const s = simCloner(e);
+  const evenements = [];
+  if (P.pertinents(key, ch)) s.choix[key] = true;
+  if (ch.itemGrant){
+    const it = objetPourDon(ch.itemGrant, P.M.objets);
+    if (it){ s.inv[it.id] = (s.inv[it.id] || 0) + (parseInt(ch.itemGrant.quantity, 10) || 1); evenements.push('+' + it.name); couverture.objets.add(it.id); simNoterPrecoce(P, s, it.id, couverture); }
+  }
+  if (ch.questGive && ch.questGive.questId && P.M.queteParId[ch.questGive.questId] && !s.quetes[ch.questGive.questId]){ s.quetes[ch.questGive.questId] = 'active'; evenements.push('quête ' + P.M.queteParId[ch.questGive.questId].name); couverture.quetesActives.add(ch.questGive.questId); }
+  if (ch.questValidate && ch.questValidate.questId){
+    const q = P.M.queteParId[ch.questValidate.questId];
+    if (q && s.quetes[q.id] === 'active'){
+      const res = resultatValidation(q, s.inv);
+      if (res.satisfait){
+        res.aDeduire.forEach(o=>{ s.inv[o.itemId] = (s.inv[o.itemId] || 0) - (o.qty || 1); if (s.inv[o.itemId] <= 0) delete s.inv[o.itemId]; });
+        s.quetes[q.id] = 'completed'; evenements.push('✅ ' + q.name); couverture.quetesTerminees.add(q.id);
+        if (q.nextQuestId && P.M.queteParId[q.nextQuestId] && !s.quetes[q.nextQuestId]){ s.quetes[q.nextQuestId] = 'active'; couverture.quetesActives.add(q.nextQuestId); }
+        if (q.id === P.queteFin){ s.fin = true; couverture.fins.add(key); }
+      }
+    }
+  }
+  return { etat: s, evenements };
+}
+function simNoterPrecoce(P, s, itemId, couverture){
+  (P.IO.consommations[itemId] || []).forEach(c=>{ if (c.genre === 'objectif' && c.queteId && !s.quetes[c.queteId]) couverture.precoces.add(itemId + '|' + c.queteId); });
+}
+/* Jouer un dialogue depuis un état : tous les états atteignables en cours de conversation
+   (le joueur peut fermer à tout moment). Boucles coupées par (étape, état). */
+function simJouerDialogue(P, e0, f, couverture, origineLibelle){
+  const steps = f._steps;
+  const sorties = [];   // { etat, libelle }
+  if (!steps.length) return sorties;
+  const e = simCloner(e0);
+  const cleR = cleRencontre(f.id);
+  const premiere = !e.choix[cleR];
+  if (steps[0] && steps[0].firstOnly) e.choix[cleR] = true;   // n'entre dans l'état que si ça change le point de départ
+  let depart = 0;
+  if (steps[0] && steps[0].firstOnly && !premiere){ const t = parseInt(steps[0].thenStep, 10); if (!isNaN(t) && t >= 0 && t < steps.length) depart = t; }
+  const vus = new Set();
+  const pile = [{ i: depart, etat: e, chemin: origineLibelle }];
+  couverture.pnj.add(f.id);
+  while (pile.length){
+    const { i, etat, chemin } = pile.pop();
+    const cle = i + '#' + simCle(P, etat);
+    if (vus.has(cle)) continue;
+    vus.add(cle);
+    couverture.etapes.add(f.id + '#' + i);
+    sorties.push({ etat, libelle: chemin });
+    const st = steps[i];
+    if (!st) continue;
+    const regles = simEtatPourRegles(etat, premiere);
+    (st.choices || []).forEach((ch, iCh)=>{
+      if (!ch) return;
+      const key = choiceKeyFor(f.id, ch, i, iCh);
+      if (!choixVisible(ch, key, f.id, regles, P.M.quetes)) return;
+      couverture.choix.add(key);
+      const r = simAppliquerChoix(P, etat, f, ch, key, couverture);
+      const suite = (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= steps.length || ch.next < 0) ? null : +ch.next;
+      const lib = chemin + ' › « ' + (ch.label || 'choix ' + (iCh + 1)) + ' »' + (r.evenements.length ? ' (' + r.evenements.join(', ') + ')' : '');
+      if (suite === null) sorties.push({ etat: r.etat, libelle: lib });
+      else pile.push({ i: suite, etat: r.etat, chemin: lib });
+    });
+  }
+  return sorties;
+}
+
+/* ---------- les zones : sous-exploration scène par scène ---------- */
+function simVerrouOuvert(pt, e){
+  if (pt.lockType === 'item') return !pt.lockItemId || (e.inv[pt.lockItemId] || 0) > 0;
+  if (pt.lockType === 'code') return !!(pt.lockCode || '').trim();   // code supposé connu du joueur
+  return true;
+}
+function simContenuScene(P, sc){
+  const variants = Array.isArray(sc.variants) ? sc.variants : [];
+  for (const v of variants){ if (isActiveAt(v, P.instant)) return (v.points && v.points.length) ? v.points : (sc.points || []); }
+  return sc.points || [];
+}
+function simJouerZone(P, e0, z, couverture, origineLibelle){
+  const sorties = [];   // états à la sortie de la zone
+  const vus = new Set();
+  const pile = [{ sc: z.startSceneId, etat: simCloner(e0), chemin: origineLibelle }];
+  let interne = 0;
+  const clePris = (pt)=> z.fiche.id + '/' + pt.id;
+  while (pile.length && interne < 4000){
+    const { sc, etat, chemin } = pile.pop();
+    const cle = sc + '#' + simCle(P, etat);
+    if (vus.has(cle)) continue;
+    vus.add(cle); interne++;
+    const scene = z.scenes.find(x=> x.id === sc);
+    if (!scene) continue;
+    couverture.scenes.add(z.fiche.id + '#' + sc);
+    simContenuScene(P, scene).forEach(pt=>{
+      if (!pt) return;
+      const dispo = pt.type === 'pnj' ? !etat.pris[clePris(pt)] : (pt.resetMode === 'unlimited' || !etat.pris[clePris(pt)]);
+      const nomPt = (pt.type || 'point') + (pt.linkedPnjName ? ' ' + pt.linkedPnjName : '');
+      if (pt.type === 'sortie_zone'){ couverture.points.add(clePris(pt)); sorties.push({ etat, libelle: chemin + ' › sortie de la zone' }); return; }
+      if (pt.type === 'sortie'){
+        if ((pt.openRanges || []).some(c=> c && (c.start || c.end)) && !heureDansCreneaux(pt.openRanges.filter(c=> c && (c.start || c.end)), P.instant)) return;
+        if (!simVerrouOuvert(pt, etat)) return;
+        couverture.points.add(clePris(pt));
+        if (pt.targetSceneId && z.scenes.some(x=> x.id === pt.targetSceneId)) pile.push({ sc: pt.targetSceneId, etat, chemin: chemin + ' › porte' });
+        else sorties.push({ etat, libelle: chemin + ' › porte (ferme la zone)' });
+        return;
+      }
+      if (!dispo) return;
+      if (pt.type === 'objet' && pt.itemId && P.M.objetParId[pt.itemId]){
+        const s = simCloner(etat); s.inv[pt.itemId] = (s.inv[pt.itemId] || 0) + (pt.qty || 1); if (pt.resetMode !== 'unlimited') s.pris[clePris(pt)] = true;
+        couverture.points.add(clePris(pt)); couverture.objets.add(pt.itemId); simNoterPrecoce(P, s, pt.itemId, couverture);
+        pile.push({ sc, etat: s, chemin: chemin + ' › ramasse ' + P.M.objetParId[pt.itemId].name });
+      } else if (pt.type === 'action' && pt.reqItemId){
+        const need = pt.reqQty || 1;
+        if ((etat.inv[pt.reqItemId] || 0) < need) return;
+        const s = simCloner(etat); s.inv[pt.reqItemId] -= need; if (s.inv[pt.reqItemId] <= 0) delete s.inv[pt.reqItemId];
+        if (pt.resultType === 'give' && pt.resultItemId && P.M.objetParId[pt.resultItemId]){ s.inv[pt.resultItemId] = (s.inv[pt.resultItemId] || 0) + (pt.resultQty || 1); couverture.objets.add(pt.resultItemId); simNoterPrecoce(P, s, pt.resultItemId, couverture); }
+        if (pt.resetMode !== 'unlimited') s.pris[clePris(pt)] = true;
+        couverture.points.add(clePris(pt));
+        pile.push({ sc, etat: s, chemin: chemin + ' › action (' + nomPt + ')' });
+      } else if (pt.type === 'coffre'){
+        if (!simVerrouOuvert(pt, etat)) return;
+        couverture.points.add(clePris(pt));
+        const loot = (pt.loot || []).filter(l=> l && l.itemId && P.M.objetParId[l.itemId]);
+        /* chaque objet à chance < 100 % donne deux issues : on explore les deux */
+        const aleatoires = loot.filter(l=> !(l.chance == null || l.chance === '' || +l.chance >= 100));
+        const surs = loot.filter(l=> (l.chance == null || l.chance === '' || +l.chance >= 100));
+        const combinaisons = Math.min(1 << aleatoires.length, 16);
+        for (let m = 0; m < combinaisons; m++){
+          const s = simCloner(etat);
+          if (pt.resetMode !== 'unlimited') s.pris[clePris(pt)] = true;
+          surs.forEach(l=>{ s.inv[l.itemId] = (s.inv[l.itemId] || 0) + (l.qty || 1); couverture.objets.add(l.itemId); simNoterPrecoce(P, s, l.itemId, couverture); });
+          aleatoires.forEach((l, k)=>{ if (m & (1 << k)){ s.inv[l.itemId] = (s.inv[l.itemId] || 0) + (l.qty || 1); couverture.objets.add(l.itemId); simNoterPrecoce(P, s, l.itemId, couverture); } });
+          pile.push({ sc, etat: s, chemin: chemin + ' › ouvre un coffre' + (aleatoires.length ? ' (tirage ' + (m + 1) + ')' : '') });
+        }
+      } else if (pt.type === 'pnj' && pt.linkedPnjId){
+        const fp = P.M.ficheParId[pt.linkedPnjId];
+        if (!fp || !isActiveAt(fp, P.instant) || !creatureConditionMet(fp, etat.quetes)) return;
+        couverture.points.add(clePris(pt));
+        simJouerDialogue(P, etat, fp, couverture, chemin + ' › ' + (fp.name || 'PNJ')).forEach(so=>{
+          const s = simCloner(so.etat);
+          if (pt.partApresDialogue) s.pris[clePris(pt)] = true;
+          pile.push({ sc, etat: s, chemin: so.libelle });
+        });
+      } else if (pt.type === 'image' || pt.type === 'dialogue' || pt.type === 'decor'){
+        couverture.points.add(clePris(pt));
+      }
+    });
+  }
+  if (interne >= 4000) couverture.avertissements.add('Zone « ' + (z.fiche.name || '?') + ' » : exploration interne tronquée (4 000 états).');
+  return sorties;
+}
+
+/* ---------- l'exploration globale ---------- */
+function simTransitions(P, e, couverture){
+  const out = [];   // { etat, libelle, acteur }
+  const M = P.M;
+  M.fiches.forEach(f=>{
+    if (!ctrlPositionnee(f)) return;
+    if (!isActiveAt(f, P.instant)) return;
+    if (f.interactionType === 'zone'){
+      const z = M.zoneParId[f.id];
+      if (!z || !z.scenes.length) return;
+      const so = simJouerZone(P, e, z, couverture, (f.name || 'Zone'));
+      if (!so.length){ const s = simCloner(e); s.piege = f.id; out.push({ etat: s, libelle: 'entre dans « ' + (f.name || 'Zone') + ' » et ne trouve aucune sortie', acteur: f.id }); return; }
+      so.forEach(x=> out.push({ etat: x.etat, libelle: x.libelle, acteur: f.id }));
+      return;
+    }
+    if (!creatureConditionMet(f, e.quetes)) return;
+    simJouerDialogue(P, e, f, couverture, (f.name || 'PNJ')).forEach(so=> out.push({ etat: so.etat, libelle: so.libelle, acteur: f.id }));
+  });
+  M.ramassages.forEach(p=>{
+    if (!ctrlPositionnee(p) || !p.itemId || !M.objetParId[p.itemId] || e.ramasses[p.id]) return;
+    const s = simCloner(e); s.ramasses[p.id] = true; s.inv[p.itemId] = (s.inv[p.itemId] || 0) + (p.qty || 1);
+    couverture.objets.add(p.itemId); couverture.ramassages.add(p.id); simNoterPrecoce(P, s, p.itemId, couverture);
+    out.push({ etat: s, libelle: 'ramasse ' + M.objetParId[p.itemId].name + ' sur la carte', acteur: 'pickup:' + p.id });
+  });
+  return out;
+}
+
+function simulerParcours(options, surProgres){
+  const opts = options || {};
+  const M = opts.modele || ctrlModele();
+  const P = simPreparer(M, opts);
+  const plafond = opts.plafond || SIM_PLAFOND_DEFAUT;
+  P.plafond = plafond;
+  const couverture = { pnj: new Set(), etapes: new Set(), choix: new Set(), objets: new Set(), quetesActives: new Set(), quetesTerminees: new Set(), fins: new Set(), points: new Set(), scenes: new Set(), ramassages: new Set(), precoces: new Set(), avertissements: new Set() };
+  const etats = new Map();   // clé → { etat, parent, libelle, acteur, succ: Set }
+  const e0 = simEtatInitial();
+  const k0 = simCle(P, e0);
+  etats.set(k0, { etat: e0, parent: null, libelle: 'départ', acteur: null, succ: new Map() });
+  const file = [k0];
+  let partiel = false, explores = 0;
+  return new Promise((resolve)=>{
+    const pas = ()=>{
+      let n = 0;
+      while (file.length && n < SIM_TRANCHE){
+        if (etats.size >= plafond && file.length){ partiel = true; break; }
+        const k = file.shift(); n++; explores++;
+        const noeud = etats.get(k);
+        noeud.explore = true;
+        if (noeud.etat.fin || noeud.etat.piege) continue;
+        let trans;
+        try { trans = simTransitions(P, noeud.etat, couverture); } catch(err){ couverture.avertissements.add('Erreur interne : ' + err.message); trans = []; }
+        trans.forEach(t=>{
+          const kk = simCle(P, t.etat);
+          if (!noeud.succ.has(kk)) noeud.succ.set(kk, new Set());
+          noeud.succ.get(kk).add(t.acteur || '');
+          if (!etats.has(kk)){
+            if (etats.size >= plafond){ partiel = true; return; }
+            etats.set(kk, { etat: t.etat, parent: k, libelle: t.libelle, acteur: t.acteur, succ: new Map() });
+            file.push(kk);
+          }
+        });
+      }
+      if (surProgres) surProgres(etats.size, plafond);
+      if (opts.arreter && opts.arreter()){ partiel = true; resolve(simRapport(P, etats, couverture, true, explores, file.length)); return; }
+      if (file.length && !partiel) setTimeout(pas, 0);
+      else resolve(simRapport(P, etats, couverture, partiel, explores, file.length));
+    };
+    pas();
+  });
+}
+
+function simRapport(P, etats, couverture, partiel, explores, restants){
+  const M = P.M;
+  /* états d'où la fin est atteignable (parcours inverse) */
+  const pred = new Map();
+  etats.forEach((n, k)=> n.succ.forEach((acteurs, s)=>{ if (!pred.has(s)) pred.set(s, new Set()); pred.get(s).add(k); }));
+  const finales = []; etats.forEach((n, k)=>{ if (n.etat.fin) finales.push(k); });
+  const vivants = new Set(finales);
+  const aVoir = finales.slice();
+  while (aVoir.length){ const k = aVoir.pop(); (pred.get(k) || new Set()).forEach(p=>{ if (!vivants.has(p)){ vivants.add(p); aVoir.push(p); } }); }
+  /* blocages : premier état mort dont le parent est vivant (ou le départ, s'il est mort) */
+  const chemin = (k)=>{ const l = []; let c = k; let garde = 0; while (c && garde++ < 200){ const n = etats.get(c); l.unshift(n.libelle); c = n.parent; } return l; };
+  const blocages = [];
+  etats.forEach((n, k)=>{
+    if (n.etat.fin || vivants.has(k)) return;
+    if (!n.explore && !n.etat.piege) return;   // pas encore exploré (analyse partielle) : on ne conclut pas
+    if (n.parent === null || vivants.has(n.parent)) blocages.push({ cle: k, chemin: chemin(k), etat: n.etat, piege: n.etat.piege || null });
+  });
+  /* si l'analyse est partielle, un état « mort » peut n'être que non exploré : on l'indique */
+  const totaux = {
+    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f._steps.length).length,
+    choix: M.fiches.reduce((n, f)=> n + f._steps.reduce((m, st)=> m + (st.choices || []).filter(Boolean).length, 0), 0),
+    etapes: M.fiches.reduce((n, f)=> n + f._steps.length, 0),
+    objets: M.objets.length, quetes: M.quetes.length,
+    points: M.zones.reduce((n, z)=> n + ctrlPointsDeZone(z).filter(({ pt })=> pt.type !== 'decor').length, 0),
+    fins: (()=>{ let n = 0; M.fiches.forEach(f=> f._steps.forEach(st=> (st.choices || []).forEach(ch=>{ if (ch && ch.questValidate && ch.questValidate.questId === P.queteFin) n++; }))); return n; })(),
+  };
+  const nomObjet = (id)=> (M.objetParId[id] ? M.objetParId[id].name : id);
+  const nomQuete = (id)=> (M.queteParId[id] ? M.queteParId[id].name : id);
+  const inaccessibles = {
+    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f._steps.length && !couverture.pnj.has(f.id)).map(f=> f.name || f.id),
+    objets: M.objets.filter(o=> !couverture.objets.has(o.id)).map(o=> o.name),
+    quetes: M.quetes.filter(q=> !couverture.quetesActives.has(q.id)).map(q=> q.name),
+    quetesNonTerminees: M.quetes.filter(q=> couverture.quetesActives.has(q.id) && !couverture.quetesTerminees.has(q.id)).map(q=> q.name),
+    choix: [], points: [],
+  };
+  M.fiches.forEach(f=> f._steps.forEach((st, i)=> (st.choices || []).forEach((ch, iCh)=>{ if (ch && !couverture.choix.has(choiceKeyFor(f.id, ch, i, iCh))) inaccessibles.choix.push((f.name || 'PNJ') + ' · étape ' + i + ' · « ' + (ch.label || 'choix ' + (iCh + 1)) + ' »'); })));
+  M.zones.forEach(z=> ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{ if (pt.type !== 'decor' && !couverture.points.has(z.fiche.id + '/' + pt.id)) inaccessibles.points.push((z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante) + ' · ' + pt.type); }));
+  /* contournements : la fin reste-t-elle atteignable sans tel personnage ? */
+  const contournables = [];
+  if (finales.length && !partiel){
+    M.fiches.filter(f=> f.interactionType !== 'zone' && couverture.pnj.has(f.id)).forEach(f=>{
+      const vus = new Set([Array.from(etats.keys())[0]]); const pile = [Array.from(etats.keys())[0]]; let ok = false;
+      while (pile.length && !ok){ const k = pile.pop(); const n = etats.get(k); if (n.etat.fin){ ok = true; break; } n.succ.forEach((acteurs, s)=>{ const sansLui = Array.from(acteurs).some(a=> a !== f.id); if (sansLui && !vus.has(s)){ vus.add(s); pile.push(s); } }); }
+      if (ok) contournables.push(f.name || f.id);
+    });
+  }
+  const precoces = Array.from(couverture.precoces).map(x=>{ const [it, q] = x.split('|'); return '« ' + nomObjet(it) + ' » peut être obtenu avant que la quête « ' + nomQuete(q) + ' » (qui le consomme) soit en cours'; });
+  return {
+    partiel, etats: etats.size, explores, restants, plafond: P.plafond,
+    instant: P.instant,
+    terminable: finales.length > 0,
+    finsAccessibles: couverture.fins.size, finsTotal: totaux.fins,
+    blocages: blocages.slice(0, 20), nbBlocages: blocages.length,
+    inaccessibles, contournables, precoces,
+    vu: couverture,
+    couverture: { choix: [couverture.choix.size, totaux.choix], etapes: [couverture.etapes.size, totaux.etapes], objets: [couverture.objets.size, totaux.objets], pnj: [couverture.pnj.size, totaux.pnj], points: [couverture.points.size, totaux.points], quetesTerminees: [couverture.quetesTerminees.size, totaux.quetes] },
+    avertissements: Array.from(couverture.avertissements),
+  };
+}
+
+/* ---------- rendu ---------- */
+function simPourcent(c){ return c[1] ? Math.round(100 * Math.min(c[0], c[1]) / c[1]) + ' %' : '—'; }
+function simHtmlRapport(R){
+  const l = [];
+  const gras = (t)=> '<b>' + ctrlEchap(t) + '</b>';
+  if (R.partiel) l.push('<p style="margin:0 0 6px; color:var(--danger);"><b>ANALYSE PARTIELLE</b> — le plafond de ' + R.plafond + ' états a été atteint (' + R.restants + ' états en attente non explorés). Les conclusions ci-dessous ne valent que pour la partie explorée : rien ne garantit l\'absence de blocage ailleurs.</p>');
+  l.push('<div style="font-size:13px; line-height:1.5;">'
+    + gras(R.etats.toLocaleString('fr-FR') + ' états analysés') + (R.partiel ? ' (partiel)' : '') + '<br>'
+    + 'Parcours terminable : ' + gras(R.terminable ? 'OUI' : 'NON') + (R.partiel && !R.terminable ? ' (dans la partie explorée)' : '') + '<br>'
+    + 'Fins accessibles : ' + gras(R.finsAccessibles + '/' + R.finsTotal) + '<br>'
+    + 'Blocages définitifs trouvés : ' + gras(String(R.nbBlocages)) + '<br>'
+    + 'Éléments inaccessibles : ' + gras(String(R.inaccessibles.pnj.length + R.inaccessibles.objets.length + R.inaccessibles.quetes.length + R.inaccessibles.points.length)) + '<br>'
+    + 'Couverture des choix : ' + gras(simPourcent(R.couverture.choix)) + ' · des étapes : ' + simPourcent(R.couverture.etapes) + ' · des objets : ' + simPourcent(R.couverture.objets) + ' · des points de zone : ' + simPourcent(R.couverture.points) + '<br>'
+    + '<span class="meta">Instant simulé : ' + ctrlEchap(new Date(R.instant).toLocaleString('fr-FR')) + '</span></div>');
+  if (R.blocages.length){
+    l.push('<div class="field-label" style="margin-top:10px; color:var(--danger);">BLOCAGE' + (R.nbBlocages > 1 ? 'S' : '') + ' TROUVÉ' + (R.nbBlocages > 1 ? 'S' : '') + (R.nbBlocages > R.blocages.length ? ' (les ' + R.blocages.length + ' premiers)' : '') + '</div>');
+    R.blocages.forEach(b=>{
+      const inv = Object.keys(b.etat.inv).filter(k=> b.etat.inv[k] > 0);
+      l.push('<div style="border-left:3px solid var(--danger); padding:4px 8px; margin:4px 0; font-size:12px;">' + ctrlEchap(b.chemin.join(' → ')) + ' <b>→ ' + (b.piege ? 'enfermé dans la zone, aucune sortie accessible.' : 'aucune action ne permet de continuer.') + '</b><br><span class="meta">Sac : ' + (inv.length ? ctrlEchap(inv.join(', ')) : 'vide') + ' · quêtes : ' + ctrlEchap(Object.keys(b.etat.quetes).map(k=> k + ' ' + b.etat.quetes[k]).join(', ') || 'aucune') + '</span></div>');
+    });
+  }
+  const liste = (titre, arr, niveau)=>{ if (!arr.length) return; l.push('<div class="field-label" style="margin-top:10px; color:' + (niveau === 'avert' ? '#e0a526' : 'var(--muted)') + ';">' + titre + ' (' + arr.length + ')</div><div style="font-size:12px;">' + arr.map(x=> '• ' + ctrlEchap(x)).join('<br>') + '</div>'); };
+  liste('Personnages jamais abordables', R.inaccessibles.pnj, 'avert');
+  liste('Objets jamais obtenus', R.inaccessibles.objets, 'avert');
+  liste('Quêtes jamais commencées', R.inaccessibles.quetes, 'avert');
+  liste('Quêtes commencées mais jamais terminées', R.inaccessibles.quetesNonTerminees, 'avert');
+  liste('Points de zone jamais atteints', R.inaccessibles.points, 'avert');
+  liste('Choix jamais proposés', R.inaccessibles.choix, 'info');
+  liste('Obtenu tôt (avant la quête qui le consomme)', R.precoces, 'info');
+  liste('Personnages contournables (la fin reste atteignable sans leur parler)', R.contournables, 'info');
+  liste('Remarques du simulateur', R.avertissements, 'avert');
+  if (!R.partiel && R.terminable && !R.nbBlocages) l.push('<p class="meta" style="margin-top:8px;">Aucun blocage trouvé dans les ' + R.etats + ' états explorés. Ce n\'est pas une garantie : un test humain reste recommandé.</p>');
+  return l.join('');
+}
+let simEnCours = null;
+document.getElementById('ctrlSimulerBtn').addEventListener('click', ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  const btn = document.getElementById('ctrlSimulerBtn');
+  if (simEnCours){ simEnCours.stop = true; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Simulation… 0 état</p>';
+  const plafond = parseInt(document.getElementById('ctrlPlafondInput').value, 10) || SIM_PLAFOND_DEFAUT;
+  const instantSaisi = document.getElementById('ctrlInstantInput').value;
+  const instant = instantSaisi ? dateLocaleVersMs(instantSaisi) : null;
+  simEnCours = { stop: false };
+  btn.textContent = '⏹️ Arrêter la simulation';
+  simulerParcours({ plafond, instant: instant || undefined, arreter: ()=> simEnCours && simEnCours.stop }, (n, max)=>{ el.innerHTML = '<p class="meta">Simulation… ' + n + ' état(s) sur ' + max + ' au plus</p>'; })
+    .then((R)=>{ el.innerHTML = simHtmlRapport(R); })
+    .catch((e)=>{ el.innerHTML = '<p class="meta" style="color:var(--danger);">Simulation impossible : ' + ctrlEchap(e.message) + '</p>'; journal('erreur', 'simulateur', e.message, true); })
+    .then(()=>{ simEnCours = null; btn.textContent = '▶️ Simuler le parcours'; });
+});
+
+/* =====================================================================================
+   v22 — CONTRÔLE DU PARCOURS : l'ARBRE textuel. Le parcours entier, indenté, avec pour chaque
+   élément ce que la simulation a atteint (✓) ou jamais atteint (✗) — pour repérer d'un coup
+   d'œil les branches mortes. Construit sur le dernier rapport de simulation.
+   ===================================================================================== */
+function ctrlArbreHtml(M, R){
+  const vu = R.vu;
+  const ok = (b)=> b ? '<span style="color:var(--accent);">✓</span>' : '<span style="color:var(--danger);">✗</span>';
+  const li = (niv, html)=> '<div style="padding-left:' + (niv * 14) + 'px; font-size:12px; line-height:1.45;">' + html + '</div>';
+  const court = (t, n)=> { t = String(t || '').replace(/\s+/g, ' '); return ctrlEchap(t.length > (n || 60) ? t.slice(0, (n || 60) - 1) + '…' : t); };
+  const nomObjet = (id)=> (M.objetParId[id] ? M.objetParId[id].name : id);
+  const nomQuete = (id)=> (M.queteParId[id] ? M.queteParId[id].name : id);
+  const nomPnj = (id)=> (M.ficheParId[id] ? (M.ficheParId[id].name || id) : id);
+  const cond = (ch)=>{
+    const l = ctrlConditionsDe(ch).map(c=> c.kind === 'item' ? (c.has === 'no' ? 'sans ' : 'a ') + nomObjet(c.itemId) : c.kind === 'quest' ? nomQuete(c.questId) + ' ' + ({ active:'en cours', completed:'terminée', not_started:'jamais commencée', not_active:'pas en cours' }[c.state] || c.state) : c.kind === 'combat' ? 'combat' : 'a dit « ' + (c.choiceId || '?') + ' »' + (c.creatureId ? ' chez ' + nomPnj(c.creatureId) : '') + (c.taken === 'no' ? ' (non)' : ''));
+    return l.length ? ' <span class="meta">[si ' + ctrlEchap(l.join(' et ')) + ']</span>' : '';
+  };
+  const effets = (ch)=>{
+    const l = [];
+    if (ch.itemGrant){ const it = objetPourDon(ch.itemGrant, M.objets); l.push('🎁 ' + (it ? it.name : '?')); }
+    if (ch.questGive) l.push('📜 ' + nomQuete(ch.questGive.questId));
+    if (ch.questValidate) l.push('✅ ' + nomQuete(ch.questValidate.questId));
+    if (ch.once) l.push('une fois');
+    return l.length ? ' <span class="meta">(' + ctrlEchap(l.join(', ')) + ')</span>' : '';
+  };
+  const out = [];
+  out.push(li(0, '🏁 <b>' + ctrlEchap(M.reglages.titre || 'Parcours') + '</b> — fins atteintes ' + R.finsAccessibles + '/' + R.finsTotal + (R.partiel ? ' <span style="color:var(--danger);">(ANALYSE PARTIELLE)</span>' : '')));
+  /* quêtes dans l'ordre des chaînes */
+  const IQ = ctrlIndexQuetes(M);
+  const ordre = []; const vues = new Set();
+  const racines = M.quetes.filter(q=> !(IQ.precedentes[q.id] || []).length);
+  const pousser = (q)=>{ if (!q || vues.has(q.id)) return; vues.add(q.id); ordre.push(q); if (q.nextQuestId) pousser(M.queteParId[q.nextQuestId]); };
+  racines.forEach(pousser); M.quetes.forEach(pousser);
+  out.push(li(0, '📜 <b>Quêtes</b>'));
+  ordre.forEach(q=>{
+    const donneurs = (IQ.confiee[q.id] || []).map(g=> nomPnj(g.pnjId)); const prec = (IQ.precedentes[q.id] || []).map(nomQuete);
+    const valideurs = (IQ.validee[q.id] || []).map(v=> nomPnj(v.pnjId));
+    out.push(li(1, ok(vu.quetesActives.has(q.id)) + ' commencée · ' + ok(vu.quetesTerminees.has(q.id)) + ' terminée — <b>' + ctrlEchap(q.name) + '</b>' + (q.id === M.reglages.queteFinId ? ' 🏆 (fin)' : '')));
+    out.push(li(2, '<span class="meta">confiée par ' + ctrlEchap(donneurs.concat(prec.map(p=> 'suite de ' + p)).join(', ') || 'personne') + ' · validée par ' + ctrlEchap(valideurs.join(', ') || 'personne') + (q.objectives && q.objectives.length ? ' · objets : ' + ctrlEchap(q.objectives.map(o=> nomObjet(o.itemId) + (o.qty > 1 ? ' ×' + o.qty : '')).join(', ')) : ' · sans objectif') + '</span>'));
+  });
+  /* personnages */
+  out.push(li(0, '👤 <b>Personnages</b>'));
+  M.fiches.filter(f=> f.interactionType !== 'zone').forEach(f=>{
+    const cf = ' data-ctrl-type="pnj" data-ctrl-id="' + ctrlEchap(f.id) + '"';
+    out.push(li(1, ok(vu.pnj.has(f.id)) + ' <b' + cf + ' style="text-decoration:underline;">' + ctrlEchap(f.name || 'sans nom') + '</b>' + (ctrlPositionnee(f) ? '' : ' <span class="meta">(sans position)</span>') + (f.visibilityCondition && f.visibilityCondition.questId ? ' <span class="meta">[apparaît : ' + ctrlEchap(nomQuete(f.visibilityCondition.questId)) + ' ' + (f.visibilityCondition.state === 'completed' ? 'terminée' : 'pas terminée') + ']</span>' : '')));
+    f._steps.forEach((st, i)=>{
+      out.push(li(2, ok(vu.etapes.has(f.id + '#' + i)) + ' étape ' + i + (st.firstOnly ? ' <span class="meta">(première rencontre)</span>' : '') + ' : <span class="meta">« ' + court(st.text, 70) + ' »</span>' + ((st.textVariants || []).length ? ' <span class="meta">+' + st.textVariants.length + ' variante(s)</span>' : '')));
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const key = choiceKeyFor(f.id, ch, i, iCh);
+        const suite = (ch.next === null || ch.next === undefined || isNaN(ch.next)) ? 'fin' : '→ étape ' + ch.next;
+        out.push(li(3, ok(vu.choix.has(key)) + ' ▸ « ' + court(ch.label || 'choix ' + (iCh + 1), 50) + ' » ' + ctrlEchap(suite) + cond(ch) + effets(ch)));
+      });
+    });
+  });
+  /* zones */
+  if (M.zones.length){
+    out.push(li(0, '🗺️ <b>Zones d\'exploration</b>'));
+    M.zones.forEach(z=>{
+      out.push(li(1, '<b data-ctrl-type="zone" data-ctrl-id="' + ctrlEchap(z.fiche.id) + '" style="text-decoration:underline;">' + ctrlEchap(z.fiche.name || 'Zone') + '</b>'));
+      z.scenes.forEach(sc=>{
+        out.push(li(2, ok(vu.scenes.has(z.fiche.id + '#' + sc.id)) + ' scène « ' + ctrlEchap(sc.name || 'Scène') + ' »' + (sc.id === z.startSceneId ? ' <span class="meta">(départ)</span>' : '')));
+        ctrlPointsDeZone(z).filter(x=> x.sc.id === sc.id).forEach(({ pt, variante })=>{
+          let desc = pt.type || 'point';
+          if (pt.type === 'pnj') desc += ' ' + (pt.linkedPnjId ? nomPnj(pt.linkedPnjId) : '?');
+          if (pt.type === 'objet') desc += ' ' + nomObjet(pt.itemId);
+          if (pt.type === 'coffre') desc += ' (' + (pt.loot || []).filter(l=> l && l.itemId).map(l=> nomObjet(l.itemId) + (l.chance != null && l.chance !== '' && +l.chance < 100 ? ' ' + l.chance + ' %' : '')).join(', ') + ')';
+          if (pt.type === 'sortie') desc += ' → ' + (pt.targetSceneId ? ((z.scenes.find(x=> x.id === pt.targetSceneId) || {}).name || '?') : 'ferme la zone');
+          if (pt.type === 'action') desc += ' (' + nomObjet(pt.reqItemId) + ' → ' + (pt.resultType === 'give' ? nomObjet(pt.resultItemId) : 'message') + ')';
+          if (pt.lockType === 'item') desc += ' 🔒 ' + nomObjet(pt.lockItemId);
+          if (pt.lockType === 'code') desc += ' 🔒 code';
+          out.push(li(3, (pt.type === 'decor' ? '·' : ok(vu.points.has(z.fiche.id + '/' + pt.id))) + ' <span data-ctrl-type="zone" data-ctrl-id="' + ctrlEchap(z.fiche.id) + '" data-ctrl-point="' + ctrlEchap(pt.id) + '" style="text-decoration:underline;">' + ctrlEchap(desc) + '</span>' + (variante ? ' <span class="meta">(variante ' + variante + ')</span>' : '')));
+        });
+      });
+    });
+  }
+  /* objets */
+  out.push(li(0, '🎒 <b>Objets</b>'));
+  M.objets.forEach(o=> out.push(li(1, ok(vu.objets.has(o.id)) + ' <span data-ctrl-type="objet" data-ctrl-id="' + ctrlEchap(o.id) + '" style="text-decoration:underline;">' + ctrlEchap(o.name) + '</span>' + (o.consultable ? ' <span class="meta">(consultable)</span>' : ''))));
+  if (M.ramassages.length) out.push(li(1, '<span class="meta">objets posés sur la carte : ' + ctrlEchap(M.ramassages.map(p=> nomObjet(p.itemId)).join(', ')) + '</span>'));
+  return '<div style="margin-top:6px;">' + out.join('') + '</div>';
+}
+document.getElementById('ctrlArbreBtn').addEventListener('click', ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Simulation puis construction de l\'arbre…</p>';
+  const plafond = parseInt(document.getElementById('ctrlPlafondInput').value, 10) || SIM_PLAFOND_DEFAUT;
+  const instantSaisi = document.getElementById('ctrlInstantInput').value;
+  const instant = instantSaisi ? dateLocaleVersMs(instantSaisi) : null;
+  const M = ctrlModele();
+  simulerParcours({ modele: M, plafond, instant: instant || undefined })
+    .then((R)=>{ el.innerHTML = ctrlArbreHtml(M, R); })
+    .catch((e)=>{ el.innerHTML = '<p class="meta" style="color:var(--danger);">Arbre impossible : ' + ctrlEchap(e.message) + '</p>'; });
 });
 
 /* =====================================================================================
