@@ -1305,7 +1305,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand" id="brandTitle">Parc<span>ours</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px; display:none;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v18</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v19</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1472,6 +1472,9 @@
         <input type="number" inputmode="numeric" id="parcoursAlerteRougeInput" class="field-input" min="1" step="5" placeholder="45">
       </div>
     </div>
+    <div class="field-label" style="margin-top:14px;">Guidage (v19)</div>
+    <label style="display:flex; gap:8px; align-items:flex-start;"><input type="checkbox" id="parcoursVolOiseauInput" style="margin-top:3px;"><span>Guidage à vol d'oiseau seulement (site fermé : parc, château, terrain de festival)</span></label>
+    <p class="meta" style="margin:4px 0 6px;">Coché : ligne droite, flèche et distance, jamais d'itinéraire par les rues. Décoché (enquête en ville) : itinéraire par les rues quand il y a du réseau, prolongé d'un pointillé jusqu'au point exact quand celui-ci est loin du chemin.</p>
 
     <div class="field-label" style="margin-top:14px;">Carte souvenir (v13)</div>
     <p class="meta" style="margin:0 0 6px;">La carte que le joueur gagne en terminant le parcours et garde dans son carnet. Image au format portrait (2 pour 3). Sans image, pas de carte.</p>
@@ -8041,9 +8044,30 @@ const GUIDAGE_ARRIVEE_M = 20;        // en dessous : « tu es arrivé »
 const GUIDAGE_RECALCUL_M = 15;       // on redemande l'itinéraire quand on s'est écarté d'autant du point de départ du tracé (v10 : 30 → 15)
 const GUIDAGE_RECALCUL_MS = 45000;   // … ou au plus tard toutes les 45 s (v10 : 90 → 45)
 const GUIDAGE_TRACE_PERIME_M = 60;   // v10 : si le service ne répond plus, l'ancien tracé reste tant qu'on n'a pas dérivé d'autant
-const guidage = { cibleId:null, questId:null, nom:'', lat:null, lng:null, trace:null, ligne:null, origineTrace:null, dateTrace:0, distanceTrace:null, enCours:false, restaure:false };
+const GUIDAGE_ECART_POINT_M = 25;    // v19 : au-delà, la fin du tracé par les rues est reliée au point réel par un pointillé, pas par un trait plein
+const guidage = { cibleId:null, questId:null, nom:'', lat:null, lng:null, trace:null, ligne:null, fin:null, origineTrace:null, dateTrace:0, distanceTrace:null, enCours:false, restaure:false };
 
 function guidageActif(){ return !!guidage.cibleId; }
+/* v19 — réglage du parcours : sur un site fermé, OSRM ne connaît pas les allées et « aimante » les
+   points sur la rue la plus proche ; on ne lui demande alors jamais rien, la ligne droite suffit. */
+function guidageVolOiseau(){
+  try { return !!(parcoursEtat && parcoursEtat.reglages && parcoursEtat.reglages.guidageVolOiseau); } catch(e){ return false; }
+}
+/* v19 — le pointillé entre la fin du tracé par les rues et le point réel (mode ville seulement). */
+function guidageDessinerFin(depuis){
+  if (!depuis){
+    if (guidage.fin){ try { map.removeLayer(guidage.fin); } catch(e){} guidage.fin = null; }
+    return;
+  }
+  const bouts = [depuis, [guidage.lat, guidage.lng]];
+  if (!guidage.fin) guidage.fin = L.polyline(bouts, { color:'#0f8a52', weight:4, opacity:.7, dashArray:'8 10', interactive:false }).addTo(map);
+  else guidage.fin.setLatLngs(bouts);
+}
+function guidageRetirerTrace(){
+  try { if (guidage.trace && map) map.removeLayer(guidage.trace); } catch(e){}
+  guidage.trace = null; guidage.distanceTrace = null; guidage.origineTrace = null;
+  guidageDessinerFin(null);
+}
 function guiderVers(ficheId, questId, silencieux){
   const f = ficheParIdJouable(ficheId);
   if (!f || typeof f.lat !== 'number' || typeof f.lng !== 'number'){ if (!silencieux) showToast('Ce lieu n\'a pas de position sur la carte'); return false; }
@@ -8059,7 +8083,8 @@ function guiderVers(ficheId, questId, silencieux){
 function guidageEffacerTraces(){
   try { if (guidage.trace && map) map.removeLayer(guidage.trace); } catch(e){}
   try { if (guidage.ligne && map) map.removeLayer(guidage.ligne); } catch(e){}
-  guidage.trace = null; guidage.ligne = null;
+  try { if (guidage.fin && map) map.removeLayer(guidage.fin); } catch(e){}   // v19
+  guidage.trace = null; guidage.ligne = null; guidage.fin = null;
 }
 function arreterGuidage(silencieux){
   const etait = guidageActif();
@@ -8103,11 +8128,13 @@ function guidageMettreAJour(force){
   if (guidage.trace && guidage.origineTrace){
     const derivePerime = haversineDist(playerPos.lat, playerPos.lng, guidage.origineTrace.lat, guidage.origineTrace.lng);
     if (derivePerime > GUIDAGE_TRACE_PERIME_M){
-      try { map.removeLayer(guidage.trace); } catch(e){}
-      guidage.trace = null; guidage.distanceTrace = null; guidage.origineTrace = null;
+      guidageRetirerTrace();
       journal('carte', 'tracé périmé', Math.round(derivePerime) + ' m de dérive, retour à la ligne droite');
     }
   }
+  /* v19 — parcours réglé « à vol d'oiseau » : un tracé par les rues encore affiché (réglage changé
+     en route, reprise après rechargement) est retiré ; la ligne droite prend sa place. */
+  if (guidageVolOiseau() && guidage.trace) guidageRetirerTrace();
   /* v10 — la ligne droite pointillée n'apparaît que s'il n'y a AUCUN tracé par les rues :
      pendant un recalcul, l'ancien tracé reste affiché (au test v9, les deux se superposaient). */
   if (guidage.trace){
@@ -8123,7 +8150,7 @@ function guidageMettreAJour(force){
     if (derive > GUIDAGE_RECALCUL_M || Date.now() - guidage.dateTrace > GUIDAGE_RECALCUL_MS) force = true;
   } else force = true;
   guidagePastille(dist);
-  if (force && (typeof navigator === 'undefined' || navigator.onLine !== false)) guidageDemanderTrace();
+  if (force && !guidageVolOiseau() && (typeof navigator === 'undefined' || navigator.onLine !== false)) guidageDemanderTrace();   // v19 : jamais de requête à vol d'oiseau
 }
 function guidagePastille(distVol){
   const pill = document.getElementById('guidagePill');
@@ -8137,7 +8164,8 @@ function guidagePastille(distVol){
   }
   metres = Math.round(metres);
   const lisible = metres >= 1000 ? (metres/1000).toFixed(1).replace('.0','') + ' km' : metres + ' m';
-  document.getElementById('guidageTexte').innerHTML = `<b>${guidage.nom}</b> · ${lisible}<small>${parLesRues ? 'par les rues' : 'à vol d\'oiseau' + (navigator.onLine === false ? ' — hors connexion' : '')}</small>`;
+  /* v19 : à vol d'oiseau par réglage, la mention « hors connexion » n'a pas de sens (ce n'est pas un repli) */
+  document.getElementById('guidageTexte').innerHTML = `<b>${guidage.nom}</b> · ${lisible}<small>${parLesRues ? 'par les rues' : 'à vol d\'oiseau' + (navigator.onLine === false && !guidageVolOiseau() ? ' — hors connexion' : '')}</small>`;
   const cap = playerPos ? guidageCap(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng) : 0;
   document.getElementById('guidageFleche').style.transform = 'rotate(' + Math.round(cap - 90) + 'deg)';
   pill.style.display = 'flex';
@@ -8160,18 +8188,25 @@ async function guidageDemanderTrace(){
     if (guidage.cibleId !== cible) return;                    // le guidage a changé pendant la requête
     const points = route.geometry.coordinates.map(c=> [c[1], c[0]]);
     points.unshift([origine.lat, origine.lng]);
-    points.push([guidage.lat, guidage.lng]);
+    /* v19 — OSRM s'arrête sur la rue la plus proche du point ; s'il en est loin (plus de
+       GUIDAGE_ECART_POINT_M), les derniers mètres sont un POINTILLÉ droit (rappel de direction,
+       pas un itinéraire), et non plus un trait plein qui faisait croire à un chemin. */
+    const bout = points[points.length - 1];
+    const ecart = haversineDist(bout[0], bout[1], guidage.lat, guidage.lng);
+    const loin = ecart > GUIDAGE_ECART_POINT_M;
+    if (!loin) points.push([guidage.lat, guidage.lng]);
     if (!guidage.trace) guidage.trace = L.polyline(points, { color:'#0f8a52', weight:5, opacity:.85, interactive:false }).addTo(map);
     else guidage.trace.setLatLngs(points);
+    guidageDessinerFin(loin ? bout : null);
     if (guidage.ligne){ try { map.removeLayer(guidage.ligne); } catch(e){} guidage.ligne = null; }
-    guidage.origineTrace = origine; guidage.dateTrace = Date.now(); guidage.distanceTrace = route.distance;
+    guidage.origineTrace = origine; guidage.dateTrace = Date.now(); guidage.distanceTrace = route.distance + ecart;
   } catch(e){
     /* pas de réseau ou service muet : on garde la ligne droite, et on réessaiera au prochain déplacement */
     if (guidage.cibleId === cible){
       /* v10 : l'ancien tracé reste (il mène toujours au bon endroit) tant qu'on n'a pas dérivé
          de plus de GUIDAGE_TRACE_PERIME_M de son point de départ ; au-delà, on repasse en ligne droite. */
       const derive = guidage.origineTrace ? haversineDist(origine.lat, origine.lng, guidage.origineTrace.lat, guidage.origineTrace.lng) : Infinity;
-      if (guidage.trace && derive > GUIDAGE_TRACE_PERIME_M){ try { map.removeLayer(guidage.trace); } catch(e2){} guidage.trace = null; guidage.distanceTrace = null; guidage.origineTrace = null; }
+      if (guidage.trace && derive > GUIDAGE_TRACE_PERIME_M) guidageRetirerTrace();   // v19 : retire aussi le pointillé de fin
       guidage.dateTrace = Date.now() - GUIDAGE_RECALCUL_MS + 20000;   // nouvel essai dans ~20 s
       if (!guidage.trace) guidage.origineTrace = origine;
       journal('carte', 'itinéraire indisponible', (e && e.message) || String(e));
@@ -11970,6 +12005,7 @@ function chargerReglagesParcoursDansLeHub(){
   document.getElementById('parcoursDureeInput').value = r.dureeMin || '';
   document.getElementById('parcoursAlerteOrangeInput').value = r.alerteOrangeMin || '';   // v18
   document.getElementById('parcoursAlerteRougeInput').value = r.alerteRougeMin || '';
+  document.getElementById('parcoursVolOiseauInput').checked = !!r.guidageVolOiseau;   // v19
   bustesEnCours.intro = r.busteIntro || null;
   bustesEnCours.fin = r.busteFin || null;
   document.getElementById('parcoursBusteIntroFile').value = '';
@@ -12006,6 +12042,7 @@ function enregistrerReglagesParcours(){
     dureeMin: parseInt(document.getElementById('parcoursDureeInput').value, 10) || null,
     alerteOrangeMin: parseInt(document.getElementById('parcoursAlerteOrangeInput').value, 10) || null,   // v18 : seuils en minutes
     alerteRougeMin: parseInt(document.getElementById('parcoursAlerteRougeInput').value, 10) || null,
+    guidageVolOiseau: !!document.getElementById('parcoursVolOiseauInput').checked,   // v19 : site fermé → jamais d'itinéraire par les rues
     carteImage: carteEnCours || null,
     carteNom: document.getElementById('parcoursCarteNomInput').value.trim() || null,
     carteSaison: document.getElementById('parcoursCarteSaisonInput').value.trim() || null,
@@ -13847,6 +13884,10 @@ function reserveVignette(e){
   return (e.images && (e.images.portrait || e.images.buste || e.images.image)) || '';
 }
 function reserveEchapper(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, c=> ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+/* v19 : filtre de la galerie — style ('' = tous) et catégorie ('' = toutes). */
+function reserveFiltrer(liste, style, cat){
+  return (liste || []).filter(e=> e && (!style || (e.style || '').trim() === style) && (!cat || e.cat === cat));
+}
 
 /* Feuille « garder dans la réserve » : nom + style (libre, avec les styles déjà connus). */
 function reserveGarder(cat, images, nomPropose){
@@ -13857,7 +13898,8 @@ function reserveGarder(cat, images, nomPropose){
     const fond = document.createElement('div');
     fond.className = 'overlay show';
     fond.style.zIndex = '5200';
-    const apercus = dispo.map(k=> '<img src="' + images[k] + '" style="width:64px; height:64px; object-fit:contain; border-radius:8px; background:#fff; border:1px solid var(--line);">').join('');
+    /* v19 : pour un objet, la version en grand est la même image — un seul aperçu */
+    const apercus = dispo.filter(k=> k !== 'imageGrande').map(k=> '<img src="' + images[k] + '" style="width:64px; height:64px; object-fit:contain; border-radius:8px; background:#fff; border:1px solid var(--line);">').join('');
     fond.innerHTML = `
       <div class="sheet">
         <div class="sheet-top">
@@ -13921,7 +13963,7 @@ function reserveChoisir(cat, appliquer){
       <div class="reserve-tuile" data-id="${e.id}">
         <img src="${reserveVignette(e)}" alt="">
         <div class="nom">${reserveEchapper(e.nom)}</div>
-        <div class="sous">${reserveEchapper(e.style || '')}${cat === 'perso' && e.images && e.images.buste ? ' · buste' : ''}</div>
+        <div class="sous">${reserveEchapper(e.style || '')}${cat === 'perso' && e.images && e.images.buste ? ' · avec buste' : ''}</div>
       </div>`).join('');
     grille.querySelectorAll('.reserve-tuile').forEach(t=> t.addEventListener('click', ()=>{
       const e = tout.find(x=> x.id === t.dataset.id);
@@ -13953,15 +13995,28 @@ function ouvrirReserve(){
         <button class="btn-secondary" data-export style="flex:1;">📤 Exporter</button>
         <button class="btn-secondary" data-import style="flex:1;">📥 Importer</button>
       </div>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <select class="field-input" data-filtre-style style="flex:1; margin:0;"><option value="">Tous les styles</option></select>
+        <select class="field-input" data-filtre-cat style="flex:1; margin:0;"><option value="">Toutes les catégories</option>${Object.keys(RESERVE_CATS).map(c=> '<option value="' + c + '">' + RESERVE_CATS[c] + '</option>').join('')}</select>
+      </div>
       <div data-contenu></div>
     </div>`;
   document.body.appendChild(fond);
   const contenu = fond.querySelector('[data-contenu]');
+  const selStyle = fond.querySelector('[data-filtre-style]'), selCat = fond.querySelector('[data-filtre-cat]');
   function dessiner(){
-    const tout = reserveListe();
-    fond.querySelector('[data-resume]').textContent = tout.length ? tout.length + ' entrée(s) · ' + (reserveStyles().length || 'aucun') + ' style(s) — sur cet appareil seulement' : 'Vide pour l\'instant. Dans une fiche, « ➕ Garder dans la réserve » y ajoute le personnage, le décor ou l\'objet.';
+    const tous = reserveListe();
+    /* v19 — les filtres : la liste des styles est refaite à chaque dessin (renommage, suppression), le choix en cours est gardé */
+    const stylesTous = Array.from(new Set(tous.map(e=> (e.style || '').trim()))).sort((a, b)=> a.localeCompare(b, 'fr'));
+    const choixStyle = selStyle.value, choixCat = selCat.value;
+    selStyle.innerHTML = '<option value="">Tous les styles</option>' + stylesTous.map(st=> '<option value="' + reserveEchapper(st) + '">' + reserveEchapper(st || '(sans style)') + '</option>').join('');
+    selStyle.value = stylesTous.indexOf(choixStyle) >= 0 ? choixStyle : '';
+    const tout = reserveFiltrer(tous, selStyle.value, choixCat);
+    const filtre = !!(selStyle.value || choixCat);
+    fond.querySelector('[data-resume]').textContent = tous.length ? tous.length + ' entrée(s) · ' + (reserveStyles().length || 'aucun') + ' style(s) — sur cet appareil seulement' + (filtre ? ' · ' + tout.length + ' affichée(s)' : '') : 'Vide pour l\'instant. Dans une fiche, « ➕ Garder dans la réserve » y ajoute le personnage, le décor ou l\'objet.';
     let html = '';
     const styles = Array.from(new Set(tout.map(e=> (e.style || '').trim()))).sort((a, b)=> a.localeCompare(b, 'fr'));
+    if (tous.length && !tout.length) html = '<p class="meta">Rien ne correspond à ce filtre.</p>';
     styles.forEach(st=>{
       html += '<div class="reserve-titre">' + reserveEchapper(st || 'Sans style') + '</div>';
       Object.keys(RESERVE_CATS).forEach(cat=>{
@@ -13997,6 +14052,8 @@ function ouvrirReserve(){
     }));
   }
   dessiner();
+  selStyle.addEventListener('change', dessiner);
+  selCat.addEventListener('change', dessiner);
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-export]').addEventListener('click', ()=>{
     const entrees = reserveListe();
