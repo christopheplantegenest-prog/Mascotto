@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v463</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v464</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7204,7 +7204,8 @@ function renderQuestTracker(){
   const wrap = document.getElementById('questTrackerList');
   if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
   wrap.innerHTML = '<p class="meta">Chargement…</p>';
-  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+  db.collection('players').doc(currentUser.uid).get().then(async (doc)=>{
+    await chargerScenesDesZones(); // v464 : pour savoir dans quelle zone vit un personnage sans position
     const inv = (doc.exists && doc.data().inventory) || {};
     const journals = (doc.exists && doc.data().questJournals) || {};
     const active = quests.filter(q=> playerQuestsState[q.id] === 'active');
@@ -7251,10 +7252,29 @@ function renderQuestTracker(){
 /* v462 (Parcours v10) — la DESTINATION d'une quête : le lieu réglé dans l'éditeur (« Lieu à rejoindre »),
    sinon, automatiquement, le personnage dont un choix de dialogue VALIDE cette quête.
    Retourne une fiche jouable positionnée, ou null. */
+/* v464 — CACHE DES SCÈNES DES ZONES. Les scènes d'une zone ne sont PAS dans sa fiche : elles vivent
+   dans la collection exploration_zones, lue seulement quand on entre dans la zone. Pour savoir quel
+   personnage vit où sans y entrer, on lit ces documents une fois par session (une lecture par zone
+   positionnée) et on les garde ici. Le cache d'une zone est oublié quand on l'enregistre dans l'éditeur. */
+const scenesDesZones = new Map(); // zoneId → scènes normalisées
+function oublierScenesDeZone(zoneId){ if (zoneId) scenesDesZones.delete(zoneId); else scenesDesZones.clear(); }
+async function chargerScenesDesZones(){
+  if (typeof zonesCol === 'undefined' || !zonesCol) return;
+  const zones = toutesLesFiches()
+    .filter(b=> (b.interactionType || '') === 'zone' && !scenesDesZones.has(b.id))
+    .map(b=> ({ id:b.id, j: ficheJouable(b) }))
+    .filter(x=> x.j && typeof x.j.lat === 'number' && typeof x.j.lng === 'number');
+  await Promise.all(zones.map(async (x)=>{
+    try {
+      const doc = await zonesCol.doc(x.id).get();
+      scenesDesZones.set(x.id, normalizeZoneScenes(doc.exists ? doc.data() : null).scenes);
+    } catch(e){ /* pas de cache pour cette zone, on réessaiera à la prochaine ouverture */ }
+  }));
+}
 /* v463 — la zone d'exploration qui HÉBERGE un personnage EN CE MOMENT : on ne regarde que le contenu
    actuellement affiché de chaque scène (la variante active, sinon la scène de base — même règle que
    resolveSceneContent), on écarte les zones hors horaires et les zones à découvrir pas encore trouvées.
-   Renvoie la fiche de zone (avec sa position), ou null. */
+   Renvoie la fiche de zone (avec sa position), ou null. v464 : les scènes viennent du cache ci-dessus. */
 function zoneQuiHeberge(pnjId){
   if (!pnjId) return null;
   for (const brute of toutesLesFiches()){
@@ -7263,7 +7283,7 @@ function zoneQuiHeberge(pnjId){
     if (!z || typeof z.lat !== 'number' || typeof z.lng !== 'number') continue;
     if (!isActiveNow(z)) continue;
     if (z.explorable && typeof playerDiscoveredZoneIds !== 'undefined' && !playerDiscoveredZoneIds.has(brute.id)) continue;
-    const scenes = Array.isArray(z.scenes) ? z.scenes : [];
+    const scenes = scenesDesZones.get(brute.id) || (Array.isArray(z.scenes) ? z.scenes : []);
     const dedans = scenes.some(sc=> (resolveSceneContent(sc).points || []).some(p=> p && p.type === 'pnj' && p.linkedPnjId === pnjId));
     if (dedans) return { ...z, id: brute.id };
   }
@@ -23842,6 +23862,7 @@ async function enregistrerSceneCourante(fermerApres){
       startSceneId: sceneEditorStartSceneId,
       updatedAt: Date.now(),
     });
+    oublierScenesDeZone(sceneEditorZoneId); // v464
     showToast('Scène enregistrée');
     /* Le point de comparaison suit l'enregistrement, sinon la zone resterait « modifiée » juste
        après avoir été sauvée et la croix redemanderait quoi faire pour rien. */
@@ -27192,6 +27213,7 @@ async function importerScenario(sc){
         startSceneId: idScene[z.sceneDepart] || scenes[0].id,
         updatedAt: Date.now(),
       }, { merge:true });
+      oublierScenesDeZone(zoneId); // v464
       journal.push('🗺️ Zone « ' + z.name + ' » : ' + scenes.length + ' scène(s) écrite(s)');
     }
   }
