@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v469</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v470</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3227,6 +3227,17 @@
       <button class="sheet-x" id="explorerRoomCloseBtn">✕</button>
     </div>
     <div id="explorerSectionShip"></div>
+  </div>
+</div>
+
+<!-- v470 : l'étagère à plans (plans volés en combat, à comparer par modèle) -->
+<div class="overlay" id="plansOverlay" style="z-index:4640;">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">📐 Étagère à plans</h3>
+      <button class="sheet-x" id="plansCloseBtn">✕</button>
+    </div>
+    <div id="plansSection"></div>
   </div>
 </div>
 
@@ -13497,6 +13508,7 @@ let rmBrouillon = null;       // la fiche en cours de saisie
 function robotModeleVierge(vice){
   vice = vice || CLES_VICES[0];
   return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), liste:[], jeu:[],
+    pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:PIRATAGE_DEFAUT.zone, pirFuite:PIRATAGE_DEFAUT.fuite,
     faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null };
 }
 /* Les quatre attaques emportées : celles choisies, restreintes à la liste apprenable, sans doublon,
@@ -13520,6 +13532,11 @@ function lireFormRobotModele(){
   f.liste = Array.from(document.querySelectorAll('#rmListe [data-rmatt]:checked')).map(el=> el.dataset.rmatt);
   const jeu = [0,1,2,3].map(p=> v('rmJeu-' + p)).filter(Boolean);
   if (jeu.length) f.jeu = jeu;
+  const num = (id, min, max, def)=>{ const n = parseInt(v(id), 10); return isNaN(n) ? def : Math.max(min, Math.min(max, n)); };
+  f.pirCadenas = num('rmPirCadenas', 1, 6, PIRATAGE_DEFAUT.cadenas);
+  f.pirVitesse = num('rmPirVitesse', 1, 5, PIRATAGE_DEFAUT.vitesse);
+  f.pirZone = num('rmPirZone', 8, 50, PIRATAGE_DEFAUT.zone);
+  f.pirFuite = num('rmPirFuite', 0, 100, PIRATAGE_DEFAUT.fuite);
   return f;
 }
 function htmlJeuModele(f){
@@ -13563,6 +13580,14 @@ function renderRobotModeleForm(){
     <div class="field-label">Main de départ — les quatre attaques que ce robot a en main quand on le croise</div>
     <p class="meta" style="margin:0 0 6px;">Provisoire : la main variable (deux, trois ou quatre attaques selon l'exemplaire) viendra avec le nouveau moteur.</p>
     <div id="rmJeuZone">${htmlJeuModele(f)}</div>
+    <div class="field-label">📡 Piratage — voler son plan en combat (v470)</div>
+    <p class="meta" style="margin:0 0 6px;">Le joueur tape quand le curseur passe dans la zone verte, un cadenas après l'autre. Le nombre de cadenas baisse quand le robot est affaibli (−1 sous 50 % de vie, −1 sous 25 %), et monte d'un à chaque plan déjà volé dans le combat.</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+      <label class="meta">Cadenas (1 à 6)<input type="number" id="rmPirCadenas" class="field-input" min="1" max="6" value="${f.pirCadenas!=null?f.pirCadenas:PIRATAGE_DEFAUT.cadenas}"></label>
+      <label class="meta">Vitesse du curseur (1 à 5)<input type="number" id="rmPirVitesse" class="field-input" min="1" max="5" value="${f.pirVitesse!=null?f.pirVitesse:PIRATAGE_DEFAUT.vitesse}"></label>
+      <label class="meta">Zone verte (% de la barre)<input type="number" id="rmPirZone" class="field-input" min="8" max="50" value="${f.pirZone!=null?f.pirZone:PIRATAGE_DEFAUT.zone}"></label>
+      <label class="meta">Fuite si le piratage rate (%)<input type="number" id="rmPirFuite" class="field-input" min="0" max="100" value="${f.pirFuite!=null?f.pirFuite:PIRATAGE_DEFAUT.fuite}"></label>
+    </div>
     ${htmlImageModele('face', 'Combat face', 'Le robot vu de face : c\'est lui qu\'on affronte, et son portrait dans la barre des tours.', f)}
     ${htmlImageModele('dos', 'Combat dos', 'Le robot vu de dos, quand il se bat à tes côtés. Sans image de dos, la face sert des deux côtés.', f)}
     ${htmlApercuCombatModele(f)}
@@ -13611,7 +13636,8 @@ function cablerFormRobotModele(){
     f.jeu = mainDeModele(f, f.jeu).map(a=> a.id);
     let images;
     try { images = await champsImagesModele(f); } catch(err){ showToast('Image non enregistrée : ' + err.message); return; }
-    const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), liste:f.liste.slice(), jeu:f.jeu.slice(), ...images, updatedAt: Date.now() };
+    const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), liste:f.liste.slice(), jeu:f.jeu.slice(),
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -13648,6 +13674,7 @@ function renderRobotsModelesList(){
     if (!m) return;
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), liste:(m.liste||[]).slice(), jeu:(m.jeu||[]).slice(),
+      pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
     rmViceAvant = rmBrouillon.vice;
@@ -15240,8 +15267,10 @@ function creerCombattant(cfg, side, idx){
   const v = (cfg.variation == null) ? 0 : cfg.variation;
   const stats = {};
   /* étape 3 : un exemplaire recruté porte un écart FIGÉ (cfg.ecart) ; un monstre tire le sien (variation) */
+  const ecartTire = {};   // v470 : l'écart tiré par un monstre est GARDÉ — c'est lui que le plan volé emporte
   Object.keys(base).forEach(k=>{
     const m = cfg.ecart ? (cfg.ecart[k] || 1) : (v ? alea(1 - v, 1 + v) : 1);
+    ecartTire[k] = Math.round(m * 1000) / 1000;
     stats[k] = Math.max(1, Math.round(base[k] * m));
   });
   if (side === 'enemy' && R.multDifficulte !== 1){
@@ -15280,9 +15309,11 @@ function creerCombattant(cfg, side, idx){
   };
   f.statuses = f.statuts;   // le même objet, sous le nom que lit l'enveloppe du jeu
   /* étape 3 : ce que l'enveloppe et la fin de combat lisent sur le combattant (butin, vol, source, fuite) */
-  ['sourceId','modeleId','rewardItemIds','stealEasyItemId','stealHardItemId','budgetCategory','fleeChance','fleeSeuil','fleeChanceSoi','ecart'].forEach(k=>{
+  ['sourceId','modeleId','rewardItemIds','stealEasyItemId','stealHardItemId','budgetCategory','fleeChance','fleeSeuil','fleeChanceSoi','ecart','piratage','multStats'].forEach(k=>{
     if (cfg[k] !== undefined) f[k] = cfg[k];
   });
+  if (!f.ecart) f.ecart = ecartTire;
+  f.piratages = 0;   // v470 : plans déjà volés sur lui pendant ce combat
   f.stolenEasy = false; f.stolenHard = false;
   f.name = f.nom;
   f.speed = stats.speed;
@@ -16338,6 +16369,66 @@ function remettreModeleAZero(){
   majBlocsModele([]);
 }
 
+/* =====================================================================================
+   v470 — LE PIRATAGE (lot 1 du chantier capture-fabrication, cadré le 08/09).
+   En combat, à la place d'une attaque, le joueur tente de voler le PLAN d'un adversaire : un
+   mini-jeu « verrou à cadenas » (taper quand le curseur passe dans le vert, un cadenas après
+   l'autre). Réussi : un plan portant les stats de CET exemplaire (son écart tiré) ; raté : le
+   robot peut fuir. Un plan = un robot à fabriquer (lot 2). Les réglages vivent sur le MODÈLE.
+   ===================================================================================== */
+const PIRATAGE_DEFAUT = { cadenas:3, vitesse:3, zone:22, fuite:20 };
+function piratageDuModele(m){
+  m = m || {};
+  return {
+    cadenas: m.pirCadenas != null ? m.pirCadenas : PIRATAGE_DEFAUT.cadenas,
+    vitesse: m.pirVitesse != null ? m.pirVitesse : PIRATAGE_DEFAUT.vitesse,
+    zone:    m.pirZone    != null ? m.pirZone    : PIRATAGE_DEFAUT.zone,
+    fuite:   m.pirFuite   != null ? m.pirFuite   : PIRATAGE_DEFAUT.fuite,
+  };
+}
+/* Les réglages EFFECTIFS d'une tentative : le modèle, moins l'affaiblissement, plus les plans déjà volés. */
+function piratageReglages(cible){
+  const base = cible.piratage || PIRATAGE_DEFAUT;
+  const deja = cible.piratages || 0;
+  const ratio = cible.maxHp ? cible.hp / cible.maxHp : 1;
+  let cadenas = base.cadenas + deja;
+  if (ratio <= 0.5) cadenas -= 1;
+  if (ratio <= 0.25) cadenas -= 1;
+  cadenas = Math.max(1, Math.min(8, cadenas));
+  const affaibli = Object.keys(cible.statuts || {}).some(s=> STATUTS_NEGATIFS.includes(s));
+  const zone = Math.min(60, base.zone + (affaibli ? 8 : 0));
+  const fuite = Math.min(100, base.fuite + 15 * deja);
+  return { cadenas, vitesse: base.vitesse, zone, fuite, deja, affaibli };
+}
+/* Le plan volé : le modèle et l'écart de CET exemplaire. Ses stats se relisent comme celles d'une
+   recrue (statsDeLExemplaire) — sans le ×0,8 des monstres communs, question qu'il tranchera au lot 2. */
+function planDepuisCombattant(f){
+  const m = f.modeleId ? ctModele(f.modeleId) : null;
+  const ecart = {}; Object.keys(f.ecart || {}).forEach(k=> ecart[k] = f.ecart[k]);
+  const stats = m ? statsDeLExemplaire({ robotModeleId: m.id, ecartStats: ecart }) : Object.assign({}, f.base || {});
+  return {
+    id: 'pl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    modeleId: f.modeleId || null, modele: m ? m.nom : (f.nom || '?'), vice: (m && m.vice) || f.vice || null,
+    ecart, stats, multStats: f.multStats != null ? f.multStats : 1,
+    source: f.nom || '?', ficheId: f.sourceId || null, date: Date.now(),
+  };
+}
+/* Les plans du joueur (champ `plans` de son document). */
+let playerPlans = [];
+function enregistrerPlan(plan){
+  if (!playerDocRef) return Promise.resolve();
+  playerPlans = playerPlans.concat([plan]);
+  return playerDocRef.set({ plans: firebase.firestore.FieldValue.arrayUnion(plan) }, { merge:true })
+    .catch((err)=> showToast('Plan non enregistré : ' + err.message));
+}
+function jeterPlan(id){
+  const plan = playerPlans.find(p=> p.id === id);
+  if (!plan || !playerDocRef) return Promise.resolve();
+  playerPlans = playerPlans.filter(p=> p.id !== id);
+  return playerDocRef.set({ plans: firebase.firestore.FieldValue.arrayRemove(plan) }, { merge:true })
+    .catch((err)=> showToast('Plan non retiré : ' + err.message));
+}
+
 /* ---------- L'EXEMPLAIRE : son écart de stats, ses stats réelles ---------- */
 function tirerEcartStats(pct){
   const v = (parseFloat(pct) || 0) / 100;
@@ -16449,6 +16540,7 @@ function m2CfgDepuisFiche(c, nomAffiche){
     rewardItemIds: (cs.rewardItemIds || []).slice(),
     stealEasyItemId: cs.stealEasyItemId || null, stealHardItemId: cs.stealHardItemId || null,
     budgetCategory: cs.budgetCategory || 'monstre_commun',
+    piratage: piratageDuModele(m),
     sourceId: c.id, modeleId: m.id, ...m2ImagesDepuisModele(m),
   };
 }
@@ -16919,6 +17011,7 @@ function m2PanneauAction(acteur){
         <button type="button" class="btn-secondary" id="m2AnalyseBtn">🔍 Analyse</button>
         <button type="button" class="btn-secondary" id="m2ObjetsBtn" ${nbObjets ? '' : 'disabled style="opacity:.5;"'}>🎒 Objets (${nbObjets})</button>
         <button type="button" class="btn-secondary" id="m2SouffleBtn" title="Regagner du cristal et revenir plus vite">⏭️ Passer</button>
+        ${m2PiratagePossible() ? '<button type="button" class="btn-secondary" id="m2PiraterBtn" title="Voler le plan d\'un adversaire">📡 Pirater</button>' : ''}
         ${ultimeDispo ? `<button type="button" class="btn-secondary btn-ultime" id="m2UltimeBtn"><span style="display:flex; align-items:center; gap:4px; min-width:0;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;">${U.emoji} ${U.nom}</span><span class="aide-i combat-atk-fiche" data-fiche="ultime" title="Fiche de l'ultime">i</span></span></button>` : ''}
         ${combatState.test
           ? '<button type="button" class="btn-secondary" id="m2QuitterBtn" style="color:var(--danger); border-color:rgba(192,57,43,.4);">⏹️ Quitter</button>'
@@ -16948,6 +17041,12 @@ function m2PanneauAction(acteur){
       m2LancerUltime(acteur);
     });
   }
+  const bP = document.getElementById('m2PiraterBtn');
+  if (bP) bP.addEventListener('click', ()=>{
+    if (!M2.vivants('enemy').some(f=> f.modeleId)){ showToast('Aucun plan à voler ici.'); return; }
+    combatState.pendingAttack = { kind:'pirater', name:'Piratage' };
+    renderCombatTargetingPanel(acteur, 'Choisis le robot à pirater');
+  });
   document.getElementById('m2AnalyseBtn').addEventListener('click', ()=>{
     if (!M2.vivants(acteur.side === 'player' ? 'enemy' : 'player').length){ showToast('Aucune cible à analyser.'); return; }
     combatState.pendingAttack = { kind:'analyze', name:'Analyse' };
@@ -17064,6 +17163,14 @@ async function m2ClicCarte(uid){
   const att = combatState.pendingAttack;
   const cible = combatState.fighters.find(f=> f.uid === uid);
   if (!acteur || !cible) return;
+  if (att.kind === 'pirater'){
+    if (cible.side === acteur.side){ showToast('Choisis un adversaire'); return; }
+    if (!cible.alive) return;
+    if (!cible.modeleId){ showToast('Ce robot n\'a pas de plan à voler'); return; }
+    combatState.pendingActor = null; combatState.pendingAttack = null;
+    m2MiniJeuVerrou(acteur, cible);
+    return;
+  }
   if (att.kind === 'analyze'){
     if (cible.side === acteur.side){ showToast('Choisis un adversaire'); return; }
     combatState.pendingActor = null; combatState.pendingAttack = null;
@@ -17112,6 +17219,95 @@ async function m2ClicCarte(uid){
   }
   await m2Jouer(acteur, att, cible);
 }
+/* ---------- v470 : LE PIRATAGE EN COMBAT ---------- */
+function m2PiratagePossible(){
+  if (!combatState || combatState.isPvp || combatState.isSpectator) return false;
+  if (typeof combatDeDialogue === 'function' && combatDeDialogue()) return false;   // un duel de dialogue n'est pas une chasse
+  return M2.vivants('enemy').some(f=> f.modeleId);
+}
+/* Le verrou à cadenas : un curseur fait l'aller-retour sur une barre, on tape (n'importe où sur le
+   panneau) quand il passe dans le vert ; chaque cadenas validé accélère le suivant. Raté = tour perdu
+   et chance de fuite du robot. Les réglages viennent de piratageReglages(cible). */
+function m2MiniJeuVerrou(acteur, cible){
+  const panel = document.getElementById('combatActionPanel');
+  const R = piratageReglages(cible);
+  let idx = 0, fini = false, raf = null, t0 = null;
+  let vitesse = 0.6 + 0.35 * R.vitesse;   // traversées de barre par seconde
+  let zoneG = 0;
+  const nouvelleZone = ()=>{ zoneG = 8 + Math.random() * (92 - R.zone - 8); };
+  nouvelleZone();
+  const cadenasHtml = ()=> [...Array(R.cadenas)].map((_, i)=> `<span style="font-size:18px; ${i < idx ? '' : 'opacity:.45;'}">${i < idx ? '🔓' : '🔒'}</span>`).join('');
+  const dessiner = ()=>{
+    panel.innerHTML = `
+      <div id="pirJeu" style="padding:5px 8px; text-align:center; user-select:none; -webkit-user-select:none; cursor:pointer;">
+        <div class="meta" style="font-size:12px; margin:0 0 3px;">📡 Piratage de <b>${cible.nom}</b> — cadenas ${Math.min(idx + 1, R.cadenas)}/${R.cadenas}${R.deja ? ' · déjà ' + R.deja + ' plan(s) volé(s)' : ''}${R.affaibli ? ' · affaibli' : ''}</div>
+        <div style="display:flex; gap:6px; justify-content:center; margin:2px 0 5px;">${cadenasHtml()}</div>
+        <div id="pirBarre" style="position:relative; height:26px; border-radius:13px; background:#e6ebe6; overflow:hidden; border:1px solid var(--line);">
+          <div id="pirZone" style="position:absolute; top:0; bottom:0; left:${zoneG}%; width:${R.zone}%; background:rgba(46,160,67,.55);"></div>
+          <div id="pirCurseur" style="position:absolute; top:0; bottom:0; width:4px; margin-left:-2px; background:#222; left:0%;"></div>
+        </div>
+        <div class="meta" style="font-size:11px; margin:4px 0 0;">Tape quand le curseur est dans le vert</div>
+      </div>`;
+    document.getElementById('pirJeu').addEventListener('pointerdown', taper);
+  };
+  const position = (t)=>{   // aller-retour : 0 → 100 → 0
+    const x = ((t - t0) / 1000) * vitesse;
+    const p = x - Math.floor(x);
+    return (Math.floor(x) % 2 === 0) ? p * 100 : (1 - p) * 100;
+  };
+  const animer = (t)=>{
+    if (fini) return;
+    if (t0 === null) t0 = t;
+    const c = document.getElementById('pirCurseur');
+    if (c) c.style.left = position(t).toFixed(2) + '%';
+    raf = requestAnimationFrame(animer);
+  };
+  function taper(ev){
+    if (fini || t0 === null) return;
+    ev.preventDefault();
+    const pos = position(performance.now());
+    if (pos >= zoneG && pos <= zoneG + R.zone){
+      idx++;
+      if (idx >= R.cadenas){ terminer(true); return; }
+      vitesse *= 1.15; t0 = performance.now(); nouvelleZone(); dessiner();
+    } else {
+      terminer(false);
+    }
+  }
+  async function terminer(reussi){
+    fini = true; cancelAnimationFrame(raf);
+    if (!combatState || combatState.finished) return;
+    let texte;
+    if (reussi){
+      cible.piratages = (cible.piratages || 0) + 1;
+      const plan = planDepuisCombattant(cible);
+      M2.log(`📡 ${acteur.nom} pirate ${cible.nom} : plan volé !`);
+      spawnParticle(cible.uid, '📐', 'plan volé', 'combat-particle-miss');
+      if (combatState.test) texte = `📐 Plan de ${plan.modele} volé (combat de test : rien n'est gardé).`;
+      else { enregistrerPlan(plan); texte = `📐 Plan de <b>${plan.modele}</b> volé ! Il t'attend sur l'étagère à plans du vaisseau.`; }
+    } else {
+      M2.log(`📡 Piratage de ${cible.nom} raté.`);
+      texte = `❌ Raté — ${cible.nom} a résisté.`;
+      if (M2.hasard(R.fuite)){
+        cible.alive = false; cible.aFui = cible.fled = true;
+        M2.log(`🏃 ${cible.nom} prend la fuite !`);
+        spawnParticle(cible.uid, '💨', 'fuite !', 'combat-particle-miss');
+        texte += ` <b>Il prend la fuite !</b>`;
+      }
+    }
+    combatState.hitUids = combatState.particles.map(p=> p.uid);
+    panel.innerHTML = `<div style="padding:12px 8px; text-align:center; font-size:13px; line-height:1.4;">${texte}</div>`;
+    renderCombat();
+    await sleep(1400);
+    if (!combatState) return;
+    combatState.particles = []; combatState.hitUids = [];
+    M2.finirAction(acteur, 0);   // le piratage coûte le tour, réussi ou non
+    m2FinDuTour();
+  }
+  dessiner();
+  raf = requestAnimationFrame(animer);
+}
+
 /* La fiche d'analyse : vice et roue, immunités, états, réserve de cristal, ultime. Coûte le tour (comme dans le jeu). */
 function m2PanneauAnalyse(acteur, cible){
   const panel = document.getElementById('combatActionPanel');
@@ -17302,6 +17498,9 @@ function watchPlayerInventoryForBase(){
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
     playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
+    if (doc.exists && Array.isArray(doc.data().plans)) playerPlans = doc.data().plans;   // v470
+    const ov = document.getElementById('plansOverlay');
+    if (ov && ov.classList.contains('show')) renderEtagerePlans();
     const ordre = (doc.exists && doc.data().quartersOrder) || null;
     quartersOrder = { combattant: (ordre && ordre.combattant) || [], artisan: (ordre && ordre.artisan) || [] };
     /* Les quartiers ne se redessinent que s'ils sont ouverts ET qu'on n'est pas en train de
@@ -21789,6 +21988,7 @@ const SCENE_POINT_TYPES = [
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
   { id:'missions', label:'📨 Terminal de missions' },
   { id:'soin', label:'💚 Soin' },
+  { id:'plans', label:'📐 Étagère à plans' },
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
@@ -23142,6 +23342,11 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'plans'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre l'étagère à plans : tous les plans volés en combat, groupés par modèle de robot, avec leurs stats côte à côte pour les comparer. Rien à régler ici.</p>`;
+    return;
+  }
+
   if (pt.type === 'explorateur'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le poste de l'explorateur : envoyer l'explorateur chercher de nouvelles zones, suivre son retour, lire son rapport. Rien à régler ici.</p>`;
     return;
@@ -24244,6 +24449,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openMissionTerminal();
     } else if (pt.type === 'explorateur'){
       wrapPointActions[pt.id] = ()=> openExplorerRoom();
+    } else if (pt.type === 'plans'){
+      wrapPointActions[pt.id] = ()=> openEtagerePlans();
     } else if (pt.type === 'soin' || pt.type === 'infirmerie'){
       /* `infirmerie` est l'ancien type, celui de la pièce à capsules supprimée en v408 : un
          point déjà posé garde ainsi un sens au lieu de ne plus rien faire. */
@@ -25358,6 +25565,62 @@ function explorerEstOuvert(){
 function explorerContainer(){
   return document.getElementById('explorerSectionShip');
 }
+/* ---------- v470 : L'ÉTAGÈRE À PLANS ---------- */
+const STATS_PLAN_COURTES = [['hp','❤️'],['atk','⚔️'],['def','🛡️'],['matk','⚡'],['mdef','✨'],['speed','💨']];
+let plansOuverts = {};
+function openEtagerePlans(){
+  document.getElementById('plansOverlay').classList.add('show');
+  armGhostTapGuard(400);
+  renderEtagerePlans();
+}
+function renderEtagerePlans(){
+  const el = document.getElementById('plansSection');
+  if (!el) return;
+  if (!currentUser || !playerDocRef){ el.innerHTML = '<p class="meta">Firebase indisponible ici.</p>'; return; }
+  const plans = (playerPlans || []).filter(Boolean);
+  if (!plans.length){ el.innerHTML = '<p class="meta">Aucun plan pour l\'instant. En combat, « 📡 Pirater » un robot sauvage pour voler le sien.</p>'; return; }
+  const groupes = {};
+  plans.forEach(p=>{ const k = p.modeleId || ('?' + p.modele); (groupes[k] = groupes[k] || []).push(p); });
+  const cles = Object.keys(groupes).sort((a, b)=> (groupes[a][0].modele || '').localeCompare(groupes[b][0].modele || ''));
+  el.innerHTML = `<p class="meta" style="margin:0 0 8px;">${plans.length} plan(s), ${cles.length} modèle(s). Dans chaque modèle, la meilleure valeur de chaque colonne est en vert. Tape un plan pour le détail.</p>`
+    + cles.map(k=>{
+      const g = groupes[k];
+      const m = g[0].modeleId ? ctModele(g[0].modeleId) : null;
+      const V = VICES[(m && m.vice) || g[0].vice] || {};
+      const meilleurs = {};
+      STATS_PLAN_COURTES.forEach(([c])=> meilleurs[c] = Math.max(...g.map(p=> (p.stats && p.stats[c]) || 0)));
+      const ouvert = plansOuverts[k] !== false;
+      const lignes = g.slice().sort((a, b)=> (b.date || 0) - (a.date || 0)).map(p=>{
+        const st = p.stats || {};
+        const cellules = STATS_PLAN_COURTES.map(([c, e])=> `<span style="flex:1; text-align:center; ${st[c] === meilleurs[c] && g.length > 1 ? 'color:#2e8b3a; font-weight:700;' : ''}">${st[c] == null ? '—' : st[c]}</span>`).join('');
+        const detail = plansOuverts['p:' + p.id] ? `
+          <div class="meta" style="font-size:11px; padding:4px 0 6px;">Volé sur ${htmlEsc(p.source || '?')} le ${new Date(p.date || 0).toLocaleDateString('fr-FR')} · ${STATS_EXEMPLAIRE.map(l=> l.emoji + ' ' + (st[l.cle] == null ? '—' : st[l.cle])).join(' · ')}</div>
+          <button type="button" class="btn-secondary plan-jeter-btn" data-plan="${htmlEsc(p.id)}" style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">🗑️ Jeter ce plan (il ne rend rien)</button>` : '';
+        return `<div class="plan-ligne" data-plan="${htmlEsc(p.id)}" style="border-bottom:1px solid var(--line); padding:5px 0; cursor:pointer;">
+          <div style="display:flex; align-items:center; font-size:13px;">${cellules}</div>${detail}</div>`;
+      }).join('');
+      return `<details data-groupe="${htmlEsc(k)}" ${ouvert ? 'open' : ''} style="margin-bottom:8px;">
+        <summary style="cursor:pointer; padding:6px 0; font-weight:600;">${V.emoji || '🤖'} ${htmlEsc(g[0].modele || '?')} <span class="meta" style="font-weight:400;">— ${g.length} plan(s)</span></summary>
+        <div style="display:flex; font-size:12px; padding:3px 0;" class="meta">${STATS_PLAN_COURTES.map(([, e])=> `<span style="flex:1; text-align:center;">${e}</span>`).join('')}</div>
+        ${lignes}
+      </details>`;
+    }).join('');
+  el.querySelectorAll('details[data-groupe]').forEach(d=> d.addEventListener('toggle', ()=>{ plansOuverts[d.dataset.groupe] = d.open; }));
+  el.querySelectorAll('.plan-ligne').forEach(l=> l.addEventListener('click', (ev)=>{
+    if (ev.target.closest('.plan-jeter-btn')) return;
+    const k = 'p:' + l.dataset.plan;
+    plansOuverts[k] = !plansOuverts[k];
+    renderEtagerePlans();
+  }));
+  el.querySelectorAll('.plan-jeter-btn').forEach(b=> b.addEventListener('click', async (ev)=>{
+    ev.stopPropagation();
+    if (!(await appConfirm('Jeter ce plan ? Il ne rend rien, et c\'est définitif.'))) return;
+    await jeterPlan(b.dataset.plan);
+    renderEtagerePlans();
+  }));
+}
+document.getElementById('plansCloseBtn').addEventListener('click', ()=> document.getElementById('plansOverlay').classList.remove('show'));
+
 function openExplorerRoom(){
   document.getElementById('explorerRoomOverlay').classList.add('show');
   armGhostTapGuard(400);
@@ -27365,7 +27628,7 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
    ===================================================================================== */
 const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
 const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
-const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur'];   // points du vaisseau : hors scénario
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans'];   // points du vaisseau : hors scénario
 
 function ctrlEtapesDe(f){
   return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
