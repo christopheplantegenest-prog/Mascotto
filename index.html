@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v464</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v465</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5320,10 +5320,17 @@ function fenetreEffetsReponse(ch){
 
     /* --- conditions : ce que le joueur a déjà dit, ici ou ailleurs. Elles se CUMULENT :
            la réponse n'apparaît que si toutes sont vraies. --- */
+    /* v465 : l'ancienne condition de quête (showIf seul, sans kind) est montrée ici aussi, pour
+       qu'on la voie et qu'on puisse la supprimer depuis cette fenêtre. */
     const toutesLesConditions = ()=> (ch.showIfList || []).concat(
-      (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'combat')) ? [ch.showIf] : []);
+      (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'combat' || ch.showIf.questId)) ? [ch.showIf] : []);
+    const LIBELLES_ETAT_QUETE = { active:'est en cours', completed:'est terminée', not_started:'n\'a jamais été commencée', not_active:'n\'est pas en cours (jamais commencée ou terminée)' };
+    const estCondQuete = (cond)=> cond.kind === 'quest' || (!cond.kind && !!cond.questId);
 
     const decrireUne = (cond)=>{
+      if (estCondQuete(cond)){
+        return 'la quête « ' + nomQuete(cond.questId) + ' » ' + (LIBELLES_ETAT_QUETE[cond.state] || LIBELLES_ETAT_QUETE.active);
+      }
       const chezQui = cond.creatureId ? ((ficheParId(cond.creatureId) || {}).name || 'quelqu\'un') : 'ce personnage';
       if (cond.kind === 'combat'){
         return (cond.state === 'not_won' ? 'il n\'a PAS encore battu ' : 'il a déjà battu ') + chezQui;
@@ -5356,7 +5363,11 @@ function fenetreEffetsReponse(ch){
          retenu la phrase ? Ici, on voit lequel des deux cloche. */
       const chezQui2 = cond.creatureId || (activeCreature ? activeCreature.id : editingId);
       let vraie, precision = '';
-      if (cond.kind === 'combat'){
+      if (estCondQuete(cond)){
+        const etatActuel = etatQuete(playerQuestsState, cond.questId);
+        vraie = etatQueteCorrespond(cond.state || 'active', etatActuel);
+        precision = ' — pour toi elle est ' + (etatActuel === 'active' ? 'en cours' : etatActuel === 'completed' ? 'terminée' : 'jamais commencée');
+      } else if (cond.kind === 'combat'){
         const battu = !!playerCombatsWon[chezQui2];
         vraie = (cond.state === 'not_won') ? !battu : battu;
         precision = battu ? '' : ' — tu ne l\'as pas encore battu';
@@ -5374,7 +5385,7 @@ function fenetreEffetsReponse(ch){
 
       /* La condition cite une phrase d'un AUTRE personnage : on doit pouvoir aller la lire
          sans démonter tout ce qu'on est en train d'écrire. */
-      if (cond.kind !== 'combat' && cond.creatureId && cond.creatureId !== editingId){
+      if (!estCondQuete(cond) && cond.kind !== 'combat' && cond.creatureId && cond.creatureId !== editingId){
         const cible = ficheParId(cond.creatureId);
         const voir = document.createElement('button');
         voir.type = 'button';
@@ -5393,6 +5404,10 @@ function fenetreEffetsReponse(ch){
       inv.textContent = '↔';
       inv.title = 'Inverser : exiger le contraire';
       inv.addEventListener('click', ()=>{
+        if (estCondQuete(cond)){
+          choisirEtatQuete(cond.state || 'active', (etat)=>{ cond.state = etat; dessiner(); });
+          return;
+        }
         if (cond.kind === 'combat') cond.state = (cond.state === 'not_won') ? 'won' : 'not_won';
         else cond.taken = (cond.taken === 'no') ? 'yes' : 'no';
         dessiner();
@@ -5457,17 +5472,42 @@ function fenetreEffetsReponse(ch){
         } });
     };
 
+    /* v465 — la condition de quête, qui n'existait que dans l'ancien éditeur : quête puis état. */
+    const choisirEtatQuete = (actuel, onChoisir)=>{
+      ouvrirSelecteur({
+        titre:'La quête…',
+        items: Object.keys(LIBELLES_ETAT_QUETE).map(k=> ({ id:k, label:LIBELLES_ETAT_QUETE[k], emoji:'📜', detail: k === actuel ? 'réglage actuel' : '' })),
+        selectionnes: [], max:1, fermerApresChoix:true,
+        onChoisir:(ids)=>{ if (ids[0]) onChoisir(ids[0]); } });
+    };
+    const ajouterConditionQuete = ()=>{
+      if (!quests.length){ showToast('Aucune quête créée pour l\'instant'); return; }
+      ouvrirSelecteur({
+        titre:'Quelle quête ?',
+        items: quests.map(q=> ({ id:q.id, label:q.name, emoji:'📜' })),
+        selectionnes: [], max:1, fermerApresChoix:true,
+        onChoisir:(ids)=>{
+          if (!ids[0]) return;
+          choisirEtatQuete('active', (etat)=>{
+            ch.showIfList = (ch.showIfList || []).concat([{ kind:'quest', questId:ids[0], state:etat }]);
+            dessiner();
+          });
+        } });
+    };
+
     ajoutCond.addEventListener('click', ()=>{
       ouvrirSelecteur({
         titre:'Quelle sorte de condition ?',
         items: [
           { id:'phrase', label:'Il a dit une certaine réponse', emoji:'💬' },
           { id:'combat', label:'Il a gagné ou non un combat', emoji:'⚔️' },
+          { id:'quete',  label:'Une quête est dans tel état', emoji:'📜' },
         ],
         selectionnes: [], max:1,
         onChoisir:(ids)=>{
           if (ids[0] === 'combat') ajouterConditionCombat();
           else if (ids[0] === 'phrase') ajouterConditionPhrase();
+          else if (ids[0] === 'quete') ajouterConditionQuete();
         } });
     });
     lignes.appendChild(ajoutCond);
@@ -6838,6 +6878,10 @@ function renderSheet(){
         const dejaBattu = !!playerCombatsWon[contreQui];
         if (cond.state === 'not_won'){ if (dejaBattu) return false; }
         else if (!dejaBattu) return false;
+        continue;
+      }
+      if (cond.kind === 'quest'){   // v465 : condition de quête cumulable comme les autres
+        if (!etatQueteCorrespond(cond.state, etatQuete(playerQuestsState, cond.questId))) return false;
         continue;
       }
       if (!cond.choiceId) continue;
