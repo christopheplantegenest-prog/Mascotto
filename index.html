@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v467</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v468</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7337,7 +7337,7 @@ async function chargerScenesDesZones(){
   const zones = toutesLesFiches()
     .filter(b=> (b.interactionType || '') === 'zone' && !scenesDesZones.has(b.id))
     .map(b=> ({ id:b.id, j: ficheJouable(b) }))
-    .filter(x=> x.j && typeof x.j.lat === 'number' && typeof x.j.lng === 'number');
+    .filter(x=> x.j && ((typeof x.j.lat === 'number' && typeof x.j.lng === 'number') || ctrlEstVaisseau(x.j)));   // v468 : le vaisseau n'a pas de position mais ses scènes se jouent
   await Promise.all(zones.map(async (x)=>{
     try {
       const doc = await zonesCol.doc(x.id).get();
@@ -27373,6 +27373,8 @@ function ctrlEtapesDe(f){
 function ctrlPositionnee(f){ return !!f && typeof f.lat === 'number' && typeof f.lng === 'number'; }
 function ctrlRenouvelable(pt){ return pt.resetMode === 'unlimited' || pt.resetMode === 'timed'; }
 function ctrlPnjRecrute(f){ return !!(f && f.recruitScope === 'shared' && f.recruited); }
+/* v468 : la zone qui sert de vaisseau (réglage shipZoneId). Sans position sur la carte, mais toujours accessible. */
+function ctrlEstVaisseau(f){ return !!(f && typeof shipZoneId !== 'undefined' && shipZoneId && f.id === shipZoneId); }
 
 /* Le modèle : un instantané normalisé de tout le scénario. Asynchrone : les scènes des zones
    vivent dans exploration_zones et passent par le cache scenesDesZones (v464). Les fiches sont
@@ -27599,7 +27601,7 @@ function verifierScenario(modele){
     if (f.interactionType !== 'zone' && f.interactionType !== 'combat' && !ctrlPositionnee(f) && !enZone && f._steps.length){
       dire(indispensables.has(f.id) ? 'erreur' : 'info', cf, nom, indispensables.has(f.id) ? 'Personnage indispensable (il confie, valide ou donne quelque chose) sans position sur la carte et absent de toute zone : le joueur ne peut jamais lui parler.' : 'Personnage en réserve (ni sur la carte, ni dans une zone).');
     }
-    if (f.interactionType === 'zone' && !ctrlPositionnee(f) && !(typeof shipZoneId !== 'undefined' && shipZoneId && f.id === shipZoneId)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
+    if (f.interactionType === 'zone' && !ctrlPositionnee(f) && !ctrlEstVaisseau(f)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
     if (ctrlPnjRecrute(f) && indispensables.has(f.id)) dire('erreur', cf, nom, 'Déjà recruté (recrutement partagé) : il n\'apparaît plus pour personne, alors qu\'il confie, valide ou donne quelque chose.');
     if (f.visibilityCondition && f.visibilityCondition.questId){
       const vq = f.visibilityCondition.questId;
@@ -27721,8 +27723,8 @@ function verifierScenario(modele){
   M.zones.forEach(z=>{
     const nomZ = z.fiche.name || 'Zone';
     const cz = ctrlCible('zone', z.fiche.id);
-    if (!z.chargee && ctrlPositionnee(z.fiche)){ dire('avert', cz, nomZ, 'Scènes non chargées (lecture impossible) : zone non vérifiée. Réessaie.'); return; }
-    if (!z.chargee) return;   // zone sans position : ses scènes ne sont jamais jouées
+    if (!z.chargee && (ctrlPositionnee(z.fiche) || ctrlEstVaisseau(z.fiche))){ dire('avert', cz, nomZ, 'Scènes non chargées (lecture impossible) : zone non vérifiée. Réessaie.'); return; }
+    if (!z.chargee) return;   // zone sans position (et pas le vaisseau) : ses scènes ne sont jamais jouées
     if (!z.scenes.length){ dire('erreur', cz, nomZ, 'Zone sans aucune scène enregistrée.'); return; }
     if (!z.scenes.find(sc=> sc.id === z.startSceneId)) dire('erreur', cz, nomZ, 'La scène de départ n\'existe pas.');
     z.scenes.forEach(sc=>{
@@ -28061,7 +28063,7 @@ function simContenuScene(P, sc, etat){
 }
 function simPnjAbordable(P, fp, etat){
   if (!fp) return false;
-  if (etat.recrutes[fp.id] || ctrlPnjRecrute(fp)) return false;
+  if (etat.recrutes[fp.id]) return false;   // v468 : le marqueur « recruté » (partagé) de la fiche est IGNORÉ — on simule un monde vierge
   if (!isActiveAt(fp, simInstant(P, etat))) return false;
   return creatureConditionMet(fp, etat.quetes);
 }
@@ -28143,7 +28145,7 @@ function simTransitions(P, e, couverture){
   const out = [];   // { etat, libelle, acteur }
   const M = P.M;
   M.fiches.forEach(f=>{
-    if (!ctrlPositionnee(f)) return;
+    if (!ctrlPositionnee(f) && !ctrlEstVaisseau(f)) return;   // v468 : le vaisseau se joue sans position
     if (f.interactionType === 'combat') return;   // monstre de carte : hors simulation
     if (!isActiveAt(f, simInstant(P, e))) return;
     if (f.interactionType === 'zone'){
