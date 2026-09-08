@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v465</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v466</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1560,6 +1560,24 @@
       <input type="file" id="scenarioImportFile" accept="application/json,.json" class="field-input" style="margin-bottom:8px;">
       <button type="button" class="btn-capture" id="scenarioImportBtn" style="width:100%; height:42px;">📥 Importer le fichier choisi</button>
       <div id="scenarioImportReport" style="margin-top:8px; font-size:12px; line-height:1.5;"></div>
+    </div>
+    <button type="button" class="btn-secondary tt-cat" data-ttcat="controle" style="width:100%; margin-bottom:6px; text-align:left;">🔎 Contrôle du scénario</button>
+    <div class="tt-panel" id="ttPanel-controle" style="display:none; padding:0 0 10px;">
+      <p class="meta" style="margin:0 0 6px;">Analyse tout le scénario sans rien modifier : références cassées, objets impossibles à obtenir, quêtes sans issue, zones sans sortie… Le simulateur rejoue ensuite toutes les parties possibles avec les règles du jeu. Touche un élément signalé pour ouvrir sa fiche. Les brouillons sont analysés seulement si « voir mes brouillons » est coché.</p>
+      <button type="button" class="btn-capture" id="ctrlVerifierBtn" style="width:100%; margin-bottom:6px; height:42px;">🔎 Vérifier le scénario</button>
+      <button type="button" class="btn-capture" id="ctrlSimulerBtn" style="width:100%; margin-bottom:6px; height:42px;">▶️ Simuler le scénario</button>
+      <button type="button" class="btn-secondary" id="ctrlArbreBtn" style="width:100%; margin-bottom:6px; height:42px;">🌳 Arbre du scénario</button>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label" style="margin-top:0;">Plafond d'états</div>
+          <input type="number" inputmode="numeric" id="ctrlPlafondInput" class="field-input" min="100" step="1000" placeholder="10000">
+        </div>
+        <div style="flex:1;">
+          <div class="field-label" style="margin-top:0;">Instant simulé (vide = maintenant)</div>
+          <input type="datetime-local" id="ctrlInstantInput" class="field-input">
+        </div>
+      </div>
+      <div id="ctrlPanneau" style="display:none; margin-top:6px;"></div>
     </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="missions" style="width:100%; margin-bottom:6px; text-align:left;">📨 Missions</button>
     <div class="tt-panel" id="ttPanel-missions" style="display:none; padding:0 0 10px;">
@@ -3499,8 +3517,13 @@ function haversineDist(lat1, lon1, lat2, lon2){
 }
 
 /* ---------- Visibilité selon date / heure ---------- */
-function isActiveNow(d){
-  const now = new Date();
+function isActiveNow(d){ return isActiveAt(d, new Date()); }
+/* v466 (Parcours v21) : la même règle à un instant quelconque — c'est ce que le simulateur du
+   scénario utilise pour rejouer les horaires à une heure choisie. Le jeu passe toujours par
+   isActiveNow ; rien ne change pour lui. */
+function isActiveAt(d, now){
+  if (!d) return true;
+  now = now || new Date();
   if (Array.isArray(d.daysOfWeek) && d.daysOfWeek.length > 0){
     if (!d.daysOfWeek.includes(now.getDay())) return false;
   }
@@ -3519,7 +3542,7 @@ function isActiveNow(d){
   const creneaux = (Array.isArray(d.timeRanges) && d.timeRanges.length)
     ? d.timeRanges.filter(c=> c && (c.start || c.end))
     : ((!d.startDate && !d.endDate) ? normaliserCreneaux(d) : []);
-  if (creneaux.length && !heureDansCreneaux(creneaux)) return false;
+  if (creneaux.length && !heureDansCreneaux(creneaux, now)) return false;
   return true;
 }
 
@@ -3540,9 +3563,9 @@ function statutFiche(d){
 /* Vrai pour l'instant présent si l'heure tombe dans l'un des créneaux.
    Partagé par les fiches (zones, PNJ, monstres, boutiques) et par les portes d'une scène :
    une seule règle d'horaire dans tout le jeu, passage de minuit compris. */
-function heureDansCreneaux(creneaux){
+function heureDansCreneaux(creneaux, date){
   if (!creneaux || !creneaux.length) return true;
-  const now = new Date();
+  const now = date || new Date();   // v466 : date en option (simulateur)
   const pad = n=> String(n).padStart(2,'0');
   const nowT = pad(now.getHours())+':'+pad(now.getMinutes());
   return creneaux.some(c=>{
@@ -6763,6 +6786,59 @@ function resultatValidation(quete, inventaire){
   const ok = objectifs.every(o=> (inv[o.itemId] || 0) >= (o.qty || 1));
   return { satisfait: ok, aDeduire: ok ? objectifs.slice() : [] };
 }
+/* v466 (Parcours v21) — UN CHOIX EST-IL PROPOSÉ AU JOUEUR ? Reprend exactement les règles du jeu :
+   - « une fois » déjà pris → non ; « confier » une quête déjà prise/terminée → non ;
+   - « valider » une quête pas en cours → non ; A2 : objectifs pas dans le sac → non ;
+   - conditions cumulées (ET) de showIfList : choix pris ici ou ailleurs, combat gagné / pas gagné,
+     état de quête ; puis l'ancien showIf seul (choice, combat, ou quête sans kind).
+   `etat` = { choix, quetes, inventaire, combats } — le vrai joueur, ou un joueur imaginaire du simulateur. */
+function choixVisible(ch, key, creatureId, etat, listeQuetes){
+  if (!ch) return false;
+  const choix = (etat && etat.choix) || {};
+  const quetes = (etat && etat.quetes) || {};
+  const inv = (etat && etat.inventaire) || {};
+  const combats = (etat && etat.combats) || {};
+  const lq = listeQuetes || quests || [];
+  if (ch.once && choix[key]) return false;
+  if (ch.questGive){
+    const st = etatQuete(quetes, ch.questGive.questId);
+    if (st === 'active' || st === 'completed') return false;
+  }
+  if (ch.questValidate){
+    if (etatQuete(quetes, ch.questValidate.questId) !== 'active') return false;
+    const q = lq.find(x=> x && x.id === ch.questValidate.questId);
+    if (!q || !resultatValidation(q, inv).satisfait) return false;
+  }
+  const conditions = (ch.showIfList || []).concat(
+    (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
+  for (const cond of conditions){
+    if (!cond) continue;
+    if (cond.kind === 'combat'){
+      const dejaBattu = !!combats[cond.creatureId || creatureId];
+      if (cond.state === 'not_won'){ if (dejaBattu) return false; }
+      else if (!dejaBattu) return false;
+      continue;
+    }
+    if (cond.kind === 'quest'){
+      if (!etatQueteCorrespond(cond.state, etatQuete(quetes, cond.questId))) return false;
+      continue;
+    }
+    if (!cond.choiceId) continue;
+    const taken = !!choix[choiceUsedKey(cond.creatureId || creatureId, cond.choiceId)];
+    if (cond.taken === 'no'){ if (taken) return false; }
+    else if (!taken) return false;
+  }
+  if (ch.showIf && ch.showIf.kind === 'choice'){
+    /* déjà traité ci-dessus */
+  } else if (ch.showIf && ch.showIf.kind === 'combat'){
+    const gagne = !!combats[ch.showIf.creatureId || creatureId];
+    if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
+    else if (!gagne) return false;
+  } else if (ch.showIf && ch.showIf.questId){
+    if (!etatQueteCorrespond(ch.showIf.state, etatQuete(quetes, ch.showIf.questId))) return false;
+  }
+  return true;
+}
 function shouldRememberChoice(ch){
   /* v462 (Parcours A8) : on mémorise TOUT choix, plus seulement ceux déjà visés par une condition —
      une condition posée PLUS TARD sur un choix déjà pris fonctionne alors. Coût : une écriture
@@ -6849,63 +6925,16 @@ function renderSheet(){
     logToActiveQuestJournals(resolvedText, c.id);
   }
 
-  const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) })).filter(({ ch, key })=>{
-    if (ch.once && playerUsedChoices[key]) return false; // choix à usage unique déjà pris
-    if (ch.questGive){
-      const state = playerQuestsState[ch.questGive.questId];
-      if (state === 'active' || state === 'completed') return false; // déjà acceptée ou terminée : ne plus proposer
-    }
-    if (ch.questValidate){
-      const state = playerQuestsState[ch.questValidate.questId];
-      if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
-      /* v462 (Parcours A2) : tant que les objectifs ne sont pas dans le sac, le bouton n'apparaît pas —
-         avant, il s'affichait, on cliquait, et il ne se passait rien. */
-      const q = quests.find(x=> x && x.id === ch.questValidate.questId);
-      const invLocal = (playerSelfData && playerSelfData.inventory) || {};
-      if (!q || !resultatValidation(q, invLocal).satisfait) return false;
-    }
-    /* Conditions cumulées : TOUTES doivent être vraies. `showIf` seul reste lu (ancien
-       format) ; `showIfList` porte les suivantes. C'est ce qui permet d'écrire « il a vu
-       Debora ET il ne me l'a pas encore dit ». */
-    const conditionsChoix = (ch.showIfList || []).concat(
-      (ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
-    for (const cond of conditionsChoix){
-      if (!cond) continue;
-      /* Une condition de combat peut se cumuler avec des conditions de phrase : on la
-         traite ici aussi, sinon elle serait silencieusement ignorée dans la liste. */
-      if (cond.kind === 'combat'){
-        const contreQui = cond.creatureId || c.id;
-        const dejaBattu = !!playerCombatsWon[contreQui];
-        if (cond.state === 'not_won'){ if (dejaBattu) return false; }
-        else if (!dejaBattu) return false;
-        continue;
-      }
-      if (cond.kind === 'quest'){   // v465 : condition de quête cumulable comme les autres
-        if (!etatQueteCorrespond(cond.state, etatQuete(playerQuestsState, cond.questId))) return false;
-        continue;
-      }
-      if (!cond.choiceId) continue;
-      /* `creatureId` absent = le choix visé est dans CE dialogue (ancien format).
-         Renseigné, il désigne un autre personnage. */
-      const chezQui = cond.creatureId || c.id;
-      const taken = !!playerUsedChoices[choiceUsedKey(chezQui, cond.choiceId)];
-      if (cond.taken === 'no'){ if (taken) return false; }
-      else if (!taken) return false;
-    }
-    if (ch.showIf && ch.showIf.kind === 'choice'){
-      /* déjà traité ci-dessus */
-    } else if (ch.showIf && ch.showIf.kind === 'combat'){
-      /* Sans personnage précisé, la condition porte sur CELUI qui parle : c'est le cas
-         courant — un rival qui provoque tant qu'il n'a pas perdu. */
-      const contre = ch.showIf.creatureId || c.id;
-      const gagne = !!playerCombatsWon[contre];
-      if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
-      else if (!gagne) return false;
-    } else if (ch.showIf && ch.showIf.questId){
-      if (!etatQueteCorrespond(ch.showIf.state, etatQuete(playerQuestsState, ch.showIf.questId))) return false;   // v462
-    }
-    return true;
-  });
+  /* v466 : la règle de visibilité d'un choix est désormais une fonction pure (choixVisible), partagée
+     avec le simulateur du scénario — le jeu et le simulateur ne peuvent plus diverger. */
+  const etatJoueur = {
+    choix: playerUsedChoices,
+    quetes: playerQuestsState,
+    inventaire: (playerSelfData && playerSelfData.inventory) || {},
+    combats: playerCombatsWon,
+  };
+  const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) }))
+    .filter(({ ch, key })=> choixVisible(ch, key, c.id, etatJoueur, quests));
 
   if (visibleChoices.length === 0){
     const btn = document.createElement('button');
@@ -7301,7 +7330,8 @@ function renderQuestTracker(){
    personnage vit où sans y entrer, on lit ces documents une fois par session (une lecture par zone
    positionnée) et on les garde ici. Le cache d'une zone est oublié quand on l'enregistre dans l'éditeur. */
 const scenesDesZones = new Map(); // zoneId → scènes normalisées
-function oublierScenesDeZone(zoneId){ if (zoneId) scenesDesZones.delete(zoneId); else scenesDesZones.clear(); }
+const departDesZones = new Map(); // v466 : zoneId → id de la scène de départ (le contrôle du scénario en a besoin)
+function oublierScenesDeZone(zoneId){ if (zoneId){ scenesDesZones.delete(zoneId); departDesZones.delete(zoneId); } else { scenesDesZones.clear(); departDesZones.clear(); } }
 async function chargerScenesDesZones(){
   if (typeof zonesCol === 'undefined' || !zonesCol) return;
   const zones = toutesLesFiches()
@@ -7311,7 +7341,9 @@ async function chargerScenesDesZones(){
   await Promise.all(zones.map(async (x)=>{
     try {
       const doc = await zonesCol.doc(x.id).get();
-      scenesDesZones.set(x.id, normalizeZoneScenes(doc.exists ? doc.data() : null).scenes);
+      const norm = normalizeZoneScenes(doc.exists ? doc.data() : null);
+      scenesDesZones.set(x.id, norm.scenes);
+      departDesZones.set(x.id, norm.startSceneId || null);
     } catch(e){ /* pas de cache pour cette zone, on réessaiera à la prochaine ouverture */ }
   }));
 }
@@ -27310,6 +27342,1076 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
   } catch(err){
     rapport.innerHTML += '<div style="color:#e66;">Interrompu : ' + err.message + '</div>';
   }
+});
+
+
+/* =====================================================================================
+   v466 — CONTRÔLE DU SCÉNARIO (repris des outils v20-v22 de Parcours). Trois outils, tous en
+   LECTURE SEULE, dans Édition → Outils de test → « 🔎 Contrôle du scénario » :
+     1. le VÉRIFICATEUR (verifierScenario) — analyse statique : références cassées, objets
+        exigés que rien ne donne, quêtes sans issue, dialogues sans sortie, zones sans porte,
+        verrous impossibles… classés ERREUR / AVERTISSEMENT / INFORMATION, chaque constat
+        ouvrant la fiche visée ;
+     2. le SIMULATEUR (simulerScenario) — un joueur imaginaire rejoue LES MÊMES règles pures
+        que le jeu (choixVisible, resultatValidation, creatureConditionMet, isActiveAt…) et
+        explore en largeur tous les états atteignables : quêtes terminables, blocages, couverture ;
+     3. l'ARBRE (ctrlArbreHtml) — tout le scénario indenté, avec ✓ / ✗ selon ce que la
+        simulation a atteint.
+   Écarts avec Parcours, assumés : pas de « quête de fin » (on vise : toutes les quêtes
+   atteignables se terminent) ; combats de dialogue explorés sur leurs deux issues ; recrutement
+   (le personnage disparaît) ; boutiques, butin de monstre et recettes = sources INDIRECTES
+   (reconnues, non simulées) ; pas de condition « il a tel objet » (signalée si elle traîne).
+   Ces outils ne prétendent jamais qu'un scénario est sans défaut.
+   ===================================================================================== */
+const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
+const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur'];   // points du vaisseau : hors scénario
+
+function ctrlEtapesDe(f){
+  return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
+}
+function ctrlPositionnee(f){ return !!f && typeof f.lat === 'number' && typeof f.lng === 'number'; }
+function ctrlRenouvelable(pt){ return pt.resetMode === 'unlimited' || pt.resetMode === 'timed'; }
+function ctrlPnjRecrute(f){ return !!(f && f.recruitScope === 'shared' && f.recruited); }
+
+/* Le modèle : un instantané normalisé de tout le scénario. Asynchrone : les scènes des zones
+   vivent dans exploration_zones et passent par le cache scenesDesZones (v464). Les fiches sont
+   lues telles que le jeu les JOUE (ficheJouable : brouillons seulement si « voir mes brouillons »). */
+async function ctrlModele(){
+  try { await chargerScenesDesZones(); } catch(e){ /* sans cache, les zones seront signalées non chargées */ }
+  const fiches = [];
+  toutesLesFiches().forEach(b=>{
+    const d = ficheJouable(b);
+    if (!d) return;
+    fiches.push({ ...d, id: b.id, _steps: ctrlEtapesDe(d), _enTravaux: !!b.enTravaux });
+  });
+  const objets = (items || []).filter(Boolean);
+  const quetes = (quests || []).filter(Boolean);
+  const ramassages = (typeof pickups !== 'undefined' ? pickups : []).filter(Boolean);
+  const recettes = (typeof recipes !== 'undefined' ? recipes : []).filter(Boolean);
+  const zones = fiches.filter(f=> f.interactionType === 'zone').map(f=>{
+    const chargee = scenesDesZones.has(f.id);
+    const scenes = chargee ? scenesDesZones.get(f.id) : (Array.isArray(f.scenes) ? f.scenes : []);
+    const startSceneId = (chargee && departDesZones.get(f.id)) || (scenes[0] && scenes[0].id) || null;
+    const vide = !scenes.some(sc=> sc.imageUrl || sc.imagePath || sc.imageRef || (sc.points || []).length || (sc.variants || []).length);
+    return { fiche: f, chargee, scenes: vide ? [] : scenes, startSceneId };
+  });
+  const M = { fiches, objets, quetes, ramassages, recettes, zones, ficheParId: {}, objetParId: {}, objetParNom: {}, queteParId: {}, zoneParId: {} };
+  fiches.forEach(f=>{ M.ficheParId[f.id] = f; });
+  objets.forEach(o=>{ M.objetParId[o.id] = o; M.objetParNom[o.name] = o; });
+  quetes.forEach(q=>{ M.queteParId[q.id] = q; });
+  zones.forEach(z=>{ M.zoneParId[z.fiche.id] = z; });
+  return M;
+}
+/* Tous les points d'une zone (scènes et variantes), avec leur scène. */
+function ctrlPointsDeZone(z){
+  const out = [];
+  z.scenes.forEach(sc=>{
+    (sc.points || []).forEach(pt=> out.push({ sc, pt, variante: null }));
+    (sc.variants || []).forEach((v, i)=> (v.points || []).forEach(pt=> out.push({ sc, pt, variante: i + 1 })));
+  });
+  return out.filter(x=> x.pt);
+}
+function ctrlNomScene(sc, variante){ return (sc.name || 'Scène') + (variante ? ' · variante ' + variante : ''); }
+/* Cibles cliquables : { type:'pnj'|'objet'|'quete'|'zone', id, pointId } */
+function ctrlCible(type, id, pointId){ return { type, id: id || null, pointId: pointId || null }; }
+/* Adversaires d'un combat lancé par un choix (identifiants de fiches ; '__self__' = celui qui parle). */
+function ctrlAdversairesDe(ch, f){
+  if (!ch || !ch.combat) return [];
+  const ids = (Array.isArray(ch.combat.creatureIds) && ch.combat.creatureIds.length) ? ch.combat.creatureIds : (ch.combat.creatureId ? [ch.combat.creatureId] : []);
+  return ids.slice(0, 3).map(id=> (id === '__self__') ? f.id : id);
+}
+
+/* Sources et besoins de chaque objet. Les sources INDIRECTES (boutique, butin de monstre, recette,
+   objet volé en combat) sont reconnues pour ne pas crier « donné nulle part », mais le simulateur
+   ne les joue pas. */
+function ctrlIndexObjets(M){
+  const sources = {}, besoins = {}, consommations = {};
+  const ajouter = (dict, itemId, entree)=>{ if (!itemId) return; (dict[itemId] = dict[itemId] || []).push(entree); };
+  M.fiches.forEach(f=>{
+    const cf = ctrlCible('pnj', f.id);
+    f._steps.forEach((st, iSt)=>{
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const ou = (f.name || 'PNJ') + ' · étape ' + iSt + ' · choix ' + (iCh + 1);
+        if (ch.itemGrant){
+          const it = objetPourDon(ch.itemGrant, M.objets);
+          ajouter(sources, it ? it.id : ('?' + (ch.itemGrant.itemName || '')), { genre:'choix', ou, cible: cf, once: !!ch.once, renouvelable: !ch.once, conditions: ctrlConditionsDe(ch), pnjId: f.id, choix: ch, etape: iSt });
+        }
+        ctrlConditionsDe(ch).forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') ajouter(besoins, c.itemId, { genre:'condition', ou, cible: cf, pnjId: f.id, choix: ch }); });
+        /* butin des adversaires d'un combat de dialogue : victoire → +1 par objet de butin */
+        ctrlAdversairesDe(ch, f).forEach(id=>{
+          const adv = M.ficheParId[id];
+          ((adv && adv.combatStats && adv.combatStats.rewardItemIds) || []).forEach(itemId=> ajouter(sources, itemId, { genre:'butin', ou: ou + ' (victoire contre ' + ((adv && adv.name) || '?') + ')', cible: cf, once: false, renouvelable: true, conditions: ctrlConditionsDe(ch), pnjId: f.id, choix: ch, indirect: false }));
+        });
+      });
+    });
+    /* boutique : objet à acheter */
+    (Array.isArray(f.shopItems) ? f.shopItems : []).forEach(row=>{ if (row && row.itemId) ajouter(sources, row.itemId, { genre:'boutique', ou: 'Boutique « ' + (f.name || '?') + ' »', cible: cf, once: false, renouvelable: true, conditions: [], indirect: true }); });
+    /* monstre ou combattant : butin et vol (hors dialogue → indirect) */
+    if (f.combatStats && (f.interactionType === 'combat' || f.canFight)){
+      const ou = 'Combat contre « ' + (f.name || '?') + ' »';
+      (f.combatStats.rewardItemIds || []).forEach(itemId=> ajouter(sources, itemId, { genre:'butin', ou, cible: cf, once: false, renouvelable: true, conditions: [], indirect: true }));
+      [f.combatStats.stealEasyItemId, f.combatStats.stealHardItemId].forEach(itemId=>{ if (itemId) ajouter(sources, itemId, { genre:'vol', ou, cible: cf, once: false, renouvelable: true, conditions: [], indirect: true }); });
+    }
+  });
+  M.ramassages.forEach(p=> ajouter(sources, p.itemId, { genre:'ramassage', ou: 'Objet posé sur la carte', cible: ctrlCible('objet', p.itemId), once: p.respawnMode === 'once', renouvelable: p.respawnMode === 'timed', conditions: [] }));
+  M.recettes.forEach(r=>{
+    if (r.outputItemId) ajouter(sources, r.outputItemId, { genre:'recette', ou: 'Recette « ' + (r.name || '?') + ' »', cible: ctrlCible('objet', r.outputItemId), once: false, renouvelable: true, conditions: [], indirect: true });
+  });
+  M.zones.forEach(z=>{
+    ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{
+      const ou = (z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante);
+      const cible = ctrlCible('zone', z.fiche.id, pt.id);
+      if (pt.type === 'objet') ajouter(sources, pt.itemId, { genre:'point', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), conditions: [], zoneId: z.fiche.id, sceneId: sc.id });
+      if (pt.type === 'coffre') (pt.loot || []).forEach(l=>{ if (l && l.itemId) ajouter(sources, l.itemId, { genre:'coffre', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), chance: (l.chance == null || l.chance === '') ? 100 : +l.chance, verrou: pt.lockType, verrouObjet: pt.lockItemId, conditions: [], zoneId: z.fiche.id, sceneId: sc.id }); });
+      if (pt.type === 'action'){
+        if (pt.reqItemId){ ajouter(besoins, pt.reqItemId, { genre:'action', ou, cible }); ajouter(consommations, pt.reqItemId, { genre:'action', ou, cible, qty: pt.reqQty || 1 }); }
+        if (pt.resultType === 'give' && pt.resultItemId) ajouter(sources, pt.resultItemId, { genre:'action', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), conditions: [], requiert: pt.reqItemId, zoneId: z.fiche.id, sceneId: sc.id });
+      }
+      if ((pt.type === 'sortie' || pt.type === 'coffre') && pt.lockType === 'item' && pt.lockItemId) ajouter(besoins, pt.lockItemId, { genre:'verrou', ou, cible });
+    });
+  });
+  M.quetes.forEach(q=>{
+    const cq = ctrlCible('quete', q.id);
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId){ ajouter(besoins, o.itemId, { genre:'objectif', ou: 'Quête « ' + q.name + ' »', cible: cq, queteId: q.id }); ajouter(consommations, o.itemId, { genre:'objectif', ou: 'Quête « ' + q.name + ' »', cible: cq, queteId: q.id, qty: o.qty || 1 }); } });
+    (q.rewards || []).forEach(r=>{ if (r && r.itemId) ajouter(sources, r.itemId, { genre:'recompense', ou: 'Récompense de « ' + q.name + ' »', cible: cq, once: true, renouvelable: false, conditions: [], queteId: q.id }); });
+  });
+  return { sources, besoins, consommations };
+}
+function ctrlConditionsDe(ch){
+  const l = (ch.showIfList || []).slice();
+  if (ch.showIf && (ch.showIf.kind === 'choice' || ch.showIf.kind === 'item' || ch.showIf.kind === 'combat')) l.push(ch.showIf);
+  else if (ch.showIf && ch.showIf.questId) l.push({ kind:'quest', questId: ch.showIf.questId, state: ch.showIf.state });
+  return l.filter(Boolean);
+}
+
+/* Les quêtes : qui les confie, qui les valide, chaîne des suivantes, atteignabilité. */
+function ctrlIndexQuetes(M){
+  const confiee = {}, validee = {};
+  M.fiches.forEach(f=>{
+    f._steps.forEach((st, iSt)=>{
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const ou = (f.name || 'PNJ') + ' · étape ' + iSt + ' · choix ' + (iCh + 1);
+        if (ch.questGive && ch.questGive.questId) (confiee[ch.questGive.questId] = confiee[ch.questGive.questId] || []).push({ pnjId: f.id, ou, choix: ch, conditions: ctrlConditionsDe(ch) });
+        if (ch.questValidate && ch.questValidate.questId) (validee[ch.questValidate.questId] = validee[ch.questValidate.questId] || []).push({ pnjId: f.id, ou, choix: ch, conditions: ctrlConditionsDe(ch) });
+      });
+    });
+  });
+  const atteignables = new Set();
+  const aVoir = Object.keys(confiee).filter(id=> M.queteParId[id]);
+  while (aVoir.length){
+    const id = aVoir.pop();
+    if (atteignables.has(id)) continue;
+    atteignables.add(id);
+    const q = M.queteParId[id];
+    if (q && q.nextQuestId && M.queteParId[q.nextQuestId] && !atteignables.has(q.nextQuestId)) aVoir.push(q.nextQuestId);
+  }
+  const precedentes = {};
+  M.quetes.forEach(q=>{ if (q.nextQuestId) (precedentes[q.nextQuestId] = precedentes[q.nextQuestId] || []).push(q.id); });
+  return { confiee, validee, atteignables, precedentes };
+}
+
+/* Un PNJ est « indispensable » s'il confie ou valide une quête, ou donne un objet requis. */
+function ctrlPnjIndispensables(M, IO, IQ){
+  const ens = new Set();
+  Object.values(IQ.confiee).forEach(l=> l.forEach(e=> ens.add(e.pnjId)));
+  Object.values(IQ.validee).forEach(l=> l.forEach(e=> ens.add(e.pnjId)));
+  Object.keys(IO.sources).forEach(itemId=>{
+    if (!IO.besoins[itemId]) return;
+    IO.sources[itemId].forEach(src=>{ if (src.genre === 'choix' && src.pnjId) ens.add(src.pnjId); });
+  });
+  return ens;
+}
+
+/* ---------- Le vérificateur ---------- */
+function verifierScenario(modele){
+  const M = modele;
+  const IO = ctrlIndexObjets(M);
+  const IQ = ctrlIndexQuetes(M);
+  const indispensables = ctrlPnjIndispensables(M, IO, IQ);
+  const constats = [];
+  const dire = (niveau, cible, ou, message)=> constats.push({ niveau, cible, ou, message });
+  const nomObjet = (id)=> (M.objetParId[id] ? '« ' + M.objetParId[id].name + ' »' : 'objet ' + id);
+  const nomQuete = (id)=> (M.queteParId[id] ? '« ' + M.queteParId[id].name + ' »' : 'quête ' + id);
+  const nomPnj = (id)=> (M.ficheParId[id] ? '« ' + (M.ficheParId[id].name || 'sans nom') + ' »' : 'personnage ' + id);
+
+  /* ===== Objets ===== */
+  M.objets.forEach(o=>{
+    const co = ctrlCible('objet', o.id);
+    const srcs = IO.sources[o.id] || [], bes = IO.besoins[o.id] || [], cons = IO.consommations[o.id] || [];
+    const directes = srcs.filter(s=> !s.indirect);
+    if (bes.length && !srcs.length) dire('erreur', co, o.name, 'Objet requis (' + bes.map(b=> b.ou).join(' ; ') + ') mais donné nulle part : aucun choix, aucun point, aucun coffre, aucune récompense, aucune boutique, aucun butin ne le fournit.');
+    else if (bes.length && !directes.length) dire('avert', co, o.name, 'Objet requis (' + bes.map(b=> b.ou).join(' ; ') + ') que seule une source indirecte fournit (' + srcs.map(s=> s.ou).join(' ; ') + ') : le simulateur ne joue ni les boutiques, ni les combats de carte, ni les recettes.');
+    if (!bes.length && !cons.length && !(o.type === 'ressource')) dire('info', co, o.name, 'Objet jamais utilisé (ni objectif, ni condition, ni verrou, ni action) : décoratif, consommable, ou oubli.');
+    const plusieurs = srcs.filter(s=> s.genre === 'choix' || s.genre === 'point' || s.genre === 'ramassage');
+    if (plusieurs.length > 1) dire('info', co, o.name, 'Donné à ' + plusieurs.length + ' endroits (' + plusieurs.map(s=> s.ou).join(' ; ') + ') : doublons possibles dans le sac.');
+    srcs.forEach(src=>{ if (src.genre === 'choix' && !src.once) dire(cons.length ? 'avert' : 'info', src.cible, src.ou, 'Le choix qui donne ' + nomObjet(o.id) + ' n\'est pas « une seule fois » : le joueur peut le reprendre à chaque visite' + (cons.length ? ', et l\'objet est consommé quelque part — le doublon peut fausser la progression.' : '.')); });
+    const hasard = srcs.filter(s=> s.genre === 'coffre' && s.chance < 100);
+    if (hasard.length && bes.length){
+      const sures = srcs.filter(s=> !(s.genre === 'coffre' && s.chance < 100));
+      dire(sures.length ? 'info' : 'avert', hasard[0].cible, hasard[0].ou, nomObjet(o.id) + ' est requis mais sort d\'un coffre à ' + hasard[0].chance + ' % de chance' + (sures.length ? ' (une autre source existe).' : ' et c\'est sa seule source : selon le hasard, certains joueurs ne l\'auront jamais.'));
+    }
+    if (cons.length && bes.length){
+      const autresBesoins = bes.filter(b=> !(b.genre === 'objectif' && cons.some(c=> c.genre === 'objectif' && c.queteId === b.queteId)) && !(b.genre === 'action' && cons.some(c=> c.genre === 'action' && c.cible.pointId === b.cible.pointId)));
+      if (autresBesoins.length){
+        const renouvelable = srcs.some(s=> s.renouvelable);
+        dire(renouvelable ? 'info' : 'avert', co, o.name, nomObjet(o.id) + ' est consommé (' + cons.map(c=> c.ou).join(' ; ') + ') alors qu\'il est aussi exigé ailleurs (' + autresBesoins.map(b=> b.ou).join(' ; ') + ')' + (renouvelable ? ' — une source renouvelable existe.' : ' — sans source renouvelable, l\'ordre de jeu peut le faire perdre définitivement.'));
+      }
+    }
+  });
+  Object.keys(IO.sources).forEach(k=>{ if (k.charAt(0) === '?') IO.sources[k].forEach(src=> dire('erreur', src.cible, src.ou, 'Ce choix donne un objet qui n\'existe pas (nom « ' + k.slice(1) + ' ») : il a sans doute été renommé ou supprimé.')); });
+  Object.keys(IO.sources).forEach(k=>{ if (k.charAt(0) !== '?' && !M.objetParId[k]) IO.sources[k].forEach(src=>{ if (src.genre !== 'choix') dire('erreur', src.cible, src.ou, 'Fournit un objet supprimé (identifiant ' + k + ').'); }); });
+
+  /* ===== Quêtes ===== */
+  M.quetes.forEach(q=>{
+    const cq = ctrlCible('quete', q.id);
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId && !M.objetParId[o.itemId]) dire('erreur', cq, q.name, 'Un objectif vise un objet supprimé.'); });
+    (q.rewards || []).forEach(r=>{ if (r && r.itemId && !M.objetParId[r.itemId]) dire('erreur', cq, q.name, 'Une récompense vise un objet supprimé.'); });
+    if (q.nextQuestId && !M.queteParId[q.nextQuestId]) dire('erreur', cq, q.name, 'La quête suivante réglée n\'existe plus.');
+    if (q.destinationId && !ctrlPositionnee(M.ficheParId[q.destinationId])) dire('avert', cq, q.name, 'Le lieu à rejoindre n\'existe plus ou n\'a pas de position : le guidage retombera sur le personnage qui valide.');
+    const donneurs = IQ.confiee[q.id] || [], prec = IQ.precedentes[q.id] || [];
+    if (!donneurs.length && !prec.length) dire('erreur', cq, q.name, 'Quête jamais confiée : aucun choix ne la confie et aucune quête ne la désigne comme suivante.');
+    else if (!IQ.atteignables.has(q.id)) dire('erreur', cq, q.name, 'Quête inatteignable : elle n\'est la suite que de quêtes elles-mêmes jamais confiées.');
+    if (donneurs.length && prec.length) dire('info', cq, q.name, 'Confiée par un choix ET suite d\'une autre quête : double source (le choix est masqué si elle est déjà en cours).');
+    const valideurs = IQ.validee[q.id] || [];
+    if (!valideurs.length) dire('erreur', cq, q.name, 'Aucun choix ne valide cette quête : elle ne peut jamais se terminer.');
+    valideurs.forEach(v=>{
+      v.conditions.forEach(c=>{
+        if (c.kind === 'quest' && c.questId === q.id && c.state !== 'active') dire('erreur', ctrlCible('pnj', v.pnjId), v.ou, 'Le choix qui valide ' + nomQuete(q.id) + ' exige qu\'elle ne soit pas en cours : contradiction.');
+      });
+    });
+    if ((q.objectiveMode || 'all') === 'any' && (q.objectives || []).length <= 1) dire('info', cq, q.name, '« Un seul suffit » avec un seul objectif : sans effet.');
+    if (!(q.objectives || []).length) dire('info', cq, q.name, 'Quête sans objectif : validée dès que le choix qui la valide est pris.');
+    if (q.showObjectives && (q.objectives || []).length) dire('info', cq, q.name, 'Les objets à trouver sont affichés au joueur : vérifie qu\'aucun n\'est un indice à découvrir.');
+  });
+
+  /* ===== Personnages et dialogues ===== */
+  const enZoneIds = new Set();
+  M.zones.forEach(z=> ctrlPointsDeZone(z).forEach(({ pt })=>{ if (pt.type === 'pnj' && pt.linkedPnjId) enZoneIds.add(pt.linkedPnjId); }));
+  const positionnes = M.fiches.filter(f=> ctrlPositionnee(f) && f.interactionType !== 'combat');
+  M.fiches.forEach(f=>{
+    const cf = ctrlCible('pnj', f.id);
+    const nom = f.name || 'sans nom';
+    const enZone = enZoneIds.has(f.id);
+    if (f._enTravaux) dire('info', cf, nom, voirLesBrouillons() ? 'Fiche en travaux : analysée dans sa version BROUILLON (« voir mes brouillons » est coché).' : 'Fiche en travaux : analysée dans sa version PUBLIÉE (les joueurs ne voient pas le brouillon).');
+    if (f.interactionType !== 'zone' && f.interactionType !== 'combat' && !ctrlPositionnee(f) && !enZone && f._steps.length){
+      dire(indispensables.has(f.id) ? 'erreur' : 'info', cf, nom, indispensables.has(f.id) ? 'Personnage indispensable (il confie, valide ou donne quelque chose) sans position sur la carte et absent de toute zone : le joueur ne peut jamais lui parler.' : 'Personnage en réserve (ni sur la carte, ni dans une zone).');
+    }
+    if (f.interactionType === 'zone' && !ctrlPositionnee(f)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
+    if (ctrlPnjRecrute(f) && indispensables.has(f.id)) dire('erreur', cf, nom, 'Déjà recruté (recrutement partagé) : il n\'apparaît plus pour personne, alors qu\'il confie, valide ou donne quelque chose.');
+    if (f.visibilityCondition && f.visibilityCondition.questId){
+      const vq = f.visibilityCondition.questId;
+      if (!M.queteParId[vq]) dire('erreur', cf, nom, 'Condition d\'apparition sur une quête supprimée : le personnage est traité comme toujours visible.');
+      else {
+        const valideIci = (IQ.validee[vq] || []).some(v=> v.pnjId === f.id);
+        if (f.visibilityCondition.state === 'completed' && valideIci) dire('erreur', cf, nom, 'N\'apparaît qu\'une fois ' + nomQuete(vq) + ' terminée, mais c\'est lui qui la valide : il n\'est jamais visible pour le faire.');
+        if (f.visibilityCondition.state !== 'completed' && indispensables.has(f.id) && (IQ.validee[vq] || []).length && !valideIci){
+          dire('info', cf, nom, 'Disparaît quand ' + nomQuete(vq) + ' est terminée : tout ce qu\'il donne ou valide doit avoir été fait avant.');
+        }
+        if (!f.hideOnExitRadius) dire('info', cf, nom, 'Condition d\'apparition sans « disparition immédiate » : une fois vu, le personnage reste abordable tant que le joueur ne s\'éloigne pas.');
+      }
+    }
+    if (Array.isArray(f.daysOfWeek) && f.daysOfWeek.length && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité à certains jours (' + f.daysOfWeek.length + '/7) : absent les autres jours.');
+    if ((f.startDate || f.endDate) && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité par des dates : vérifie qu\'elles couvrent toute la période voulue.');
+    if (Array.isArray(f.timeRanges) && f.timeRanges.some(c=> c && (c.start || c.end)) && indispensables.has(f.id)) dire('avert', cf, nom, 'Personnage indispensable limité à des créneaux horaires : absent en dehors.');
+    if (f.interactionType === 'zone' && f.explorable) dire('info', cf, nom, 'Zone à découvrir : invisible tant que l\'explorateur ne l\'a pas trouvée (le simulateur la considère trouvée).');
+
+    /* --- structure du dialogue --- */
+    const steps = f._steps;
+    if (!steps.length && f.interactionType !== 'zone' && f.interactionType !== 'combat' && f.interactionType !== 'shop') dire('info', cf, nom, 'Personnage sans dialogue.');
+    const atteintes = new Set();
+    const suites = (ch)=>{   // étapes où un choix peut mener (« ensuite », victoire, défaite)
+      const l = [];
+      if (ch.combat){ [ch.combat.stepWin, ch.combat.stepLose].forEach(v=>{ const t = parseInt(v, 10); if (v !== null && v !== undefined && !isNaN(t)) l.push(t); }); }
+      else if (ch.next !== null && ch.next !== undefined && !isNaN(ch.next)) l.push(+ch.next);
+      return l;
+    };
+    if (steps.length){
+      const aVoir = [0];
+      if (steps[0].firstOnly){ const t = parseInt(steps[0].thenStep, 10); if (!isNaN(t) && t >= 0 && t < steps.length) aVoir.push(t); else if (steps[0].thenStep != null) dire('avert', cf, nom, 'Étape de reprise « les fois suivantes » hors limites : le dialogue reprendra à l\'étape 0.'); }
+      while (aVoir.length){ const i = aVoir.pop(); if (atteintes.has(i) || !steps[i]) continue; atteintes.add(i); (steps[i].choices || []).forEach(ch=>{ if (ch) suites(ch).forEach(t=>{ if (t >= 0 && t < steps.length) aVoir.push(t); }); }); }
+    }
+    steps.forEach((st, i)=>{
+      const ou = nom + ' · étape ' + i;
+      if (!atteintes.has(i)) dire('avert', cf, ou, 'Étape inaccessible : aucun choix n\'y mène.');
+      const choix = (st.choices || []).filter(Boolean);
+      if (!choix.length && i !== steps.length - 1) dire('info', cf, ou, 'Étape sans choix : seul « Fermer » est proposé.');
+      if (choix.length && choix.every(ch=> ctrlConditionsDe(ch).length || ch.questValidate || ch.questGive)) dire('info', cf, ou, 'Tous les choix de cette étape sont conditionnels : quand aucun n\'est vrai, le joueur ne voit que « Fermer ».');
+      (st.textVariants || []).forEach(v=>{
+        if (!v) return;
+        if (v.kind === 'choice'){
+          const chez = v.creatureId ? M.ficheParId[v.creatureId] : f;
+          if (!chez || !chez._steps.some(s2=> (s2.choices || []).some(c2=> c2 && c2.id === v.choiceId))) dire('erreur', cf, ou, 'Variante de texte sur un choix introuvable' + (v.creatureId ? ' chez ' + nomPnj(v.creatureId) : ' dans ce dialogue') + '.');
+        } else if (v.questId && !M.queteParId[v.questId]) dire('erreur', cf, ou, 'Variante de texte sur une quête supprimée.');
+        else if (v.state === 'not_active') dire('info', cf, ou, 'Variante « pas en cours » : vraie aussi quand la quête est terminée (pour « jamais commencée », choisir l\'autre option).');
+      });
+      choix.forEach((ch, iCh)=>{
+        const ouc = ou + ' · choix ' + (iCh + 1) + (ch.label ? ' « ' + ch.label + ' »' : '');
+        if (!ch.combat && ch.next !== null && ch.next !== undefined && (isNaN(ch.next) || ch.next < 0 || ch.next >= steps.length)) dire('avert', cf, ouc, '« Ensuite » vise l\'étape ' + ch.next + ' qui n\'existe pas : le dialogue se fermera.');
+        if (!ch.label) dire('info', cf, ouc, 'Choix sans texte de bouton.');
+        if (ch.questGive && ch.questGive.questId && !M.queteParId[ch.questGive.questId]) dire('erreur', cf, ouc, 'Confie une quête supprimée.');
+        if (ch.questValidate && ch.questValidate.questId && !M.queteParId[ch.questValidate.questId]) dire('erreur', cf, ouc, 'Valide une quête supprimée.');
+        if (ch.questValidate && ch.questGive && ch.questValidate.questId === ch.questGive.questId) dire('erreur', cf, ouc, 'Confie et valide la même quête dans un seul choix : jamais affiché (elle n\'est pas en cours au moment de la confier).');
+        if (ch.itemGrant && ch.questValidate){
+          const it = objetPourDon(ch.itemGrant, M.objets); const q = M.queteParId[ch.questValidate.questId];
+          if (it && q && (q.objectives || []).some(o=> o && o.itemId === it.id)) dire('info', cf, ouc, 'Donne ' + nomObjet(it.id) + ' et valide la quête qui le consomme : l\'objet est donné puis repris aussitôt.');
+        }
+        ctrlConditionsDe(ch).forEach(c=>{
+          if (c.kind === 'item') dire('erreur', cf, ouc, 'Condition « il a tel objet » : ce type de condition n\'existe pas dans Mascotto (dialogue importé ?), elle est ignorée par le jeu.');
+          else if (c.kind === 'quest'){ if (!M.queteParId[c.questId]) dire('erreur', cf, ouc, 'Condition sur une quête supprimée.'); else if (c.state === 'not_active') dire('info', cf, ouc, 'Condition « pas en cours » : vraie aussi quand la quête est terminée.'); }
+          else if (c.kind === 'combat'){
+            const contre = c.creatureId || f.id;
+            if (!M.ficheParId[contre]) dire('erreur', cf, ouc, 'Condition de combat sur un personnage supprimé.');
+            else if (!M.fiches.some(g=> g._steps.some(s2=> (s2.choices || []).some(c2=> c2 && ctrlAdversairesDe(c2, g).includes(contre)))) && !(M.ficheParId[contre].interactionType === 'combat')) dire('avert', cf, ouc, 'Condition « combat gagné contre ' + nomPnj(contre) + ' » alors qu\'aucun choix ne lance de combat contre lui (et ce n\'est pas un monstre de carte) : jamais vraie.');
+          }
+          else if (c.choiceId){
+            const chez = c.creatureId ? M.ficheParId[c.creatureId] : f;
+            if (!chez) dire('erreur', cf, ouc, 'Condition sur le choix d\'un personnage supprimé.');
+            else if (!chez._steps.some(s2=> (s2.choices || []).some(c2=> c2 && c2.id === c.choiceId))) dire('erreur', cf, ouc, 'Condition sur un choix qui n\'existe plus' + (c.creatureId ? ' chez ' + nomPnj(c.creatureId) : ' dans ce dialogue') + '.');
+            else if ((c.taken || 'yes') !== 'no' && chez.id === f.id && ch.id === c.choiceId) dire('erreur', cf, ouc, 'Ce choix exige d\'avoir déjà été pris lui-même : jamais affiché.');
+          }
+        });
+        const condsQuete = ctrlConditionsDe(ch).filter(c=> c.kind === 'quest');
+        if (condsQuete.length && ch.questGive && condsQuete.some(c=> c.questId === ch.questGive.questId && (c.state === 'active' || c.state === 'completed'))) dire('erreur', cf, ouc, 'Confie une quête en exigeant qu\'elle soit déjà en cours ou terminée : jamais affiché.');
+        /* combat lancé par ce choix */
+        if (ch.combat){
+          const ids = ctrlAdversairesDe(ch, f);
+          if (!ids.length) dire('erreur', cf, ouc, 'Lance un combat sans adversaire.');
+          ids.forEach(id=>{
+            const adv = M.ficheParId[id];
+            if (!adv) dire('erreur', cf, ouc, 'Lance un combat contre un personnage supprimé.');
+            else if (!adv.combatStats) dire('erreur', cf, ouc, 'Lance un combat contre ' + nomPnj(id) + ' qui n\'a pas de caractéristiques de combat : le jeu refusera de le lancer.');
+          });
+          [['stepWin','victoire'], ['stepLose','défaite']].forEach(([k, lib])=>{
+            const v = ch.combat[k];
+            if (v === null || v === undefined || v === '') dire('info', cf, ouc, 'Pas de réplique de ' + lib + ' : le dialogue se ferme après le combat.');
+            else { const t = parseInt(v, 10); if (isNaN(t) || t < 0 || t >= steps.length) dire('avert', cf, ouc, 'La réplique de ' + lib + ' vise l\'étape ' + v + ' qui n\'existe pas.'); }
+          });
+          if (ch.next !== null && ch.next !== undefined && !isNaN(ch.next)) dire('info', cf, ouc, '« Ensuite » est ignoré quand le choix lance un combat (ce sont les répliques de victoire / défaite qui comptent).');
+        }
+        if (ch.recruit){
+          if (indispensables.has(f.id)) dire('avert', cf, ouc, 'Recrute ' + nomPnj(f.id) + ', qui confie, valide ou donne quelque chose : une fois recruté, il disparaît de la carte et des zones — tout doit avoir été fait avant.');
+          else dire('info', cf, ouc, 'Recrute le personnage : il disparaît ensuite de la carte et des zones.');
+        }
+      });
+    });
+    /* Une étape d'où aucun chemin ne mène à « Fin » : le joueur ne sort que par la croix. */
+    if (steps.length){
+      const versFin = new Set();
+      let change = true;
+      const ferme = (ch)=> ch.combat ? ([ch.combat.stepWin, ch.combat.stepLose].some(v=> v === null || v === undefined || v === '' || isNaN(parseInt(v, 10)) || parseInt(v, 10) >= steps.length)) : (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= steps.length);
+      steps.forEach((st, i)=>{ if ((st.choices || []).some(ch=> ch && ferme(ch))) versFin.add(i); if (!(st.choices || []).filter(Boolean).length) versFin.add(i); });
+      while (change){ change = false; steps.forEach((st, i)=>{ if (!versFin.has(i) && (st.choices || []).some(ch=> ch && suites(ch).some(t=> versFin.has(t)))){ versFin.add(i); change = true; } }); }
+      steps.forEach((st, i)=>{ if (atteintes.has(i) && !versFin.has(i)) dire('avert', cf, nom + ' · étape ' + i, 'Boucle sans issue : aucun chemin de choix ne mène à « Fin de la conversation ».'); });
+    }
+  });
+  /* Distances entre points interactifs */
+  const pts = positionnes.map(f=> ({ id: f.id, nom: f.name || 'sans nom', lat: f.lat, lng: f.lng, cible: ctrlCible('pnj', f.id) }))
+    .concat(M.ramassages.filter(p=> ctrlPositionnee(p)).map(p=> ({ id: 'pickup:' + p.id, nom: 'objet posé ' + nomObjet(p.itemId), lat: p.lat, lng: p.lng, cible: ctrlCible('objet', p.itemId) })));
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++){
+    const d = Math.round(haversineDist(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng));
+    if (d < CTRL_DIST_MIN_M) dire('avert', pts[i].cible, pts[i].nom + ' / ' + pts[j].nom, 'À ' + d + ' m l\'un de l\'autre (moins de ' + CTRL_DIST_MIN_M + ' m) : avec le rayon d\'interaction et l\'imprécision du GPS, les deux seront atteignables au même endroit.');
+    else if (d < CTRL_DIST_CONSEIL_M) dire('info', pts[i].cible, pts[i].nom + ' / ' + pts[j].nom, 'À ' + d + ' m l\'un de l\'autre : l\'espacement conseillé est de ' + CTRL_DIST_CONSEIL_M + ' m.');
+  }
+  M.ramassages.forEach(p=>{ if (!M.objetParId[p.itemId]) dire('erreur', ctrlCible('objet', p.itemId), 'Objet posé sur la carte', 'Point de ramassage sur un objet supprimé.'); if (!ctrlPositionnee(p)) dire('erreur', ctrlCible('objet', p.itemId), 'Objet posé sur la carte', 'Point de ramassage sans position.'); });
+
+  /* ===== Zones d'exploration ===== */
+  M.zones.forEach(z=>{
+    const nomZ = z.fiche.name || 'Zone';
+    const cz = ctrlCible('zone', z.fiche.id);
+    if (!z.chargee && ctrlPositionnee(z.fiche)){ dire('avert', cz, nomZ, 'Scènes non chargées (lecture impossible) : zone non vérifiée. Réessaie.'); return; }
+    if (!z.chargee) return;   // zone sans position : ses scènes ne sont jamais jouées
+    if (!z.scenes.length){ dire('erreur', cz, nomZ, 'Zone sans aucune scène enregistrée.'); return; }
+    if (!z.scenes.find(sc=> sc.id === z.startSceneId)) dire('erreur', cz, nomZ, 'La scène de départ n\'existe pas.');
+    z.scenes.forEach(sc=>{
+      if (!sc.imageUrl && !sc.imageRef && !sc.imagePath) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Scène sans image de fond : elle s\'affichera vide.');
+      if ((sc.encounterChance || 0) > 0 && (sc.encounterMonsterIds || []).length) dire('info', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontres aléatoires (' + sc.encounterChance + ' %) : hors simulation.');
+      (sc.encounterMonsterIds || []).forEach(id=>{ if (!M.ficheParId[id]) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontre aléatoire sur un monstre supprimé.'); });
+    });
+    const pointsZ = ctrlPointsDeZone(z);
+    if (!pointsZ.some(({ pt })=> pt.type === 'sortie_zone')) dire('erreur', cz, nomZ, 'Aucune porte « Sortie de zone » : le joueur ne pourra pas ressortir.');
+    /* atteignabilité des scènes depuis le départ, portes verrouillées comprises (statique : on suppose les verrous ouvrables) */
+    const atteintes = new Set(); const aVoir = [z.startSceneId];
+    while (aVoir.length){ const id = aVoir.pop(); if (!id || atteintes.has(id)) continue; atteintes.add(id); pointsZ.filter(({ sc, pt })=> sc.id === id && pt.type === 'sortie' && pt.targetSceneId).forEach(({ pt })=> aVoir.push(pt.targetSceneId)); }
+    z.scenes.forEach(sc=>{
+      const n = nomZ + ' · ' + ctrlNomScene(sc);
+      if (!atteintes.has(sc.id)){ dire('avert', cz, n, 'Scène non reliée au départ : le joueur ne peut pas y arriver.'); return; }
+      const ptsSc = pointsZ.filter(x=> x.sc.id === sc.id);
+      if (!ptsSc.some(({ pt })=> (pt.type === 'sortie' && pt.targetSceneId) || pt.type === 'sortie_zone')) dire('erreur', cz, n, 'Aucune porte dans cette scène : le joueur y sera enfermé.');
+    });
+    pointsZ.forEach(({ sc, pt, variante })=>{
+      const n = nomZ + ' · ' + ctrlNomScene(sc, variante) + ' · ' + (pt.type || 'point');
+      const cp = ctrlCible('zone', z.fiche.id, pt.id);
+      if (pt.type === 'pnj'){
+        if (!pt.linkedPnjId) dire('erreur', cp, n, 'Point PNJ sans personnage choisi.');
+        else if (!M.ficheParId[pt.linkedPnjId]) dire('erreur', cp, n, 'Point PNJ lié à une fiche supprimée ou jamais publiée (« ' + (pt.linkedPnjName || '?') + ' ») : il n\'apparaît pas en jeu.');
+        else {
+          const fp = M.ficheParId[pt.linkedPnjId];
+          if (pt.partApresDialogue && fp._steps.some(st=> (st.choices || []).some(ch=> ch && (ch.questValidate || ch.questGive)))) dire('avert', cp, n, nomPnj(fp.id) + ' disparaît après son dialogue alors qu\'il confie ou valide une quête : si ce n\'est pas fait à la première visite, ce ne sera plus possible ici.');
+          if (pt.autoTrigger) dire('info', cp, n, 'Le dialogue de ' + nomPnj(fp.id) + ' s\'ouvre tout seul à l\'entrée de la scène.');
+          if (ctrlPnjRecrute(fp)) dire('info', cp, n, nomPnj(fp.id) + ' est déjà recruté (partagé) : ce point est vide.');
+        }
+      }
+      if (pt.type === 'sortie'){
+        if (!pt.targetSceneId) dire('info', cp, n, 'Porte qui ferme la zone (pas de scène cible).');
+        else if (!z.scenes.some(x=> x.id === pt.targetSceneId)) dire('erreur', cp, n, 'Porte vers une scène supprimée.');
+        if ((pt.openRanges || []).some(c=> c && (c.start || c.end))) dire('info', cp, n, 'Porte à créneaux horaires : fermée en dehors, même avec la clé.');
+      }
+      if (pt.type === 'sortie' || pt.type === 'coffre'){
+        if (pt.lockType === 'item'){
+          if (!pt.lockItemId) dire('avert', cp, n, 'Verrou « objet requis » sans objet choisi : la porte / le coffre s\'ouvre librement.');
+          else if (!M.objetParId[pt.lockItemId]) dire('erreur', cp, n, 'Verrou sur un objet supprimé.');
+          else if (!(IO.sources[pt.lockItemId] || []).length) dire('erreur', cp, n, 'Verrou exigeant ' + nomObjet(pt.lockItemId) + ', que rien ne donne : impossible à ouvrir.');
+          else {
+            const srcs = IO.sources[pt.lockItemId] || [];
+            const derriere = pt.type === 'sortie' ? (pt.targetSceneId ? ctrlScenesDerriere(z, pointsZ, pt.targetSceneId, sc.id) : new Set()) : new Set();
+            const toutesDerriere = srcs.length && srcs.every(s=> s.zoneId === z.fiche.id && (derriere.has(s.sceneId) || (pt.type === 'coffre' && s.cible.pointId === pt.id)));
+            if (toutesDerriere) dire('erreur', cp, n, nomObjet(pt.lockItemId) + ' ouvre ce verrou mais ne s\'obtient que derrière lui : cercle vicieux.');
+          }
+        }
+        if (pt.lockType === 'code' && !String(pt.lockCode || '').trim()) dire('erreur', cp, n, 'Verrou « code » sans code réglé : impossible à ouvrir.');
+        if (pt.lockType === 'code' && String(pt.lockCode || '').trim()) dire('info', cp, n, 'Code numérique « ' + pt.lockCode + ' » : vérifie qu\'un indice le donne au joueur.');
+      }
+      if (pt.type === 'coffre'){
+        if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
+        const loot = (pt.loot || []).filter(l=> l && l.itemId);
+        if (!loot.length && !pt.message && !pt.trapEnabled) dire('avert', cp, n, 'Coffre vide, sans message : il dira « il n\'y a rien à l\'intérieur ».');
+        loot.forEach(l=>{ if (!M.objetParId[l.itemId]) dire('erreur', cp, n, 'Coffre contenant un objet supprimé.'); });
+        if (pt.chestReclosable) dire('info', cp, n, 'Coffre refermable.');
+        if (pt.trapEnabled) dire('info', cp, n, 'Coffre piégé : blesse l\'équipe à l\'ouverture (hors simulation).');
+      }
+      if (pt.type === 'objet'){
+        if (!pt.itemId) dire('erreur', cp, n, 'Point objet sans objet choisi.');
+        else if (!M.objetParId[pt.itemId]) dire('erreur', cp, n, 'Point objet sur un objet supprimé.');
+      }
+      if (pt.type === 'action'){
+        if (!pt.reqItemId) dire('erreur', cp, n, 'Action sans objet demandé : inutilisable.');
+        else if (!M.objetParId[pt.reqItemId]) dire('erreur', cp, n, 'Action demandant un objet supprimé.');
+        if (pt.resultType === 'give' && (!pt.resultItemId || !M.objetParId[pt.resultItemId])) dire('erreur', cp, n, 'Action « donne un objet » sans objet valide.');
+        if (pt.resultType !== 'give' && !pt.resultMessage) dire('info', cp, n, 'Action sans message de résultat.');
+      }
+      if (pt.type === 'image' && !pt.bigImageUrl && !pt.bigImagePath && !pt.bigImageRef) dire('avert', cp, n, 'Point « image en grand » sans image.');
+      if (pt.type === 'dialogue' && !pt.text) dire('avert', cp, n, 'Point dialogue sans texte.');
+    });
+    /* objet indispensable dans une scène non reliée */
+    pointsZ.forEach(({ sc, pt })=>{
+      if (atteintes.has(sc.id)) return;
+      const ids = pt.type === 'objet' ? [pt.itemId] : pt.type === 'coffre' ? (pt.loot || []).map(l=> l && l.itemId) : pt.type === 'action' && pt.resultType === 'give' ? [pt.resultItemId] : [];
+      ids.filter(Boolean).forEach(id=>{ if ((IO.besoins[id] || []).length) dire('erreur', ctrlCible('zone', z.fiche.id, pt.id), nomZ + ' · ' + ctrlNomScene(sc), nomObjet(id) + ' est requis mais se trouve dans une scène inaccessible.'); });
+    });
+    if (!isActiveNow(z.fiche)) dire('info', cz, nomZ, 'Zone fermée en ce moment (horaires) : le message de fermeture s\'affiche.');
+  });
+
+  /* ===== Dépendances circulaires (graphe objet/quête → ce qu'il faut pour l'obtenir) ===== */
+  const graphe = {};
+  const lier = (a, b)=>{ if (!a || !b || a === b) return; (graphe[a] = graphe[a] || new Set()).add(b); };
+  Object.keys(IO.sources).forEach(itemId=>{
+    IO.sources[itemId].forEach(src=>{
+      (src.conditions || []).forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('o:' + itemId, 'o:' + c.itemId); if (c.kind === 'quest' && (c.state === 'completed' || c.state === 'active')) lier('o:' + itemId, 'q:' + c.questId); });
+      if (src.requiert) lier('o:' + itemId, 'o:' + src.requiert);
+      if (src.verrou === 'item' && src.verrouObjet) lier('o:' + itemId, 'o:' + src.verrouObjet);
+      if (src.genre === 'choix' && src.choix && src.choix.questValidate) lier('o:' + itemId, 'q:' + src.choix.questValidate.questId);
+      if (src.genre === 'recompense' && src.queteId) lier('o:' + itemId, 'q:' + src.queteId);
+    });
+  });
+  M.quetes.forEach(q=>{
+    (q.objectives || []).forEach(o=>{ if (o && o.itemId) lier('q:' + q.id, 'o:' + o.itemId); });
+    (IQ.validee[q.id] || []).forEach(v=> v.conditions.forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('q:' + q.id, 'o:' + c.itemId); if (c.kind === 'quest' && c.questId !== q.id && (c.state === 'completed' || c.state === 'active')) lier('q:' + q.id, 'q:' + c.questId); }));
+    (IQ.confiee[q.id] || []).forEach(g=> g.conditions.forEach(c=>{ if (c.kind === 'item' && c.has !== 'no') lier('q:' + q.id, 'o:' + c.itemId); if (c.kind === 'quest' && (c.state === 'completed' || c.state === 'active')) lier('q:' + q.id, 'q:' + c.questId); }));
+    (IQ.precedentes[q.id] || []).forEach(p=> lier('q:' + q.id, 'q:' + p));
+  });
+  const couleur = {}; const cyclesVus = new Set();
+  const libelle = (n)=> n.charAt(0) === 'o' ? nomObjet(n.slice(2)) : nomQuete(n.slice(2));
+  const visiter = (n, pile)=>{
+    couleur[n] = 'gris'; pile.push(n);
+    (graphe[n] || new Set()).forEach(m=>{
+      if (couleur[m] === 'gris'){
+        const cycle = pile.slice(pile.indexOf(m)).concat([m]);
+        const cle = cycle.slice().sort().join('|');
+        if (!cyclesVus.has(cle)){ cyclesVus.add(cle); const n0 = cycle[0]; dire('avert', n0.charAt(0) === 'o' ? ctrlCible('objet', n0.slice(2)) : ctrlCible('quete', n0.slice(2)), 'Dépendances', 'Dépendance circulaire : ' + cycle.map(libelle).join(' → ') + '. Si aucune autre source ne casse le cercle, c\'est un blocage (la simulation le confirmera).'); }
+      } else if (!couleur[m]) visiter(m, pile);
+    });
+    pile.pop(); couleur[n] = 'noir';
+  };
+  Object.keys(graphe).forEach(n=>{ if (!couleur[n]) visiter(n, []); });
+
+  const ordre = { erreur: 0, avert: 1, info: 2 };
+  constats.sort((a, b)=> ordre[a.niveau] - ordre[b.niveau]);
+  return { constats, resume: { erreurs: constats.filter(c=> c.niveau === 'erreur').length, avertissements: constats.filter(c=> c.niveau === 'avert').length, informations: constats.filter(c=> c.niveau === 'info').length }, modele: M, index: { IO, IQ } };
+}
+/* Scènes atteignables depuis `depuis` sans passer par `sansPasserPar` (pour le cercle vicieux d'un verrou). */
+function ctrlScenesDerriere(z, pointsZ, depuis, sansPasserPar){
+  const vues = new Set(); const aVoir = [depuis];
+  while (aVoir.length){ const id = aVoir.pop(); if (!id || vues.has(id) || id === sansPasserPar) continue; vues.add(id); pointsZ.filter(({ sc, pt })=> sc.id === id && pt.type === 'sortie' && pt.targetSceneId).forEach(({ pt })=> aVoir.push(pt.targetSceneId)); }
+  return vues;
+}
+
+/* ---------- Affichage dans le hub ---------- */
+function ctrlEchap(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, c=> ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function ctrlHtmlConstats(constats){
+  if (!constats.length) return '';
+  const groupes = { erreur: [], avert: [], info: [] };
+  constats.forEach(c=> groupes[c.niveau].push(c));
+  const couleurs = { erreur: 'var(--danger)', avert: '#e0a526', info: 'var(--muted)' };
+  return ['erreur', 'avert', 'info'].map(niv=>{
+    if (!groupes[niv].length) return '';
+    return '<div class="field-label" style="margin-top:10px; color:' + couleurs[niv] + ';">' + CTRL_LIBELLES[niv] + ' (' + groupes[niv].length + ')</div>' + groupes[niv].map(c=>{
+      const cible = c.cible || {};
+      const attr = ' data-ctrl-type="' + ctrlEchap(cible.type || '') + '" data-ctrl-id="' + ctrlEchap(cible.id || '') + '" data-ctrl-point="' + ctrlEchap(cible.pointId || '') + '"';
+      return '<div style="border-left:3px solid ' + couleurs[niv] + '; padding:4px 8px; margin:4px 0; font-size:12px;"><b' + attr + ' style="text-decoration:underline; cursor:pointer;">' + ctrlEchap(c.ou) + '</b><br>' + ctrlEchap(c.message) + '</div>';
+    }).join('');
+  }).join('');
+}
+/* Ouvre la fiche visée par un constat, dans l'éditeur correspondant du jeu. */
+function ctrlOuvrirCible(type, id, pointId){
+  try {
+    if (type === 'pnj' && id){ document.getElementById('editHubOverlay').classList.remove('show'); openCreatureEditFromMap(id); }
+    else if (type === 'objet' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('itemsEditorOverlay').classList.add('show'); loadItemForEdit(id); showItemsSection('new'); }
+    else if (type === 'quete' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('questsEditorOverlay').classList.add('show'); loadQuestForEdit(id); showQuestsSection('new'); }
+    else if (type === 'zone' && id){
+      document.getElementById('editHubOverlay').classList.remove('show'); openSceneEditor(id);
+      if (pointId) setTimeout(()=>{ try { const p = sceneEditorPoints.find(x=> x.id === pointId); if (p) selectScenePoint(pointId); else { const sc = sceneEditorScenes.find(s=> (s.points || []).some(x=> x.id === pointId)); if (sc){ loadSceneIntoEditorState(sc.id); renderSceneEditorPoints(); selectScenePoint(pointId); } } } catch(e){} }, 800);
+    }
+  } catch(e){ journal('erreur', 'ouverture depuis le contrôle', e.message, true); }
+}
+document.getElementById('ctrlVerifierBtn').addEventListener('click', async ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Analyse…</p>';
+  try {
+    const M = await ctrlModele();
+    const res = verifierScenario(M);
+    const r = res.resume;
+    const titre = r.erreurs === 0 && r.avertissements === 0 && r.informations === 0
+      ? 'Aucune incohérence détectée automatiquement. Un test de simulation et un test humain restent recommandés.'
+      : (r.erreurs + ' erreur' + (r.erreurs > 1 ? 's' : '') + ' bloquante' + (r.erreurs > 1 ? 's' : '') + ' — ' + r.avertissements + ' avertissement' + (r.avertissements > 1 ? 's' : '') + ' — ' + r.informations + ' information' + (r.informations > 1 ? 's' : '')) + (r.erreurs === 0 ? '<br><span class="meta">Aucune erreur bloquante détectée automatiquement. Un test de simulation et un test humain restent recommandés.</span>' : '');
+    el.innerHTML = '<p style="margin:0 0 6px; font-size:13px;"><b>' + titre + '</b></p><p class="meta" style="margin:0 0 6px;">' + M.fiches.length + ' fiche(s) jouable(s), ' + M.quetes.length + ' quête(s), ' + M.objets.length + ' objet(s), ' + M.zones.filter(z=> z.chargee).length + '/' + M.zones.length + ' zone(s) chargée(s).</p>' + ctrlHtmlConstats(res.constats);
+  } catch(e){ el.innerHTML = '<p class="meta" style="color:var(--danger);">Vérification impossible : ' + ctrlEchap(e.message) + '</p>'; journal('erreur', 'vérificateur', e.message, true); }
+});
+document.getElementById('ctrlPanneau').addEventListener('click', (ev)=>{
+  const b = ev.target && ev.target.closest ? ev.target.closest('[data-ctrl-type]') : null;
+  if (!b) return;
+  ctrlOuvrirCible(b.dataset.ctrlType, b.dataset.ctrlId, b.dataset.ctrlPoint);
+});
+
+/* =====================================================================================
+   Le SIMULATEUR. Un moteur VIRTUEL rejoue les règles du jeu (choixVisible, resultatValidation,
+   creatureConditionMet, isActiveAt, heureDansCreneaux) sur un état de joueur imaginaire, et explore
+   en largeur tous les états atteignables, en fusionnant ceux qui sont identiques. Aucune écriture.
+   Sans quête de fin dans Mascotto, l'objectif est : toutes les quêtes terminables sont terminées.
+   Il ne dit jamais « validé » : il dit ce qu'il a exploré et ce qu'il a trouvé.
+   ===================================================================================== */
+const SIM_PLAFOND_DEFAUT = 10000;
+const SIM_TRANCHE = 150;   // états par tranche avant de rendre la main à l'interface
+
+function simCloner(e){ return { inv: { ...e.inv }, quetes: { ...e.quetes }, choix: { ...e.choix }, ramasses: { ...e.ramasses }, pris: { ...e.pris }, combats: { ...e.combats }, recrutes: { ...e.recrutes }, piege: e.piege || null }; }
+function simEtatInitial(){ return { inv: {}, quetes: {}, choix: {}, ramasses: {}, pris: {}, combats: {}, recrutes: {} }; }
+
+/* Préparation : ce qui compte dans l'état (choix cités, quantités utiles), les PNJ, les zones. */
+function simPreparer(M, options){
+  const IO = ctrlIndexObjets(M);
+  const IQ = ctrlIndexQuetes(M);
+  const instant = (options && options.instant) ? new Date(options.instant) : new Date();
+  const maxUtile = {};
+  Object.keys(IO.besoins).forEach(id=>{ maxUtile[id] = 1; });
+  Object.keys(IO.consommations).forEach(id=>{ IO.consommations[id].forEach(c=>{ maxUtile[id] = Math.max(maxUtile[id] || 1, c.qty || 1); }); });
+  const cites = new Set();
+  M.fiches.forEach(f=>{
+    f._steps.forEach(st=>{
+      (st.textVariants || []).forEach(v=>{ if (v && v.kind === 'choice' && v.choiceId) cites.add((v.creatureId || f.id) + '__' + v.choiceId); });
+      (st.choices || []).forEach(ch=>{ if (!ch) return; ctrlConditionsDe(ch).forEach(c=>{ if (c.choiceId) cites.add((c.creatureId || f.id) + '__' + c.choiceId); }); });
+    });
+  });
+  const pertinents = (cle, ch)=> !!(ch && ch.once) || cites.has(cle);
+  /* objectif : les quêtes atteignables (confiées par un choix ou suite d'une quête confiée) */
+  const quetesCibles = Array.from(IQ.atteignables).filter(id=> M.queteParId[id]);
+  return { M, IO, IQ, instant, maxUtile, pertinents, quetesCibles };
+}
+function simCle(P, e){
+  const inv = Object.keys(e.inv).filter(k=> e.inv[k] > 0).sort().map(k=> k + ':' + Math.min(e.inv[k], Math.max(1, P.maxUtile[k] || 1))).join(',');
+  const q = Object.keys(e.quetes).sort().map(k=> k + ':' + e.quetes[k].charAt(0)).join(',');
+  const c = Object.keys(e.choix).sort().join(',');
+  const r = Object.keys(e.ramasses).sort().join(',');
+  const p = Object.keys(e.pris).sort().join(',');
+  const b = Object.keys(e.combats).sort().join(',');
+  const rc = Object.keys(e.recrutes).sort().join(',');
+  return (e.piege ? 'P:' + e.piege + '|' : '') + inv + '|' + q + '|' + c + '|' + r + '|' + p + '|' + b + '|' + rc;
+}
+function simEtatPourRegles(e){ return { inventaire: e.inv, quetes: e.quetes, choix: e.choix, combats: e.combats }; }
+function simFin(P, e){ return P.quetesCibles.length > 0 && P.quetesCibles.every(id=> e.quetes[id] === 'completed'); }
+function simAjouter(P, s, itemId, qty, couverture){
+  if (!itemId || !P.M.objetParId[itemId]) return;
+  s.inv[itemId] = (s.inv[itemId] || 0) + (qty || 1);
+  couverture.objets.add(itemId);
+  (P.IO.consommations[itemId] || []).forEach(c=>{ if (c.genre === 'objectif' && c.queteId && !s.quetes[c.queteId]) couverture.precoces.add(itemId + '|' + c.queteId); });
+}
+
+/* ---------- le moteur virtuel : effets d'un choix (hors combat, géré par simJouerDialogue) ---------- */
+function simAppliquerChoix(P, e, f, ch, key, couverture){
+  const s = simCloner(e);
+  const evenements = [];
+  if (P.pertinents(key, ch)) s.choix[key] = true;
+  if (ch.itemGrant){
+    const it = objetPourDon(ch.itemGrant, P.M.objets);
+    if (it){ simAjouter(P, s, it.id, parseInt(ch.itemGrant.quantity, 10) || 1, couverture); evenements.push('+' + it.name); }
+  }
+  if (ch.questGive && ch.questGive.questId && P.M.queteParId[ch.questGive.questId] && !s.quetes[ch.questGive.questId]){ s.quetes[ch.questGive.questId] = 'active'; evenements.push('quête ' + P.M.queteParId[ch.questGive.questId].name); couverture.quetesActives.add(ch.questGive.questId); }
+  if (ch.questValidate && ch.questValidate.questId){
+    const q = P.M.queteParId[ch.questValidate.questId];
+    if (q && s.quetes[q.id] === 'active'){
+      const res = resultatValidation(q, s.inv);
+      if (res.satisfait){
+        res.aDeduire.forEach(o=>{ s.inv[o.itemId] = (s.inv[o.itemId] || 0) - (o.qty || 1); if (s.inv[o.itemId] <= 0) delete s.inv[o.itemId]; });
+        (q.rewards || []).forEach(r=>{ if (r && r.itemId) simAjouter(P, s, r.itemId, r.qty || 1, couverture); });
+        s.quetes[q.id] = 'completed'; evenements.push('✅ ' + q.name); couverture.quetesTerminees.add(q.id);
+        if (q.nextQuestId && P.M.queteParId[q.nextQuestId] && !s.quetes[q.nextQuestId]){ s.quetes[q.nextQuestId] = 'active'; couverture.quetesActives.add(q.nextQuestId); }
+      }
+    }
+  }
+  if (ch.recruit){ s.recrutes[f.id] = true; evenements.push('recrute ' + (f.name || 'PNJ')); couverture.recrutes.add(f.id); }
+  return { etat: s, evenements };
+}
+/* Jouer un dialogue depuis un état : tous les états atteignables en cours de conversation
+   (le joueur peut fermer à tout moment). Boucles coupées par (étape, état). Un choix qui lance un
+   combat produit DEUX suites : victoire (combat gagné + butin, réplique de victoire) et défaite. */
+function simJouerDialogue(P, e0, f, couverture, origineLibelle){
+  const steps = f._steps;
+  const sorties = [];   // { etat, libelle }
+  if (!steps.length) return sorties;
+  const e = simCloner(e0);
+  const cleR = cleRencontre(f.id);
+  const premiere = !e.choix[cleR];
+  if (steps[0] && steps[0].firstOnly) e.choix[cleR] = true;
+  let depart = 0;
+  if (steps[0] && steps[0].firstOnly && !premiere){ const t = parseInt(steps[0].thenStep, 10); if (!isNaN(t) && t >= 0 && t < steps.length) depart = t; }
+  const vus = new Set();
+  const pile = [{ i: depart, etat: e, chemin: origineLibelle }];
+  couverture.pnj.add(f.id);
+  const etapeValide = (v)=>{ if (v === null || v === undefined || v === '') return null; const t = parseInt(v, 10); return (isNaN(t) || t < 0 || t >= steps.length) ? null : t; };
+  while (pile.length){
+    const { i, etat, chemin } = pile.pop();
+    const cle = i + '#' + simCle(P, etat);
+    if (vus.has(cle)) continue;
+    vus.add(cle);
+    couverture.etapes.add(f.id + '#' + i);
+    sorties.push({ etat, libelle: chemin });
+    const st = steps[i];
+    if (!st) continue;
+    const regles = simEtatPourRegles(etat);
+    (st.choices || []).forEach((ch, iCh)=>{
+      if (!ch) return;
+      const key = choiceKeyFor(f.id, ch, i, iCh);
+      if (!choixVisible(ch, key, f.id, regles, P.M.quetes)) return;
+      couverture.choix.add(key);
+      const r = simAppliquerChoix(P, etat, f, ch, key, couverture);
+      const lib = chemin + ' › « ' + (ch.label || 'choix ' + (iCh + 1)) + ' »' + (r.evenements.length ? ' (' + r.evenements.join(', ') + ')' : '');
+      const adversaires = ctrlAdversairesDe(ch, f).map(id=> P.M.ficheParId[id]).filter(Boolean);
+      if (ch.combat && adversaires.length && adversaires.every(a=> a.combatStats)){
+        couverture.combats.add(f.id + '#' + key);
+        /* victoire */
+        const v = simCloner(r.etat);
+        v.combats[f.id] = true;
+        adversaires.forEach(a=> ((a.combatStats && a.combatStats.rewardItemIds) || []).forEach(id=> simAjouter(P, v, id, 1, couverture)));
+        const sv = etapeValide(ch.combat.stepWin);
+        if (sv === null) sorties.push({ etat: v, libelle: lib + ' › combat gagné' }); else pile.push({ i: sv, etat: v, chemin: lib + ' › combat gagné' });
+        /* défaite */
+        const sd = etapeValide(ch.combat.stepLose);
+        if (sd === null) sorties.push({ etat: r.etat, libelle: lib + ' › combat perdu' }); else pile.push({ i: sd, etat: r.etat, chemin: lib + ' › combat perdu' });
+        return;
+      }
+      if (ch.combat){ sorties.push({ etat: r.etat, libelle: lib + ' › combat impossible (adversaire sans stats)' }); return; }
+      const suite = (ch.next === null || ch.next === undefined || isNaN(ch.next) || ch.next >= steps.length || ch.next < 0) ? null : +ch.next;
+      if (suite === null) sorties.push({ etat: r.etat, libelle: lib });
+      else pile.push({ i: suite, etat: r.etat, chemin: lib });
+    });
+  }
+  return sorties;
+}
+
+/* ---------- les zones : sous-exploration scène par scène ---------- */
+function simVerrouOuvert(pt, e){
+  if (pt.lockType === 'item') return !pt.lockItemId || (e.inv[pt.lockItemId] || 0) > 0;
+  if (pt.lockType === 'code') return !!String(pt.lockCode || '').trim();   // code supposé connu du joueur
+  return true;
+}
+function simContenuScene(P, sc){
+  const variants = Array.isArray(sc.variants) ? sc.variants : [];
+  for (const v of variants){ if (isActiveAt(v, P.instant)) return (v.points && v.points.length) ? v.points : (sc.points || []); }
+  return sc.points || [];
+}
+function simPnjAbordable(P, fp, etat){
+  if (!fp) return false;
+  if (etat.recrutes[fp.id] || ctrlPnjRecrute(fp)) return false;
+  if (!isActiveAt(fp, P.instant)) return false;
+  return creatureConditionMet(fp, etat.quetes);
+}
+function simJouerZone(P, e0, z, couverture, origineLibelle){
+  const sorties = [];   // états à la sortie de la zone
+  const vus = new Set();
+  const pile = [{ sc: z.startSceneId, etat: simCloner(e0), chemin: origineLibelle }];
+  let interne = 0;
+  const clePris = (pt)=> z.fiche.id + '/' + pt.id;
+  while (pile.length && interne < 4000){
+    const { sc, etat, chemin } = pile.pop();
+    const cle = sc + '#' + simCle(P, etat);
+    if (vus.has(cle)) continue;
+    vus.add(cle); interne++;
+    const scene = z.scenes.find(x=> x.id === sc);
+    if (!scene) continue;
+    couverture.scenes.add(z.fiche.id + '#' + sc);
+    simContenuScene(P, scene).forEach(pt=>{
+      if (!pt) return;
+      const dispo = pt.type === 'pnj' ? !etat.pris[clePris(pt)] : (ctrlRenouvelable(pt) || !etat.pris[clePris(pt)]);
+      const nomPt = (pt.type || 'point') + (pt.linkedPnjName ? ' ' + pt.linkedPnjName : '');
+      if (pt.type === 'sortie_zone'){ couverture.points.add(clePris(pt)); sorties.push({ etat, libelle: chemin + ' › sortie de la zone' }); return; }
+      if (pt.type === 'sortie'){
+        const cren = (pt.openRanges || []).filter(c=> c && (c.start || c.end));
+        if (cren.length && !heureDansCreneaux(cren, P.instant)) return;
+        if (!simVerrouOuvert(pt, etat)) return;
+        couverture.points.add(clePris(pt));
+        if (pt.targetSceneId && z.scenes.some(x=> x.id === pt.targetSceneId)) pile.push({ sc: pt.targetSceneId, etat, chemin: chemin + ' › porte' });
+        else sorties.push({ etat, libelle: chemin + ' › porte (ferme la zone)' });
+        return;
+      }
+      if (!dispo) return;
+      if (pt.type === 'objet' && pt.itemId && P.M.objetParId[pt.itemId]){
+        const s = simCloner(etat); simAjouter(P, s, pt.itemId, pt.qty || 1, couverture); if (!ctrlRenouvelable(pt)) s.pris[clePris(pt)] = true;
+        couverture.points.add(clePris(pt));
+        pile.push({ sc, etat: s, chemin: chemin + ' › ramasse ' + P.M.objetParId[pt.itemId].name });
+      } else if (pt.type === 'action' && pt.reqItemId){
+        const need = pt.reqQty || 1;
+        if ((etat.inv[pt.reqItemId] || 0) < need) return;
+        const s = simCloner(etat); s.inv[pt.reqItemId] -= need; if (s.inv[pt.reqItemId] <= 0) delete s.inv[pt.reqItemId];
+        if (pt.resultType === 'give' && pt.resultItemId) simAjouter(P, s, pt.resultItemId, pt.resultQty || 1, couverture);
+        if (!ctrlRenouvelable(pt)) s.pris[clePris(pt)] = true;
+        couverture.points.add(clePris(pt));
+        pile.push({ sc, etat: s, chemin: chemin + ' › action (' + nomPt + ')' });
+      } else if (pt.type === 'coffre'){
+        if (!simVerrouOuvert(pt, etat)) return;
+        couverture.points.add(clePris(pt));
+        const loot = (pt.loot || []).filter(l=> l && l.itemId && P.M.objetParId[l.itemId]);
+        const aleatoires = loot.filter(l=> !(l.chance == null || l.chance === '' || +l.chance >= 100));
+        const surs = loot.filter(l=> (l.chance == null || l.chance === '' || +l.chance >= 100));
+        const combinaisons = Math.min(1 << aleatoires.length, 16);
+        for (let m = 0; m < combinaisons; m++){
+          const s = simCloner(etat);
+          if (!ctrlRenouvelable(pt)) s.pris[clePris(pt)] = true;
+          surs.forEach(l=> simAjouter(P, s, l.itemId, l.qty || 1, couverture));
+          aleatoires.forEach((l, k)=>{ if (m & (1 << k)) simAjouter(P, s, l.itemId, l.qty || 1, couverture); });
+          pile.push({ sc, etat: s, chemin: chemin + ' › ouvre un coffre' + (aleatoires.length ? ' (tirage ' + (m + 1) + ')' : '') });
+        }
+      } else if (pt.type === 'pnj' && pt.linkedPnjId){
+        const fp = P.M.ficheParId[pt.linkedPnjId];
+        if (!simPnjAbordable(P, fp, etat)) return;
+        couverture.points.add(clePris(pt));
+        simJouerDialogue(P, etat, fp, couverture, chemin + ' › ' + (fp.name || 'PNJ')).forEach(so=>{
+          const s = simCloner(so.etat);
+          if (pt.partApresDialogue) s.pris[clePris(pt)] = true;
+          pile.push({ sc, etat: s, chemin: so.libelle });
+        });
+      } else if (pt.type === 'image' || pt.type === 'dialogue' || pt.type === 'decor' || CTRL_TYPES_IGNORES.includes(pt.type)){
+        couverture.points.add(clePris(pt));
+      }
+    });
+  }
+  if (interne >= 4000) couverture.avertissements.add('Zone « ' + (z.fiche.name || '?') + ' » : exploration interne tronquée (4 000 états).');
+  return sorties;
+}
+
+/* ---------- l'exploration globale ---------- */
+function simTransitions(P, e, couverture){
+  const out = [];   // { etat, libelle, acteur }
+  const M = P.M;
+  M.fiches.forEach(f=>{
+    if (!ctrlPositionnee(f)) return;
+    if (f.interactionType === 'combat') return;   // monstre de carte : hors simulation
+    if (!isActiveAt(f, P.instant)) return;
+    if (f.interactionType === 'zone'){
+      const z = M.zoneParId[f.id];
+      if (!z || !z.scenes.length) return;
+      const so = simJouerZone(P, e, z, couverture, (f.name || 'Zone'));
+      if (!so.length){ const s = simCloner(e); s.piege = f.id; out.push({ etat: s, libelle: 'entre dans « ' + (f.name || 'Zone') + ' » et ne trouve aucune sortie', acteur: f.id }); return; }
+      so.forEach(x=> out.push({ etat: x.etat, libelle: x.libelle, acteur: f.id }));
+      return;
+    }
+    if (!simPnjAbordable(P, f, e)) return;
+    simJouerDialogue(P, e, f, couverture, (f.name || 'PNJ')).forEach(so=> out.push({ etat: so.etat, libelle: so.libelle, acteur: f.id }));
+  });
+  M.ramassages.forEach(p=>{
+    if (!ctrlPositionnee(p) || !p.itemId || !M.objetParId[p.itemId] || e.ramasses[p.id]) return;
+    const s = simCloner(e); s.ramasses[p.id] = true; simAjouter(P, s, p.itemId, p.qty || 1, couverture);
+    couverture.ramassages.add(p.id);
+    out.push({ etat: s, libelle: 'ramasse ' + M.objetParId[p.itemId].name + ' sur la carte', acteur: 'pickup:' + p.id });
+  });
+  return out;
+}
+
+function simulerScenario(options, surProgres){
+  const opts = options || {};
+  const M = opts.modele;
+  const P = simPreparer(M, opts);
+  const plafond = opts.plafond || SIM_PLAFOND_DEFAUT;
+  P.plafond = plafond;
+  const couverture = { pnj: new Set(), etapes: new Set(), choix: new Set(), objets: new Set(), quetesActives: new Set(), quetesTerminees: new Set(), points: new Set(), scenes: new Set(), ramassages: new Set(), precoces: new Set(), combats: new Set(), recrutes: new Set(), avertissements: new Set() };
+  const etats = new Map();   // clé → { etat, parent, libelle, acteur, succ: Map }
+  const e0 = simEtatInitial();
+  const k0 = simCle(P, e0);
+  etats.set(k0, { etat: e0, parent: null, libelle: 'départ', acteur: null, succ: new Map() });
+  const file = [k0];
+  let partiel = false, explores = 0;
+  return new Promise((resolve)=>{
+    const pas = ()=>{
+      let n = 0;
+      while (file.length && n < SIM_TRANCHE){
+        if (etats.size >= plafond && file.length){ partiel = true; break; }
+        const k = file.shift(); n++; explores++;
+        const noeud = etats.get(k);
+        noeud.explore = true;
+        if (simFin(P, noeud.etat) || noeud.etat.piege) continue;
+        let trans;
+        try { trans = simTransitions(P, noeud.etat, couverture); } catch(err){ couverture.avertissements.add('Erreur interne : ' + err.message); trans = []; }
+        trans.forEach(t=>{
+          const kk = simCle(P, t.etat);
+          if (!noeud.succ.has(kk)) noeud.succ.set(kk, new Set());
+          noeud.succ.get(kk).add(t.acteur || '');
+          if (!etats.has(kk)){
+            if (etats.size >= plafond){ partiel = true; return; }
+            etats.set(kk, { etat: t.etat, parent: k, libelle: t.libelle, acteur: t.acteur, succ: new Map() });
+            file.push(kk);
+          }
+        });
+      }
+      if (surProgres) surProgres(etats.size, plafond);
+      if (opts.arreter && opts.arreter()){ partiel = true; resolve(simRapport(P, etats, couverture, true, explores, file.length)); return; }
+      if (file.length && !partiel) setTimeout(pas, 0);
+      else resolve(simRapport(P, etats, couverture, partiel, explores, file.length));
+    };
+    pas();
+  });
+}
+
+function simRapport(P, etats, couverture, partiel, explores, restants){
+  const M = P.M;
+  /* Objectif atteint : toutes les quêtes que la simulation a su terminer quelque part sont terminées
+     dans un même état. Sans quête de fin, c'est la meilleure définition d'une partie « complète ». */
+  const terminables = Array.from(couverture.quetesTerminees);
+  const complet = (e)=> terminables.length > 0 && terminables.every(id=> e.quetes[id] === 'completed');
+  const pred = new Map();
+  etats.forEach((n, k)=> n.succ.forEach((acteurs, s)=>{ if (!pred.has(s)) pred.set(s, new Set()); pred.get(s).add(k); }));
+  const finales = []; etats.forEach((n, k)=>{ if (complet(n.etat)) finales.push(k); });
+  const vivants = new Set(finales);
+  const aVoir = finales.slice();
+  while (aVoir.length){ const k = aVoir.pop(); (pred.get(k) || new Set()).forEach(p=>{ if (!vivants.has(p)){ vivants.add(p); aVoir.push(p); } }); }
+  const chemin = (k)=>{ const l = []; let c = k; let garde = 0; while (c && garde++ < 200){ const n = etats.get(c); l.unshift(n.libelle); c = n.parent; } return l; };
+  const blocages = [];
+  if (finales.length){
+    etats.forEach((n, k)=>{
+      if (vivants.has(k)) return;
+      if (!n.explore && !n.etat.piege) return;   // pas encore exploré (analyse partielle) : on ne conclut pas
+      if (n.parent === null || vivants.has(n.parent)) blocages.push({ cle: k, chemin: chemin(k), etat: n.etat, piege: n.etat.piege || null });
+    });
+  } else {
+    etats.forEach((n, k)=>{ if (n.etat.piege) blocages.push({ cle: k, chemin: chemin(k), etat: n.etat, piege: n.etat.piege }); });
+  }
+  const totaux = {
+    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f._steps.length).length,
+    choix: M.fiches.reduce((n, f)=> n + f._steps.reduce((m, st)=> m + (st.choices || []).filter(Boolean).length, 0), 0),
+    etapes: M.fiches.reduce((n, f)=> n + f._steps.length, 0),
+    objets: M.objets.length, quetes: M.quetes.length,
+    points: M.zones.reduce((n, z)=> n + ctrlPointsDeZone(z).filter(({ pt })=> pt.type !== 'decor').length, 0),
+    combats: M.fiches.reduce((n, f)=> n + f._steps.reduce((m, st)=> m + (st.choices || []).filter(ch=> ch && ch.combat).length, 0), 0),
+  };
+  const nomObjet = (id)=> (M.objetParId[id] ? M.objetParId[id].name : id);
+  const nomQuete = (id)=> (M.queteParId[id] ? M.queteParId[id].name : id);
+  const indirects = new Set();
+  Object.keys(P.IO.sources).forEach(id=>{ if (M.objetParId[id] && !couverture.objets.has(id) && P.IO.sources[id].some(s=> s.indirect)) indirects.add(id); });
+  const inaccessibles = {
+    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f.interactionType !== 'combat' && f._steps.length && !couverture.pnj.has(f.id)).map(f=> f.name || f.id),
+    objets: M.objets.filter(o=> !couverture.objets.has(o.id) && !indirects.has(o.id)).map(o=> o.name),
+    objetsIndirects: Array.from(indirects).map(nomObjet),
+    quetes: M.quetes.filter(q=> !couverture.quetesActives.has(q.id)).map(q=> q.name),
+    quetesNonTerminees: M.quetes.filter(q=> couverture.quetesActives.has(q.id) && !couverture.quetesTerminees.has(q.id)).map(q=> q.name),
+    choix: [], points: [],
+  };
+  M.fiches.forEach(f=> f._steps.forEach((st, i)=> (st.choices || []).forEach((ch, iCh)=>{ if (ch && !couverture.choix.has(choiceKeyFor(f.id, ch, i, iCh))) inaccessibles.choix.push((f.name || 'PNJ') + ' · étape ' + i + ' · « ' + (ch.label || 'choix ' + (iCh + 1)) + ' »'); })));
+  M.zones.forEach(z=> ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{ if (pt.type !== 'decor' && !couverture.points.has(z.fiche.id + '/' + pt.id)) inaccessibles.points.push((z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante) + ' · ' + pt.type); }));
+  /* contournements : l'objectif reste-t-il atteignable sans tel personnage ? */
+  const contournables = [];
+  if (finales.length && !partiel){
+    const k0 = Array.from(etats.keys())[0];
+    M.fiches.filter(f=> f.interactionType !== 'zone' && couverture.pnj.has(f.id)).forEach(f=>{
+      const vus = new Set([k0]); const pile = [k0]; let ok = false;
+      while (pile.length && !ok){ const k = pile.pop(); const n = etats.get(k); if (complet(n.etat)){ ok = true; break; } n.succ.forEach((acteurs, s)=>{ const sansLui = Array.from(acteurs).some(a=> a !== f.id); if (sansLui && !vus.has(s)){ vus.add(s); pile.push(s); } }); }
+      if (ok) contournables.push(f.name || f.id);
+    });
+  }
+  const precoces = Array.from(couverture.precoces).map(x=>{ const [it, q] = x.split('|'); return '« ' + nomObjet(it) + ' » peut être obtenu avant que la quête « ' + nomQuete(q) + ' » (qui le consomme) soit en cours'; });
+  return {
+    partiel, etats: etats.size, explores, restants, plafond: P.plafond,
+    instant: P.instant,
+    quetesCibles: P.quetesCibles.length, quetesTerminables: terminables.length,
+    complet: finales.length > 0,
+    blocages: blocages.slice(0, 20), nbBlocages: blocages.length,
+    inaccessibles, contournables, precoces,
+    vu: couverture,
+    couverture: { choix: [couverture.choix.size, totaux.choix], etapes: [couverture.etapes.size, totaux.etapes], objets: [couverture.objets.size, totaux.objets], pnj: [couverture.pnj.size, totaux.pnj], points: [couverture.points.size, totaux.points], quetesTerminees: [couverture.quetesTerminees.size, totaux.quetes], combats: [couverture.combats.size, totaux.combats] },
+    avertissements: Array.from(couverture.avertissements),
+  };
+}
+
+/* ---------- rendu ---------- */
+function simPourcent(c){ return c[1] ? Math.round(100 * Math.min(c[0], c[1]) / c[1]) + ' %' : '—'; }
+function simHtmlRapport(R){
+  const l = [];
+  const gras = (t)=> '<b>' + ctrlEchap(t) + '</b>';
+  if (R.partiel) l.push('<p style="margin:0 0 6px; color:var(--danger);"><b>ANALYSE PARTIELLE</b> — le plafond de ' + R.plafond + ' états a été atteint (' + R.restants + ' états en attente non explorés). Les conclusions ci-dessous ne valent que pour la partie explorée : rien ne garantit l\'absence de blocage ailleurs.</p>');
+  const objectif = R.quetesCibles === 0 ? 'aucune quête atteignable : rien à terminer'
+    : (R.quetesTerminables + '/' + R.quetesCibles + ' quête(s) atteignable(s) terminée(s) au moins une fois');
+  l.push('<div style="font-size:13px; line-height:1.5;">'
+    + gras(R.etats.toLocaleString('fr-FR') + ' états analysés') + (R.partiel ? ' (partiel)' : '') + '<br>'
+    + 'Quêtes : ' + gras(objectif) + '<br>'
+    + 'Une même partie termine toutes les quêtes terminables : ' + gras(R.quetesTerminables ? (R.complet ? 'OUI' : 'NON') : '—') + (R.quetesTerminables && !R.complet ? ' <span class="meta">(choix exclusifs, ou objet consommé ?)</span>' : '') + '<br>'
+    + 'Blocages définitifs trouvés : ' + gras(String(R.nbBlocages)) + '<br>'
+    + 'Éléments inaccessibles : ' + gras(String(R.inaccessibles.pnj.length + R.inaccessibles.objets.length + R.inaccessibles.quetes.length + R.inaccessibles.points.length)) + '<br>'
+    + 'Couverture des choix : ' + gras(simPourcent(R.couverture.choix)) + ' · des étapes : ' + simPourcent(R.couverture.etapes) + ' · des objets : ' + simPourcent(R.couverture.objets) + ' · des points de zone : ' + simPourcent(R.couverture.points) + (R.couverture.combats[1] ? ' · des combats de dialogue : ' + simPourcent(R.couverture.combats) : '') + '<br>'
+    + '<span class="meta">Instant simulé : ' + ctrlEchap(new Date(R.instant).toLocaleString('fr-FR')) + ' · hors simulation : boutiques, monstres de carte, rencontres aléatoires, recettes, missions</span></div>');
+  if (R.blocages.length){
+    l.push('<div class="field-label" style="margin-top:10px; color:var(--danger);">BLOCAGE' + (R.nbBlocages > 1 ? 'S' : '') + ' TROUVÉ' + (R.nbBlocages > 1 ? 'S' : '') + (R.nbBlocages > R.blocages.length ? ' (les ' + R.blocages.length + ' premiers)' : '') + '</div>');
+    R.blocages.forEach(b=>{
+      const inv = Object.keys(b.etat.inv).filter(k=> b.etat.inv[k] > 0);
+      l.push('<div style="border-left:3px solid var(--danger); padding:4px 8px; margin:4px 0; font-size:12px;">' + ctrlEchap(b.chemin.join(' → ')) + ' <b>→ ' + (b.piege ? 'enfermé dans la zone, aucune sortie accessible.' : 'aucune action ne permet plus de terminer toutes les quêtes.') + '</b><br><span class="meta">Sac : ' + (inv.length ? ctrlEchap(inv.join(', ')) : 'vide') + ' · quêtes : ' + ctrlEchap(Object.keys(b.etat.quetes).map(k=> k + ' ' + b.etat.quetes[k]).join(', ') || 'aucune') + '</span></div>');
+    });
+  }
+  const liste = (titre, arr, niveau)=>{ if (!arr.length) return; l.push('<div class="field-label" style="margin-top:10px; color:' + (niveau === 'avert' ? '#e0a526' : 'var(--muted)') + ';">' + titre + ' (' + arr.length + ')</div><div style="font-size:12px;">' + arr.map(x=> '• ' + ctrlEchap(x)).join('<br>') + '</div>'); };
+  liste('Personnages jamais abordables', R.inaccessibles.pnj, 'avert');
+  liste('Objets jamais obtenus', R.inaccessibles.objets, 'avert');
+  liste('Objets disponibles seulement par boutique, butin ou recette (non simulés)', R.inaccessibles.objetsIndirects, 'info');
+  liste('Quêtes jamais commencées', R.inaccessibles.quetes, 'avert');
+  liste('Quêtes commencées mais jamais terminées', R.inaccessibles.quetesNonTerminees, 'avert');
+  liste('Points de zone jamais atteints', R.inaccessibles.points, 'avert');
+  liste('Choix jamais proposés', R.inaccessibles.choix, 'info');
+  liste('Obtenu tôt (avant la quête qui le consomme)', R.precoces, 'info');
+  liste('Personnages contournables (toutes les quêtes restent terminables sans leur parler)', R.contournables, 'info');
+  liste('Remarques du simulateur', R.avertissements, 'avert');
+  if (!R.partiel && R.complet && !R.nbBlocages) l.push('<p class="meta" style="margin-top:8px;">Aucun blocage trouvé dans les ' + R.etats + ' états explorés. Ce n\'est pas une garantie : un test humain reste recommandé.</p>');
+  return l.join('');
+}
+let simEnCours = null;
+function ctrlOptionsSim(){
+  const plafond = parseInt(document.getElementById('ctrlPlafondInput').value, 10) || SIM_PLAFOND_DEFAUT;
+  const saisi = document.getElementById('ctrlInstantInput').value;
+  const instant = saisi ? new Date(saisi).getTime() : null;
+  return { plafond, instant: (instant && !isNaN(instant)) ? instant : undefined };
+}
+document.getElementById('ctrlSimulerBtn').addEventListener('click', async ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  const btn = document.getElementById('ctrlSimulerBtn');
+  if (simEnCours){ simEnCours.stop = true; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Simulation… 0 état</p>';
+  simEnCours = { stop: false };
+  btn.textContent = '⏹️ Arrêter la simulation';
+  try {
+    const M = await ctrlModele();
+    const o = ctrlOptionsSim();
+    const R = await simulerScenario({ modele: M, plafond: o.plafond, instant: o.instant, arreter: ()=> simEnCours && simEnCours.stop }, (n, max)=>{ el.innerHTML = '<p class="meta">Simulation… ' + n + ' état(s) sur ' + max + ' au plus</p>'; });
+    el.innerHTML = simHtmlRapport(R);
+  } catch(e){ el.innerHTML = '<p class="meta" style="color:var(--danger);">Simulation impossible : ' + ctrlEchap(e.message) + '</p>'; journal('erreur', 'simulateur', e.message, true); }
+  simEnCours = null; btn.textContent = '▶️ Simuler le scénario';
+});
+
+/* =====================================================================================
+   L'ARBRE textuel. Le scénario entier, indenté, avec pour chaque élément ce que la simulation
+   a atteint (✓) ou jamais atteint (✗) — pour repérer d'un coup d'œil les branches mortes.
+   ===================================================================================== */
+function ctrlArbreHtml(M, R){
+  const vu = R.vu;
+  const ok = (b)=> b ? '<span style="color:var(--accent);">✓</span>' : '<span style="color:var(--danger);">✗</span>';
+  const li = (niv, html)=> '<div style="padding-left:' + (niv * 14) + 'px; font-size:12px; line-height:1.45;">' + html + '</div>';
+  const court = (t, n)=> { t = String(t || '').replace(/\s+/g, ' '); return ctrlEchap(t.length > (n || 60) ? t.slice(0, (n || 60) - 1) + '…' : t); };
+  const nomObjet = (id)=> (M.objetParId[id] ? M.objetParId[id].name : id);
+  const nomQuete = (id)=> (M.queteParId[id] ? M.queteParId[id].name : id);
+  const nomPnj = (id)=> (M.ficheParId[id] ? (M.ficheParId[id].name || id) : id);
+  const cond = (ch)=>{
+    const l = ctrlConditionsDe(ch).map(c=> c.kind === 'item' ? (c.has === 'no' ? 'sans ' : 'a ') + nomObjet(c.itemId) : c.kind === 'quest' ? nomQuete(c.questId) + ' ' + ({ active:'en cours', completed:'terminée', not_started:'jamais commencée', not_active:'pas en cours' }[c.state] || c.state) : c.kind === 'combat' ? (c.state === 'not_won' ? 'pas encore battu ' : 'a battu ') + nomPnj(c.creatureId || '') : 'a dit « ' + (c.choiceId || '?') + ' »' + (c.creatureId ? ' chez ' + nomPnj(c.creatureId) : '') + (c.taken === 'no' ? ' (non)' : ''));
+    return l.length ? ' <span class="meta">[si ' + ctrlEchap(l.join(' et ')) + ']</span>' : '';
+  };
+  const effets = (ch)=>{
+    const l = [];
+    if (ch.itemGrant){ const it = objetPourDon(ch.itemGrant, M.objets); l.push('🎁 ' + (it ? it.name : '?')); }
+    if (ch.questGive) l.push('📜 ' + nomQuete(ch.questGive.questId));
+    if (ch.questValidate) l.push('✅ ' + nomQuete(ch.questValidate.questId));
+    if (ch.recruit) l.push('🤝 recrute');
+    if (ch.once) l.push('une fois');
+    return l.length ? ' <span class="meta">(' + ctrlEchap(l.join(', ')) + ')</span>' : '';
+  };
+  const out = [];
+  out.push(li(0, '🏁 <b>Scénario</b> — ' + R.quetesTerminables + '/' + R.quetesCibles + ' quête(s) atteignable(s) terminée(s)' + (R.partiel ? ' <span style="color:var(--danger);">(ANALYSE PARTIELLE)</span>' : '')));
+  const IQ = ctrlIndexQuetes(M);
+  const ordre = []; const vues = new Set();
+  const racines = M.quetes.filter(q=> !(IQ.precedentes[q.id] || []).length);
+  const pousser = (q)=>{ if (!q || vues.has(q.id)) return; vues.add(q.id); ordre.push(q); if (q.nextQuestId) pousser(M.queteParId[q.nextQuestId]); };
+  racines.forEach(pousser); M.quetes.forEach(pousser);
+  out.push(li(0, '📜 <b>Quêtes</b>'));
+  ordre.forEach(q=>{
+    const donneurs = (IQ.confiee[q.id] || []).map(g=> nomPnj(g.pnjId)); const prec = (IQ.precedentes[q.id] || []).map(nomQuete);
+    const valideurs = (IQ.validee[q.id] || []).map(v=> nomPnj(v.pnjId));
+    out.push(li(1, ok(vu.quetesActives.has(q.id)) + ' commencée · ' + ok(vu.quetesTerminees.has(q.id)) + ' terminée — <b data-ctrl-type="quete" data-ctrl-id="' + ctrlEchap(q.id) + '" style="text-decoration:underline;">' + ctrlEchap(q.name) + '</b>'));
+    out.push(li(2, '<span class="meta">confiée par ' + ctrlEchap(donneurs.concat(prec.map(p=> 'suite de ' + p)).join(', ') || 'personne') + ' · validée par ' + ctrlEchap(valideurs.join(', ') || 'personne') + (q.objectives && q.objectives.length ? ' · objets : ' + ctrlEchap(q.objectives.map(o=> nomObjet(o.itemId) + (o.qty > 1 ? ' ×' + o.qty : '')).join(', ')) : ' · sans objectif') + (q.rewards && q.rewards.length ? ' · récompense : ' + ctrlEchap(q.rewards.map(r=> nomObjet(r.itemId)).join(', ')) : '') + '</span>'));
+  });
+  out.push(li(0, '👤 <b>Personnages</b>'));
+  M.fiches.filter(f=> f.interactionType !== 'zone' && f.interactionType !== 'combat').forEach(f=>{
+    const cf = ' data-ctrl-type="pnj" data-ctrl-id="' + ctrlEchap(f.id) + '"';
+    out.push(li(1, ok(vu.pnj.has(f.id)) + ' <b' + cf + ' style="text-decoration:underline;">' + ctrlEchap(f.name || 'sans nom') + '</b>' + (ctrlPositionnee(f) ? '' : ' <span class="meta">(sans position)</span>') + (f._enTravaux ? ' <span class="meta">(en travaux)</span>' : '') + (f.visibilityCondition && f.visibilityCondition.questId ? ' <span class="meta">[apparaît : ' + ctrlEchap(nomQuete(f.visibilityCondition.questId)) + ' ' + (f.visibilityCondition.state === 'completed' ? 'terminée' : 'pas terminée') + ']</span>' : '')));
+    f._steps.forEach((st, i)=>{
+      out.push(li(2, ok(vu.etapes.has(f.id + '#' + i)) + ' étape ' + i + (st.firstOnly ? ' <span class="meta">(première rencontre)</span>' : '') + ' : <span class="meta">« ' + court(st.text, 70) + ' »</span>' + ((st.textVariants || []).length ? ' <span class="meta">+' + st.textVariants.length + ' variante(s)</span>' : '')));
+      (st.choices || []).forEach((ch, iCh)=>{
+        if (!ch) return;
+        const key = choiceKeyFor(f.id, ch, i, iCh);
+        let suite;
+        if (ch.combat) suite = '⚔️ combat contre ' + ctrlAdversairesDe(ch, f).map(nomPnj).join(', ') + ' (victoire → ' + (ch.combat.stepWin == null || ch.combat.stepWin === '' ? 'fin' : 'étape ' + ch.combat.stepWin) + ', défaite → ' + (ch.combat.stepLose == null || ch.combat.stepLose === '' ? 'fin' : 'étape ' + ch.combat.stepLose) + ')';
+        else suite = (ch.next === null || ch.next === undefined || isNaN(ch.next)) ? 'fin' : '→ étape ' + ch.next;
+        out.push(li(3, ok(vu.choix.has(key)) + ' ▸ « ' + court(ch.label || 'choix ' + (iCh + 1), 50) + ' » ' + ctrlEchap(suite) + cond(ch) + effets(ch)));
+      });
+    });
+  });
+  if (M.zones.length){
+    out.push(li(0, '🗺️ <b>Zones d\'exploration</b>'));
+    M.zones.forEach(z=>{
+      out.push(li(1, '<b data-ctrl-type="zone" data-ctrl-id="' + ctrlEchap(z.fiche.id) + '" style="text-decoration:underline;">' + ctrlEchap(z.fiche.name || 'Zone') + '</b>' + (ctrlPositionnee(z.fiche) ? '' : ' <span class="meta">(sans position)</span>') + (z.chargee ? '' : ' <span class="meta">(scènes non chargées)</span>')));
+      z.scenes.forEach(sc=>{
+        out.push(li(2, ok(vu.scenes.has(z.fiche.id + '#' + sc.id)) + ' scène « ' + ctrlEchap(sc.name || 'Scène') + ' »' + (sc.id === z.startSceneId ? ' <span class="meta">(départ)</span>' : '')));
+        ctrlPointsDeZone(z).filter(x=> x.sc.id === sc.id).forEach(({ pt, variante })=>{
+          let desc = pt.type || 'point';
+          if (pt.type === 'pnj') desc += ' ' + (pt.linkedPnjId ? nomPnj(pt.linkedPnjId) : '?');
+          if (pt.type === 'objet') desc += ' ' + nomObjet(pt.itemId);
+          if (pt.type === 'coffre') desc += ' (' + (pt.loot || []).filter(l=> l && l.itemId).map(l=> nomObjet(l.itemId) + (l.chance != null && l.chance !== '' && +l.chance < 100 ? ' ' + l.chance + ' %' : '')).join(', ') + ')';
+          if (pt.type === 'sortie') desc += ' → ' + (pt.targetSceneId ? ((z.scenes.find(x=> x.id === pt.targetSceneId) || {}).name || '?') : 'ferme la zone');
+          if (pt.type === 'action') desc += ' (' + nomObjet(pt.reqItemId) + ' → ' + (pt.resultType === 'give' ? nomObjet(pt.resultItemId) : 'message') + ')';
+          if (pt.lockType === 'item') desc += ' 🔒 ' + nomObjet(pt.lockItemId);
+          if (pt.lockType === 'code') desc += ' 🔒 code';
+          out.push(li(3, (pt.type === 'decor' ? '·' : ok(vu.points.has(z.fiche.id + '/' + pt.id))) + ' <span data-ctrl-type="zone" data-ctrl-id="' + ctrlEchap(z.fiche.id) + '" data-ctrl-point="' + ctrlEchap(pt.id) + '" style="text-decoration:underline;">' + ctrlEchap(desc) + '</span>' + (variante ? ' <span class="meta">(variante ' + variante + ')</span>' : '')));
+        });
+      });
+    });
+  }
+  out.push(li(0, '🎒 <b>Objets</b>'));
+  M.objets.forEach(o=> out.push(li(1, ok(vu.objets.has(o.id)) + ' <span data-ctrl-type="objet" data-ctrl-id="' + ctrlEchap(o.id) + '" style="text-decoration:underline;">' + ctrlEchap(o.name) + '</span>' + (R.inaccessibles.objetsIndirects.includes(o.name) ? ' <span class="meta">(boutique / butin / recette)</span>' : ''))));
+  if (M.ramassages.length) out.push(li(1, '<span class="meta">objets posés sur la carte : ' + ctrlEchap(M.ramassages.map(p=> nomObjet(p.itemId)).join(', ')) + '</span>'));
+  return '<div style="margin-top:6px;">' + out.join('') + '</div>';
+}
+document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
+  const el = document.getElementById('ctrlPanneau');
+  el.style.display = 'block';
+  el.innerHTML = '<p class="meta">Simulation puis construction de l\'arbre…</p>';
+  try {
+    const M = await ctrlModele();
+    const o = ctrlOptionsSim();
+    const R = await simulerScenario({ modele: M, plafond: o.plafond, instant: o.instant }, (n, max)=>{ el.innerHTML = '<p class="meta">Simulation… ' + n + ' état(s) sur ' + max + ' au plus</p>'; });
+    el.innerHTML = ctrlArbreHtml(M, R);
+  } catch(e){ el.innerHTML = '<p class="meta" style="color:var(--danger);">Arbre impossible : ' + ctrlEchap(e.message) + '</p>'; }
 });
 
 </script>
