@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v468</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v469</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -28078,6 +28078,28 @@ function simMotifExclusion(P, f){
   if (!ctrlPositionnee(f) && enZone) return 'dans une zone, mais la scène ou la variante qui le contient n\'a jamais été affichée';
   return 'motif inconnu (aucune des règles connues ne l\'écarte)';
 }
+/* v469 : POURQUOI un choix n'a jamais été proposé — personnage jamais abordé, étape jamais atteinte,
+   ou étape atteinte mais règle de visibilité (choixVisible) jamais vraie : on décrit alors la règle. */
+function simMotifChoix(P, f, i, ch, couverture){
+  const M = P.M;
+  if (!couverture.pnj.has(f.id)) return 'le personnage n\'est jamais abordé (voir la liste des personnages)';
+  if (!couverture.etapes.has(f.id + '#' + i)) return 'l\'étape ' + i + ' n\'est jamais atteinte (aucun choix, aucun « puis étape » n\'y mène)';
+  const nomQ = (id)=> (M.queteParId[id] ? '« ' + (M.queteParId[id].name || id) + ' »' : 'SUPPRIMÉE (' + id + ')');
+  const nomP = (id)=>{ const p = M.fiches.find(x=> x.id === id); return p ? '« ' + (p.name || id) + ' »' : 'SUPPRIMÉ (' + id + ')'; };
+  const regles = [];
+  if (ch.once) regles.push('à usage unique');
+  if (ch.questGive) regles.push('donne la quête ' + nomQ(ch.questGive.questId) + (M.queteParId[ch.questGive.questId] ? ' (déjà active ou terminée sur tous les chemins ?)' : ''));
+  if (ch.questValidate) regles.push('valide la quête ' + nomQ(ch.questValidate.questId) + (M.queteParId[ch.questValidate.questId] ? ' (jamais active ici, ou objets requis jamais réunis)' : ''));
+  const conditions = (ch.showIfList || []).concat((ch.showIf && ch.showIf.kind === 'choice') ? [ch.showIf] : []);
+  conditions.forEach(cond=>{
+    if (!cond) return;
+    if (cond.kind === 'combat') regles.push('combat contre ' + (cond.creatureId ? nomP(cond.creatureId) : 'lui-même') + ' ' + (cond.state === 'not_won' ? 'pas encore gagné' : 'gagné'));
+    else if (cond.kind === 'quest') regles.push('quête ' + nomQ(cond.questId) + ' à l\'état « ' + (cond.state || '?') + ' »');
+    else if (cond.choiceId) regles.push('choix « ' + cond.choiceId + ' » de ' + (cond.creatureId ? nomP(cond.creatureId) : 'lui-même') + (cond.taken === 'no' ? ' pas pris' : ' pris'));
+  });
+  if (regles.length) return 'étape atteinte, mais sa condition n\'est jamais vraie : ' + regles.join(' ; ');
+  return 'motif inconnu (étape atteinte, aucune condition connue)';
+}
 function simPnjAbordable(P, fp, etat){
   if (!fp) return false;
   if (etat.recrutes[fp.id]) return false;   // v468 : le marqueur « recruté » (partagé) de la fiche est IGNORÉ — on simule un monde vierge
@@ -28278,7 +28300,7 @@ function simRapport(P, etats, couverture, partiel, explores, restants){
     quetesNonTerminees: M.quetes.filter(q=> couverture.quetesActives.has(q.id) && !couverture.quetesTerminees.has(q.id)).map(q=> q.name),
     choix: [], points: [],
   };
-  M.fiches.forEach(f=> f._steps.forEach((st, i)=> (st.choices || []).forEach((ch, iCh)=>{ if (ch && !couverture.choix.has(choiceKeyFor(f.id, ch, i, iCh))) inaccessibles.choix.push((f.name || 'PNJ') + ' · étape ' + i + ' · « ' + (ch.label || 'choix ' + (iCh + 1)) + ' »'); })));
+  M.fiches.forEach(f=> f._steps.forEach((st, i)=> (st.choices || []).forEach((ch, iCh)=>{ if (ch && !couverture.choix.has(choiceKeyFor(f.id, ch, i, iCh))) inaccessibles.choix.push((f.name || 'PNJ') + ' · étape ' + i + ' · « ' + (ch.label || 'choix ' + (iCh + 1)) + ' » — ' + simMotifChoix(P, f, i, ch, couverture)); })));
   M.zones.forEach(z=> ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{ if (pt.type !== 'decor' && !couverture.points.has(z.fiche.id + '/' + pt.id)) inaccessibles.points.push((z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante) + ' · ' + pt.type); }));
   /* contournements : l'objectif reste-t-il atteignable sans tel personnage ? */
   const contournables = [];
