@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v462</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v463</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7251,11 +7251,35 @@ function renderQuestTracker(){
 /* v462 (Parcours v10) — la DESTINATION d'une quête : le lieu réglé dans l'éditeur (« Lieu à rejoindre »),
    sinon, automatiquement, le personnage dont un choix de dialogue VALIDE cette quête.
    Retourne une fiche jouable positionnée, ou null. */
+/* v463 — la zone d'exploration qui HÉBERGE un personnage EN CE MOMENT : on ne regarde que le contenu
+   actuellement affiché de chaque scène (la variante active, sinon la scène de base — même règle que
+   resolveSceneContent), on écarte les zones hors horaires et les zones à découvrir pas encore trouvées.
+   Renvoie la fiche de zone (avec sa position), ou null. */
+function zoneQuiHeberge(pnjId){
+  if (!pnjId) return null;
+  for (const brute of toutesLesFiches()){
+    if ((brute.interactionType || '') !== 'zone') continue;
+    const z = ficheJouable(brute);
+    if (!z || typeof z.lat !== 'number' || typeof z.lng !== 'number') continue;
+    if (!isActiveNow(z)) continue;
+    if (z.explorable && typeof playerDiscoveredZoneIds !== 'undefined' && !playerDiscoveredZoneIds.has(brute.id)) continue;
+    const scenes = Array.isArray(z.scenes) ? z.scenes : [];
+    const dedans = scenes.some(sc=> (resolveSceneContent(sc).points || []).some(p=> p && p.type === 'pnj' && p.linkedPnjId === pnjId));
+    if (dedans) return { ...z, id: brute.id };
+  }
+  return null;
+}
+/* v463 — le LIEU JOIGNABLE pour une fiche : la fiche elle-même si elle est sur la carte, sinon la zone
+   d'exploration qui l'héberge en ce moment. Une fiche hors horaires n'est jamais joignable. */
+function lieuJoignable(f){
+  if (!f || !isActiveNow(f)) return null;
+  if (typeof f.lat === 'number' && typeof f.lng === 'number') return f;
+  return zoneQuiHeberge(f.id);
+}
 function destinationDeQuete(q){
   if (!q) return null;
-  const positionnee = (f)=> f && typeof f.lat === 'number' && typeof f.lng === 'number' ? f : null;
   if (q.destinationId){
-    const f = positionnee(ficheParIdJouable(q.destinationId));
+    const f = lieuJoignable(ficheParIdJouable(q.destinationId));
     if (f) return f;
   }
   for (const brute of toutesLesFiches()){
@@ -7264,7 +7288,7 @@ function destinationDeQuete(q){
     const steps = (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
     const valide = (steps || []).some(st=> (st.choices || []).some(ch=> ch && ch.questValidate && ch.questValidate.questId === q.id));
     if (valide){
-      const p = positionnee({ ...f, id: brute.id });
+      const p = lieuJoignable({ ...f, id: brute.id });
       if (p) return p;
     }
   }
@@ -7281,11 +7305,12 @@ function openQuestJournal(questId, entries){
     let distLabel = '';
     let itineraryBtn = '';
     if (entry.npcId){
-      const npc = creatures.find(c=>c.id===entry.npcId);
-      if (npc && typeof npc.lat === 'number' && playerPos){
-        const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
-        distLabel = `<span class="meta" style="display:block;">${npc.name || 'PNJ'} à ${dist} m</span>`;
-        itineraryBtn = `<button class="btn-secondary" data-jitin="${npc.id}" data-jitin-quete="${questId}" style="margin-top:6px;">🧭 Aller là-bas</button>`;
+      const npc = ficheParIdJouable(entry.npcId);
+      const lieu = lieuJoignable(npc); // v463 : un PNJ dans une zone d'exploration mène à la zone
+      if (lieu && playerPos){
+        const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, lieu.lat, lieu.lng));
+        distLabel = `<span class="meta" style="display:block;">${lieu.name || 'PNJ'} à ${dist} m</span>`;
+        itineraryBtn = `<button class="btn-secondary" data-jitin="${lieu.id}" data-jitin-quete="${questId}" style="margin-top:6px;">🧭 Aller là-bas${lieu.id !== entry.npcId ? ' — ' + (lieu.name || 'la zone') : ''}</button>`;
       }
     }
     return `
@@ -11428,8 +11453,9 @@ function guidageRetirerTrace(){
   guidageDessinerFin(null);
 }
 function guiderVers(ficheId, questId, silencieux){
-  const f = ficheParIdJouable(ficheId);
-  if (!f || typeof f.lat !== 'number' || typeof f.lng !== 'number'){ if (!silencieux) showToast('Ce lieu n\'a pas de position sur la carte'); return false; }
+  const f = lieuJoignable(ficheParIdJouable(ficheId)); // v463 : PNJ dans une zone → la zone
+  if (!f){ if (!silencieux) showToast('Ce lieu n\'est pas joignable pour l\'instant'); return false; }
+  ficheId = f.id;
   if (guidage.cibleId && guidage.cibleId !== ficheId) guidageEffacerTraces();
   guidage.cibleId = ficheId; guidage.questId = questId || null;
   guidage.nom = f.name || 'le lieu'; guidage.lat = f.lat; guidage.lng = f.lng;
@@ -20328,7 +20354,8 @@ function renderQuestDestinationSelect(){
   const sel = document.getElementById('questDestination');
   if (!sel) return;
   const current = sel.value;
-  const lieux = toutesLesFiches().map(f=> ({ id:f.id, j: ficheJouable(f) })).filter(x=> x.j && typeof x.j.lat === 'number' && typeof x.j.lng === 'number');
+  /* v463 : on liste aussi les PNJ sans position (ceux qui vivent dans une zone d'exploration) — le guidage mènera à leur zone */
+  const lieux = toutesLesFiches().map(f=> ({ id:f.id, j: ficheJouable(f) })).filter(x=> x.j && (x.j.interactionType !== 'zone' || (typeof x.j.lat === 'number' && typeof x.j.lng === 'number')));
   lieux.sort((a,b)=> (a.j.name||'').localeCompare(b.j.name||''));
   sel.innerHTML = '<option value="">Automatique (le personnage qui valide la quête)</option>' + lieux.map(x=>`<option value="${x.id}">${x.j.interactionType === 'zone' ? '🗺️' : '👤'} ${x.j.name || '(sans nom)'}</option>`).join('');
   if (current) sel.value = current;
