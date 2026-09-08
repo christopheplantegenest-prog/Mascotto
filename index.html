@@ -28061,6 +28061,23 @@ function simContenuScene(P, sc, etat){
   for (const v of variants){ if (isActiveAt(v, simInstant(P, etat))) return (v.points && v.points.length) ? v.points : (sc.points || []); }
   return sc.points || [];
 }
+/* v468 : POURQUOI un personnage n'a jamais été abordé — le motif est affiché dans le rapport, pour ne
+   plus avoir à deviner (position, dates, jours, horaires, condition de visibilité, ou rien de tout ça). */
+function simMotifExclusion(P, f){
+  const M = P.M;
+  const enZone = M.zones.some(z=> ctrlPointsDeZone(z).some(({ pt })=> pt.type === 'pnj' && pt.linkedPnjId === f.id));
+  if (!ctrlPositionnee(f) && !enZone) return 'ni sur la carte (position absente ou invalide), ni dans une zone';
+  if (Array.isArray(f.daysOfWeek) && f.daysOfWeek.length && !P.instants.some(d=> f.daysOfWeek.includes(d.getDay()))) return 'absent ce jour de la semaine (jours : ' + f.daysOfWeek.join(', ') + ')';
+  if (f.startDate && P.instants.every(d=> d < new Date(f.startDate + 'T' + (f.startTime || '00:00')))) return 'pas encore là (date de début ' + f.startDate + ')';
+  if (f.endDate && P.instants.every(d=> d > new Date(f.endDate + 'T' + (f.endTime || '23:59')))) return 'plus là (date de fin ' + f.endDate + ')';
+  if (!P.instants.some(d=> isActiveAt(f, d))) return 'hors horaires à tous les instants simulés';
+  if (f.visibilityCondition && f.visibilityCondition.questId){
+    const q = M.queteParId[f.visibilityCondition.questId];
+    return 'condition de visibilité : quête ' + (q ? '« ' + (q.name || q.id) + ' » ' + (f.visibilityCondition.state === 'completed' ? 'terminée' : 'pas terminée') + ', jamais remplie' : 'SUPPRIMÉE (' + f.visibilityCondition.questId + ') — la condition ne peut jamais être vraie');
+  }
+  if (!ctrlPositionnee(f) && enZone) return 'dans une zone, mais la scène ou la variante qui le contient n\'a jamais été affichée';
+  return 'motif inconnu (aucune des règles connues ne l\'écarte)';
+}
 function simPnjAbordable(P, fp, etat){
   if (!fp) return false;
   if (etat.recrutes[fp.id]) return false;   // v468 : le marqueur « recruté » (partagé) de la fiche est IGNORÉ — on simule un monde vierge
@@ -28254,7 +28271,7 @@ function simRapport(P, etats, couverture, partiel, explores, restants){
   const indirects = new Set();
   Object.keys(P.IO.sources).forEach(id=>{ if (M.objetParId[id] && !couverture.objets.has(id) && P.IO.sources[id].some(s=> s.indirect)) indirects.add(id); });
   const inaccessibles = {
-    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f.interactionType !== 'combat' && f._steps.length && !couverture.pnj.has(f.id)).map(f=> f.name || f.id),
+    pnj: M.fiches.filter(f=> f.interactionType !== 'zone' && f.interactionType !== 'combat' && f._steps.length && !couverture.pnj.has(f.id)).map(f=> (f.name || f.id) + ' — ' + simMotifExclusion(P, f)),
     objets: M.objets.filter(o=> !couverture.objets.has(o.id) && !indirects.has(o.id)).map(o=> o.name),
     objetsIndirects: Array.from(indirects).map(nomObjet),
     quetes: M.quetes.filter(q=> !couverture.quetesActives.has(q.id)).map(q=> q.name),
