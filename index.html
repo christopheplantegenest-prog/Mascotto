@@ -247,6 +247,17 @@
     padding:6px 12px; border-radius:999px; font-size:11px; font-family:var(--mono); color:var(--muted);
     display:flex; align-items:center; gap:6px;
   }
+  /* v462 (Parcours v9) : pastille de guidage (en bas à droite, face à la pastille de précision) */
+  .guidage-pill{
+    position:absolute; bottom:max(14px, env(safe-area-inset-bottom)); right:14px; z-index:1000;
+    max-width:62%; background:rgba(255,255,255,.94); border:1px solid var(--accent);
+    padding:6px 8px 6px 12px; border-radius:999px; font-size:12px; color:var(--text);
+    display:flex; align-items:center; gap:8px; box-shadow:0 2px 10px rgba(0,0,0,.12);
+  }
+  .guidage-pill .fleche{ display:inline-block; color:var(--accent); font-size:16px; line-height:1; transform-origin:50% 50%; flex-shrink:0; }
+  .guidage-pill .texte{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .guidage-pill .texte small{ display:block; font-size:10px; color:var(--muted); }
+  .guidage-pill button{ border:none; background:var(--line); color:var(--text); width:24px; height:24px; border-radius:50%; font-size:13px; line-height:24px; padding:0; flex-shrink:0; }
 
   .player-icon{
     width:18px; height:18px; border-radius:50%;
@@ -1206,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v461</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v462</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1232,6 +1243,11 @@
   <div class="map-wrap">
     <div id="map"></div>
     <div class="acc-pill" id="accPill" style="display:none;"><span class="dot" id="statusDot"></span><span id="accPillText"></span></div>
+    <div class="guidage-pill" id="guidagePill" style="display:none;">
+      <span class="fleche" id="guidageFleche">➤</span>
+      <span class="texte" id="guidageTexte"></span>
+      <button id="guidageStopBtn" title="Arrêter le guidage">✕</button>
+    </div>
   </div>
 
 </div>
@@ -1949,6 +1965,11 @@
       <div id="questRewardsList"></div>
       <button class="btn-secondary" id="questAddRewardBtn" style="width:100%; margin-top:4px;">➕ Ajouter une récompense</button>
 
+      <div class="field-label">Lieu à rejoindre (le bouton « Aller là-bas » du suivi mène là — par défaut, au personnage qui valide la quête)</div>
+      <select id="questDestination" class="field-input">
+        <option value="">Automatique (le personnage qui valide la quête)</option>
+      </select>
+
       <div class="field-label">Quête suivante (optionnel — débloquée automatiquement une fois celle-ci validée)</div>
       <select id="questNextQuest" class="field-input">
         <option value="">Aucune</option>
@@ -1958,6 +1979,11 @@
         <input type="checkbox" id="questShowInJournal" style="width:auto;" checked>
         <label for="questShowInJournal" style="margin:0;">Afficher dans le journal de suivi</label>
       </div>
+      <div class="field-label" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="questShowObjectives" style="width:auto;" checked>
+        <label for="questShowObjectives" style="margin:0;">Afficher les objets à trouver dans le suivi (ex. : 0/3)</label>
+      </div>
+      <p class="meta" style="margin:2px 0 0 26px;">À décocher quand le nom d'un objet est lui-même un indice — sinon le suivi révèle ce que le joueur est censé découvrir.</p>
 
       <button class="btn-capture" id="questSaveBtn" style="width:100%; margin-top:16px;">Enregistrer la quête</button>
       <button class="btn-secondary" id="questCancelBtn" style="width:100%; margin-top:8px; display:none;">Annuler la modification</button>
@@ -4664,7 +4690,7 @@ function renderDialogueBuilder(){
 
         const stSel = document.createElement('select');
         stSel.className = 'field-input';
-        stSel.innerHTML = '<option value="active">en cours</option><option value="completed">terminée</option><option value="not_active">pas commencée</option>';
+        stSel.innerHTML = '<option value="active">en cours</option><option value="completed">terminée</option><option value="not_started">jamais commencée</option><option value="not_active">pas en cours (jamais commencée ou terminée)</option>';
         stSel.value = variant.state || 'active';
         variant.state = stSel.value;
         stSel.style.flex = '1';
@@ -4880,7 +4906,7 @@ function renderDialogueBuilder(){
 
       const stSel = document.createElement('select');
       stSel.className = 'field-input';
-      stSel.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_active">n\'est pas (encore) en cours</option>';
+      stSel.innerHTML = '<option value="active">est en cours</option><option value="completed">est terminée</option><option value="not_started">n\'a jamais été commencée</option><option value="not_active">n\'est pas en cours (jamais commencée ou terminée)</option>';
       stSel.value = choice.showIf.state || 'active';
       choice.showIf.state = stSel.value;
       stSel.style.flex = '2';
@@ -5029,7 +5055,8 @@ function renderDialogueBuilder(){
     let itemOpts = '<option value="">Aucun</option>';
     items.forEach(it=>{ itemOpts += '<option value="' + it.name + '">' + it.name + '</option>'; }); // pas d'image possible dans une <option>
     itemSelect.innerHTML = itemOpts;
-    itemSelect.value = (choice.itemGrant && choice.itemGrant.itemName) || '';
+    const objActuel = choice.itemGrant && objetPourDon(choice.itemGrant);   // v462 : retrouve l'objet même renommé
+    itemSelect.value = objActuel ? objActuel.name : ((choice.itemGrant && choice.itemGrant.itemName) || '');
 
     const qtyInput = document.createElement('input');
     qtyInput.type = 'number';
@@ -5044,7 +5071,8 @@ function renderDialogueBuilder(){
         choice.itemGrant = null;
         qtyInput.style.display = 'none';
       } else {
-        choice.itemGrant = { itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
+        const objChoisi = items.find(i=> i.name === itemSelect.value);   // v462 : on garde aussi l'identifiant
+        choice.itemGrant = { itemId: objChoisi ? objChoisi.id : null, itemName: itemSelect.value, quantity: parseInt(qtyInput.value,10) || 1 };
         qtyInput.style.display = 'block';
       }
     });
@@ -5206,14 +5234,14 @@ function fenetreEffetsReponse(ch){
       : ('« ' + extraitReplique(v, 34) + ' »');
 
     /* --- objet donné --- */
-    const it = ch.itemGrant && items.find(x=> x.name === ch.itemGrant.itemName);
+    const it = ch.itemGrant && objetPourDon(ch.itemGrant);   // v462 : par identifiant, nom en repli
     ligne('🎁 Donner un objet', ch.itemGrant ? ((it ? it.name : ch.itemGrant.itemName) + ' ×' + (ch.itemGrant.quantity || 1)) : 'aucun', ()=>{
       if (ch.itemGrant){ ch.itemGrant = null; dessiner(); return; }
       if (!items.length){ showToast('Aucun objet créé pour l\'instant'); return; }
       ouvrirSelecteur({ titre:'Quel objet ?', items: itemsPourSelecteur(), selectionnes: [], max:1,
         onChoisir:(ids)=>{
           const obj = items.find(x=> x.id === ids[0]);
-          if (obj) ch.itemGrant = { itemName: obj.name, quantity: 1 };
+          if (obj) ch.itemGrant = { itemId: obj.id, itemName: obj.name, quantity: 1 };   // v462
           dessiner();
         } });
     });
@@ -6119,12 +6147,17 @@ if (creatureCol){
 
 let expiredCreatureIds = new Set(); // PNJ dont la condition n'est plus remplie ET le joueur a quitté son rayon (ou disparition immédiate activée)
 
-function creatureConditionMet(d){
-  if (!d.visibilityCondition || !d.visibilityCondition.questId) return true;
-  const state = playerQuestsState[d.visibilityCondition.questId] || 'none';
+function creatureConditionMet(d, quetes){
+  if (!d || !d.visibilityCondition || !d.visibilityCondition.questId) return true;
+  const state = etatQuete(quetes || playerQuestsState, d.visibilityCondition.questId);
   if (d.visibilityCondition.state === 'completed') return state === 'completed';
   return state !== 'completed'; // 'not_completed' par défaut
 }
+/* v462 (Parcours A5) : un PNJ dont la condition est fausse n'est affiché que s'il a déjà été vu, condition
+   vraie, pendant CETTE session (il s'en va quand on s'éloigne — au lieu de disparaître sous les yeux
+   du joueur). Au chargement, personne n'a été vu : la condition est stricte, et un rechargement ne
+   fait plus réapparaître un personnage exclu. */
+let pnjVusConditionVraie = new Set();
 
 /* Tous les monstres du jeu, y compris ceux qui ne sont posés nulle part sur la carte.
    ATTENTION : ne jamais utiliser `creatures` pour ça — c'est la liste des marqueurs
@@ -6213,7 +6246,9 @@ function renderAllCreatures(snap){
     if (ferme && d.interactionType !== 'zone') return;
     if (d.interactionType === 'zone' && d.explorable && !playerDiscoveredZoneIds.has(doc.id)) return; // zone découvrable pas encore trouvée par l'explorateur
     const conditionOk = creatureConditionMet(d);
+    if (conditionOk) pnjVusConditionVraie.add(doc.id);
     if (!conditionOk && (d.hideOnExitRadius || expiredCreatureIds.has(doc.id))) return; // condition expirée : exclu définitivement
+    if (!conditionOk && !pnjVusConditionVraie.has(doc.id)) return;   // v462 (A5) : jamais vu avec sa condition vraie → pas affiché
     creatures.push({ id: doc.id, ...d, marker:null, active: true, _conditionOk: conditionOk, _closed: ferme });
   });
   renderCreatureMarkers();
@@ -6307,6 +6342,34 @@ function adjustMapIconRotation(delta){
 document.getElementById('mapIconRotMinusBtn').addEventListener('click', ()=> adjustMapIconRotation(-15));
 document.getElementById('mapIconRotPlusBtn').addEventListener('click', ()=> adjustMapIconRotation(15));
 
+/* v462 (repris de Parcours v15) : l'icône d'un personnage fait 96 px de côté, mais l'image est souvent plus
+   petite et a un fond transparent — un appui dans ce vide sélectionnait le personnage. On ne garde l'appui
+   que si le pixel touché est opaque. L'image est dessinée une fois dans un petit canvas (mêmes proportions
+   que l'icône : object-fit contain) ; s'il est impossible de tester (image pas chargée, canvas absent,
+   image hébergée ailleurs qui « salit » le canvas), on accepte l'appui comme avant. */
+const ALPHA_PERSONNAGE_MIN = 40;
+function appuiSurLePersonnage(c, evt){
+  try {
+    if (!c || !c.imageUrl || !evt || typeof evt.clientX !== 'number') return true;
+    const img = document.getElementById('icon-' + c.id);
+    if (!img || img.tagName !== 'IMG' || !img.naturalWidth) return true;
+    const rect = img.getBoundingClientRect();
+    if (!rect.width || !rect.height) return true;
+    if (!c._masque || c._masqueSrc !== c.imageUrl){
+      const T = 128;
+      const cv = document.createElement('canvas'); cv.width = T; cv.height = T;
+      const ctx2 = cv.getContext('2d');
+      const k = Math.min(T / img.naturalWidth, T / img.naturalHeight);
+      const w = img.naturalWidth * k, h = img.naturalHeight * k;
+      ctx2.drawImage(img, (T - w) / 2, (T - h) / 2, w, h);
+      c._masque = ctx2.getImageData(0, 0, T, T).data; c._masqueT = T; c._masqueSrc = c.imageUrl;
+    }
+    const T = c._masqueT;
+    const x = Math.floor((evt.clientX - rect.left) / rect.width * T), y = Math.floor((evt.clientY - rect.top) / rect.height * T);
+    if (x < 0 || y < 0 || x >= T || y >= T) return false;
+    return c._masque[(y * T + x) * 4 + 3] >= ALPHA_PERSONNAGE_MIN;
+  } catch(e){ return true; }
+}
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
@@ -6317,10 +6380,11 @@ function renderCreatureMarkers(){
       : `<div class="creature-icon" id="icon-${c.id}" style="${iconTransform}">${fallbackEmoji}</div>`;
     const icon = L.divIcon({ className:'', html: inner, iconSize:[96,96] });
     const marker = L.marker([c.lat, c.lng], { icon }); // pas ajouté tout de suite : dépend du périmètre de visibilité
-    marker.on('click', ()=>{
+    marker.on('click', (ev)=>{
       if (isMovingMarker) return;
       if (mapLongPressFired){ mapLongPressFired = false; return; }
       if (isGhostTap()) return; // reste du geste qui vient de fermer un écran
+      if (!appuiSurLePersonnage(c, ev && ev.originalEvent)) return;   // v462 : à côté du personnage, on ne le sélectionne pas
       handleCreatureClick(c);
     });
     marker.on('add', ()=>{
@@ -6618,8 +6682,52 @@ function majChoixReferencesPartout(){
   });
   choixReferencesPartout = ids;
 }
+/* =====================================================================================
+   v462 (repris de Parcours v20a) — RÈGLES PURES DU MOTEUR DE QUÊTES. Un seul endroit pour
+   décider ce qu'un état de quête veut dire, quel objet un don désigne, et si une quête est
+   validable : le jeu, l'éditeur et un futur vérificateur y passent tous.
+   États de quête : 'active' | 'completed' | 'none' (absent). Règles :
+     active      → en cours
+     completed   → terminée
+     not_started → jamais commencée
+     not_active  → pas en cours : jamais commencée OU terminée (ancien libellé trompeur, gardé)
+   ===================================================================================== */
+function etatQuete(quetes, questId){ return (quetes && questId && quetes[questId]) || 'none'; }
+function etatQueteCorrespond(regle, etat){
+  if (regle === 'active') return etat === 'active';
+  if (regle === 'completed') return etat === 'completed';
+  if (regle === 'not_started') return etat === 'none';
+  if (regle === 'not_active') return etat !== 'active';
+  return true;
+}
+/* A1 : un don d'objet se résout par l'IDENTIFIANT ; le nom n'est qu'un repli (anciennes fiches,
+   dialogues importés). Avant, renommer un objet cassait tous les dons qui le visaient. */
+function objetPourDon(grant, listeObjets){
+  if (!grant) return null;
+  const liste = listeObjets || items || [];
+  let it = grant.itemId ? liste.find(i=> i && i.id === grant.itemId) : null;
+  if (!it && grant.itemName) it = liste.find(i=> i && i.name === grant.itemName) || null;
+  return it || null;
+}
+/* Validation d'une quête sur un inventaire : satisfaite ? et quels objectifs consommer.
+   A7 : une quête sans objectif est toujours satisfaite (« va parler à X »). */
+function resultatValidation(quete, inventaire){
+  const inv = inventaire || {};
+  const mode = (quete && quete.objectiveMode) || 'all';
+  const objectifs = ((quete && quete.objectives) || []).filter(o=> o && o.itemId);
+  if (!objectifs.length) return { satisfait: true, aDeduire: [] };
+  if (mode === 'any'){
+    const met = objectifs.find(o=> (inv[o.itemId] || 0) >= (o.qty || 1));
+    return { satisfait: !!met, aDeduire: met ? [met] : [] };
+  }
+  const ok = objectifs.every(o=> (inv[o.itemId] || 0) >= (o.qty || 1));
+  return { satisfait: ok, aDeduire: ok ? objectifs.slice() : [] };
+}
 function shouldRememberChoice(ch){
-  return !!ch.once || !!(ch.id && (activeReferencedChoiceIds.has(ch.id) || choixReferencesPartout.has(ch.id)));
+  /* v462 (Parcours A8) : on mémorise TOUT choix, plus seulement ceux déjà visés par une condition —
+     une condition posée PLUS TARD sur un choix déjà pris fonctionne alors. Coût : une écriture
+     Firestore par réponse cliquée (fusion sur le doc joueur), négligeable à notre échelle. */
+  return true;
 }
 function markChoiceUsed(key){
   playerUsedChoices[key] = true; // effet immédiat, sans attendre le retour du serveur
@@ -6663,10 +6771,7 @@ function resolveStepText(step, creatureId){
       else if (taken) return resoudreMarqueurs(v.text);
       continue;
     }
-    const state = playerQuestsState[v.questId] || 'none';
-    if (v.state === 'active' && state === 'active') return resoudreMarqueurs(v.text);
-    if (v.state === 'completed' && state === 'completed') return resoudreMarqueurs(v.text);
-    if (v.state === 'not_active' && state !== 'active') return resoudreMarqueurs(v.text);
+    if (etatQueteCorrespond(v.state, etatQuete(playerQuestsState, v.questId))) return resoudreMarqueurs(v.text);   // v462 : gère aussi « jamais commencée »
   }
   return resoudreMarqueurs(step.text);
 }
@@ -6713,6 +6818,11 @@ function renderSheet(){
     if (ch.questValidate){
       const state = playerQuestsState[ch.questValidate.questId];
       if (state !== 'active') return false; // pas acceptée (ou déjà validée) : rien à valider
+      /* v462 (Parcours A2) : tant que les objectifs ne sont pas dans le sac, le bouton n'apparaît pas —
+         avant, il s'affichait, on cliquait, et il ne se passait rien. */
+      const q = quests.find(x=> x && x.id === ch.questValidate.questId);
+      const invLocal = (playerSelfData && playerSelfData.inventory) || {};
+      if (!q || !resultatValidation(q, invLocal).satisfait) return false;
     }
     /* Conditions cumulées : TOUTES doivent être vraies. `showIf` seul reste lu (ancien
        format) ; `showIfList` porte les suivantes. C'est ce qui permet d'écrire « il a vu
@@ -6748,10 +6858,7 @@ function renderSheet(){
       if (ch.showIf.state === 'not_won'){ if (gagne) return false; }
       else if (!gagne) return false;
     } else if (ch.showIf && ch.showIf.questId){
-      const state = playerQuestsState[ch.showIf.questId] || 'none';
-      if (ch.showIf.state === 'active' && state !== 'active') return false;
-      if (ch.showIf.state === 'completed' && state !== 'completed') return false;
-      if (ch.showIf.state === 'not_active' && state === 'active') return false;
+      if (!etatQueteCorrespond(ch.showIf.state, etatQuete(playerQuestsState, ch.showIf.questId))) return false;   // v462
     }
     return true;
   });
@@ -6770,24 +6877,34 @@ function renderSheet(){
     btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
     btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
     btn.addEventListener('click', ()=>{
+      if (btn.disabled) return;
+      btn.disabled = true;   // v462 : un appui = un effet, même si l'écriture prend quelques ms
       if (shouldRememberChoice(ch)) markChoiceUsed(key);
-      if (ch.itemGrant) grantItemToPlayer(ch.itemGrant.itemName, ch.itemGrant.quantity);
       if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
-      if (ch.questGive) giveQuestToPlayer(ch.questGive.questId);
-      if (ch.questValidate) validateQuestForPlayer(ch.questValidate.questId);
-      /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
-         Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
-         et le dialogue se terminait sans que le combat parte. */
-      if (ch.combat && ((Array.isArray(ch.combat.creatureIds) && ch.combat.creatureIds.length) || ch.combat.creatureId)){
-        lancerCombatDepuisDialogue(activeCreature, ch.combat);
-        return;
-      }
-      if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
-        fermerDialogue();
-      } else {
-        currentStepIdx = ch.next;
-        renderSheet();
-      }
+      const suite = ()=>{
+        /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
+           Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
+           et le dialogue se terminait sans que le combat parte. */
+        if (ch.combat && ((Array.isArray(ch.combat.creatureIds) && ch.combat.creatureIds.length) || ch.combat.creatureId)){
+          lancerCombatDepuisDialogue(activeCreature, ch.combat);
+          return;
+        }
+        if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
+          fermerDialogue();
+        } else {
+          currentStepIdx = ch.next;
+          renderSheet();
+        }
+      };
+      /* v462 (Parcours A3) : les effets s'ENCHAÎNENT (don d'objet, puis quête, puis validation) — la
+         validation relit l'inventaire APRÈS que le don est écrit ; avant, les trois partaient en même
+         temps et la validation pouvait tester le sac avant l'arrivée de l'objet. */
+      Promise.resolve()
+        .then(()=> ch.itemGrant ? grantItemToPlayer(ch.itemGrant) : null)
+        .then(()=> ch.questGive ? giveQuestToPlayer(ch.questGive.questId) : null)
+        .then(()=> ch.questValidate ? validateQuestForPlayer(ch.questValidate.questId) : null)
+        .catch((e)=> showToast('Effets du choix : ' + ((e && e.message) || String(e))))
+        .then(suite);
     });
     choicesEl.appendChild(btn);
   });
@@ -6867,11 +6984,15 @@ function reprendreDialogueApresCombat(resultat){
   return true;
 }
 
-function grantItemToPlayer(itemName, quantity){
-  if (!currentUser || !db) return;
-  const it = items.find(i=>i.name === itemName);
-  if (!it){ showToast('Objet "' + itemName + '" introuvable'); return; }
-  db.collection('players').doc(currentUser.uid).set({
+function grantItemToPlayer(grant, quantiteAncienne){
+  /* v462 (Parcours A1) : accepte { itemId, itemName, quantity } (identifiant d'abord, nom en repli)
+     ou, pour l'ancien appel, (nom, quantité). Renvoie une promesse. */
+  const g = (typeof grant === 'string') ? { itemName: grant, quantity: quantiteAncienne } : (grant || {});
+  const quantity = parseInt(g.quantity, 10) || 1;
+  if (!currentUser || !db) return Promise.resolve();
+  const it = objetPourDon(g);
+  if (!it){ showToast('Objet "' + (g.itemName || g.itemId || '?') + '" introuvable'); return Promise.resolve(); }
+  return db.collection('players').doc(currentUser.uid).set({
     inventory: { [it.id]: firebase.firestore.FieldValue.increment(quantity) }
   }, { merge: true })
     .then(()=> showToast(`+${quantity} ${it.name}`, it.imageUrl || ITEM_PLACEHOLDER_IMG))
@@ -6973,6 +7094,7 @@ function watchPlayerQuests(uid){
     playerQuestsState = (doc.exists && doc.data().quests) || {};
     playerUsedChoices = (doc.exists && doc.data().usedChoices) || {};
     playerCombatsWon = (doc.exists && doc.data().combatsWon) || {};
+    try { if (guidage.questId && playerQuestsState[guidage.questId] === 'completed') arreterGuidage(true); } catch(e){}   // v462
     playerDiscoveredZoneIds = new Set((doc.exists && doc.data().discoveredZoneIds) || []);
     playerExplorerMissionStartedAt = (doc.exists && doc.data().explorerMissionStartedAt) || null;
     playerExplorerMissionDuration = (doc.exists && doc.data().explorerMissionDuration) || null;
@@ -7028,11 +7150,11 @@ function watchPlayerQuests(uid){
 }
 
 function giveQuestToPlayer(questId){
-  if (!currentUser || !db) return;
+  if (!currentUser || !db) return Promise.resolve();
   const quest = quests.find(q=>q.id===questId);
-  if (!quest) return;
-  if (playerQuestsState[questId]){ showToast('Quête déjà en cours ou terminée'); return; }
-  db.collection('players').doc(currentUser.uid).set({
+  if (!quest) return Promise.resolve();
+  if (playerQuestsState[questId]){ showToast('Quête déjà en cours ou terminée'); return Promise.resolve(); }
+  return db.collection('players').doc(currentUser.uid).set({
     quests: { [questId]: 'active' }
   }, { merge: true })
     .then(()=> showToast(`Nouvelle quête : ${quest.name}`))
@@ -7040,40 +7162,31 @@ function giveQuestToPlayer(questId){
 }
 
 function validateQuestForPlayer(questId){
-  if (!currentUser || !db) return;
+  if (!currentUser || !db) return Promise.resolve();
   const quest = quests.find(q=>q.id===questId);
-  if (!quest){ showToast('Quête introuvable'); return; }
-  if (playerQuestsState[questId] !== 'active'){ showToast('Cette quête n\'est pas active pour toi'); return; }
+  if (!quest){ showToast('Quête introuvable'); return Promise.resolve(); }
+  if (playerQuestsState[questId] !== 'active'){ showToast('Cette quête n\'est pas active pour toi'); return Promise.resolve(); }
 
-  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+  return db.collection('players').doc(currentUser.uid).get().then((doc)=>{
     const inventory = (doc.exists && doc.data().inventory) || {};
-    const mode = quest.objectiveMode || 'all';
-    const objectives = quest.objectives || [];
-    let satisfied;
-    let toDeduct = [];
-    if (mode === 'any'){
-      const met = objectives.find(o => (inventory[o.itemId]||0) >= o.qty);
-      satisfied = !!met;
-      if (met) toDeduct = [met];
-    } else {
-      satisfied = objectives.every(o => (inventory[o.itemId]||0) >= o.qty);
-      if (satisfied) toDeduct = objectives;
-    }
-    if (!satisfied){ showToast('Objectif pas encore rempli'); return; }
+    /* v462 : même règle que l'affichage du bouton (A7 : sans objectif, toujours satisfaite) */
+    const res = resultatValidation(quest, inventory);
+    if (!res.satisfait){ showToast('Objectif pas encore rempli'); return; }
 
     const deltas = {};
-    toDeduct.forEach(o=>{ deltas[o.itemId] = (deltas[o.itemId]||0) - o.qty; });
+    res.aDeduire.forEach(o=>{ deltas[o.itemId] = (deltas[o.itemId]||0) - (o.qty || 1); });
     (quest.rewards||[]).forEach(r=>{ deltas[r.itemId] = (deltas[r.itemId]||0) + r.qty; });
     const inc = {};
     Object.keys(deltas).forEach(k=>{ inc[k] = firebase.firestore.FieldValue.increment(deltas[k]); });
 
     const questsUpdate = { [questId]: 'completed' };
-    if (quest.nextQuestId) questsUpdate[quest.nextQuestId] = 'active';
+    /* v462 (Parcours A4) : la quête suivante ne s'ouvre que si elle n'a encore aucun état — une quête
+       déjà terminée ne redevient pas active. */
+    if (quest.nextQuestId && !playerQuestsState[quest.nextQuestId]) questsUpdate[quest.nextQuestId] = 'active';
 
-    db.collection('players').doc(currentUser.uid).set({
-      inventory: inc,
-      quests: questsUpdate,
-    }, { merge: true }).then(()=>{
+    const maj = { quests: questsUpdate };
+    if (Object.keys(inc).length) maj.inventory = inc;
+    return db.collection('players').doc(currentUser.uid).set(maj, { merge: true }).then(()=>{
       showToast(`Quête terminée : ${quest.name} !`);
     }).catch((err)=> showToast('Échec : ' + err.message));
   });
@@ -7096,16 +7209,24 @@ function renderQuestTracker(){
     const journals = (doc.exists && doc.data().questJournals) || {};
     const active = quests.filter(q=> playerQuestsState[q.id] === 'active');
     const completed = quests.filter(q=> playerQuestsState[q.id] === 'completed');
-    const describeObjectives = (q)=> (q.objectives||[]).map(o=>{
+    /* v462 (repris de Parcours v12) : la liste des objets à trouver se masque par quête (case dans l'éditeur),
+       parce qu'elle peut divulguer des objets que le joueur n'est pas censé connaître. Les quêtes existantes
+       (sans le champ) continuent de l'afficher. */
+    const describeObjectives = (q)=> q.showObjectives === false ? '' : (q.objectives||[]).map(o=>{
       const it = items.find(i=>i.id===o.itemId);
       const have = inv[o.itemId] || 0;
       return `${it ? it.name : '(objet supprimé)'} : ${Math.min(have,o.qty)}/${o.qty}`;
     }).join(' · ');
     const renderGroup = (list, emptyMsg, showJournalBtn)=> list.length ? list.map(q=>{
       const hasJournal = showJournalBtn && q.showInJournal !== false && (journals[q.id]||[]).length;
+      /* v462 (Parcours v9/v10) : bouton de guidage vers la destination de la quête (réglée ou automatique) */
+      const lieu = showJournalBtn ? destinationDeQuete(q) : null;
+      const guidable = !!lieu;
+      const enRoute = guidable && guidage.cibleId === lieu.id;
       return `
       <div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
         <div class="name">${q.name}${q.description ? `<span class="meta" style="display:block;">${q.description}</span>` : ''}${describeObjectives(q) ? `<span class="meta" style="display:block;">${describeObjectives(q)}</span>` : ''}</div>
+        ${guidable ? `<button class="${enRoute ? 'btn-secondary' : 'btn-capture'}" data-guider="${lieu.id}" data-guider-quete="${q.id}" style="width:100%; margin-top:6px;">${enRoute ? '✕ Arrêter le guidage' : '🧭 Aller là-bas — ' + (lieu.name || 'le lieu')}</button>` : ''}
         ${hasJournal ? `<button class="btn-secondary" data-open-journal="${q.id}" style="width:100%; margin-top:6px;">📖 Voir le journal</button>` : ''}
       </div>
     `;
@@ -7119,7 +7240,35 @@ function renderQuestTracker(){
     wrap.querySelectorAll('[data-open-journal]').forEach(btn=>{
       btn.addEventListener('click', ()=> openQuestJournal(btn.dataset.openJournal, journals[btn.dataset.openJournal]||[]));
     });
+    wrap.querySelectorAll('[data-guider]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if (guidage.cibleId === btn.dataset.guider){ arreterGuidage(); renderQuestTracker(); return; }
+        if (guiderVers(btn.dataset.guider, btn.dataset.guiderQuete)) document.getElementById('questTrackerOverlay').classList.remove('show');
+      });
+    });
   });
+}
+/* v462 (Parcours v10) — la DESTINATION d'une quête : le lieu réglé dans l'éditeur (« Lieu à rejoindre »),
+   sinon, automatiquement, le personnage dont un choix de dialogue VALIDE cette quête.
+   Retourne une fiche jouable positionnée, ou null. */
+function destinationDeQuete(q){
+  if (!q) return null;
+  const positionnee = (f)=> f && typeof f.lat === 'number' && typeof f.lng === 'number' ? f : null;
+  if (q.destinationId){
+    const f = positionnee(ficheParIdJouable(q.destinationId));
+    if (f) return f;
+  }
+  for (const brute of toutesLesFiches()){
+    const f = ficheJouable(brute);
+    if (!f) continue;
+    const steps = (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
+    const valide = (steps || []).some(st=> (st.choices || []).some(ch=> ch && ch.questValidate && ch.questValidate.questId === q.id));
+    if (valide){
+      const p = positionnee({ ...f, id: brute.id });
+      if (p) return p;
+    }
+  }
+  return null;
 }
 function openQuestJournal(questId, entries){
   const quest = quests.find(q=>q.id===questId);
@@ -7136,7 +7285,7 @@ function openQuestJournal(questId, entries){
       if (npc && typeof npc.lat === 'number' && playerPos){
         const dist = Math.round(haversineDist(playerPos.lat, playerPos.lng, npc.lat, npc.lng));
         distLabel = `<span class="meta" style="display:block;">${npc.name || 'PNJ'} à ${dist} m</span>`;
-        itineraryBtn = `<button class="btn-secondary" data-jitin-lat="${npc.lat}" data-jitin-lng="${npc.lng}" style="margin-top:6px;">🧭 Itinéraire</button>`;
+        itineraryBtn = `<button class="btn-secondary" data-jitin="${npc.id}" data-jitin-quete="${questId}" style="margin-top:6px;">🧭 Aller là-bas</button>`;
       }
     }
     return `
@@ -7148,10 +7297,10 @@ function openQuestJournal(questId, entries){
       </div>
     `;
   }).join('') : '<p class="meta">Rien noté pour l\'instant.</p>';
-  stepsEl.querySelectorAll('[data-jitin-lat]').forEach(btn=>{
+  stepsEl.querySelectorAll('[data-jitin]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${btn.dataset.jitinLat},${btn.dataset.jitinLng}`;
-      window.open(url, '_blank');
+      /* v462 (Parcours v9) : guidage dans le jeu, plus d'ouverture de Google Maps */
+      if (guiderVers(btn.dataset.jitin, btn.dataset.jitinQuete)) document.getElementById('questJournalOverlay').classList.remove('show');
     });
   });
   document.getElementById('questTrackerOverlay').classList.remove('show');
@@ -11199,6 +11348,7 @@ function onPosition(pos){
 
   updateCreatureVisuals();
   if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  try { guidageMettreAJour(); } catch(e){ console.warn('guidage', e); }   // v462
   setStatus('ok', false);
   accPill.style.display = 'block';
   accPillText.textContent = `± ${Math.round(accuracy)} m`;
@@ -11218,6 +11368,7 @@ function onFreeModeClick(e){
   if (accCircle){ map.removeLayer(accCircle); accCircle = null; }
   updateCreatureVisuals();
   if (typeof updatePickupVisibility === 'function') updatePickupVisibility();
+  try { guidageMettreAJour(); } catch(e){ console.warn('guidage', e); }   // v462
   accPill.style.display = 'block';
   accPillText.textContent = 'Mode libre';
 }
@@ -11238,6 +11389,198 @@ document.getElementById('freeModeToggleBtn').addEventListener('click', ()=>{
   }
   document.getElementById('editHubOverlay').classList.remove('show');
 });
+
+/* =====================================================================================
+   GUIDAGE VERS UN LIEU (v462, repris de Parcours v9→v19) — un tracé sur la carte jusqu'à un PNJ ou une zone.
+   Avec du réseau : le vrai itinéraire piéton par les rues (service OSRM). Sans réseau, ou si
+   le service ne répond pas : une ligne droite pointillée, la distance à vol d'oiseau et une
+   flèche. Le guidage reste affiché jusqu'à l'arrivée (moins de GUIDAGE_ARRIVEE_M mètres) ou
+   jusqu'au ✕ de la pastille ; il survit à un rechargement (localStorage) et s'arrête tout seul
+   quand la quête qui l'a lancé est terminée.
+   NOTE : le serveur public d'OSRM est un service de démonstration, sans garantie — suffisant pour un
+   usage personnel ; sans réponse, la ligne droite prend le relais.
+   ===================================================================================== */
+const GUIDAGE_SERVICE = 'https://router.project-osrm.org/route/v1/foot/';
+const GUIDAGE_ARRIVEE_M = 20;        // en dessous : « tu es arrivé »
+const GUIDAGE_RECALCUL_M = 15;       // on redemande l'itinéraire quand on s'est écarté d'autant du point de départ du tracé (v10 : 30 → 15)
+const GUIDAGE_RECALCUL_MS = 45000;   // … ou au plus tard toutes les 45 s (v10 : 90 → 45)
+const GUIDAGE_TRACE_PERIME_M = 60;   // v10 : si le service ne répond plus, l'ancien tracé reste tant qu'on n'a pas dérivé d'autant
+const GUIDAGE_ECART_POINT_M = 25;    // v19 : au-delà, la fin du tracé par les rues est reliée au point réel par un pointillé, pas par un trait plein
+const guidage = { cibleId:null, questId:null, nom:'', lat:null, lng:null, trace:null, ligne:null, fin:null, origineTrace:null, dateTrace:0, distanceTrace:null, enCours:false, restaure:false };
+
+function guidageActif(){ return !!guidage.cibleId; }
+/* v19 — réglage du parcours : sur un site fermé, OSRM ne connaît pas les allées et « aimante » les
+   points sur la rue la plus proche ; on ne lui demande alors jamais rien, la ligne droite suffit. */
+function guidageVolOiseau(){ return false; }   // (dans Parcours c'était un réglage par site fermé ; pas de réglage ici)
+/* v19 — le pointillé entre la fin du tracé par les rues et le point réel (mode ville seulement). */
+function guidageDessinerFin(depuis){
+  if (!depuis){
+    if (guidage.fin){ try { map.removeLayer(guidage.fin); } catch(e){} guidage.fin = null; }
+    return;
+  }
+  const bouts = [depuis, [guidage.lat, guidage.lng]];
+  if (!guidage.fin) guidage.fin = L.polyline(bouts, { color:'#0f8a52', weight:4, opacity:.7, dashArray:'8 10', interactive:false }).addTo(map);
+  else guidage.fin.setLatLngs(bouts);
+}
+function guidageRetirerTrace(){
+  try { if (guidage.trace && map) map.removeLayer(guidage.trace); } catch(e){}
+  guidage.trace = null; guidage.distanceTrace = null; guidage.origineTrace = null;
+  guidageDessinerFin(null);
+}
+function guiderVers(ficheId, questId, silencieux){
+  const f = ficheParIdJouable(ficheId);
+  if (!f || typeof f.lat !== 'number' || typeof f.lng !== 'number'){ if (!silencieux) showToast('Ce lieu n\'a pas de position sur la carte'); return false; }
+  if (guidage.cibleId && guidage.cibleId !== ficheId) guidageEffacerTraces();
+  guidage.cibleId = ficheId; guidage.questId = questId || null;
+  guidage.nom = f.name || 'le lieu'; guidage.lat = f.lat; guidage.lng = f.lng;
+  guidage.origineTrace = null; guidage.dateTrace = 0; guidage.distanceTrace = null;
+  try { localStorage.setItem('mascotto_guidage', JSON.stringify({ cibleId: ficheId, questId: questId || null })); } catch(e){}
+  if (!silencieux) showToast('🧭 En route vers ' + guidage.nom);
+  guidageMettreAJour(true);
+  return true;
+}
+function guidageEffacerTraces(){
+  try { if (guidage.trace && map) map.removeLayer(guidage.trace); } catch(e){}
+  try { if (guidage.ligne && map) map.removeLayer(guidage.ligne); } catch(e){}
+  try { if (guidage.fin && map) map.removeLayer(guidage.fin); } catch(e){}   // v19
+  guidage.trace = null; guidage.ligne = null; guidage.fin = null;
+}
+function arreterGuidage(silencieux){
+  const etait = guidageActif();
+  guidageEffacerTraces();
+  guidage.cibleId = null; guidage.questId = null; guidage.nom = ''; guidage.lat = null; guidage.lng = null;
+  guidage.origineTrace = null; guidage.dateTrace = 0; guidage.distanceTrace = null;
+  try { localStorage.removeItem('mascotto_guidage'); } catch(e){}
+  const pill = document.getElementById('guidagePill');
+  if (pill) pill.style.display = 'none';
+  if (etait && !silencieux) showToast('Guidage arrêté');
+}
+/* Au rechargement : on reprend le guidage en cours dès qu'on a une position et que la fiche est là. */
+function guidageRestaurerSiBesoin(){
+  if (guidage.restaure || guidageActif()) return;
+  let memo = null;
+  try { memo = JSON.parse(localStorage.getItem('mascotto_guidage') || 'null'); } catch(e){}
+  if (!memo || !memo.cibleId) { guidage.restaure = true; return; }
+  if (!ficheParIdJouable(memo.cibleId)) return;      // les fiches ne sont pas encore chargées : on réessaiera
+  guidage.restaure = true;
+  if (memo.questId && playerQuestsState[memo.questId] === 'completed'){ try { localStorage.removeItem('mascotto_guidage'); } catch(e){} return; }
+  guiderVers(memo.cibleId, memo.questId, true);
+}
+function guidageCap(lat1, lon1, lat2, lon2){
+  const y = Math.sin(toRad(lon2-lon1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function guidageMettreAJour(force){
+  guidageRestaurerSiBesoin();
+  if (!guidageActif() || !playerPos || typeof map === 'undefined' || !map) return;
+  const dist = haversineDist(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng);
+  if (dist <= GUIDAGE_ARRIVEE_M){
+    showToast('🎯 Tu es arrivé : ' + guidage.nom);
+    arreterGuidage(true);
+    return;
+  }
+  /* v11 — le tracé PÉRIME ici, à chaque position, et non plus seulement dans l'échec de la requête
+     d'itinéraire : hors connexion la requête n'est jamais envoyée, donc le tracé restait figé pour
+     toujours (bug du test v10). Au-delà de GUIDAGE_TRACE_PERIME_M de son point de départ, on le
+     retire ; les pointillés prennent le relais et, s'il y a du réseau, un recalcul suit. */
+  if (guidage.trace && guidage.origineTrace){
+    const derivePerime = haversineDist(playerPos.lat, playerPos.lng, guidage.origineTrace.lat, guidage.origineTrace.lng);
+    if (derivePerime > GUIDAGE_TRACE_PERIME_M){
+      guidageRetirerTrace();
+      console.info('guidage', 'tracé périmé', Math.round(derivePerime) + ' m de dérive, retour à la ligne droite');
+    }
+  }
+  /* v19 — parcours réglé « à vol d'oiseau » : un tracé par les rues encore affiché (réglage changé
+     en route, reprise après rechargement) est retiré ; la ligne droite prend sa place. */
+  if (guidageVolOiseau() && guidage.trace) guidageRetirerTrace();
+  /* v10 — la ligne droite pointillée n'apparaît que s'il n'y a AUCUN tracé par les rues :
+     pendant un recalcul, l'ancien tracé reste affiché (au test v9, les deux se superposaient). */
+  if (guidage.trace){
+    if (guidage.ligne){ try { map.removeLayer(guidage.ligne); } catch(e){} guidage.ligne = null; }
+  } else {
+    const bouts = [[playerPos.lat, playerPos.lng], [guidage.lat, guidage.lng]];
+    if (!guidage.ligne) guidage.ligne = L.polyline(bouts, { color:'#0f8a52', weight:4, opacity:.7, dashArray:'8 10', interactive:false }).addTo(map);
+    else guidage.ligne.setLatLngs(bouts);
+  }
+  if (guidage.trace){
+    /* le tracé existe : on le laisse tant qu'on n'a pas trop dérivé de son point de départ */
+    const derive = guidage.origineTrace ? haversineDist(playerPos.lat, playerPos.lng, guidage.origineTrace.lat, guidage.origineTrace.lng) : Infinity;
+    if (derive > GUIDAGE_RECALCUL_M || Date.now() - guidage.dateTrace > GUIDAGE_RECALCUL_MS) force = true;
+  } else force = true;
+  guidagePastille(dist);
+  if (force && !guidageVolOiseau() && (typeof navigator === 'undefined' || navigator.onLine !== false)) guidageDemanderTrace();   // v19 : jamais de requête à vol d'oiseau
+}
+function guidagePastille(distVol){
+  const pill = document.getElementById('guidagePill');
+  if (!pill) return;
+  const parLesRues = !!guidage.trace;
+  let metres = distVol;
+  if (parLesRues && guidage.distanceTrace){
+    /* v10 : entre deux recalculs, on retranche ce qu'on a parcouru depuis le départ du tracé */
+    const parcouru = (guidage.origineTrace && playerPos) ? haversineDist(playerPos.lat, playerPos.lng, guidage.origineTrace.lat, guidage.origineTrace.lng) : 0;
+    metres = Math.max(distVol, guidage.distanceTrace - parcouru);
+  }
+  metres = Math.round(metres);
+  const lisible = metres >= 1000 ? (metres/1000).toFixed(1).replace('.0','') + ' km' : metres + ' m';
+  /* v19 : à vol d'oiseau par réglage, la mention « hors connexion » n'a pas de sens (ce n'est pas un repli) */
+  document.getElementById('guidageTexte').innerHTML = `<b>${guidage.nom}</b> · ${lisible}<small>${parLesRues ? 'par les rues' : 'à vol d\'oiseau' + (navigator.onLine === false && !guidageVolOiseau() ? ' — hors connexion' : '')}</small>`;
+  const cap = playerPos ? guidageCap(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng) : 0;
+  document.getElementById('guidageFleche').style.transform = 'rotate(' + Math.round(cap - 90) + 'deg)';
+  pill.style.display = 'flex';
+}
+async function guidageDemanderTrace(){
+  if (guidage.enCours || !playerPos) return;
+  guidage.enCours = true;
+  const cible = guidage.cibleId;
+  const origine = { lat: playerPos.lat, lng: playerPos.lng };
+  try {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const minuteur = ctrl ? setTimeout(()=> ctrl.abort(), 7000) : null;
+    const url = GUIDAGE_SERVICE + origine.lng + ',' + origine.lat + ';' + guidage.lng + ',' + guidage.lat + '?overview=full&geometries=geojson';
+    const rep = await fetch(url, { cache:'no-store', signal: ctrl ? ctrl.signal : undefined });
+    if (minuteur) clearTimeout(minuteur);
+    if (!rep.ok) throw new Error('HTTP ' + rep.status);
+    const data = await rep.json();
+    const route = data && data.routes && data.routes[0];
+    if (!route || !route.geometry || !route.geometry.coordinates) throw new Error('pas d\'itinéraire');
+    if (guidage.cibleId !== cible) return;                    // le guidage a changé pendant la requête
+    const points = route.geometry.coordinates.map(c=> [c[1], c[0]]);
+    points.unshift([origine.lat, origine.lng]);
+    /* v19 — OSRM s'arrête sur la rue la plus proche du point ; s'il en est loin (plus de
+       GUIDAGE_ECART_POINT_M), les derniers mètres sont un POINTILLÉ droit (rappel de direction,
+       pas un itinéraire), et non plus un trait plein qui faisait croire à un chemin. */
+    const bout = points[points.length - 1];
+    const ecart = haversineDist(bout[0], bout[1], guidage.lat, guidage.lng);
+    const loin = ecart > GUIDAGE_ECART_POINT_M;
+    if (!loin) points.push([guidage.lat, guidage.lng]);
+    if (!guidage.trace) guidage.trace = L.polyline(points, { color:'#0f8a52', weight:5, opacity:.85, interactive:false }).addTo(map);
+    else guidage.trace.setLatLngs(points);
+    guidageDessinerFin(loin ? bout : null);
+    if (guidage.ligne){ try { map.removeLayer(guidage.ligne); } catch(e){} guidage.ligne = null; }
+    guidage.origineTrace = origine; guidage.dateTrace = Date.now(); guidage.distanceTrace = route.distance + ecart;
+  } catch(e){
+    /* pas de réseau ou service muet : on garde la ligne droite, et on réessaiera au prochain déplacement */
+    if (guidage.cibleId === cible){
+      /* v10 : l'ancien tracé reste (il mène toujours au bon endroit) tant qu'on n'a pas dérivé
+         de plus de GUIDAGE_TRACE_PERIME_M de son point de départ ; au-delà, on repasse en ligne droite. */
+      const derive = guidage.origineTrace ? haversineDist(origine.lat, origine.lng, guidage.origineTrace.lat, guidage.origineTrace.lng) : Infinity;
+      if (guidage.trace && derive > GUIDAGE_TRACE_PERIME_M) guidageRetirerTrace();   // v19 : retire aussi le pointillé de fin
+      guidage.dateTrace = Date.now() - GUIDAGE_RECALCUL_MS + 20000;   // nouvel essai dans ~20 s
+      if (!guidage.trace) guidage.origineTrace = origine;
+      console.info('guidage', 'itinéraire indisponible', (e && e.message) || String(e));
+    }
+  } finally {
+    guidage.enCours = false;
+    if (guidageActif() && playerPos){
+      const dv = haversineDist(playerPos.lat, playerPos.lng, guidage.lat, guidage.lng);
+      if (!guidage.trace && !guidage.ligne && map) guidage.ligne = L.polyline([[playerPos.lat, playerPos.lng], [guidage.lat, guidage.lng]], { color:'#0f8a52', weight:4, opacity:.7, dashArray:'8 10', interactive:false }).addTo(map);
+      guidagePastille(dv);
+    }
+  }
+}
+document.getElementById('guidageStopBtn').addEventListener('click', ()=> arreterGuidage());
+window.addEventListener('online', ()=>{ try { guidageMettreAJour(true); } catch(e){} });
 
 function startWatch(){
   if (!('geolocation' in navigator)){
@@ -19980,6 +20323,16 @@ if (questsCol){
   });
 }
 
+/* v462 (Parcours v10) : la liste des lieux positionnés (PNJ et zones) pour « Lieu à rejoindre » */
+function renderQuestDestinationSelect(){
+  const sel = document.getElementById('questDestination');
+  if (!sel) return;
+  const current = sel.value;
+  const lieux = toutesLesFiches().map(f=> ({ id:f.id, j: ficheJouable(f) })).filter(x=> x.j && typeof x.j.lat === 'number' && typeof x.j.lng === 'number');
+  lieux.sort((a,b)=> (a.j.name||'').localeCompare(b.j.name||''));
+  sel.innerHTML = '<option value="">Automatique (le personnage qui valide la quête)</option>' + lieux.map(x=>`<option value="${x.id}">${x.j.interactionType === 'zone' ? '🗺️' : '👤'} ${x.j.name || '(sans nom)'}</option>`).join('');
+  if (current) sel.value = current;
+}
 function renderQuestNextSelect(){
   const sel = document.getElementById('questNextQuest');
   if (!sel) return;
@@ -20110,6 +20463,9 @@ function loadQuestForEdit(id){
   renderQuestRewardsBuilder();
   document.getElementById('questObjectiveMode').value = q.objectiveMode || 'all';
   document.getElementById('questShowInJournal').checked = q.showInJournal !== false;
+  document.getElementById('questShowObjectives').checked = q.showObjectives !== false;   // v462
+  renderQuestDestinationSelect();
+  document.getElementById('questDestination').value = q.destinationId || '';
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = q.nextQuestId || '';
   document.getElementById('questSaveBtn').textContent = 'Mettre à jour la quête';
@@ -20125,6 +20481,9 @@ function resetQuestForm(){
   renderQuestRewardsBuilder();
   document.getElementById('questObjectiveMode').value = 'all';
   document.getElementById('questShowInJournal').checked = true;
+  document.getElementById('questShowObjectives').checked = true;   // v462
+  renderQuestDestinationSelect();
+  document.getElementById('questDestination').value = '';
   renderQuestNextSelect();
   document.getElementById('questNextQuest').value = '';
   document.getElementById('questSaveBtn').textContent = 'Enregistrer la quête';
@@ -20140,12 +20499,14 @@ document.getElementById('questSaveBtn').addEventListener('click', ()=>{
   const rewards = currentQuestRewards.filter(r=>r.itemId && r.qty > 0);
   const nextQuestId = document.getElementById('questNextQuest').value || null;
   const showInJournal = document.getElementById('questShowInJournal').checked;
+  const showObjectives = document.getElementById('questShowObjectives').checked;   // v462
+  const destinationId = document.getElementById('questDestination').value || null;   // v462
 
   if (!name){ showToast('Donne un nom à la quête'); return; }
-  if (!objectives.length){ showToast('Ajoute au moins un objectif'); return; }
+  /* v462 (Parcours v20a A7) : une quête sans objectif est permise (« va parler à X ») ; sa validation est toujours satisfaite. */
   if (!questsCol){ showToast('Firebase indisponible ici'); return; }
 
-  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, updatedAt: Date.now() };
+  const data = { name, description, objectives, objectiveMode, rewards, nextQuestId, showInJournal, showObjectives, destinationId, updatedAt: Date.now() };
   const op = editingQuestId ? questsCol.doc(editingQuestId).set(data) : questsCol.add({ ...data, createdAt: Date.now() });
   op.then(()=>{ showToast(editingQuestId ? 'Quête mise à jour' : 'Quête ajoutée'); resetQuestForm(); showQuestsSection('list'); })
     .catch((err)=> showToast('Échec : ' + err.message));
@@ -23687,6 +24048,8 @@ async function renderSceneViewCurrentScene(){
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
     if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
     if (pt.type === 'pnj' && !isScenePointAvailable(pt)) return;
+    /* v462 (Parcours A6) : la condition d'apparition de la fiche vaut aussi dans une zone (strictement) */
+    if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.fiches[pt.linkedPnjId] && !creatureConditionMet(infoPnj.fiches[pt.linkedPnjId])) return;
 
     const el = document.createElement('div');
     el.className = 'scene-point';
