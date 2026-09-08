@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v466</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v467</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1570,10 +1570,10 @@
       <div style="display:flex; gap:8px;">
         <div style="flex:1;">
           <div class="field-label" style="margin-top:0;">Plafond d'états</div>
-          <input type="number" inputmode="numeric" id="ctrlPlafondInput" class="field-input" min="100" step="1000" placeholder="10000">
+          <input type="number" inputmode="numeric" id="ctrlPlafondInput" class="field-input" min="100" step="1000" placeholder="30000">
         </div>
         <div style="flex:1;">
-          <div class="field-label" style="margin-top:0;">Instant simulé (vide = maintenant)</div>
+          <div class="field-label" style="margin-top:0;">Instant simulé (vide = aujourd'hui 8 h, 14 h et 20 h)</div>
           <input type="datetime-local" id="ctrlInstantInput" class="field-input">
         </div>
       </div>
@@ -27457,7 +27457,7 @@ function ctrlIndexObjets(M){
   });
   M.ramassages.forEach(p=> ajouter(sources, p.itemId, { genre:'ramassage', ou: 'Objet posé sur la carte', cible: ctrlCible('objet', p.itemId), once: p.respawnMode === 'once', renouvelable: p.respawnMode === 'timed', conditions: [] }));
   M.recettes.forEach(r=>{
-    if (r.outputItemId) ajouter(sources, r.outputItemId, { genre:'recette', ou: 'Recette « ' + (r.name || '?') + ' »', cible: ctrlCible('objet', r.outputItemId), once: false, renouvelable: true, conditions: [], indirect: true });
+    if (r.outputItemId) ajouter(sources, r.outputItemId, { genre:'recette', ou: 'Recette « ' + (r.name || '?') + ' »', cible: ctrlCible('recette', r.id), once: false, renouvelable: true, conditions: [], indirect: true });
   });
   M.zones.forEach(z=>{
     ctrlPointsDeZone(z).forEach(({ sc, pt, variante })=>{
@@ -27599,7 +27599,7 @@ function verifierScenario(modele){
     if (f.interactionType !== 'zone' && f.interactionType !== 'combat' && !ctrlPositionnee(f) && !enZone && f._steps.length){
       dire(indispensables.has(f.id) ? 'erreur' : 'info', cf, nom, indispensables.has(f.id) ? 'Personnage indispensable (il confie, valide ou donne quelque chose) sans position sur la carte et absent de toute zone : le joueur ne peut jamais lui parler.' : 'Personnage en réserve (ni sur la carte, ni dans une zone).');
     }
-    if (f.interactionType === 'zone' && !ctrlPositionnee(f)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
+    if (f.interactionType === 'zone' && !ctrlPositionnee(f) && !(typeof shipZoneId !== 'undefined' && shipZoneId && f.id === shipZoneId)) dire('erreur', cf, nom, 'Zone d\'exploration sans position sur la carte.');
     if (ctrlPnjRecrute(f) && indispensables.has(f.id)) dire('erreur', cf, nom, 'Déjà recruté (recrutement partagé) : il n\'apparaît plus pour personne, alors qu\'il confie, valide ou donne quelque chose.');
     if (f.visibilityCondition && f.visibilityCondition.questId){
       const vq = f.visibilityCondition.questId;
@@ -27867,9 +27867,19 @@ function ctrlHtmlConstats(constats){
 /* Ouvre la fiche visée par un constat, dans l'éditeur correspondant du jeu. */
 function ctrlOuvrirCible(type, id, pointId){
   try {
-    if (type === 'pnj' && id){ document.getElementById('editHubOverlay').classList.remove('show'); openCreatureEditFromMap(id); }
+    if (type === 'pnj' && id){
+      /* v467 : on entre par la même porte que le menu Édition (filtre par NATURE + titre), sinon la
+         croix ou la liste retombent sur l'ancienne liste où zones et PNJ se mélangent. */
+      const brute = ficheParId(id);
+      const nature = (brute && brute.interactionType) || 'dialogue';
+      const estVaisseau = !!(typeof shipZoneId !== 'undefined' && shipZoneId && id === shipZoneId);
+      if (nature === 'zone') ouvrirListeFiches({ cles:['zone'], vaisseau: estVaisseau }, estVaisseau ? 'Vaisseaux' : 'Zones d\'exploration');
+      else ouvrirListeFiches({ cles:['dialogue','shop','combat'] }, 'PNJ');
+      loadForEdit(id); showPnjSection('new'); renderDialogueBuilder();
+    }
     else if (type === 'objet' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('itemsEditorOverlay').classList.add('show'); loadItemForEdit(id); showItemsSection('new'); }
     else if (type === 'quete' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('questsEditorOverlay').classList.add('show'); loadQuestForEdit(id); showQuestsSection('new'); }
+    else if (type === 'recette' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('recipesEditorOverlay').classList.add('show'); loadRecipeForEdit(id); showRecipesSection('new'); }
     else if (type === 'zone' && id){
       document.getElementById('editHubOverlay').classList.remove('show'); openSceneEditor(id);
       if (pointId) setTimeout(()=>{ try { const p = sceneEditorPoints.find(x=> x.id === pointId); if (p) selectScenePoint(pointId); else { const sc = sceneEditorScenes.find(s=> (s.points || []).some(x=> x.id === pointId)); if (sc){ loadSceneIntoEditorState(sc.id); renderSceneEditorPoints(); selectScenePoint(pointId); } } } catch(e){} }, 800);
@@ -27903,17 +27913,25 @@ document.getElementById('ctrlPanneau').addEventListener('click', (ev)=>{
    Sans quête de fin dans Mascotto, l'objectif est : toutes les quêtes terminables sont terminées.
    Il ne dit jamais « validé » : il dit ce qu'il a exploré et ce qu'il a trouvé.
    ===================================================================================== */
-const SIM_PLAFOND_DEFAUT = 10000;
+const SIM_PLAFOND_DEFAUT = 30000;
 const SIM_TRANCHE = 150;   // états par tranche avant de rendre la main à l'interface
 
-function simCloner(e){ return { inv: { ...e.inv }, quetes: { ...e.quetes }, choix: { ...e.choix }, ramasses: { ...e.ramasses }, pris: { ...e.pris }, combats: { ...e.combats }, recrutes: { ...e.recrutes }, piege: e.piege || null }; }
-function simEtatInitial(){ return { inv: {}, quetes: {}, choix: {}, ramasses: {}, pris: {}, combats: {}, recrutes: {} }; }
+function simCloner(e){ return { inv: { ...e.inv }, quetes: { ...e.quetes }, choix: { ...e.choix }, ramasses: { ...e.ramasses }, pris: { ...e.pris }, combats: { ...e.combats }, recrutes: { ...e.recrutes }, piege: e.piege || null, moment: e.moment || 0 }; }
+function simEtatInitial(){ return { inv: {}, quetes: {}, choix: {}, ramasses: {}, pris: {}, combats: {}, recrutes: {}, moment: 0 }; }
+/* v467 : l'instant d'un état. Le joueur peut revenir à une autre heure (transition « attend ») : sans
+   instant imposé, on joue trois moments de la journée pour que les PNJ, zones et variantes à horaires
+   ne soient signalés que s'ils restent inaccessibles à tous. */
+function simInstant(P, e){ return P.instants[Math.min((e && e.moment) || 0, P.instants.length - 1)]; }
+function simHeureLibelle(d){ return d.getHours() + ' h' + (d.getMinutes() ? String(d.getMinutes()).padStart(2, '0') : ''); }
 
 /* Préparation : ce qui compte dans l'état (choix cités, quantités utiles), les PNJ, les zones. */
 function simPreparer(M, options){
   const IO = ctrlIndexObjets(M);
   const IQ = ctrlIndexQuetes(M);
-  const instant = (options && options.instant) ? new Date(options.instant) : new Date();
+  let instants;
+  if (options && options.instant) instants = [new Date(options.instant)];
+  else { const j = new Date(); instants = [8, 14, 20].map(h=>{ const d = new Date(j); d.setHours(h, 0, 0, 0); return d; }); }
+  const instant = instants[0];
   const maxUtile = {};
   Object.keys(IO.besoins).forEach(id=>{ maxUtile[id] = 1; });
   Object.keys(IO.consommations).forEach(id=>{ IO.consommations[id].forEach(c=>{ maxUtile[id] = Math.max(maxUtile[id] || 1, c.qty || 1); }); });
@@ -27927,7 +27945,7 @@ function simPreparer(M, options){
   const pertinents = (cle, ch)=> !!(ch && ch.once) || cites.has(cle);
   /* objectif : les quêtes atteignables (confiées par un choix ou suite d'une quête confiée) */
   const quetesCibles = Array.from(IQ.atteignables).filter(id=> M.queteParId[id]);
-  return { M, IO, IQ, instant, maxUtile, pertinents, quetesCibles };
+  return { M, IO, IQ, instant, instants, maxUtile, pertinents, quetesCibles };
 }
 function simCle(P, e){
   const inv = Object.keys(e.inv).filter(k=> e.inv[k] > 0).sort().map(k=> k + ':' + Math.min(e.inv[k], Math.max(1, P.maxUtile[k] || 1))).join(',');
@@ -27937,7 +27955,7 @@ function simCle(P, e){
   const p = Object.keys(e.pris).sort().join(',');
   const b = Object.keys(e.combats).sort().join(',');
   const rc = Object.keys(e.recrutes).sort().join(',');
-  return (e.piege ? 'P:' + e.piege + '|' : '') + inv + '|' + q + '|' + c + '|' + r + '|' + p + '|' + b + '|' + rc;
+  return (e.piege ? 'P:' + e.piege + '|' : '') + inv + '|' + q + '|' + c + '|' + r + '|' + p + '|' + b + '|' + rc + '|M' + (e.moment || 0);
 }
 function simEtatPourRegles(e){ return { inventaire: e.inv, quetes: e.quetes, choix: e.choix, combats: e.combats }; }
 function simFin(P, e){ return P.quetesCibles.length > 0 && P.quetesCibles.every(id=> e.quetes[id] === 'completed'); }
@@ -28036,15 +28054,15 @@ function simVerrouOuvert(pt, e){
   if (pt.lockType === 'code') return !!String(pt.lockCode || '').trim();   // code supposé connu du joueur
   return true;
 }
-function simContenuScene(P, sc){
+function simContenuScene(P, sc, etat){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
-  for (const v of variants){ if (isActiveAt(v, P.instant)) return (v.points && v.points.length) ? v.points : (sc.points || []); }
+  for (const v of variants){ if (isActiveAt(v, simInstant(P, etat))) return (v.points && v.points.length) ? v.points : (sc.points || []); }
   return sc.points || [];
 }
 function simPnjAbordable(P, fp, etat){
   if (!fp) return false;
   if (etat.recrutes[fp.id] || ctrlPnjRecrute(fp)) return false;
-  if (!isActiveAt(fp, P.instant)) return false;
+  if (!isActiveAt(fp, simInstant(P, etat))) return false;
   return creatureConditionMet(fp, etat.quetes);
 }
 function simJouerZone(P, e0, z, couverture, origineLibelle){
@@ -28061,14 +28079,14 @@ function simJouerZone(P, e0, z, couverture, origineLibelle){
     const scene = z.scenes.find(x=> x.id === sc);
     if (!scene) continue;
     couverture.scenes.add(z.fiche.id + '#' + sc);
-    simContenuScene(P, scene).forEach(pt=>{
+    simContenuScene(P, scene, etat).forEach(pt=>{
       if (!pt) return;
       const dispo = pt.type === 'pnj' ? !etat.pris[clePris(pt)] : (ctrlRenouvelable(pt) || !etat.pris[clePris(pt)]);
       const nomPt = (pt.type || 'point') + (pt.linkedPnjName ? ' ' + pt.linkedPnjName : '');
       if (pt.type === 'sortie_zone'){ couverture.points.add(clePris(pt)); sorties.push({ etat, libelle: chemin + ' › sortie de la zone' }); return; }
       if (pt.type === 'sortie'){
         const cren = (pt.openRanges || []).filter(c=> c && (c.start || c.end));
-        if (cren.length && !heureDansCreneaux(cren, P.instant)) return;
+        if (cren.length && !heureDansCreneaux(cren, simInstant(P, etat))) return;
         if (!simVerrouOuvert(pt, etat)) return;
         couverture.points.add(clePris(pt));
         if (pt.targetSceneId && z.scenes.some(x=> x.id === pt.targetSceneId)) pile.push({ sc: pt.targetSceneId, etat, chemin: chemin + ' › porte' });
@@ -28127,7 +28145,7 @@ function simTransitions(P, e, couverture){
   M.fiches.forEach(f=>{
     if (!ctrlPositionnee(f)) return;
     if (f.interactionType === 'combat') return;   // monstre de carte : hors simulation
-    if (!isActiveAt(f, P.instant)) return;
+    if (!isActiveAt(f, simInstant(P, e))) return;
     if (f.interactionType === 'zone'){
       const z = M.zoneParId[f.id];
       if (!z || !z.scenes.length) return;
@@ -28144,6 +28162,12 @@ function simTransitions(P, e, couverture){
     const s = simCloner(e); s.ramasses[p.id] = true; simAjouter(P, s, p.itemId, p.qty || 1, couverture);
     couverture.ramassages.add(p.id);
     out.push({ etat: s, libelle: 'ramasse ' + M.objetParId[p.itemId].name + ' sur la carte', acteur: 'pickup:' + p.id });
+  });
+  /* v467 : attendre un autre moment de la journée. */
+  P.instants.forEach((d, j)=>{
+    if (j === (e.moment || 0)) return;
+    const s = simCloner(e); s.moment = j;
+    out.push({ etat: s, libelle: 'attend jusqu\'à ' + simHeureLibelle(d), acteur: 'attente:' + j });
   });
   return out;
 }
@@ -28250,7 +28274,7 @@ function simRapport(P, etats, couverture, partiel, explores, restants){
   const precoces = Array.from(couverture.precoces).map(x=>{ const [it, q] = x.split('|'); return '« ' + nomObjet(it) + ' » peut être obtenu avant que la quête « ' + nomQuete(q) + ' » (qui le consomme) soit en cours'; });
   return {
     partiel, etats: etats.size, explores, restants, plafond: P.plafond,
-    instant: P.instant,
+    instant: P.instant, instants: P.instants,
     quetesCibles: P.quetesCibles.length, quetesTerminables: terminables.length,
     complet: finales.length > 0,
     blocages: blocages.slice(0, 20), nbBlocages: blocages.length,
@@ -28276,7 +28300,7 @@ function simHtmlRapport(R){
     + 'Blocages définitifs trouvés : ' + gras(String(R.nbBlocages)) + '<br>'
     + 'Éléments inaccessibles : ' + gras(String(R.inaccessibles.pnj.length + R.inaccessibles.objets.length + R.inaccessibles.quetes.length + R.inaccessibles.points.length)) + '<br>'
     + 'Couverture des choix : ' + gras(simPourcent(R.couverture.choix)) + ' · des étapes : ' + simPourcent(R.couverture.etapes) + ' · des objets : ' + simPourcent(R.couverture.objets) + ' · des points de zone : ' + simPourcent(R.couverture.points) + (R.couverture.combats[1] ? ' · des combats de dialogue : ' + simPourcent(R.couverture.combats) : '') + '<br>'
-    + '<span class="meta">Instant simulé : ' + ctrlEchap(new Date(R.instant).toLocaleString('fr-FR')) + ' · hors simulation : boutiques, monstres de carte, rencontres aléatoires, recettes, missions</span></div>');
+    + '<span class="meta">' + ((R.instants || []).length > 1 ? 'Instants simulés : ' + ctrlEchap(new Date(R.instants[0]).toLocaleDateString('fr-FR')) + ' à ' + R.instants.map(d=> simHeureLibelle(new Date(d))).join(', ') + ' (le joueur peut attendre entre deux)' : 'Instant simulé : ' + ctrlEchap(new Date(R.instant).toLocaleString('fr-FR'))) + ' · hors simulation : boutiques, monstres de carte, rencontres aléatoires, recettes, missions</span></div>');
   if (R.blocages.length){
     l.push('<div class="field-label" style="margin-top:10px; color:var(--danger);">BLOCAGE' + (R.nbBlocages > 1 ? 'S' : '') + ' TROUVÉ' + (R.nbBlocages > 1 ? 'S' : '') + (R.nbBlocages > R.blocages.length ? ' (les ' + R.blocages.length + ' premiers)' : '') + '</div>');
     R.blocages.forEach(b=>{
