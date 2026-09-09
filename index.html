@@ -1271,7 +1271,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v478</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v479</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2656,6 +2656,19 @@
           <option value="">Aucun métier</option>
         </select>
       </div>
+      <!-- v479 : la fonction à bord. Un recruté non combattant occupe une PORTE du vaisseau et y
+           apporte sa fonction (son atelier, son dojo…). C'est elle qui s'affiche sur la porte. -->
+      <div id="fonctionBlock">
+        <div class="field-label">Fonction à bord (si ce PNJ peut être recruté sans être un combattant)</div>
+        <select id="editFonction" class="field-input">
+          <option value="artisanat">🛠️ Artisanat (atelier)</option>
+          <option value="dojo">🥋 Dojo</option>
+          <option value="bibliotheque">📚 Bibliothèque</option>
+          <option value="cuisine">🍲 Cuisine</option>
+          <option value="autre">✨ Autre</option>
+        </select>
+        <p class="meta" style="margin-top:4px;">Une fois recruté, il s'installe derrière une porte 🚪 libre du vaisseau et son panneau affiche cette fonction.</p>
+      </div>
 
       <div class="field-label">Photo depuis ton téléphone</div>
       <input type="file" id="editImageFile" accept="image/*" class="field-input">
@@ -3286,9 +3299,37 @@
 </div>
 
 <!-- Vue joueur d'une scène d'exploration (plein écran, lecture seule pour l'instant) -->
+<style>
+/* v479 : le panneau holographique posé sur une porte d'habitant. Pas d'image : du texte lumineux,
+   une bordure fine et un léger balayage, pour se fondre dans n'importe quel décor. */
+.holo-panel{ position:absolute; left:50%; transform:translate(-50%,-50%); pointer-events:none;
+  padding:.28em .6em; border-radius:.35em; white-space:nowrap; text-align:center; line-height:1.15;
+  font-family:"Segoe UI",Roboto,Arial,sans-serif; letter-spacing:.06em; font-weight:800;
+  color:var(--holo); background:linear-gradient(180deg, color-mix(in srgb, var(--holo) 22%, transparent), color-mix(in srgb, var(--holo) 8%, transparent));
+  border:1px solid color-mix(in srgb, var(--holo) 65%, transparent);
+  box-shadow:0 0 .5em color-mix(in srgb, var(--holo) 55%, transparent), inset 0 0 .6em color-mix(in srgb, var(--holo) 25%, transparent);
+  text-shadow:0 0 .35em var(--holo), 0 0 .9em color-mix(in srgb, var(--holo) 60%, transparent);
+  backdrop-filter:blur(1.5px); overflow:hidden; }
+.holo-panel::after{ content:""; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(180deg, transparent 0 .18em, color-mix(in srgb, var(--holo) 14%, transparent) .18em .24em);
+  animation:holoScan 3.2s linear infinite; }
+.holo-panel .holo-l1{ display:block; font-size:1em; }
+.holo-panel .holo-l2{ display:block; font-size:.66em; font-weight:600; opacity:.85; letter-spacing:.1em; }
+.holo-panel.holo-libre{ --holo:#9aa4ad; font-weight:600; }
+.holo-panel.holo-libre .holo-l1{ opacity:.8; }
+.holo-panel.holo-cible{ animation:holoPulse .9s ease-in-out infinite; }
+@keyframes holoScan{ from{ transform:translateY(-.24em); } to{ transform:translateY(.24em); } }
+@keyframes holoPulse{ 0%,100%{ box-shadow:0 0 .5em color-mix(in srgb, var(--holo) 55%, transparent); } 50%{ box-shadow:0 0 1.1em var(--holo); } }
+#deplacementBandeau{ position:absolute; left:0; right:0; top:0; z-index:6; display:none; align-items:center; gap:10px;
+  padding:10px 12px; background:rgba(0,0,0,.72); color:#fff; font-size:14px; font-weight:700; }
+#deplacementBandeau button{ flex:none; height:36px; padding:0 12px; border-radius:9px; border:1px solid rgba(255,255,255,.4); background:rgba(255,255,255,.12); color:#fff; font-weight:700; }
+</style>
 <div class="scene-full" id="sceneViewFull">
   <!-- Plus de croix ici : on sort d'un lieu par sa porte, pas par un bouton de fenêtre.
        Le point « 🏳️ Sortie de zone » posé dans la scène est la seule issue. -->
+  <!-- v479 : bandeau du mode « déplacement d'un habitant ». Hors de #sceneViewImgWrap : il doit
+       survivre au changement de scène (la porte de destination peut être dans une autre pièce). -->
+  <div id="deplacementBandeau"><span id="deplacementBandeauTexte" style="flex:1; min-width:0;"></span><button type="button" id="deplacementAnnulerBtn">Annuler</button></div>
   <div class="scene-imgwrap" id="sceneViewImgWrap">
     <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
   </div>
@@ -6859,6 +6900,14 @@ async function acheterVaisseau(zoneId){
     const b = bilanVaisseau(f, coins, inv);
     if (!b.argentOk){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${b.net})`); return; }
     if (!b.materiauxOk){ showToast('Il manque des matériaux'); return; }
+    /* v479 : les habitants suivent, une porte chacun. Un vaisseau avec des portes mais trop peu
+       pour tout le monde ne s'achète pas : on renvoie d'abord, il n'y a pas de réserve. */
+    const habitants = recruits.filter(estHabitantAPorte).slice().sort((x, y)=> (x.createdAt || 0) - (y.createdAt || 0));
+    const portesNeuves = await portesDuVaisseau(zoneId);
+    if (portesNeuves.length && habitants.length > portesNeuves.length){
+      showToast(`Ce vaisseau n'a que ${portesNeuves.length} porte${portesNeuves.length > 1 ? 's' : ''} pour ${habitants.length} habitants — renvoie-en d'abord`);
+      return;
+    }
     const inventory = {};
     b.lignes.forEach(l=> { inventory[l.itemId] = firebase.firestore.FieldValue.increment(-l.besoin); });
     const ancien = shipZoneId || null;
@@ -6866,6 +6915,15 @@ async function acheterVaisseau(zoneId){
       vaisseauAchats: firebase.firestore.FieldValue.arrayUnion({ zoneId, ancien, prix: b.prix, reprise: b.reprise, net: b.net, date: Date.now() }) };
     if (b.lignes.length) maj.inventory = inventory;
     await ref.set(maj, { merge:true });
+    if (habitants.length && recruitsCol){
+      const batch = db.batch();
+      habitants.forEach((h, i)=>{
+        const p = portesNeuves[i] ? { sceneId: portesNeuves[i].sceneId, pointId: portesNeuves[i].pointId } : null;
+        h.porte = p;
+        batch.update(recruitsCol.doc(h.id), { porte: p });
+      });
+      await batch.commit().catch((err)=> showToast('Portes non réaffectées : ' + err.message));
+    }
     b.lignes.forEach(l=> { baseResources[l.itemId] = Math.max(0, (baseResources[l.itemId] || 0) - l.besoin); });
     journal('vaisseau', 'achat', b.nom + ' pour 💰 ' + b.net + (b.reprise ? ' (reprise ' + b.reprise + ')' : ''), true);
     showToast('🚀 Bienvenue à bord : ' + b.nom);
@@ -7355,6 +7413,28 @@ function grantItemToPlayer(grant, quantiteAncienne){
 }
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
+  const isCombattant = creature.interactionType === 'combat';
+  /* v479 : un habitant a besoin d'une porte libre à bord. Aucune → refus, pas de réserve.
+     Un vaisseau sans aucune porte posée (l'auteur n'a pas encore fait ce travail) recrute
+     comme avant, sans porte : la règle ne doit jamais bloquer un vaisseau non aménagé. */
+  if (!isCombattant){
+    portesDuVaisseau().then((portes)=>{
+      if (portes.length){
+        const libres = portesLibres(portes);
+        if (!libres.length){
+          showToast('Plus de place à bord : renvoie un habitant, ou achète un plus grand vaisseau');
+          return;
+        }
+        recruitCreatureEcrire(creature, metierId, { sceneId: libres[0].sceneId, pointId: libres[0].pointId });
+      } else {
+        recruitCreatureEcrire(creature, metierId, null);
+      }
+    });
+    return;
+  }
+  recruitCreatureEcrire(creature, metierId, null);
+}
+function recruitCreatureEcrire(creature, metierId, porte){
   const recruitsColRef = db.collection('recruits');
   const isCombattant = creature.interactionType === 'combat';
   const cs = creature.combatStats || {};
@@ -7385,6 +7465,8 @@ function recruitCreature(creature, metierId){
     craftingRecipeId: null,
     craftingStartedAt: null,
     recruitType: isCombattant ? 'combattant' : 'artisan',
+    fonction: isCombattant ? null : (creature.fonction || 'artisanat'),   // v479
+    porte: porte || null,                                                 // v479 : { sceneId, pointId }
     sourceCreatureId: creature.id,
     roomSlot: null, // attribué au premier passage dans le vaisseau
 
@@ -7404,7 +7486,7 @@ function recruitCreature(creature, metierId){
       return db.collection('creature_types').doc(creature.id).update({ recruited: true });
     }
   }).then(()=>{
-    showToast(`${creature.name} recruté(e) !`);
+    showToast(`${creature.name} recruté(e) !` + (porte ? ' Une porte l\'attend à bord.' : ''));
     if (document.getElementById('sceneViewFull').classList.contains('show')) renderSceneViewCurrentScene();
   }).catch((err)=> showToast('Échec du recrutement : ' + err.message));
 }
@@ -9462,6 +9544,7 @@ function loadForEdit(id){
   document.getElementById('editHideImmediately').checked = !!d.hideOnExitRadius;
   document.getElementById('editName').value = d.name || '';
   document.getElementById('editMetier').value = d.metier || '';
+  document.getElementById('editFonction').value = d.fonction || 'artisanat';   // v479
   if (Array.isArray(d.dialogueSteps) && d.dialogueSteps.length){
     currentDialogueSteps = JSON.parse(JSON.stringify(d.dialogueSteps));
     currentDialogueSteps.forEach(s=>{ if (!s.textVariants) s.textVariants = []; });
@@ -9938,6 +10021,7 @@ function resetForm(){
   document.getElementById('imagePreview').removeAttribute('src');
   document.getElementById('editName').value = '';
   document.getElementById('editMetier').value = '';
+  document.getElementById('editFonction').value = 'artisanat';   // v479
   document.getElementById('editVisibilityQuest').value = '';
   document.getElementById('editVisibilityState').style.display = 'none';
   document.getElementById('editVisibilityState').value = 'not_completed';
@@ -10493,6 +10577,7 @@ document.getElementById('optionsSignOutBtn').addEventListener('click', async ()=
 document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('editName').value.trim();
   const metier = document.getElementById('editMetier').value || '';
+  const fonction = document.getElementById('editFonction').value || 'artisanat';   // v479
   const emoji = '🐾';
   const imageUrl = uploadedImageDataUrl || '';
   const visQuestId = document.getElementById('editVisibilityQuest').value;
@@ -10633,7 +10718,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, fonction, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -19313,6 +19398,7 @@ async function dismissRecruit(recruit, apres){
     activeRecruitId = null;
     showToast(recruit.name + ' a quitté le vaisseau');
     if (apres) apres();
+    if (typeof redessinerSceneSiVisible === 'function') setTimeout(redessinerSceneSiVisible, 50);   // v479 : la porte redevient libre
   }).catch((err)=> showToast('Échec : ' + err.message));
 }
 document.getElementById('recruitSheetCloseBtn').addEventListener('click', ()=>{
@@ -21382,6 +21468,132 @@ document.getElementById('quartersCloseBtn').addEventListener('click', ()=>{
    recruté en est justement retiré (piège corrigé en v229).
    On entre même si l'habitant est sorti : c'est son décor qu'on vient voir, et son état est
    déjà annoncé dans la liste. */
+/* ---------- v479 : LES PORTES D'HABITANT ----------
+   Ce ne sont pas des emplacements d'artisans mais d'HABITANTS : un recruté non combattant
+   (artisan, maître de dojo, bibliothécaire…) s'installe derrière une porte et y apporte sa
+   fonction. Une porte = un habitant. Pas de réserve : si aucune porte n'est libre, le
+   recrutement est refusé — c'est ce qui donne son sens au grand vaisseau. Pour changer
+   d'habitant, on renvoie celui qui occupe la porte, ou on ÉCHANGE deux portes. */
+const HOLO_TEINTE_DEFAUT = '#5ff2ff';
+const FONCTIONS_HABITANT = [
+  { id:'artisanat',    label:'Atelier' },
+  { id:'dojo',         label:'Dojo' },
+  { id:'bibliotheque', label:'Bibliothèque' },
+  { id:'cuisine',      label:'Cuisine' },
+  { id:'autre',        label:'' },
+];
+function fonctionLabel(id){
+  const f = FONCTIONS_HABITANT.find(x=> x.id === (id || 'artisanat'));
+  return f ? f.label : '';
+}
+function estHabitantAPorte(r){ return !!r && r.recruitType !== 'combattant'; }
+function habitantDeLaPorte(pointId){
+  if (!pointId) return null;
+  return recruits.find(r=> estHabitantAPorte(r) && r.porte && r.porte.pointId === pointId) || null;
+}
+/* Ce que le panneau affiche : la fonction en gros (le métier si c'est un artisan qui en a un),
+   le prénom en petit ; « Libre » en terne sur une porte vide. */
+function texteHolo(occupant){
+  if (!occupant) return { l1:'Libre', l2:'', libre:true };
+  const fonction = occupant.fonction || 'artisanat';
+  let l1 = fonctionLabel(fonction);
+  if (fonction === 'artisanat'){ const m = metierNom(occupant); if (m) l1 = m; }
+  if (!l1) l1 = occupant.name || 'Habitant';
+  const l2 = (l1 === occupant.name) ? '' : (occupant.name || '');
+  return { l1, l2, libre:false };
+}
+/* Toutes les portes d'une liste de scènes, dans l'ordre des scènes puis des points. Les variantes
+   d'une scène comptent (un point peut n'exister que dans l'une d'elles), sans doublon d'id. */
+function portesDepuisScenes(scenes){
+  const out = []; const vus = new Set();
+  (scenes || []).forEach(sc=>{
+    const paquets = [sc.points || []].concat(Array.isArray(sc.variants) ? sc.variants.map(v=> v.points || []) : []);
+    paquets.forEach(pts=> pts.forEach(p=>{
+      if (!p || p.type !== 'habitant' || vus.has(p.id)) return;
+      vus.add(p.id);
+      out.push({ sceneId: sc.id, pointId: p.id, sceneName: sc.name || '' });
+    }));
+  });
+  return out;
+}
+function portesDuVaisseau(zoneId){
+  const id = zoneId || shipZoneId;
+  if (!id || !zonesCol) return Promise.resolve([]);
+  return zonesCol.doc(id).get()
+    .then((doc)=> portesDepuisScenes(normalizeZoneScenes(doc.exists ? doc.data() : null).scenes))
+    .catch(()=> []);
+}
+function portesLibres(portes){
+  return portes.filter(p=> !habitantDeLaPorte(p.pointId));
+}
+function nomDeScene(sceneId){
+  const sc = (sceneViewScenes || []).find(s=> s.id === sceneId);
+  return sc ? (sc.name || '') : '';
+}
+function redessinerSceneSiVisible(){
+  if (document.getElementById('sceneViewFull').classList.contains('show')) renderSceneViewCurrentScene();
+}
+
+/* Le mode « déplacement » : on choisit l'habitant, puis on touche la porte de destination.
+   Occupée → les deux permutent. Il survit au changement de pièce, d'où le bandeau hors image. */
+let deplacementHabitant = null;
+function commencerDeplacement(recruit){
+  if (!recruit) return;
+  const sceneOuverte = document.getElementById('sceneViewFull').classList.contains('show');
+  if (!sceneOuverte || !sceneViewIsShip){ showToast('Va dans ton vaisseau pour changer ' + recruit.name + ' de porte'); return; }
+  deplacementHabitant = recruit.id;
+  const b = document.getElementById('deplacementBandeau');
+  document.getElementById('deplacementBandeauTexte').textContent = '🚪 Déplacement de ' + recruit.name + ' — touche une porte';
+  b.style.display = 'flex';
+  showToast('Touche la porte où installer ' + recruit.name);
+  redessinerSceneSiVisible();
+}
+function annulerDeplacement(silencieux){
+  const actif = !!deplacementHabitant;
+  deplacementHabitant = null;
+  const b = document.getElementById('deplacementBandeau');
+  if (b) b.style.display = 'none';
+  if (actif && !silencieux){ showToast('Déplacement annulé'); redessinerSceneSiVisible(); }
+}
+document.getElementById('deplacementAnnulerBtn').addEventListener('click', ()=> annulerDeplacement());
+
+async function installerHabitantSurPorte(recruit, porte){
+  /* Une seule écriture pour la permutation : le déplacé prend la porte, l'ancien occupant prend
+     la sienne — jamais un instant avec deux habitants sur la même porte. */
+  if (!recruitsCol || !recruit || !porte) return;
+  const occupant = habitantDeLaPorte(porte.pointId);
+  if (occupant && occupant.id === recruit.id){ showToast(recruit.name + ' est déjà là'); return; }
+  const batch = db.batch();
+  const nouvelle = { sceneId: porte.sceneId, pointId: porte.pointId };
+  const ancienne = recruit.porte ? { sceneId: recruit.porte.sceneId, pointId: recruit.porte.pointId } : null;
+  batch.update(recruitsCol.doc(recruit.id), { porte: nouvelle });
+  if (occupant) batch.update(recruitsCol.doc(occupant.id), { porte: ancienne });
+  try {
+    await batch.commit();
+    /* On reflète tout de suite en local : l'instantané Firestore suit, mais l'écran ne doit pas attendre. */
+    recruit.porte = nouvelle;
+    if (occupant) occupant.porte = ancienne;
+    journal('vaisseau', 'porte', recruit.name + (occupant ? ' échange sa porte avec ' + occupant.name : ' s\'installe derrière une porte'), true);
+    showToast(occupant ? (recruit.name + ' et ' + occupant.name + ' ont échangé leurs portes') : (recruit.name + ' s\'installe ici'));
+  } catch(err){ showToast('Échec : ' + err.message); }
+}
+
+function toucherPorteHabitant(pt){
+  if (!sceneViewIsShip){ showToast('Cette porte ne sert que dans le vaisseau'); return; }
+  const porte = { sceneId: sceneViewCurrentSceneId, pointId: pt.id };
+  if (deplacementHabitant){
+    const r = recruits.find(x=> x.id === deplacementHabitant);
+    deplacementHabitant = null;
+    document.getElementById('deplacementBandeau').style.display = 'none';
+    if (!r){ showToast('Cet habitant n\'est plus à bord'); redessinerSceneSiVisible(); return; }
+    installerHabitantSurPorte(r, porte).then(redessinerSceneSiVisible);
+    return;
+  }
+  const occupant = habitantDeLaPorte(pt.id);
+  if (occupant){ openRecruitRoom(occupant); return; }
+  showToast('Porte libre — le prochain habitant recruté s\'installera ici');
+}
+
 function openRecruitRoom(hab){
   const pasAmenagee = ()=> showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
   /* v475 : un robot FABRIQUÉ à l'atelier ne vient d'aucune fiche de PNJ — `sourceCreatureId`
@@ -21845,6 +22057,7 @@ const SCENE_POINT_TYPES = [
   { id:'coffre', label:'📦 Coffre' },
   { id:'recolte', label:'🌱 Récolte (plante, filon, arbre…)' },
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
+  { id:'habitant', label:'🚪 Porte d\'habitant (artisan, dojo…)' },   // v479
   { id:'missions', label:'📨 Terminal de missions' },
   { id:'soin', label:'💚 Soin' },
   { id:'plans', label:'📐 Étagère à plans' },
@@ -23230,6 +23443,28 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'habitant'){
+    /* v479 : une porte = une place à bord. Le nombre de portes posées dans les scènes du vaisseau
+       EST sa capacité. Le panneau holographique se règle ici, sans re-livraison : taille, hauteur,
+       teinte — tout ce qu'il faut pour l'accorder à l'image de la porte. */
+    if (pt.holoTaille == null) pt.holoTaille = 100;
+    if (pt.holoY == null) pt.holoY = -60;
+    if (!pt.holoTeinte) pt.holoTeinte = HOLO_TEINTE_DEFAUT;
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une porte = une place à bord. Un PNJ recruté sans être combattant s'installe derrière une porte libre, et son panneau holographique affiche sa fonction et son prénom. Pose le point sur la porte dessinée dans le décor (icône masquée).</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Taille du panneau (%)</div>
+      <input type="number" class="field-input" data-holo-taille min="30" max="300" step="5" value="${pt.holoTaille}">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Hauteur du panneau (% de la hauteur du point, 0 = au centre, négatif = au-dessus)</div>
+      <input type="number" class="field-input" data-holo-y min="-300" max="300" step="5" value="${pt.holoY}">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Teinte</div>
+      <input type="color" class="field-input" data-holo-teinte value="${pt.holoTeinte}" style="height:42px; padding:2px;">
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Aperçu dans le jeu, sur la vraie porte. Le nombre de portes du vaisseau est compté automatiquement : inutile de le saisir sur la fiche du modèle.</p>`;
+    typeWrap.querySelector('[data-holo-taille]').addEventListener('input', (e)=>{ pt.holoTaille = Math.max(30, Math.min(300, +e.target.value || 100)); });
+    typeWrap.querySelector('[data-holo-y]').addEventListener('input', (e)=>{ pt.holoY = Math.max(-300, Math.min(300, +e.target.value || 0)); });
+    typeWrap.querySelector('[data-holo-teinte]').addEventListener('input', (e)=>{ pt.holoTeinte = e.target.value || HOLO_TEINTE_DEFAUT; });
+    return;
+  }
+
   if (pt.type === 'pnj'){
     if (!pt.resetMode) pt.resetMode = 'unlimited';   // un PNJ revient, sauf décision contraire
     typeWrap.innerHTML = `
@@ -24161,6 +24396,7 @@ function zoneComporteDesCombats(zone){
 }
 function openSceneView(creature, resumeSceneId, opts){
   sceneViewIsShip = !!(opts && opts.isShip);
+  annulerDeplacement(true);   // v479 : un déplacement ne survit pas à un changement de lieu
   /* En montant à bord, on annonce les rapports qui attendent. Différé d'un instant : la scène
      doit être là derrière, sinon la fenêtre s'ouvre sur du vide. */
   if (sceneViewIsShip && !resumeSceneId) setTimeout(proposerRapports, 700);
@@ -24276,6 +24512,24 @@ async function renderSceneViewCurrentScene(){
       el.textContent = sceneTypeEmoji(pt.type);
     }
 
+    if (pt.type === 'habitant'){
+      /* v479 : le panneau holographique par-dessus la porte. Il n'attrape pas les touchers :
+         c'est le rectangle du point qui reçoit le doigt, comme pour toute porte. */
+      el.style.overflow = 'visible';
+      if (!url && !pt.hideIcon) el.textContent = '';
+      const occ = habitantDeLaPorte(pt.id);
+      const t = texteHolo(occ);
+      const holo = document.createElement('div');
+      holo.className = 'holo-panel' + (t.libre ? ' holo-libre' : '') + (deplacementHabitant ? ' holo-cible' : '');
+      holo.style.setProperty('--holo', pt.holoTeinte || HOLO_TEINTE_DEFAUT);
+      holo.style.top = (pt.holoY == null ? -60 : pt.holoY) + '%';
+      holo.style.fontSize = (12 * ((pt.holoTaille == null ? 100 : pt.holoTaille) / 100)) + 'px';
+      holo.innerHTML = '<span class="holo-l1"></span>' + (t.l2 ? '<span class="holo-l2"></span>' : '');
+      holo.querySelector('.holo-l1').textContent = t.l1;
+      if (t.l2) holo.querySelector('.holo-l2').textContent = t.l2;
+      el.appendChild(holo);
+    }
+
     if (pt.type === 'sortie_zone'){
       /* La porte de sortie porte désormais tous les contrôles : confirmation hors du
          vaisseau, et refus de descendre sans combattant valide. */
@@ -24323,6 +24577,8 @@ async function renderSceneViewCurrentScene(){
       };
     } else if (pt.type === 'chambre'){
       wrapPointActions[pt.id] = ()=> openQuarters();
+    } else if (pt.type === 'habitant'){
+      wrapPointActions[pt.id] = ()=> toucherPorteHabitant(pt);   // v479
     } else if (pt.type === 'missions'){
       wrapPointActions[pt.id] = ()=> openMissionTerminal();
     } else if (pt.type === 'explorateur'){
@@ -24717,6 +24973,7 @@ const ROOM_ACTIONS = [
   { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
   { id:'artisanat',  emoji:'🔨', titre:'Atelier' },
   { id:'equipement', emoji:'🎒', titre:'Équipement' },
+  { id:'porte',      emoji:'🚪', titre:'Changer de porte' },   // v479, habitants seulement
   { id:'renvoyer',   emoji:'👋', titre:'Renvoyer' },
 ];
 function renderRoomActions(recruit){
@@ -24726,7 +24983,7 @@ function renderRoomActions(recruit){
   /* Chez un artisan, 📊 Profil n'affichait que la fabrication et les recettes — exactement ce
      que montre 🔨 Atelier. Deux icônes pour le même écran : on garde l'atelier. */
   const dispo = ROOM_ACTIONS.filter(a=> combattant
-    ? (a.id !== 'artisanat')
+    ? (a.id !== 'artisanat' && a.id !== 'porte')
     : (a.id !== 'equipe' && a.id !== 'attaques' && a.id !== 'profil'));
   document.getElementById('sceneBigImageCloseBtn').style.display = 'none'; // remplacée par la flèche
   const inTeam = activeTeamIds.includes(recruit.id);
@@ -24766,6 +25023,7 @@ function renderRoomActions(recruit){
         return;
       }
       if (quoi === 'renvoyer'){ showToast('Reste appuyé pour renvoyer'); return; }
+      if (quoi === 'porte'){ closeSceneBigImage(); commencerDeplacement(r); return; }   // v479
       if (quoi === 'equipe'){ toggleRecruitTeam(r, ()=> renderRoomActions(currentRecruitById(r.id) || r)); return; }
       /* La chambre reste visible derrière : la fiche doit donc passer au-dessus d'elle. */
       document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
