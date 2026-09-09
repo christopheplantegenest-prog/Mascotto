@@ -1271,7 +1271,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v476</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v478</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1424,6 +1424,21 @@
     </div>
     <div id="shopBuyList"></div>
     <div id="shopSellList" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- v478 : le concessionnaire de vaisseaux -->
+<div class="overlay" id="concessionOverlay">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <div class="emoji" id="concessionEmoji">🚀</div>
+      <button class="sheet-x" id="concessionCloseBtn">✕</button>
+    </div>
+    <h3 id="concessionName" style="margin-top:0;">—</h3>
+    <p class="meta" id="concessionPhrase" style="font-style:italic; display:none;"></p>
+    <div class="meta" id="concessionCoinsLabel">💰 —</div>
+    <div class="meta" id="concessionActuel" style="margin-top:4px;"></div>
+    <div id="concessionList" style="margin-top:10px;"></div>
   </div>
 </div>
 
@@ -2656,6 +2671,7 @@
         <option value="shop">Boutique</option>
         <option value="combat">Monstre / Combattant</option>
         <option value="zone">Zone d'exploration</option>
+        <option value="concession">🚀 Concessionnaire de vaisseaux</option>
       </select>
       <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
         <input type="checkbox" id="editEnTravaux" style="width:auto;">
@@ -2821,6 +2837,13 @@
           <div id="vaisseauMateriauxList"></div>
           <button type="button" class="btn-secondary" id="addVaisseauMateriauBtn" style="width:100%; margin-top:4px;">➕ Ajouter un matériau</button>
         </div>
+      </div>
+
+      <!-- v478 : le concessionnaire de vaisseaux n'a ni dialogue ni objets — il vend les modèles de vaisseau. -->
+      <div id="concessionBlock" style="display:none;">
+        <div class="field-label">🚀 Phrase d'accueil du concessionnaire (optionnel)</div>
+        <textarea id="editConcessionPhrase" class="field-input" style="min-height:50px;" placeholder="Un vaisseau neuf ? Regarde ce que j'ai en stock."></textarea>
+        <p class="meta" style="margin-top:6px;">Ce personnage vend TOUS les modèles de vaisseau (les zones cochées « modèle de vaisseau »), avec leur prix et leurs matériaux. Le vaisseau actuel du joueur est repris à la moitié de son prix, déduite du nouveau. Pose-le à un endroit fixe de la carte.</p>
       </div>
 
       <div data-rubrique="dialogue" data-titre="💬 Dialogue"></div>
@@ -3859,11 +3882,14 @@ function majBlocsSelonType(type){
   if (typeof majMenuRubriques === 'function') setTimeout(majMenuRubriques, 0);
   if (typeof majFicheEnCours === 'function') setTimeout(majFicheEnCours, 0);
   const estZone = (type === 'zone');
+  const estConcession = (type === 'concession');   // v478
   const caseSeBattre = document.getElementById('editCanFight');
   const wrapSeBattre = document.getElementById('canFightWrap');
   if (wrapSeBattre) wrapSeBattre.style.display = (type === 'dialogue') ? 'flex' : 'none';
-  document.getElementById('dialogueBlock').style.display = (type === 'shop' || estZone) ? 'none' : 'block';
+  document.getElementById('dialogueBlock').style.display = (type === 'shop' || estZone || estConcession) ? 'none' : 'block';
   document.getElementById('shopBlock').style.display = (type === 'shop') ? 'block' : 'none';
+  const blocConcession = document.getElementById('concessionBlock');
+  if (blocConcession) blocConcession.style.display = estConcession ? 'block' : 'none';
   /* Les caractéristiques de combat servent aussi à un PNJ ordinaire qui accepte un duel. */
   const peutSeBattre = (type === 'combat') || (type === 'dialogue' && caseSeBattre && caseSeBattre.checked);
   document.getElementById('combatBlock').style.display = peutSeBattre ? 'block' : 'none';
@@ -3875,7 +3901,7 @@ function majBlocsSelonType(type){
   ['metierBlock','recruitScopeBlock','roomImageBlock','portraitCropBlock',
    'backImageBlock','bustImageBlock','combatImageBlock','combatScaleBlock'].forEach(id=>{
     const el = document.getElementById(id);
-    if (el) el.style.display = estZone ? 'none' : 'block';
+    if (el) el.style.display = (estZone || estConcession) ? 'none' : 'block';   // v478 : le concessionnaire non plus
   });
   /* v444 : « 🗺️ Éditer la scène de cette zone » ne s'affiche QUE sur une zone déjà enregistrée.
      `loadForEdit` l'allumait pour TOUTE fiche sans regarder sa nature : il traînait donc en haut
@@ -6561,7 +6587,7 @@ function appuiSurLePersonnage(c, evt){
 function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
-    const fallbackEmoji = c.interactionType === 'zone' ? '🗺️' : (c.emoji || '🐾');
+    const fallbackEmoji = c.interactionType === 'zone' ? '🗺️' : (c.emoji || (c.interactionType === 'concession' ? '🚀' : '🐾'));
     const iconTransform = `transform:scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg);`;
     const inner = c.imageUrl
       ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;${iconTransform}">`
@@ -6628,6 +6654,7 @@ function handleCreatureClick(c){
     return;
   }
   if (c.interactionType === 'shop'){ openShopWindow(c); return; }
+  if (c.interactionType === 'concession'){ openConcessionWindow(c); return; }   // v478
   if (c.interactionType === 'zone'){
     if (c.id === lastZoneExitId && (Date.now() - lastZoneExitAt) < ZONE_REENTRY_COOLDOWN_MS) return;
     if (c._closed){
@@ -6714,6 +6741,136 @@ function renderShopBuyList(){
       });
     });
   });
+}
+
+/* ---------- v478 : LE CONCESSIONNAIRE DE VAISSEAUX ----------
+   Un PNJ de type « concession » vend TOUS les modèles de vaisseau (les zones marquées modèle,
+   voir ficheEstModeleVaisseau). Un seul vaisseau actif par joueur : acheter REMPLACE. Le
+   vaisseau actuel est repris à TAUX_REPRISE_VAISSEAU de son prix, déduit du prix du nouveau.
+   Certains modèles demandent des matériaux EN PLUS du prix (idée du 09/09 : la fabrication
+   n'est qu'un achat avec des matériaux). L'achat écrit `vaisseauId` sur la fiche joueur ;
+   tout le reste suit grâce au socle v477 (bouton 🚀, scène ouverte, quartiers, artisans). */
+const TAUX_REPRISE_VAISSEAU = 0.5;
+let activeConcessionCreature = null;
+function prixDuVaisseau(f){ return (f && f.vaisseau && Number(f.vaisseau.prix)) || 0; }
+function repriseDuVaisseauActif(){
+  const f = shipZoneId ? ficheParId(shipZoneId) : null;
+  return Math.floor(prixDuVaisseau(f) * TAUX_REPRISE_VAISSEAU);
+}
+function imageDuVaisseau(f){
+  if (!f) return '';
+  return f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+}
+/* Les modèles en vitrine : toute zone-modèle publiée, sauf celui qu'on possède déjà. */
+function modelesDeVaisseauAchetables(){
+  return toutesLesFiches()
+    .filter(f=> f.id !== shipZoneId && (f.interactionType || '') === 'zone' && ficheEstModeleVaisseau(f))
+    .map(f=> { const j = ficheJouable(f); return j ? { ...j, id: f.id } : null; })
+    .filter(f=> f && ficheEstModeleVaisseau(f))
+    .sort((a,b)=> prixDuVaisseau(a) - prixDuVaisseau(b) || (a.vaisseau.nom || a.name || '').localeCompare(b.vaisseau.nom || b.name || '', 'fr'));
+}
+/* Le bilan d'un modèle face au joueur : prix net après reprise, matériaux qu'il a / qu'il faut. */
+function bilanVaisseau(f, coins, inv){
+  const v = (f && f.vaisseau) || {};
+  const prix = prixDuVaisseau(f);
+  const reprise = Math.min(prix, repriseDuVaisseauActif());
+  const net = Math.max(0, prix - reprise);
+  const lignes = (Array.isArray(v.materiaux) ? v.materiaux : [])
+    .map(m=> ({ item: items.find(i=> i.id === m.itemId) || null, itemId: m.itemId, besoin: Math.max(1, parseInt(m.qty, 10) || 1) }))
+    .filter(l=> l.item)
+    .map(l=> ({ ...l, dispo: (inv && inv[l.itemId]) || 0 }))
+    .map(l=> ({ ...l, ok: l.dispo >= l.besoin }));
+  const argentOk = (coins || 0) >= net;
+  return { id: f.id, nom: v.nom || f.name || 'Vaisseau', emplacements: Number(v.emplacements) || 0, image: imageDuVaisseau(f),
+    prix, reprise, net, lignes, argentOk, materiauxOk: lignes.every(l=> l.ok), complet: argentOk && lignes.every(l=> l.ok) };
+}
+function openConcessionWindow(c){
+  activeConcessionCreature = c;
+  document.getElementById('concessionEmoji').innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🚀');
+  document.getElementById('concessionName').textContent = c.name || 'Concessionnaire';
+  const phraseEl = document.getElementById('concessionPhrase');
+  if (c.concessionPhrase){ phraseEl.textContent = '« ' + c.concessionPhrase + ' »'; phraseEl.style.display = 'block'; }
+  else { phraseEl.style.display = 'none'; }
+  /* Depuis une scène d'exploration (plan 4000), la fenêtre doit passer devant le décor. */
+  const dansUneScene = document.getElementById('sceneViewFull').classList.contains('show');
+  const ov = document.getElementById('concessionOverlay');
+  ov.style.zIndex = dansUneScene ? '4200' : '';
+  ov.classList.add('show');
+  renderConcession();
+}
+document.getElementById('concessionCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('concessionOverlay').classList.remove('show');
+  activeConcessionCreature = null;
+});
+function renderConcession(){
+  const c = activeConcessionCreature;
+  const wrap = document.getElementById('concessionList');
+  if (!c) return;
+  if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
+  wrap.innerHTML = '<p class="meta">Chargement…</p>';
+  db.collection('players').doc(currentUser.uid).get().then((doc)=>{
+    if (activeConcessionCreature !== c) return;
+    const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+    const inv = (doc.exists && doc.data().inventory) || {};
+    playerCoins = coins;
+    document.getElementById('concessionCoinsLabel').textContent = '💰 ' + coins;
+    const actuel = shipZoneId ? ficheParId(shipZoneId) : null;
+    const reprise = repriseDuVaisseauActif();
+    document.getElementById('concessionActuel').textContent = actuel
+      ? ('Ton vaisseau : ' + nomDuVaisseauActif() + (reprise > 0 ? ' — repris 💰 ' + reprise : ' — sans valeur de reprise'))
+      : 'Tu n\'as pas encore de vaisseau.';
+    const bilans = modelesDeVaisseauAchetables().map(f=> bilanVaisseau(f, coins, inv));
+    if (!bilans.length){ wrap.innerHTML = '<p class="meta">Aucun autre modèle en stock pour le moment.</p>'; return; }
+    wrap.innerHTML = bilans.map((b, idx)=>{
+      const prixHtml = b.reprise > 0
+        ? `<span style="text-decoration:line-through; opacity:.6;">💰 ${b.prix}</span> → <strong>💰 ${b.net}</strong>`
+        : `<strong>💰 ${b.net}</strong>`;
+      const mats = b.lignes.length ? '<div style="margin-top:4px;">' + b.lignes.map(l=>
+        `<span class="meta" style="display:inline-flex; align-items:center; gap:4px; margin-right:8px; ${l.ok ? '' : 'color:#c0392b;'}">${itemThumbHtml(l.item, 18)} ${l.item.name} ${l.dispo}/${l.besoin}</span>`).join('') + '</div>' : '';
+      const img = b.image ? `<img src="${b.image}" style="width:64px; height:64px; object-fit:contain; border-radius:8px;">` : '<div style="width:64px; height:64px; display:flex; align-items:center; justify-content:center; font-size:30px;">🚀</div>';
+      return `
+      <div class="editor-list-item" style="align-items:center;">
+        <div class="thumb" style="flex:none;">${img}</div>
+        <div class="name" style="flex:1;">${b.nom}
+          <span class="meta" style="display:block;">🛠️ ${b.emplacements} emplacement${b.emplacements > 1 ? 's' : ''} d'artisan</span>
+          <span class="meta" style="display:block;">${prixHtml}${b.argentOk ? '' : ' <span style="color:#c0392b;">(pas assez)</span>'}</span>
+          ${mats}
+        </div>
+        <button class="btn-secondary" data-concession-buy="${idx}" style="flex:none;${b.complet ? '' : ' opacity:.45;'}" ${b.complet ? '' : 'disabled'}>Acheter</button>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-concession-buy]').forEach(btn=>{
+      btn.addEventListener('click', ()=> acheterVaisseau(bilans[parseInt(btn.dataset.concessionBuy, 10)].id));
+    });
+  }).catch((err)=>{ wrap.innerHTML = '<p class="meta">Échec : ' + err.message + '</p>'; });
+}
+/* L'achat. Le solde et le sac sont RELUS juste avant (jamais la variable en mémoire), comme
+   pour la boutique. Une seule écriture : pièces, matériaux, et le nouveau vaisseau. */
+async function acheterVaisseau(zoneId){
+  if (!currentUser || !db || !zoneId) return;
+  const f = ficheParIdJouable(zoneId);
+  if (!f || !ficheEstModeleVaisseau(f)){ showToast('Ce modèle n\'est plus disponible'); return; }
+  if (zoneId === shipZoneId){ showToast('C\'est déjà ton vaisseau'); return; }
+  const ref = db.collection('players').doc(currentUser.uid);
+  try {
+    const doc = await ref.get();
+    const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+    const inv = (doc.exists && doc.data().inventory) || {};
+    const b = bilanVaisseau(f, coins, inv);
+    if (!b.argentOk){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${b.net})`); return; }
+    if (!b.materiauxOk){ showToast('Il manque des matériaux'); return; }
+    const inventory = {};
+    b.lignes.forEach(l=> { inventory[l.itemId] = firebase.firestore.FieldValue.increment(-l.besoin); });
+    const ancien = shipZoneId || null;
+    const maj = { coins: firebase.firestore.FieldValue.increment(-b.net), vaisseauId: zoneId,
+      vaisseauAchats: firebase.firestore.FieldValue.arrayUnion({ zoneId, ancien, prix: b.prix, reprise: b.reprise, net: b.net, date: Date.now() }) };
+    if (b.lignes.length) maj.inventory = inventory;
+    await ref.set(maj, { merge:true });
+    b.lignes.forEach(l=> { baseResources[l.itemId] = Math.max(0, (baseResources[l.itemId] || 0) - l.besoin); });
+    journal('vaisseau', 'achat', b.nom + ' pour 💰 ' + b.net + (b.reprise ? ' (reprise ' + b.reprise + ')' : ''), true);
+    showToast('🚀 Bienvenue à bord : ' + b.nom);
+    renderConcession();
+  } catch(err){ showToast('Échec : ' + err.message); }
 }
 
 function renderShopSellList(){
@@ -9077,6 +9234,7 @@ function renderEditorList(snap){
     { cle:'zone',     titre:'🗺️ Zones d\'exploration', parZone:false },
     { cle:'dialogue', titre:'💬 PNJ de dialogue',       parZone:true  },
     { cle:'shop',     titre:'🛒 Boutiques',             parZone:true  },
+    { cle:'concession', titre:'🚀 Concessionnaires de vaisseaux', parZone:true },   // v478
     { cle:'combat',   titre:'⚔️ Monstres et combattants', parZone:true },
   ];
 
@@ -9318,7 +9476,7 @@ function loadForEdit(id){
   const interactionType = d.interactionType || 'dialogue';
   document.getElementById('editInteractionType').value = interactionType;
   document.getElementById('editRecruitScope').value = d.recruitScope === 'shared' ? 'shared' : 'perPlayer';
-  document.getElementById('dialogueBlock').style.display = (interactionType === 'shop' || interactionType === 'zone') ? 'none' : 'block';
+  document.getElementById('dialogueBlock').style.display = (interactionType === 'shop' || interactionType === 'zone' || interactionType === 'concession') ? 'none' : 'block';
   majBlocsSelonType(interactionType);
   document.getElementById('editZoneClosedMessage').value = d.closedMessage || '';
   document.getElementById('editZoneShowName').checked = !!d.zoneShowName;
@@ -9406,6 +9564,7 @@ function loadForEdit(id){
   currentShopItems = Array.isArray(d.shopItems) ? JSON.parse(JSON.stringify(d.shopItems)) : [];
   renderShopItemsBuilder();
   document.getElementById('editShopPhrase').value = d.shopPhrase || '';
+  document.getElementById('editConcessionPhrase').value = d.concessionPhrase || '';   // v478
   const cs = d.combatStats || {};
   document.getElementById('editCombatTribe').value = cs.tribe || '';
   document.getElementById('editCombatHp').value = cs.hp != null ? cs.hp : 50;
@@ -9790,6 +9949,7 @@ function resetForm(){
   renderDialogueBuilder();
   document.getElementById('editInteractionType').value = 'dialogue';
   majBlocsSelonType('dialogue');
+  document.getElementById('editConcessionPhrase').value = '';   // v478
   document.getElementById('editZoneClosedMessage').value = '';
   document.getElementById('editZoneShowName').checked = false;
   document.getElementById('editZoneExplorable').checked = false;
@@ -10143,7 +10303,7 @@ document.getElementById('hubPnjBtn').addEventListener('click', ()=>{
   /* « PNJ » ne montre plus que les habitants : les zones et le vaisseau ont leurs propres
      boutons. On ouvre la LISTE et non un formulaire vierge — on vient presque toujours ici
      pour retrouver une fiche, pas pour en créer une. */
-  ouvrirListeFiches({ cles:['dialogue','shop','combat'] }, 'PNJ');
+  ouvrirListeFiches({ cles:['dialogue','shop','combat','concession'] }, 'PNJ');
 });
 document.getElementById('hubZonesBtn').addEventListener('click', ()=>{
   ouvrirListeFiches({ cles:['zone'], vaisseau:false }, 'Zones d\'exploration');
@@ -10348,6 +10508,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const interactionType = document.getElementById('editInteractionType').value;
   const shopItems = currentShopItems.filter(r=> r.itemId && r.price > 0);
   const shopPhrase = document.getElementById('editShopPhrase').value.trim();
+  const concessionPhrase = document.getElementById('editConcessionPhrase').value.trim();   // v478
   const zoneShowName = document.getElementById('editZoneShowName').checked;
   const explorable = document.getElementById('editZoneExplorable').checked;
   const explorerReport = document.getElementById('editZoneExplorerReport').value.trim();
@@ -10472,7 +10633,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -24311,6 +24472,8 @@ async function renderSceneViewCurrentScene(){
             startZoneBossCombat({ id: doc.id, ...data }, pt);
             return;
           }
+          if (data.interactionType === 'concession'){ openConcessionWindow({ id: doc.id, ...data }); return; }   // v478
+          if (data.interactionType === 'shop'){ openShopWindow({ id: doc.id, ...data }); return; }   // v478 : un marchand posé dans une scène vend aussi
           document.getElementById('overlay').style.zIndex = '4200';
           /* « Disparaît quand son dialogue se referme » : la conséquence est posée ici, elle
              se déclenchera à la fermeture — y compris après un combat mené par ce dialogue. */
@@ -27991,7 +28154,7 @@ function verifierScenario(modele){
 
     /* --- structure du dialogue --- */
     const steps = f._steps;
-    if (!steps.length && f.interactionType !== 'zone' && f.interactionType !== 'combat' && f.interactionType !== 'shop') dire('info', cf, nom, 'Personnage sans dialogue.');
+    if (!steps.length && f.interactionType !== 'zone' && f.interactionType !== 'combat' && f.interactionType !== 'shop' && f.interactionType !== 'concession') dire('info', cf, nom, 'Personnage sans dialogue.');
     const atteintes = new Set();
     const suites = (ch)=>{   // étapes où un choix peut mener (« ensuite », victoire, défaite)
       const l = [];
@@ -28245,7 +28408,7 @@ function ctrlOuvrirCible(type, id, pointId){
       const nature = (brute && brute.interactionType) || 'dialogue';
       const estVaisseau = !!(typeof ficheEstVaisseau === 'function' && ficheEstVaisseau(id, brute));
       if (nature === 'zone') ouvrirListeFiches({ cles:['zone'], vaisseau: estVaisseau }, estVaisseau ? 'Vaisseaux' : 'Zones d\'exploration');
-      else ouvrirListeFiches({ cles:['dialogue','shop','combat'] }, 'PNJ');
+      else ouvrirListeFiches({ cles:['dialogue','shop','combat','concession'] }, 'PNJ');
       loadForEdit(id); showPnjSection('new'); renderDialogueBuilder();
     }
     else if (type === 'objet' && id){ document.getElementById('editHubOverlay').classList.remove('show'); document.getElementById('itemsEditorOverlay').classList.add('show'); loadItemForEdit(id); showItemsSection('new'); }
