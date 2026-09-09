@@ -1276,7 +1276,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v474</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v475</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2383,7 +2383,7 @@
         <option value="consommable">Consommable</option>
         <option value="apprentissage">Apprentissage d'attaque</option>
         <option value="equipement">Équipement</option>
-        <option value="composant">Composant de robot (v474)</option>
+        <option value="composant">Composant de robot</option>
       </select>
       <div id="itemComposantBlock" style="display:none;">
         <div class="field-label">Famille de composant</div>
@@ -13622,7 +13622,8 @@ function robotModeleVierge(vice){
   return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), liste:[], jeu:[],
     pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:PIRATAGE_DEFAUT.zone, pirFuite:PIRATAGE_DEFAUT.fuite,
     fab: Object.assign({}, FABRICATION_DEFAUT),
-    faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null };
+    faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null,
+    chambreImagePath:null, chambreImageRef:null, chambreImageDataUrl:null };
 }
 /* Les quatre attaques emportées : celles choisies, restreintes à la liste apprenable, sans doublon,
    complétées depuis la liste pour ne jamais partir à moins de quatre (mainDeFiche du proto). */
@@ -13714,6 +13715,7 @@ function renderRobotModeleForm(){
     ${htmlImageModele('face', 'Combat face', 'Le robot vu de face : c\'est lui qu\'on affronte, et son portrait dans la barre des tours.', f)}
     ${htmlImageModele('dos', 'Combat dos', 'Le robot vu de dos, quand il se bat à tes côtés. Sans image de dos, la face sert des deux côtés.', f)}
     ${htmlApercuCombatModele(f)}
+    ${htmlImageModele('chambre', '🛏️ Chambre du modèle (v475)', 'Le décor de la chambre qu\'occupe ce robot dans les quartiers. Tous les exemplaires de ce modèle la partagent. Un robot FABRIQUÉ ne vient d\'aucune fiche de PNJ : sans cette image, sa porte reste fermée.', f)}
     <div class="field-label">🎯 Portrait de la barre des tours</div>
     <button type="button" class="btn-secondary" id="rmPortraitCropBtn" style="width:100%;">🎯 Régler le cadrage visage + buste</button>
     <p class="meta" style="margin:6px 0 0;">Recadre l'image de FACE pour la vignette de la barre d'ordre des tours. Le même cadrage sert des deux côtés, allié ou adversaire.</p>
@@ -13734,7 +13736,7 @@ function cablerFormRobotModele(){
     renderRobotModeleForm();
   });
   wrap.querySelector('#rmProfil').addEventListener('change', (e)=>{ document.getElementById('rmProfilResume').textContent = resumeProfil(e.target.value); });
-  cablerImageModele('face'); cablerImageModele('dos'); cablerApercuCombatModele();
+  cablerImageModele('face'); cablerImageModele('dos'); cablerImageModele('chambre'); cablerApercuCombatModele();
   wrap.querySelectorAll('details[data-rmvice]').forEach(d=> d.addEventListener('toggle', ()=>{ rmOuverts[d.dataset.rmvice] = d.open; }));
   wrap.querySelectorAll('#rmImmunites input[type="checkbox"]').forEach(chk=> chk.addEventListener('change', ()=>{
     const cochees = wrap.querySelectorAll('#rmImmunites input[type="checkbox"]:checked');
@@ -13800,6 +13802,7 @@ function renderRobotsModelesList(){
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
       fab: fabricationDuModele(m),
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
+      chambreImagePath:m.chambreImagePath||null, chambreImageRef:m.chambreImageRef||null, chambreImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
     rmViceAvant = rmBrouillon.vice;
     rmOuverts = {};
@@ -15619,7 +15622,7 @@ function cablerApercuCombatModele(){
     });
   });
   /* Une image gardée en référence interne n'a pas d'adresse : on la lit pour l'aperçu et la vignette. */
-  ['face','dos'].forEach(cle=>{
+  ['face','dos','chambre'].forEach(cle=>{
     if (f[cle + 'ImageRef'] && !f[cle + 'ImagePath'] && !f[cle + 'ImageDataUrl']){
       internalizeSceneImage(f[cle + 'ImageRef']).then(url=>{
         if (rmBrouillon !== f || !url) return;
@@ -15653,7 +15656,9 @@ function cablerImageModele(cle){
     reader.onload = (ev)=>{
       const img = new Image();
       img.onload = ()=>{
-        const dataUrl = encoderImageSousLimite(img, 600, true);
+        /* La chambre est un DÉCOR affiché en plein écran : 600 px la rendraient floue.
+           La face et le dos sont des sprites posés sur la scène, 600 px leur suffisent. */
+        const dataUrl = encoderImageSousLimite(img, cle === 'chambre' ? 1400 : 600, cle !== 'chambre');
         if (!dataUrl){ showToast('Image illisible'); return; }
         f[cle + 'ImageDataUrl'] = dataUrl; f[cle + 'ImagePath'] = null; f[cle + 'ImageRef'] = null;
         rendre();
@@ -15672,7 +15677,7 @@ function cablerImageModele(cle){
    comme les fiches de PNJ. Rend les champs à écrire dans le document. */
 async function champsImagesModele(f){
   const out = {};
-  for (const cle of ['face','dos']){
+  for (const cle of ['face','dos','chambre']){
     const path = f[cle + 'ImagePath'] || null;
     let ref = path ? null : (f[cle + 'ImageRef'] || null);
     if (!path && !ref && f[cle + 'ImageDataUrl']) ref = await externalizeSceneImage(f[cle + 'ImageDataUrl']);
@@ -21628,11 +21633,20 @@ document.getElementById('quartersCloseBtn').addEventListener('click', ()=>{
    déjà annoncé dans la liste. */
 function openRecruitRoom(hab){
   const pasAmenagee = ()=> showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
-  if (!hab.sourceCreatureId || !creatureCol){ pasAmenagee(); return; }
-  creatureCol.doc(hab.sourceCreatureId).get().then((doc)=>{
-    const d = doc.exists ? doc.data() : null;
-    if (!d || (!d.roomImagePath && !d.roomImageRef)){ pasAmenagee(); return; }
-    const montrer = (url)=>{
+  /* v475 : un robot FABRIQUÉ à l'atelier ne vient d'aucune fiche de PNJ — `sourceCreatureId`
+     est nul, et l'ancienne version s'arrêtait là, porte close. La chambre est désormais portée
+     par le MODÈLE de robot : tous les exemplaires d'un même modèle partagent le même décor,
+     ce qui est logique puisque c'est le même robot. La fiche de PNJ reste prioritaire quand
+     elle existe : un personnage écrit à la main garde sa chambre à lui. */
+  const chambreDuModele = ()=>{
+    const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
+    if (!m || (!m.chambreImagePath && !m.chambreImageRef)){ pasAmenagee(); return; }
+    if (m.chambreImagePath){ montrerChambre(resolveMediaPath(m.chambreImagePath)); return; }
+    internalizeSceneImage(m.chambreImageRef)
+      .then((u)=>{ if (u) montrerChambre(u); else showToast('Image de chambre illisible'); })
+      .catch(()=> showToast('Image de chambre illisible'));
+  };
+  const montrerChambre = (url)=>{
       document.getElementById('quartersOverlay').classList.remove('show');
       showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name);
       openSceneBigImage(url, true);
@@ -21641,11 +21655,15 @@ function openRecruitRoom(hab){
       roomSheetRecruitId = hab.id;
       renderRoomActions(hab);
       armGhostTapGuard(400);
-    };
-    if (d.roomImagePath){ montrer(resolveMediaPath(d.roomImagePath)); return; }
+  };
+  if (!hab.sourceCreatureId || !creatureCol){ chambreDuModele(); return; }
+  creatureCol.doc(hab.sourceCreatureId).get().then((doc)=>{
+    const d = doc.exists ? doc.data() : null;
+    if (!d || (!d.roomImagePath && !d.roomImageRef)){ chambreDuModele(); return; }
+    if (d.roomImagePath){ montrerChambre(resolveMediaPath(d.roomImagePath)); return; }
     internalizeSceneImage(d.roomImageRef)
-      .then(montrer)
-      .catch(()=> showToast('Image de chambre illisible'));
+      .then((u)=>{ if (u) montrerChambre(u); else chambreDuModele(); })
+      .catch(()=> chambreDuModele());
   }).catch((err)=> showToast('Échec : ' + err.message));
 }
 
@@ -25988,15 +26006,23 @@ async function lancerFabrication(plan){
   } catch(err){ showToast('Fabrication non lancée : ' + err.message); }
 }
 /* Crée la recrue à partir du plan : les stats de l'exemplaire piraté, la main du modèle. */
-function recrueDepuisPlan(plan){
+/* v475 : `urlImageModele` ne rend une adresse que si le modèle a un chemin GitHub ou une
+   dataURL sous la main. Un modèle dont l'image vit dans la réserve interne (`faceImageRef`)
+   partait donc avec `imageUrl: ''`, et la vignette des quartiers — qui ne sait afficher que
+   `imageUrl` — restait vide. On résout la référence AVANT de créer la recrue. */
+async function recrueDepuisPlan(plan){
   const m = plan.modeleId ? ctModele(plan.modeleId) : null;
   if (!m) return null;
+  let vignette = urlImageModele(m, 'face') || '';
+  if (!vignette && m.faceImageRef){
+    try { vignette = await internalizeSceneImage(m.faceImageRef) || ''; } catch(e){ vignette = ''; }
+  }
   const st = statsDeLExemplaire({ robotModeleId: m.id, ecartStats: plan.ecart || {} }) || plan.stats || {};
   const main = mainDeModele(m, m.jeu).map(a=> a.id);
   return {
     robotModeleId: m.id, ecartStats: plan.ecart || {},
     name: m.nom, metierId: null, ownerUid: currentUser ? currentUser.uid : null,
-    imageUrl: urlImageModele(m, 'face') || '',
+    imageUrl: vignette,
     combatImageRef: m.faceImageRef || null, combatImagePath: m.faceImagePath || null,
     backImageRef: m.dosImageRef || null, backImagePath: m.dosImagePath || null,
     bustImagePath: null, bustImageRef: null,
@@ -26023,7 +26049,7 @@ async function verifierAtelier(){
   try {
     const nouveaux = [];
     for (const j of finis){
-      const r = recrueDepuisPlan(j.job.plan);
+      const r = await recrueDepuisPlan(j.job.plan);
       if (r){ await db.collection('recruits').add(r); nouveaux.push(j.job.nom || (r.name)); }
       else journal('erreur', 'atelier : modèle introuvable', j.job.modeleId || '?', true);
     }
@@ -26076,6 +26102,7 @@ function renderAtelier(){
   if (!plans.length){
     html.push(`<p class="meta">Aucun plan sur l'étagère. En combat, « 📡 Pirater » un robot sauvage pour voler le sien.</p>`);
   } else if (!atelierPlanChoisi){
+    html.push(`<p class="meta" style="margin:0 0 8px;">Touche un plan pour voir sa recette et lancer la fabrication.</p>`);
     const groupes = {};
     plans.forEach(p=>{ const k = p.modeleId || ('?' + p.modele); (groupes[k] = groupes[k] || []).push(p); });
     Object.keys(groupes).sort((a, b)=> (groupes[a][0].modele || '').localeCompare(groupes[b][0].modele || '')).forEach(k=>{
