@@ -313,13 +313,8 @@
   }
   #missionTerminalFrame *{ -webkit-tap-highlight-color:transparent; }
 
-  .ship-marker{ position:relative; width:100%; height:100%; animation:shipFloat 3.4s ease-in-out infinite; }
-  .ship-marker img{ width:100%; height:100%; object-fit:contain; display:block; filter:drop-shadow(0 6px 8px rgba(0,0,0,.35)); }
-  .ship-marker .shipfallback{
-    width:100%; height:100%; border-radius:50%; background:rgba(255,255,255,.94);
-    border:2px solid var(--accent); display:flex; align-items:center; justify-content:center; font-size:26px;
-  }
-  @keyframes shipFloat{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-6px); } }
+  /* v477 : le vaisseau ne flotte plus sur la carte, c'est le bouton 🚀 qui porte son image. */
+  .icon-btn img.ship-btn-img{ width:26px; height:26px; object-fit:contain; display:block; }
   .robot-editor-imgs .slot{ text-align:center; }
   .robot-editor-imgs .slot .box{
     border:1px dashed rgba(0,0,0,.25); border-radius:10px; height:88px;
@@ -1687,15 +1682,6 @@
     <button class="btn-secondary" id="terminalPreviewBtn" style="width:100%; margin-top:8px;">👁️ Voir le terminal</button>
 
     </div>
-    <button type="button" class="btn-secondary tt-cat" data-ttcat="vaisseau" style="width:100%; margin-bottom:6px; text-align:left;">🚀 Vaisseau</button>
-    <div class="tt-panel" id="ttPanel-vaisseau" style="display:none; padding:0 0 10px;">
-      <div class="field-label" style="margin-top:0;">🚀 Image du vaisseau sur la carte</div>
-      <p class="meta" style="margin:0 0 6px;">Le vaisseau flotte à côté de toi et te suit. Touche-le pour entrer. Sans image, une pastille 🚀 est utilisée.</p>
-      <input type="file" id="shipMapFile" accept="image/*" class="field-input">
-      <button type="button" class="btn-secondary" id="shipMapGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
-      <img id="shipMapPreview" style="display:none; width:90px; margin-top:8px; border-radius:8px; border:2px solid var(--accent);">
-      <button type="button" class="btn-secondary" id="shipMapClearBtn" style="width:100%; margin-top:6px;">Retirer l'image</button>
-    </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="combatui" style="width:100%; margin-bottom:6px; text-align:left;">⚔️ Mise en page du combat</button>
     <div class="tt-panel" id="ttPanel-combatui" style="display:none; padding:0 0 10px;">
       <p class="meta" style="margin:0 0 8px;">Ces réglages sont des PARTS de l'écran, pas des pixels : le combat gardera les mêmes proportions sur tous les téléphones. Chaque valeur reste bornée, pour qu'un réglage confortable ici ne rende pas l'écran inutilisable sur un petit appareil.</p>
@@ -2811,6 +2797,30 @@
         <div class="field-label" style="margin-top:12px;">📜 Rapport d'exploration</div>
         <p class="meta" style="margin:0 0 6px;">Texte donné par l'explorateur quand il découvre cette zone (avant-goût vague, pas technique). Laisse vide pour un texte générique par défaut.</p>
         <textarea id="editZoneExplorerReport" class="field-input" rows="3" placeholder="Texte par défaut utilisé si laissé vide."></textarea>
+
+        <div class="field-label" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+          <input type="checkbox" id="editZoneVaisseau" style="width:auto;">
+          <label for="editZoneVaisseau" style="margin:0;">🚀 Cette zone est un modèle de vaisseau</label>
+        </div>
+        <p class="meta" style="margin:2px 0 0;">Un modèle de vaisseau ne se pose pas sur la carte : le joueur y monte par le bouton 🚀. L'image de la fiche (en haut) est celle qui s'affiche dans ce bouton.</p>
+        <div id="zoneVaisseauBlock" style="display:none;">
+          <div class="field-label" style="margin-top:10px;">Nom du modèle</div>
+          <input type="text" id="editVaisseauNom" class="field-input" placeholder="Ex. Coccinelle MK-1">
+          <div class="field-row" style="gap:8px; margin-top:8px;">
+            <div style="flex:1;">
+              <div class="field-label" style="margin-top:0;">🛠️ Emplacements d'artisan</div>
+              <input type="number" id="editVaisseauEmplacements" class="field-input" min="0" max="99" value="2">
+            </div>
+            <div style="flex:1;">
+              <div class="field-label" style="margin-top:0;">💰 Prix</div>
+              <input type="number" id="editVaisseauPrix" class="field-input" min="0" value="0">
+            </div>
+          </div>
+          <div class="field-label" style="margin-top:10px;">🧩 Matériaux demandés en plus du prix</div>
+          <p class="meta" style="margin:0 0 6px;">Laisse vide pour un vaisseau qui s'achète simplement.</p>
+          <div id="vaisseauMateriauxList"></div>
+          <button type="button" class="btn-secondary" id="addVaisseauMateriauBtn" style="width:100%; margin-top:4px;">➕ Ajouter un matériau</button>
+        </div>
       </div>
 
       <div data-rubrique="dialogue" data-titre="💬 Dialogue"></div>
@@ -3041,7 +3051,7 @@
       <!-- La désignation du vaisseau vit ICI depuis la refonte du 28/08, plus dans l'éditeur de
            zone : une zone d'exploration ne doit plus se préoccuper de savoir si elle est un
            vaisseau. Le bouton n'apparaît que dans la catégorie Vaisseaux. -->
-      <button class="btn-secondary" id="listeChangerVaisseauBtn" style="width:100%; margin-bottom:10px; display:none;">🚀 Changer la zone qui sert de vaisseau</button>
+      <button class="btn-secondary" id="listeChangerVaisseauBtn" style="width:100%; margin-bottom:10px; display:none;">🚀 Choisir le vaisseau de départ</button>
       <!-- Recherche dans la liste (étape 3 de la refonte, 28/08). PAS d'autofocus, jamais :
            un clavier qui s'ouvre tout seul à chaque ouverture de liste est insupportable sur
            téléphone. type="text" et non "search" pour éviter la croix native qui varie d'un
@@ -3801,6 +3811,45 @@ function renderShopItemsBuilder(){
 document.getElementById('addShopItemBtn').addEventListener('click', ()=>{
   currentShopItems.push({ itemId: '', price: 10 });
   renderShopItemsBuilder();
+});
+/* v477 : les matériaux d'un modèle de vaisseau — même mécanique que les lignes de boutique. */
+let currentVaisseauMateriaux = []; // { itemId, qty }
+function renderVaisseauMateriaux(){
+  const wrap = document.getElementById('vaisseauMateriauxList');
+  if (!wrap) return;
+  wrap.innerHTML = currentVaisseauMateriaux.map((row, idx)=>{
+    const it = items.find(i=>i.id===row.itemId);
+    return `
+      <div class="field-row" style="align-items:center; margin-bottom:6px;">
+        <button type="button" class="btn-secondary" data-vmat-pick="${idx}" style="flex:2;">${itemThumbHtml(it)} ${it ? it.name : '— choisir —'}</button>
+        <input type="number" class="field-input" data-vmat-qty="${idx}" value="${row.qty || 1}" min="1" placeholder="Qté" style="flex:1;">
+        <button type="button" class="btn-secondary" data-vmat-del="${idx}" style="flex:none; color:var(--danger);">✕</button>
+      </div>`;
+  }).join('') || '<p class="meta">Aucun matériau : ce vaisseau s\'achète simplement.</p>';
+  wrap.querySelectorAll('[data-vmat-pick]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.dataset.vmatPick, 10);
+      openRecipeItemChooser((itemId)=>{ currentVaisseauMateriaux[idx].itemId = itemId; renderVaisseauMateriaux(); });
+    });
+  });
+  wrap.querySelectorAll('[data-vmat-qty]').forEach(input=>{
+    input.addEventListener('input', ()=>{
+      currentVaisseauMateriaux[parseInt(input.dataset.vmatQty, 10)].qty = Math.max(1, parseInt(input.value, 10) || 1);
+    });
+  });
+  wrap.querySelectorAll('[data-vmat-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      currentVaisseauMateriaux.splice(parseInt(btn.dataset.vmatDel, 10), 1);
+      renderVaisseauMateriaux();
+    });
+  });
+}
+document.getElementById('addVaisseauMateriauBtn').addEventListener('click', ()=>{
+  currentVaisseauMateriaux.push({ itemId: '', qty: 1 });
+  renderVaisseauMateriaux();
+});
+document.getElementById('editZoneVaisseau').addEventListener('change', (e)=>{
+  document.getElementById('zoneVaisseauBlock').style.display = e.target.checked ? 'block' : 'none';
 });
 /* Une seule fonction décide de ce qui s'affiche dans la fiche selon son type, pour que
    l'ouverture d'une fiche existante et le changement de type au vol donnent exactement le
@@ -6274,6 +6323,7 @@ if (creatureCol){
     latestSnap = snap;
     redessinerCarte();
     renderEditorList(snap);
+    try { if (typeof majBoutonVaisseau === 'function') majBoutonVaisseau(); } catch(e){}
     /* v443 : la bande des versions se lit dans l'instantané. Une version tout juste créée n'y
        est pas encore à l'instant de l'enregistrement — elle apparaît donc ici, à son arrivée. */
     if (typeof majFicheVersions === 'function' && document.getElementById('editorOverlay').classList.contains('show')) majFicheVersions();
@@ -7229,6 +7279,10 @@ function watchPlayerQuests(uid){
   if (!db) return;
   db.collection('players').doc(uid).onSnapshot((doc)=>{
     playerSelfData = doc.exists ? doc.data() : null;
+    /* v477 : le vaisseau actif dépend de la fiche joueur (vaisseauId). Même prudence que pour
+       robotId juste en dessous : on ne recule jamais sur l'absence d'un champ — c'est le
+       vaisseau de départ qui prend le relais, pas une remise à zéro. */
+    try { if (typeof recalculerVaisseauActif === 'function') recalculerVaisseauActif(); } catch(e){}
     try {
       const rid = (doc.exists && doc.data().robotId) || null;
       // on n'adopte que si le serveur designe vraiment un robot : un snapshot
@@ -7678,7 +7732,7 @@ function empreinteFiche(){
   const taille = (s)=> String((s || '').length);
   const dat = (id)=>{ const el = document.getElementById(id); return el ? (el.dataset.itemId || '') : ''; };
   morceaux.push(
-    j(currentDialogueSteps), j(currentShopItems), j(editTimeRanges), j(pendingCombatPortraitCrop),
+    j(currentDialogueSteps), j(currentShopItems), j(currentVaisseauMateriaux), j(editTimeRanges), j(pendingCombatPortraitCrop),
     ens(selectedDays), ens(selectedCombatAttacks), ens(selectedStartingAttacks),
     ens(selectedCombatImmunities), ens(selectedCombatResistances), ens(selectedCombatRewards),
     dat('editCombatStealEasy'), dat('editCombatStealHard'),
@@ -9029,14 +9083,15 @@ function renderEditorList(snap){
   const allDocs = [];
   snap.forEach((doc)=> allDocs.push(doc));
 
-  /* Application du filtre du menu Édition. Le vaisseau est une zone comme une autre pour le
-     moteur : il n'est distingué que par le pointeur app_config/ship, d'où le test sur son id. */
+  /* Application du filtre du menu Édition. v477 : un vaisseau est une zone marquée « modèle de
+     vaisseau » dans sa fiche (ou désignée vaisseau de départ / active) — voir ficheEstVaisseau. */
   const docsFiltres = (!filtreFiches ? allDocs : allDocs.filter(doc=>{
     const d = doc.data();
     const cle = d.interactionType || 'dialogue';
     if (filtreFiches.cles && !filtreFiches.cles.includes(cle)) return false;
-    if (filtreFiches.vaisseau === true  && doc.id !== shipZoneId) return false;
-    if (filtreFiches.vaisseau === false && doc.id === shipZoneId) return false;
+    const vaisseau = ficheEstVaisseau(doc.id, d);
+    if (filtreFiches.vaisseau === true  && !vaisseau) return false;
+    if (filtreFiches.vaisseau === false && vaisseau) return false;
     return true;
   })).filter(doc=>{
     /* La recherche s'applique APRÈS le filtre de catégorie : dans les Zones, elle ne peut
@@ -9269,6 +9324,14 @@ function loadForEdit(id){
   document.getElementById('editZoneShowName').checked = !!d.zoneShowName;
   document.getElementById('editZoneExplorable').checked = !!d.explorable;
   document.getElementById('editZoneExplorerReport').value = d.explorerReport || '';
+  const vz = (d.vaisseau && typeof d.vaisseau === 'object') ? d.vaisseau : null;
+  document.getElementById('editZoneVaisseau').checked = !!(vz && vz.modele);
+  document.getElementById('zoneVaisseauBlock').style.display = (vz && vz.modele) ? 'block' : 'none';
+  document.getElementById('editVaisseauNom').value = (vz && vz.nom) || '';
+  document.getElementById('editVaisseauEmplacements').value = (vz && typeof vz.emplacements === 'number') ? vz.emplacements : 2;
+  document.getElementById('editVaisseauPrix').value = (vz && typeof vz.prix === 'number') ? vz.prix : 0;
+  currentVaisseauMateriaux = (vz && Array.isArray(vz.materiaux)) ? vz.materiaux.map(x=>({ itemId: x.itemId || '', qty: Math.max(1, parseInt(x.qty, 10) || 1) })) : [];
+  renderVaisseauMateriaux();
   /* v444 : plus d'allumage inconditionnel des boutons de scène ici — c'est `majBlocsSelonType`
      (appelé juste au-dessus) qui décide, en fonction de la nature de la fiche. */
   pendingCombatPortraitCrop = d.combatPortraitCrop || null;
@@ -9731,6 +9794,13 @@ function resetForm(){
   document.getElementById('editZoneShowName').checked = false;
   document.getElementById('editZoneExplorable').checked = false;
   document.getElementById('editZoneExplorerReport').value = '';
+  document.getElementById('editZoneVaisseau').checked = false;
+  document.getElementById('zoneVaisseauBlock').style.display = 'none';
+  document.getElementById('editVaisseauNom').value = '';
+  document.getElementById('editVaisseauEmplacements').value = 2;
+  document.getElementById('editVaisseauPrix').value = 0;
+  currentVaisseauMateriaux = [];
+  renderVaisseauMateriaux();
   /* v444 : `majBlocsSelonType('dialogue')` juste au-dessus a déjà éteint les boutons de scène. */
   pendingCombatPortraitCrop = null;
   document.getElementById('editPortraitCropBtn').style.display = 'none';
@@ -10281,6 +10351,14 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const zoneShowName = document.getElementById('editZoneShowName').checked;
   const explorable = document.getElementById('editZoneExplorable').checked;
   const explorerReport = document.getElementById('editZoneExplorerReport').value.trim();
+  /* v477 : le modèle de vaisseau ne vit que sur une zone ; ailleurs le champ est effacé. */
+  const vaisseau = (interactionType === 'zone' && document.getElementById('editZoneVaisseau').checked) ? {
+    modele: true,
+    nom: document.getElementById('editVaisseauNom').value.trim(),
+    emplacements: Math.max(0, parseInt(document.getElementById('editVaisseauEmplacements').value, 10) || 0),
+    prix: Math.max(0, parseInt(document.getElementById('editVaisseauPrix').value, 10) || 0),
+    materiaux: currentVaisseauMateriaux.filter(x=> x.itemId).map(x=>({ itemId: x.itemId, qty: Math.max(1, parseInt(x.qty, 10) || 1) })),
+  } : null;
   ficheModifiee = false;   // ce qui suit part en base : il n'y a plus rien à perdre
   const enTravaux = document.getElementById('editEnTravaux').checked;
   const canFight = document.getElementById('editCanFight').checked;
@@ -10394,7 +10472,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -11545,7 +11623,6 @@ function onPosition(pos){
 
   playerMarker.setLatLng([latitude, longitude]);
   try { updateRobotFacingFromMove({ lat: latitude, lng: longitude }); } catch(e){}
-  try { refreshShipMarker(); paintShipMarker(); } catch(e){}
   if (accCircle) map.removeLayer(accCircle);
   accCircle = L.circle([latitude, longitude], { radius: accuracy, color:'#0f8a52', weight:1, fillOpacity:0.08 }).addTo(map);
 
@@ -11574,7 +11651,6 @@ let freeModeActive = false;
 function onFreeModeClick(e){
   playerPos = { lat: e.latlng.lat, lng: e.latlng.lng };
   playerMarker.setLatLng([e.latlng.lat, e.latlng.lng]);
-  try { refreshShipMarker(); paintShipMarker(); } catch(e){}
   try { updateRobotFacingFromMove({ lat: e.latlng.lat, lng: e.latlng.lng }); } catch(e){}
   if (accCircle){ map.removeLayer(accCircle); accCircle = null; }
   updateCreatureVisuals();
@@ -18154,36 +18230,8 @@ document.getElementById('refreshOrphansBtn').addEventListener('click', renderOrp
 /* Les réglages de l'infirmerie (images de la pièce et de la porte, zones des capsules,
    nombre de capsules) ont été supprimés en v408 avec la pièce elle-même. */
 
-function enregistrerImageVaisseau(donnees){
-  if (!db){ showToast('Firebase indisponible ici'); return; }
-  db.collection('app_config').doc('ship').set(donnees, { merge:true })
-    .then(()=> showToast('Vaisseau enregistré'))
-    .catch((err)=> showToast('Échec : ' + err.message));
-}
-document.getElementById('shipMapFile').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev)=>{
-    const img = new Image();
-    img.onload = ()=>{
-      const maxSize = 320; // une icône de carte : inutile de stocker plus grand
-      // PNG : un vaisseau détouré a besoin de sa transparence
-      const url = encoderImageSousLimite(img, maxSize, true);
-      if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
-      enregistrerImageVaisseau({ mapImage: url, mapImagePath: null });
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-});
-document.getElementById('shipMapGithubBtn').addEventListener('click', ()=>{
-  openGithubFilePicker(null, (item)=> enregistrerImageVaisseau({ mapImagePath: item.path, mapImage: null }));
-});
-document.getElementById('shipMapClearBtn').addEventListener('click', ()=>{
-  document.getElementById('shipMapFile').value = '';
-  enregistrerImageVaisseau({ mapImage: null, mapImagePath: null });
-});
+/* v477 : l'image du vaisseau n'est plus un réglage global — c'est l'image de la fiche du
+   modèle de vaisseau actif, affichée dans le bouton 🚀 (voir majBoutonVaisseau). */
 document.getElementById('missionTerminalFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if (!file || !db) return;
@@ -18482,7 +18530,7 @@ function ramenerAInfirmerie(){
       showToast('Toute l\'équipe est K.O. — tout le monde est soigné');
       return;
     }
-    openSceneView({ id: shipZoneId, name: 'Vaisseau' }, sceneId || null, { isShip:true });
+    openSceneView({ id: shipZoneId, name: nomDuVaisseauActif() }, sceneId || null, { isShip:true });
     /* Le voile doit attendre que la scène soit à l'écran, sinon il joue dans le vide :
        openSceneView lit Firestore et décode l'image avant d'afficher quoi que ce soit. */
     setTimeout(()=> jouerVoileDeSoin('Toute l\'équipe est soignée'), 600);
@@ -19142,10 +19190,10 @@ setInterval(()=>{
    gestionnaires sans rien apporter. */
 function ouvrirLeVaisseau(){
   if (!shipZoneId){
-    showToast('Aucune zone n\'est désignée comme vaisseau — choisis-la dans l\'éditeur de scènes');
+    showToast('Aucun vaisseau de départ — choisis-le dans Édition → Vaisseaux');
     return;
   }
-  openSceneView({ id: shipZoneId, name: 'Vaisseau' }, null, { isShip:true });
+  openSceneView({ id: shipZoneId, name: nomDuVaisseauActif() }, null, { isShip:true });
 }
 document.getElementById('baseBtn').addEventListener('click', ()=>{
   if (isGhostTap()) return;
@@ -21209,70 +21257,8 @@ function openRecruitRoom(hab){
   }).catch((err)=> showToast('Échec : ' + err.message));
 }
 
-/* ---------- Le vaisseau posé sur la carte (v254) ----------
-   Le vaisseau suit le joueur, décalé de quelques mètres au nord-est de sa position. C'est un
-   vaisseau volant : il est toujours au-dessus de soi, ce qui garde l'infirmerie, les missions
-   et l'artisanat accessibles où qu'on soit — comme l'était le menu Base qu'il remplace.
-   Le décalage évite qu'il recouvre le robot du joueur. */
-/* Le vaisseau se tient à l'écart du joueur pour ne pas encombrer sa position, mais reste
-   TOUJOURS visible à l'écran : plus loin, il sortirait du cadre en promenade et paraîtrait
-   perdu. Environ 45 m, soit au-delà du rayon d'interaction ordinaire (40 m).
-   C'est une EXCEPTION assumée : on peut y monter quelle que soit la distance. Un vaisseau
-   s'appelle et ouvre sa porte, on n'a pas besoin de le toucher pour y entrer. Le jour où l'on
-   voudra devoir le rappeler, cette exception laissera place à un délai — rien à défaire. */
-const SHIP_OFFSET_LAT = 0.00029;   // ≈ 32 m au nord
-const SHIP_OFFSET_LNG = 0.00040;   // ≈ 31 m à l'est sous nos latitudes
-let shipMarker = null;
-let shipImageUrl = '';
-/* Plus petit que le robot du joueur : ce qui l'encombrait n'était pas seulement sa position,
-   mais sa taille — presque celle du robot alors qu'il est censé se tenir en retrait. */
-function shipIconSize(){
-  const vmin = Math.min(window.innerWidth, window.innerHeight);
-  const c = Math.max(40, Math.min(74, Math.round(vmin * 0.12)));
-  return c;
-}
-function shipIconHtml(){
-  const c = shipImageUrl
-    ? `<img src="${shipImageUrl}" alt="">`
-    : '<div class="shipfallback">🚀</div>';
-  return `<div class="ship-marker">${c}</div>`;
-}
-function shipLatLng(){
-  if (!playerPos) return null;
-  return [playerPos.lat + SHIP_OFFSET_LAT, playerPos.lng + SHIP_OFFSET_LNG];
-}
-function refreshShipMarker(){
-  if (typeof map === 'undefined' || !map) return;
-  const pos = shipLatLng();
-  if (!shipZoneId || !pos){
-    if (shipMarker){ map.removeLayer(shipMarker); shipMarker = null; }
-    return;
-  }
-  const c = shipIconSize();
-  if (!shipMarker){
-    shipMarker = L.marker(pos, {
-      icon: L.divIcon({ className:'', html: shipIconHtml(), iconSize:[c, c] }),
-      zIndexOffset: 900,
-    }).addTo(map);
-    shipMarker.on('click', ()=>{
-      if (isGhostTap()) return;
-      openSceneView({ id: shipZoneId, name: 'Vaisseau' }, null, { isShip:true });
-    });
-    return;
-  }
-  shipMarker.setLatLng(pos);
-}
-/* Ne redessine l'icône que si son contenu a changé : sinon le marqueur serait recréé en boucle
-   et l'animation repartirait de zéro à chaque pas du GPS (même piège que le robot du joueur). */
-let lastShipIconKey = null;
-function paintShipMarker(){
-  if (!shipMarker) return;
-  const key = shipImageUrl + '|' + shipIconSize();
-  if (key === lastShipIconKey) return;
-  lastShipIconKey = key;
-  const c = shipIconSize();
-  shipMarker.setIcon(L.divIcon({ className:'', html: shipIconHtml(), iconSize:[c, c] }));
-}
+/* v477 : le vaisseau qui flottait à côté du joueur sur la carte a été retiré (jamais utilisé) —
+   son image vit maintenant dans le bouton 🚀 de la barre du bas. */
 
 /* ---------- Le vaisseau (v226) ----------
    Le vaisseau est une zone d'exploration ORDINAIRE, créée dans l'éditeur de zones comme les
@@ -21539,35 +21525,56 @@ if (cuReset) cuReset.addEventListener('click', ()=>{
 });
 appliquerCombatUi();
 
+/* ---------- Le vaisseau actif (v477) ----------
+   Avant : un seul vaisseau pour tout le monde, désigné par app_config/ship.zoneId.
+   Maintenant : app_config/ship.zoneId est le VAISSEAU DE DÉPART ; chaque joueur peut porter
+   `vaisseauId` sur sa fiche (posé par le concessionnaire, lot 2), et c'est lui qui gagne.
+   `shipZoneId` reste le nom historique de « la zone qui sert de vaisseau », mais il désigne
+   désormais le vaisseau ACTIF DU JOUEUR — tout le reste du code continue de le lire tel quel. */
 let shipZoneId = null;
+let vaisseauDepartId = null;
+let shipImageUrl = '';
+function ficheEstModeleVaisseau(d){ return !!(d && d.vaisseau && typeof d.vaisseau === 'object' && d.vaisseau.modele); }
+function ficheEstVaisseau(id, d){
+  if (!id) return false;
+  if (id === shipZoneId || id === vaisseauDepartId) return true;
+  if (d === undefined && typeof ficheParId === 'function') d = ficheParId(id);
+  return ficheEstModeleVaisseau(d);
+}
+function nomDuVaisseauActif(){
+  const f = shipZoneId ? ficheParId(shipZoneId) : null;
+  return (f && f.vaisseau && f.vaisseau.nom) || (f && f.name) || 'Vaisseau';
+}
+/* Le bouton 🚀 porte l'image de la fiche du modèle actif. Idempotent : on ne touche au DOM
+   que si le contenu change, sinon l'image se rechargerait à chaque instantané. */
+function majBoutonVaisseau(){
+  const b = document.getElementById('baseBtn');
+  if (!b) return;
+  const f = shipZoneId ? ficheParId(shipZoneId) : null;
+  shipImageUrl = f ? (f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '')) : '';
+  const html = shipImageUrl ? `<img class="ship-btn-img" src="${shipImageUrl}" alt="">` : '🚀';
+  if (b.dataset.shipHtml !== html){ b.dataset.shipHtml = html; b.innerHTML = html; }
+  b.title = nomDuVaisseauActif();
+}
+function recalculerVaisseauActif(){
+  const choisi = (typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.vaisseauId) || null;
+  shipZoneId = choisi || vaisseauDepartId || null;
+  majBoutonVaisseau();
+  /* On démarre à bord. C'est le point de départ naturel : on prépare son équipe, puis on
+     descend. Une seule fois par session, et jamais si le joueur est déjà quelque part —
+     une reprise de combat ou une zone en cours passe avant. */
+  if (!demarrageVaisseauFait && shipZoneId){
+    demarrageVaisseauFait = true;
+    /* On n'ouvre PAS le vaisseau immédiatement : la reprise de combat attend ses attaques,
+       ses fiches et ses recrues, et le vaisseau partage l'écran avec l'exploration. Ouvrir
+       trop tôt reconstruisait le combat DERRIÈRE le vaisseau. */
+    ouvrirLeVaisseauQuandLaRepriseARendu();
+  }
+}
 if (typeof db !== 'undefined' && db){
   db.collection('app_config').doc('ship').onSnapshot((doc)=>{
-    shipZoneId = (doc.exists && doc.data().zoneId) || null;
-    const d = doc.exists ? doc.data() : {};
-    shipImageUrl = d.mapImagePath ? resolveMediaPath(d.mapImagePath) : (d.mapImage || '');
-    const p = document.getElementById('shipMapPreview');
-    if (p){
-      if (shipImageUrl) p.src = shipImageUrl; else p.removeAttribute('src');
-      p.style.display = shipImageUrl ? 'block' : 'none';
-    }
-    lastShipIconKey = null;
-    refreshShipMarker();
-    paintShipMarker();
-    /* On démarre à bord. C'est le point de départ naturel : on prépare son équipe, puis on
-       descend. Une seule fois par session, et jamais si le joueur est déjà quelque part —
-       une reprise de combat ou une zone en cours passe avant. */
-    if (!demarrageVaisseauFait && shipZoneId){
-      demarrageVaisseauFait = true;
-      /* On n'ouvre PLUS le vaisseau immédiatement. La garde d'avant était juste dans son
-         intention (« une reprise de combat passe avant ») mais elle s'exécutait TROP TÔT :
-         la reprise attend ses attaques, ses fiches et ses recrues, donc à cet instant rien
-         n'est encore ouvert, la garde ne voit rien, et le vaisseau s'installe le premier.
-         Ensuite la reprise trouvait `sceneViewFull` déjà affiché — le vaisseau PARTAGE cet
-         écran avec l'exploration — le prenait pour une session en cours et n'osait plus
-         prendre la main. D'où le combat reconstruit DERRIÈRE le vaisseau, et le retour au
-         vaisseau en fin de combat puisqu'il n'avait jamais été fermé. */
-      ouvrirLeVaisseauQuandLaRepriseARendu();
-    }
+    vaisseauDepartId = (doc.exists && doc.data().zoneId) || null;
+    recalculerVaisseauActif();
   }, ()=>{});
 }
 let demarrageVaisseauFait = false;
@@ -23787,23 +23794,23 @@ document.getElementById('sceneEditorHabitantsBtn').addEventListener('click', ()=
 document.getElementById('habitantsCloseBtn').addEventListener('click', ()=>{
   document.getElementById('habitantsOverlay').classList.remove('show');
 });
-/* Désignation du vaisseau, déplacée le 28/08 de l'éditeur de scène vers Édition → Vaisseaux.
-   Le vaisseau n'est pas une propriété de la fiche : c'est un pointeur app_config/ship vers un
-   zoneId. Tant qu'il n'y en a qu'un, changer de vaisseau, c'est déplacer ce pointeur. */
+/* Vaisseau de DÉPART (v477). Le pointeur app_config/ship.zoneId ne désigne plus « le » vaisseau
+   mais celui que reçoit tout nouveau joueur ; un joueur qui en a acheté un autre porte
+   `vaisseauId` sur sa fiche. On ne propose que les zones marquées « modèle de vaisseau ». */
 document.getElementById('listeChangerVaisseauBtn').addEventListener('click', async ()=>{
   if (!db || !latestSnap){ showToast('Firebase indisponible ici'); return; }
   const zones = [];
   latestSnap.forEach(doc=>{
-    if ((doc.data().interactionType || '') === 'zone') zones.push(doc);
+    if ((doc.data().interactionType || '') === 'zone' && ficheEstModeleVaisseau(doc.data())) zones.push(doc);
   });
-  if (!zones.length){ showToast('Crée d\'abord une zone d\'exploration'); return; }
+  if (!zones.length){ showToast('Coche d\'abord « modèle de vaisseau » sur une zone'); return; }
   zones.sort((a,b)=> (a.data().name||'').localeCompare(b.data().name||'', 'fr'));
 
   const fond = document.createElement('div');
   fond.className = 'overlay show';
   fond.innerHTML = `<div class="sheet" style="max-height:80vh; overflow-y:auto;">
-      <div class="sheet-top"><h3 style="margin-top:0;">Quelle zone sert de vaisseau ?</h3></div>
-      <p class="meta">La zone choisie ne sera plus explorée depuis la carte, mais depuis le bouton 🚀.</p>
+      <div class="sheet-top"><h3 style="margin-top:0;">Quel est le vaisseau de départ ?</h3></div>
+      <p class="meta">Celui que reçoit chaque nouveau joueur. Un joueur qui en a acheté un autre garde le sien.</p>
       <div id="choixVaisseauListe"></div>
       <button class="btn-secondary" id="choixVaisseauAucun" style="width:100%; margin-top:10px;">Aucun vaisseau</button>
       <button class="btn-secondary" id="choixVaisseauAnnuler" style="width:100%; margin-top:6px;">Annuler</button>
@@ -23815,17 +23822,18 @@ document.getElementById('listeChangerVaisseauBtn').addEventListener('click', asy
     const b = document.createElement('button');
     b.className = 'btn-capture';
     b.style.cssText = 'width:100%; margin-bottom:6px; text-align:left;';
-    b.textContent = (doc.id === shipZoneId ? '🚀 ' : '🗺️ ') + (doc.data().name || '(zone sans nom)');
+    b.textContent = (doc.id === vaisseauDepartId ? '🚀 ' : '🛸 ') + (doc.data().name || '(zone sans nom)')
+      + ((doc.data().vaisseau && doc.data().vaisseau.nom) ? ' — ' + doc.data().vaisseau.nom : '');
     b.addEventListener('click', ()=>{
       db.collection('app_config').doc('ship').set({ zoneId: doc.id }, { merge:true })
-        .then(()=>{ showToast('Vaisseau : ' + (doc.data().name || 'zone sans nom')); fond.remove(); renderEditorList(latestSnap); })
+        .then(()=>{ showToast('Vaisseau de départ : ' + (doc.data().name || 'zone sans nom')); fond.remove(); renderEditorList(latestSnap); })
         .catch((err)=> showToast('Échec : ' + err.message));
     });
     liste.appendChild(b);
   });
   fond.querySelector('#choixVaisseauAucun').addEventListener('click', ()=>{
     db.collection('app_config').doc('ship').set({ zoneId: null }, { merge:true })
-      .then(()=>{ showToast('Plus aucun vaisseau'); fond.remove(); renderEditorList(latestSnap); })
+      .then(()=>{ showToast('Plus aucun vaisseau de départ'); fond.remove(); renderEditorList(latestSnap); })
       .catch((err)=> showToast('Échec : ' + err.message));
   });
   fond.querySelector('#choixVaisseauAnnuler').addEventListener('click', ()=> fond.remove());
@@ -27734,8 +27742,8 @@ function ctrlEtapesDe(f){
 function ctrlPositionnee(f){ return !!f && typeof f.lat === 'number' && typeof f.lng === 'number'; }
 function ctrlRenouvelable(pt){ return pt.resetMode === 'unlimited' || pt.resetMode === 'timed'; }
 function ctrlPnjRecrute(f){ return !!(f && f.recruitScope === 'shared' && f.recruited); }
-/* v468 : la zone qui sert de vaisseau (réglage shipZoneId). Sans position sur la carte, mais toujours accessible. */
-function ctrlEstVaisseau(f){ return !!(f && typeof shipZoneId !== 'undefined' && shipZoneId && f.id === shipZoneId); }
+/* v468/v477 : une zone-vaisseau (modèle, de départ ou active). Sans position sur la carte, mais toujours accessible. */
+function ctrlEstVaisseau(f){ return !!(f && typeof ficheEstVaisseau === 'function' && ficheEstVaisseau(f.id, f)); }
 
 /* Le modèle : un instantané normalisé de tout le scénario. Asynchrone : les scènes des zones
    vivent dans exploration_zones et passent par le cache scenesDesZones (v464). Les fiches sont
@@ -28235,7 +28243,7 @@ function ctrlOuvrirCible(type, id, pointId){
          croix ou la liste retombent sur l'ancienne liste où zones et PNJ se mélangent. */
       const brute = ficheParId(id);
       const nature = (brute && brute.interactionType) || 'dialogue';
-      const estVaisseau = !!(typeof shipZoneId !== 'undefined' && shipZoneId && id === shipZoneId);
+      const estVaisseau = !!(typeof ficheEstVaisseau === 'function' && ficheEstVaisseau(id, brute));
       if (nature === 'zone') ouvrirListeFiches({ cles:['zone'], vaisseau: estVaisseau }, estVaisseau ? 'Vaisseaux' : 'Zones d\'exploration');
       else ouvrirListeFiches({ cles:['dialogue','shop','combat'] }, 'PNJ');
       loadForEdit(id); showPnjSection('new'); renderDialogueBuilder();
