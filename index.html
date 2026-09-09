@@ -1276,7 +1276,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v475</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v476</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2273,28 +2273,8 @@
         <div id="attackParamsWrap"></div>
       </div>
 
-      <div class="attack-cat-block" id="attackCat-learn" style="display:none;">
-        <div class="field-label" style="margin-top:0;">Temps d'apprentissage</div>
-        <div class="field-row">
-          <div>
-            <div class="field-label" style="margin-top:0;">Jours</div>
-            <input type="number" id="attackLearnDays" class="field-input" value="0" min="0">
-          </div>
-          <div>
-            <div class="field-label" style="margin-top:0;">Heures</div>
-            <input type="number" id="attackLearnHours" class="field-input" value="0" min="0">
-          </div>
-          <div>
-            <div class="field-label" style="margin-top:0;">Minutes</div>
-            <input type="number" id="attackLearnMinutes" class="field-input" value="10" min="0">
-          </div>
-          <div>
-            <div class="field-label" style="margin-top:0;">Secondes</div>
-            <input type="number" id="attackLearnSeconds" class="field-input" value="0" min="0">
-          </div>
-        </div>
-
-        <!-- Les métiers ne restreignent plus les attaques : c'est la liste apprenable de chaque fiche robot qui le fait (portage, étape 1). -->
+      <!-- v476 : l'onglet « Apprentissage » (durée, manuel) est retiré, les métiers avec lui. -->
+      <div style="display:none;">
         <div id="attackMetiersList" style="display:none;"></div>
       </div>
 
@@ -2854,11 +2834,10 @@
         <div id="combatModeleBlock">
           <div class="field-label">🤖 Modèle de robot</div>
           <select id="editCombatModele" class="field-input"><option value="">— aucun modèle (cette fiche ne peut pas combattre) —</option></select>
-          <p class="meta" style="margin:4px 0 0;">Le modèle définit ce qui est commun (vice, profil de stats, trait, immunités, attaques apprenables, images de combat). La fiche ne règle que ce qui est propre à cet exemplaire.</p>
+          <p class="meta" style="margin:4px 0 0;">Le modèle définit ce qui est commun (vice, profil de stats, trait, immunités, ses quatre attaques, images de combat). La fiche ne règle que ce qui est propre à cet exemplaire.</p>
           <div id="combatExemplaireBlock" style="display:none;">
-            <div class="field-label">Main de départ (4 attaques, prises dans la liste du modèle)</div>
+            <div class="field-label">Ses quatre attaques (celles du modèle)</div>
             <div id="editCombatMainSlots" class="main-slots"></div>
-            <div style="display:none;"><select id="editCombatMain0"></select><select id="editCombatMain1"></select><select id="editCombatMain2"></select><select id="editCombatMain3"></select></div>
             <div class="field-label">Écart de stats par exemplaire</div>
             <select id="editCombatEcart" class="field-input">
               <option value="0">Aucun — stats exactes du profil</option>
@@ -9379,7 +9358,7 @@ function loadForEdit(id){
   document.getElementById('editCombatModele').value = cs.robotModeleId || '';
   if (cs.robotModeleId && document.getElementById('editCombatModele').value !== cs.robotModeleId) document.getElementById('editCombatModele').value = '';
   document.getElementById('editCombatEcart').value = String(cs.ecartStats != null ? cs.ecartStats : 5);
-  majBlocsModele(cs.mainIds || null);
+  majBlocsModele();
   document.getElementById('editCombatRecruitable').checked = !!cs.recruitable;
   document.getElementById('editCombatCategory').value = cs.budgetCategory || 'monstre_commun';
   document.getElementById('editCombatRarity').value = cs.rarity || 'commun';
@@ -10332,14 +10311,11 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     stealHardItemId: document.getElementById('editCombatStealHard').dataset.itemId || null,
     /* étape 3 : le modèle de robot et ce qui est propre à l'exemplaire */
     robotModeleId: document.getElementById('editCombatModele').value || null,
-    mainIds: [0,1,2,3].map(i=> document.getElementById('editCombatMain' + i).value).filter(Boolean),
     ecartStats: parseInt(document.getElementById('editCombatEcart').value, 10) || 0,
   };
   if (combatStats.robotModeleId){
     const modeleChoisi = ctModele(combatStats.robotModeleId);
     if (!modeleChoisi){ showToast('Ce modèle de robot n\'existe plus : choisis-en un autre'); return; }
-    if (!combatStats.mainIds.length) combatStats.mainIds = (modeleChoisi.jeu || []).slice(0, 4);
-    if (!combatStats.mainIds.length){ showToast('Choisis au moins une attaque de départ'); return; }
     combatStats.hp = statsDuProfil(modeleChoisi.profil || 'equilibre').hp;   // pour l'affichage des PV hors combat
   }
   const startDate = document.getElementById('editStartDate').value;
@@ -12327,7 +12303,6 @@ function renderAttackMetiers(){
 const ATTACK_CATEGORIES = [
   { id:'basic', label:'📝 Infos' },
   { id:'combat', label:'⚔️ Combat' },
-  { id:'learn', label:'🎓 Apprentissage' },
   { id:'fx', label:'🎇 Effet visuel & son' },
 ];
 let attackActiveCategory = 'basic';
@@ -12669,26 +12644,6 @@ document.getElementById('attackFxStaticToggleBtn').addEventListener('click', ()=
 renderAttackFxStaticToggleBtn();
 
 document.getElementById('attackCancelBtn').addEventListener('click', resetAttackForm);
-
-function syncAttackLearnItem(attackId, attackName){
-  // Chaque attaque a son propre objet d'apprentissage (un manuel unique par attaque), créé/mis à jour automatiquement.
-  const existing = items.find(it => it.teachesAttackId === attackId);
-  const itemData = {
-    name: 'Manuel : ' + attackName,
-    emoji: '📖',
-    imageUrl: '',
-    type: 'apprentissage',
-    description: `Permet à un combattant compatible d'apprendre l'attaque "${attackName}".`,
-    teachesAttackId: attackId,
-    equippable: false, effectType: null, effectValue: 0, effectDuration: 'permanent', effectSeconds: 0, effectMetiers: [],
-    sellable: false, basePrice: 0,
-    updatedAt: Date.now()
-  };
-  if (existing){
-    return itemsCol.doc(existing.id).set({ ...itemData, createdAt: existing.createdAt || Date.now() });
-  }
-  return itemsCol.add({ ...itemData, createdAt: Date.now() });
-}
 
 function showAttacksSection(name){
   document.querySelectorAll('.attacks-section').forEach(el=> el.style.display = 'none');
@@ -13502,13 +13457,6 @@ function loadAttackForEdit(id){
   document.getElementById('attackPuissance').value = a.puissance != null ? a.puissance : 0;
   document.getElementById('attackCout').value = a.cout != null ? a.cout : 0;
   renderAttackParams(a);
-  {
-    const total = a.learnDuration || 600;
-    document.getElementById('attackLearnDays').value = Math.floor(total / 86400);
-    document.getElementById('attackLearnHours').value = Math.floor((total % 86400) / 3600);
-    document.getElementById('attackLearnMinutes').value = Math.floor((total % 3600) / 60);
-    document.getElementById('attackLearnSeconds').value = total % 60;
-  }
   selectedAttackMetiers = new Set();
   document.getElementById('attackSaveBtn').textContent = 'Mettre à jour l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'block';
@@ -13533,10 +13481,6 @@ function resetAttackForm(){
   document.getElementById('attackPuissance').value = 30;
   document.getElementById('attackCout').value = 0;
   renderAttackParams({});
-  document.getElementById('attackLearnDays').value = 0;
-  document.getElementById('attackLearnHours').value = 0;
-  document.getElementById('attackLearnMinutes').value = 10;
-  document.getElementById('attackLearnSeconds').value = 0;
   selectedAttackMetiers = new Set();
   document.getElementById('attackSaveBtn').textContent = 'Enregistrer l\'attaque';
   document.getElementById('attackCancelBtn').style.display = 'none';
@@ -13561,12 +13505,7 @@ function lireFormAttaque(){
   const type = document.getElementById('attackTypeProto').value;
   const puissance = parseFloat(document.getElementById('attackPuissance').value) || 0;
   const cout = parseFloat(document.getElementById('attackCout').value) || 0;
-  const learnDays = parseInt(document.getElementById('attackLearnDays').value, 10) || 0;
-  const learnHours = parseInt(document.getElementById('attackLearnHours').value, 10) || 0;
-  const learnMinutes = parseInt(document.getElementById('attackLearnMinutes').value, 10) || 0;
-  const learnSeconds = parseInt(document.getElementById('attackLearnSeconds').value, 10) || 0;
-  const learnDuration = (learnDays*86400) + (learnHours*3600) + (learnMinutes*60) + learnSeconds;
-  const data = { nom, emoji, desc, vice, famille, type, puissance, cout, learnDuration, ...lireParamsAttaque() };
+  const data = { nom, emoji, desc, vice, famille, type, puissance, cout, ...lireParamsAttaque() };
   /* Un état sans durée ne s'applique jamais (le bug de Contagion du 31/08) : la durée par défaut du proto. */
   if (data.statut && !data.duree && DUREE_STATUT[data.statut]) data.duree = DUREE_STATUT[data.statut];
   return data;
@@ -13593,10 +13532,7 @@ document.getElementById('attackSaveBtn').addEventListener('click', ()=>{
   data.fxSelf = { ...editingAttackFxSelf };
   data.updatedAt = Date.now();
   const op = editingAttackId ? attaquesCol.doc(editingAttackId).set(data) : attaquesCol.add({ ...data, createdAt: Date.now() });
-  op.then((ref)=>{
-    const attackId = editingAttackId || (ref && ref.id);
-    return syncAttackLearnItem(attackId, data.nom);
-  }).then(()=>{
+  op.then(()=>{   // v476 : plus de manuel créé avec l'attaque
     showToast(editingAttackId ? 'Attaque mise à jour' : 'Attaque ajoutée');
     resetAttackForm();
     showAttacksSection('list');
@@ -13619,20 +13555,24 @@ function fabricationDuModele(m){
 
 function robotModeleVierge(vice){
   vice = vice || CLES_VICES[0];
-  return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), liste:[], jeu:[],
+  return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), jeu:[],
     pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:PIRATAGE_DEFAUT.zone, pirFuite:PIRATAGE_DEFAUT.fuite,
     fab: Object.assign({}, FABRICATION_DEFAUT),
     faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null,
     chambreImagePath:null, chambreImageRef:null, chambreImageDataUrl:null };
 }
-/* Les quatre attaques emportées : celles choisies, restreintes à la liste apprenable, sans doublon,
-   complétées depuis la liste pour ne jamais partir à moins de quatre (mainDeFiche du proto). */
+/* v476 — LE LOT 3 « MÉNAGE » : LA LISTE APPRENABLE EST SUPPRIMÉE (décision du 09/09).
+   Chaque modèle a UNE combinaison de quatre attaques, choisies librement dans tout le
+   catalogue (son vice ou un autre : c'est lui qui décide), et tous ses exemplaires se battent
+   avec. Plus de manuels, plus d'entraînement, plus de main propre à une fiche ou à une recrue,
+   plus de recherche de « meilleure main » au simulateur : ce qui distingue deux modèles,
+   c'est justement leur combinaison. Le champ `liste` encore en base est ignoré.
+   Les quatre attaques emportées par un modèle : sans doublon, quatre au plus, jamais complétées
+   d'office — l'éditeur refuse d'enregistrer un modèle qui n'en a pas exactement quatre. */
 function mainDeModele(f, choix){
-  const permis = (f.liste || []).map(attaqueParId).filter(Boolean);
   const cles = (Array.isArray(choix) && choix.length) ? choix : (f.jeu || []);
   const main = [];
-  cles.forEach(id=>{ const a = attaqueParId(id); if (a && permis.includes(a) && !main.includes(a) && main.length < 4) main.push(a); });
-  for (const a of permis){ if (main.length >= 4) break; if (!main.includes(a)) main.push(a); }
+  cles.forEach(id=>{ const a = attaqueParId(id); if (a && !main.includes(a) && main.length < 4) main.push(a); });
   return main;
 }
 function lireFormRobotModele(){
@@ -13643,9 +13583,6 @@ function lireFormRobotModele(){
   f.profil = v('rmProfil') || 'equilibre';
   f.trait = v('rmTrait') || 'aucun';
   f.immunites = Array.from(document.querySelectorAll('#rmImmunites input[type="checkbox"]:checked')).map(el=> el.value);
-  f.liste = Array.from(document.querySelectorAll('#rmListe [data-rmatt]:checked')).map(el=> el.dataset.rmatt);
-  const jeu = [0,1,2,3].map(p=> v('rmJeu-' + p)).filter(Boolean);
-  if (jeu.length) f.jeu = jeu;
   const num = (id, min, max, def)=>{ const n = parseInt(v(id), 10); return isNaN(n) ? def : Math.max(min, Math.min(max, n)); };
   f.pirCadenas = num('rmPirCadenas', 1, 6, PIRATAGE_DEFAUT.cadenas);
   f.pirVitesse = num('rmPirVitesse', 1, 5, PIRATAGE_DEFAUT.vitesse);
@@ -13655,11 +13592,16 @@ function lireFormRobotModele(){
     articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
   return f;
 }
+/* Les quatre emplacements du modèle : des rectangles pleins, au format des boutons de combat
+   (nom, symboles, descriptif), empilés pour voir la main entière d'un coup d'œil. Un trou reste
+   à sa place jusqu'à ce qu'on le remplisse. */
 function htmlJeuModele(f){
-  const permis = (f.liste || []).map(attaqueParId).filter(Boolean);
-  if (!permis.length) return '<p class="meta">Coche d\'abord des attaques apprenables.</p>';
-  const jeu = mainDeModele(f, f.jeu).map(a=> a.id);
-  return jeu.map((id0, pos)=>`<div class="field-row" style="align-items:center;"><div class="meta" style="flex:0 0 52px;">Att. ${pos+1}</div><select id="rmJeu-${pos}" class="field-input" style="margin:0;">${permis.map(a=>`<option value="${a.id}" ${a.id===id0?'selected':''}>${a.nom}</option>`).join('')}</select></div>`).join('');
+  const jeu = (f.jeu || []).slice(0, 4);
+  return `<div class="main-slots" style="grid-template-columns:1fr;">${[0,1,2,3].map(p=>{
+    const a = jeu[p] ? attaqueParId(jeu[p]) : null;
+    if (!a) return `<button type="button" class="main-slot vide" data-rmjeu="${p}">+ Attaque ${p + 1}</button>`;
+    return `<button type="button" class="main-slot" data-rmjeu="${p}">${htmlContenuAttaque(a, false)}</button>`;
+  }).join('')}</div>`;
 }
 function renderRobotModeleForm(){
   const f = rmBrouillon || (rmBrouillon = robotModeleVierge());
@@ -13669,14 +13611,6 @@ function renderRobotModeleForm(){
   const optProfil = CLES_PROFILS.map(k=>`<option value="${k}" ${f.profil===k?'selected':''}>${PROFILS[k].nom} — ${PROFILS[k].desc}</option>`).join('');
   const optTraits = Object.keys(TRAITS).map(k=>`<option value="${k}" ${f.trait===k?'selected':''}>${TRAITS[k].nom}${TRAITS[k].desc ? ' : ' + TRAITS[k].desc : ''}</option>`).join('');
   const immun = STATUTS_NEGATIFS.map(s=>`<label style="display:flex; align-items:center; gap:6px; padding:4px 0;"><input type="checkbox" value="${s}" ${f.immunites.includes(s)?'checked':''} style="width:auto;"> <span>${libStatut(s)} <span class="meta" style="font-size:11px;">— ${DESC_STATUTS[s] || ''}</span></span></label>`).join('');
-  const ordre = [f.vice, ...CLES_VICES.filter(v=> v !== f.vice)];
-  const listes = ordre.map(v=>{
-    const pool = attaquesDuVice(v);
-    const nb = pool.filter(a=> f.liste.includes(a.id)).length;
-    const lignes = pool.map(a=>`<label style="display:flex; align-items:center; gap:6px; padding:4px 0;"><input type="checkbox" data-rmatt="${a.id}" ${f.liste.includes(a.id)?'checked':''} style="width:auto;"> ${a.nom} <span class="meta" style="font-size:11px;">${iconeFamille(a)} ${LIB_TYPES[a.type]||a.type}${(a.cout||0)?' · 🔷'+a.cout:''}</span></label>`).join('');
-    const ouvert = (rmOuverts[v] != null) ? rmOuverts[v] : (v === f.vice);
-    return `<details data-rmvice="${v}" ${ouvert ? 'open' : ''} style="margin-bottom:6px;"><summary style="cursor:pointer; padding:6px 0;">${VICES[v].emoji} ${VICES[v].nom}${v===f.vice?' (son vice)':''} — ${nb} cochée(s) sur ${pool.length}</summary><div style="padding-left:6px;">${lignes || '<p class="meta">Aucune attaque de ce vice pour l\'instant.</p>'}</div></details>`;
-  }).join('');
   wrap.innerHTML = `
     <div class="field-label" style="margin-top:0;">Nom du modèle</div>
     <input type="text" id="rmNom" class="field-input" value="${(f.nom||'').replace(/"/g,'&quot;')}" placeholder="Nom du robot">
@@ -13690,11 +13624,8 @@ function renderRobotModeleForm(){
     <div class="field-label">Immunités — exactement 5 <span id="rmImmunCompte" class="meta">(${f.immunites.length} cochée(s))</span></div>
     <p class="meta" style="margin:0 0 6px;">Pré-remplies selon le vice ; à choisir comme des stats. Jamais plus de quatre états sur ce robot.</p>
     <div id="rmImmunites">${immun}</div>
-    <div class="field-label">Attaques apprenables — <span id="rmCompte">${f.liste.length}</span> cochée(s), une vingtaine visée</div>
-    <p class="meta" style="margin:0 0 6px;">Son vice d'abord ; les autres vices se déplient. Une attaque d'un autre vice frappe avec la force et la faiblesse de ce vice.</p>
-    <div id="rmListe">${listes}</div>
-    <div class="field-label">Main de départ — les quatre attaques que ce robot a en main quand on le croise</div>
-    <p class="meta" style="margin:0 0 6px;">Provisoire : la main variable (deux, trois ou quatre attaques selon l'exemplaire) viendra avec le nouveau moteur.</p>
+    <div class="field-label">⚔️ Ses quatre attaques (v476)</div>
+    <p class="meta" style="margin:0 0 6px;">La combinaison propre à ce modèle : tous ses exemplaires se battent avec, et c'est elle qui le distingue des autres. Tape un rectangle pour choisir dans toutes les attaques du jeu — son vice d'abord, les autres en dessous. Une attaque d'un autre vice frappe avec la force et la faiblesse de ce vice.</p>
     <div id="rmJeuZone">${htmlJeuModele(f)}</div>
     <div class="field-label">📡 Piratage — voler son plan en combat (v470)</div>
     <p class="meta" style="margin:0 0 6px;">Le joueur tape quand le curseur passe dans la zone verte, un cadenas après l'autre. Le nombre de cadenas baisse quand le robot est affaibli (−1 sous 50 % de vie, −1 sous 25 %), et monte d'un à chaque plan déjà volé dans le combat.</p>
@@ -13737,31 +13668,41 @@ function cablerFormRobotModele(){
   });
   wrap.querySelector('#rmProfil').addEventListener('change', (e)=>{ document.getElementById('rmProfilResume').textContent = resumeProfil(e.target.value); });
   cablerImageModele('face'); cablerImageModele('dos'); cablerImageModele('chambre'); cablerApercuCombatModele();
-  wrap.querySelectorAll('details[data-rmvice]').forEach(d=> d.addEventListener('toggle', ()=>{ rmOuverts[d.dataset.rmvice] = d.open; }));
   wrap.querySelectorAll('#rmImmunites input[type="checkbox"]').forEach(chk=> chk.addEventListener('change', ()=>{
     const cochees = wrap.querySelectorAll('#rmImmunites input[type="checkbox"]:checked');
     if (cochees.length > 5){ chk.checked = false; showToast('Cinq immunités, pas plus : décoche-en une d\'abord'); }
     document.getElementById('rmImmunCompte').textContent = `(${wrap.querySelectorAll('#rmImmunites input[type="checkbox"]:checked').length} cochée(s))`;
   }));
-  wrap.querySelectorAll('[data-rmatt]').forEach(chk=> chk.addEventListener('change', ()=>{
-    const f = lireFormRobotModele();
-    document.getElementById('rmCompte').textContent = f.liste.length;
-    document.getElementById('rmJeuZone').innerHTML = htmlJeuModele(f);   // seul le jeu par défaut bouge
-    const d = chk.closest('details');
-    if (d){ const v = d.dataset.rmvice, pool = attaquesDuVice(v); d.querySelector('summary').textContent = `${VICES[v].emoji} ${VICES[v].nom}${v===f.vice?' (son vice)':''} — ${pool.filter(a=> f.liste.includes(a.id)).length} cochée(s) sur ${pool.length}`; }
-  }));
+  /* v476 : taper un rectangle ouvre la grille de toutes les attaques ; le choix va dans le
+     brouillon (f.jeu), pas dans un champ caché. Une attaque déjà posée ailleurs se déplace. */
+  const cablerJeu = ()=>{
+    document.querySelectorAll('#rmJeuZone [data-rmjeu]').forEach(b=> b.addEventListener('click', ()=>{
+      const f = lireFormRobotModele();
+      const p = parseInt(b.dataset.rmjeu, 10);
+      const jeu = (f.jeu || []).slice(0, 4); while (jeu.length < 4) jeu.push('');
+      ouvrirChoixAttaque({ vice: f.vice, actuel: jeu[p] || '', titre: `Attaque ${p + 1} de ${f.nom || 'ce modèle'}`, onChoix: (id)=>{
+        if (id){ const k = jeu.indexOf(id); if (k >= 0 && k !== p) jeu[k] = ''; }
+        jeu[p] = id || '';
+        f.jeu = jeu;
+        document.getElementById('rmJeuZone').innerHTML = htmlJeuModele(f);
+        cablerJeu();
+      } });
+    }));
+  };
+  cablerJeu();
   wrap.querySelector('#rmSaveBtn').addEventListener('click', async ()=>{
     const f = lireFormRobotModele();
     if (!f.nom){ showToast('Donne un nom au modèle'); return; }
     if (f.immunites.length !== 5){ showToast('Il faut exactement cinq immunités (' + f.immunites.length + ' cochée(s))'); return; }
-    if (f.liste.length < 4){ showToast('Coche au moins quatre attaques apprenables'); return; }
+    f.jeu = mainDeModele(f, f.jeu).map(a=> a.id);
+    if (f.jeu.length !== 4){ showToast('Il faut exactement quatre attaques (' + f.jeu.length + ' posée(s))'); return; }
     if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
     const doublon = robotsModeles.find(m=> m.id !== editingRobotModeleId && String(m.nom).toLowerCase() === f.nom.toLowerCase());
     if (doublon){ showToast('Un modèle porte déjà ce nom'); return; }
-    f.jeu = mainDeModele(f, f.jeu).map(a=> a.id);
     let images;
     try { images = await champsImagesModele(f); } catch(err){ showToast('Image non enregistrée : ' + err.message); return; }
-    const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), liste:f.liste.slice(), jeu:f.jeu.slice(),
+    const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), jeu:f.jeu.slice(),
+      ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
       pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
@@ -13789,7 +13730,7 @@ function renderRobotsModelesList(){
     return `<div class="editor-list-item" style="flex-direction:column; align-items:stretch;">
       <div style="display:flex; align-items:center; gap:10px; width:100%;">
         <div class="thumb">${(VICES[m.vice] || {}).emoji || '🤖'}</div>
-        <div class="name">${m.nom || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${(VICES[m.vice]||{}).nom || m.vice} · ${(PROFILS[m.profil]||{}).nom || m.profil}${m.trait && m.trait !== 'aucun' ? ' · ' + (TRAITS[m.trait]||{}).nom : ''} · ${(m.liste||[]).length} apprenables${jeu ? '<br>' + jeu : ''}</span></div>
+        <div class="name">${m.nom || '(sans nom)'} <span class="meta" style="display:block; font-size:11px;">${(VICES[m.vice]||{}).nom || m.vice} · ${(PROFILS[m.profil]||{}).nom || m.profil}${m.trait && m.trait !== 'aucun' ? ' · ' + (TRAITS[m.trait]||{}).nom : ''}${jeu ? '<br>' + jeu : ''}</span></div>
         <button class="btn-secondary" data-rm-edit="${m.id}">Modifier</button>
       </div>
     </div>`;
@@ -13798,7 +13739,7 @@ function renderRobotsModelesList(){
     const m = robotsModeles.find(x=> x.id === btn.dataset.rmEdit);
     if (!m) return;
     editingRobotModeleId = m.id;
-    rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), liste:(m.liste||[]).slice(), jeu:(m.jeu||[]).slice(),
+    rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
       fab: fabricationDuModele(m),
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
@@ -15720,11 +15661,12 @@ function renderCombatTest(){
     if (m && !s.main.length) s.main = (m.jeu || []).slice(0, 4);
     let corps = '';
     if (m){
-      const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
-      const mains = [0,1,2,3].map(p=>`<select class="field-input" data-ct-main="${side}-${i}-${p}" style="margin-top:4px;"><option value="">— vide —</option>${permis.map(a=>`<option value="${a.id}" ${s.main[p]===a.id?'selected':''}>${a.nom} · ${iconeFamille(a)}${(a.cout||0)?' 🔷'+a.cout:''}</option>`).join('')}</select>`).join('');
+      /* v476 : toutes les attaques du jeu, le vice du modèle en tête — pour tester librement */
+      const permis = [m.vice, ...CLES_VICES.filter(v=> v !== m.vice)].flatMap(v=> attaquesDuVice(v));
+      const mains = [0,1,2,3].map(p=>`<select class="field-input" data-ct-main="${side}-${i}-${p}" style="margin-top:4px;"><option value="">— vide —</option>${permis.map(a=>`<option value="${a.id}" ${s.main[p]===a.id?'selected':''}>${(VICES[a.vice]||{}).emoji||''} ${a.nom} · ${iconeFamille(a)}${(a.cout||0)?' 🔷'+a.cout:''}</option>`).join('')}</select>`).join('');
       corps = `
         <div class="meta" style="margin-top:6px;">${(PROFILS[m.profil]||{}).nom || m.profil} · ${(TRAITS[m.trait]||{}).nom || 'sans trait'} · ${(m.immunites||[]).map(x=> LIB_STATUTS[x]||'').join('')}</div>
-        <div class="field-label" style="font-size:12px;">Main (4 attaques de sa liste)</div>
+        <div class="field-label" style="font-size:12px;">Main (par défaut les quatre du modèle ; toutes les attaques sont proposées)</div>
         ${mains}
         <div class="field-label" style="font-size:12px;">Pièces</div>
         <select class="field-input" data-ct-piece="${side}-${i}-arme">${optPieces('arme', s.arme)}</select>
@@ -15796,9 +15738,8 @@ function attaquePourCombat(a){
 function ctCombattantDepuisSlot(s, side, variation){
   const m = ctModele(s.modele);
   if (!m) return null;
-  const main = (s.main || []).map(attaqueParId).filter(Boolean);
-  const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
-  for (const a of permis){ if (main.length >= 4) break; if (!main.includes(a)) main.push(a); }
+  let main = (s.main || []).map(attaqueParId).filter(Boolean).slice(0, 4);
+  if (!main.length) main = mainDeModele(m, m.jeu);   // v476 : à vide, la main du modèle
   const img = imagesDuModele(m);
   return {
     nom: m.nom, vice: m.vice, profil: m.profil || 'equilibre', trait: m.trait || 'aucun',
@@ -16010,21 +15951,7 @@ function renderSimulateur(){
       <button class="btn-secondary" id="simuDuelBtn" style="flex:1;">▶️ Simuler</button>
     </div>
     <div id="simuDuelDetail"></div>
-    <div class="field-label" style="margin-top:14px;">🃏 Constructeur de mains</div>
-    <p class="meta" style="margin:0 0 6px;">Pour un modèle, essaie des mains de 4 attaques prises dans sa liste apprenable, chacune jouée contre tous les autres modèles avec leur jeu actuel (moitié en haut, moitié en bas, pour annuler le biais de camp). Rien n'est appliqué sans ton accord.</p>
-    <select class="field-input" id="simuMainsModele"><option value="*">🤖 Tous les modèles</option>${opt(robotsModeles[0] && robotsModeles[0].id)}</select>
-    <div style="display:flex; gap:6px; align-items:center; margin-top:4px;">
-      <select class="field-input" id="simuMainsN" style="flex:1;">${[10, 20, 30, 50].map(n=> `<option value="${n}" ${n === 20 ? 'selected' : ''}>${n} combats par adversaire</option>`).join('')}</select>
-      <button class="btn-capture" id="simuMainsBtn" style="flex:1;">🃏 Chercher</button>
-    </div>
-    <div id="simuMainsProgress" class="meta" style="margin-top:4px;"></div>
-    <div id="simuMainsResultat"></div>`;
-  document.getElementById('simuMainsBtn').addEventListener('click', ()=>{
-    if (simuMainsEnCours){ simuStop = true; return; }
-    const sel = document.getElementById('simuMainsModele').value;
-    simuChercherMains(sel === '*' ? robotsModeles.slice() : [ctModele(sel)].filter(Boolean), parseInt(document.getElementById('simuMainsN').value, 10) || 20);
-  });
-  if (simuDernierMains) simuAfficherMains(simuDernierMains);
+`;
   document.getElementById('simuGrilleBtn').addEventListener('click', ()=>{
     if (simuEnCours){ simuStop = true; return; }
     simuLancerGrille(parseInt(document.getElementById('simuGrilleN').value, 10) || 100);
@@ -16042,7 +15969,6 @@ function renderSimulateur(){
 }
 async function simuLancerGrille(n){
   if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
-  if (simuMainsEnCours){ showToast('Le constructeur de mains tourne — attends la fin ou arrête-le'); return; }
   const modeles = robotsModeles.slice();
   if (modeles.length < 1){ showToast('Aucun modèle'); return; }
   const btn = document.getElementById('simuGrilleBtn'), prog = document.getElementById('simuProgress');
@@ -16136,203 +16062,9 @@ function simuAfficherGrille(d){
   }));
 }
 
-/* -------------------------------------------------------------------------------------
-   LOT 2 (03/09) — 🃏 LE CONSTRUCTEUR DE MAINS
-   Pour un modèle, on cherche la meilleure main de 4 attaques dans sa liste apprenable.
-   - le PANEL : tous les autres modèles, chacun avec son jeu actuel ; chaque main joue
-     contre chaque adversaire N fois, MOITIÉ en camp du haut, MOITIÉ en camp du bas — le
-     moteur favorise un camp (miroir colère à 10 % au test du 03/09), on annule ça ;
-   - le SCORE d'une main = son taux de victoires moyen sur le panel ; à égalité, les PV
-     restants moyens ;
-   - les DOUBLONS : pas deux attaques de même type ET même état posé dans une main ;
-   - liste courte (≤ SIMU_MAINS_EXHAUSTIF mains possibles) : on essaie TOUT ;
-     liste longue : recherche locale — on part de la main actuelle, on échange une attaque
-     à la fois en gardant ce qui améliore, puis deux redémarrages depuis une main tirée au
-     hasard ; chaque main n'est jouée qu'une fois (cache) ;
-   - à la fin, les 5 meilleures sont REJOUÉES avec trois fois plus de combats, pour que le
-     classement final ne soit pas un coup de chance ;
-   - rien n'est écrit sur la fiche sans le bouton « Appliquer », qui ne change que `jeu`.
-   ------------------------------------------------------------------------------------- */
-const SIMU_MAINS_EXHAUSTIF = 330;    // C(11,4) : au-delà, recherche locale
-const SIMU_MAINS_RESTARTS = 2;
-const SIMU_MAINS_TOP = 5;
-let simuMainsEnCours = false;
-let simuDernierMains = null;         // { n, resultats:[ { modele, actuelle, meilleures:[...], nbMains, mode, duree } ] }
-
-function simuCleMain(ids){ return ids.slice().sort().join('+'); }
-/* Deux attaques « pareilles » pour une main : même type et même état posé. */
-function simuCleDoublon(a){ return a.type + '|' + (a.statut || ''); }
-function simuMainValide(atts){
-  const vues = new Set();
-  for (const a of atts){ const k = simuCleDoublon(a); if (vues.has(k)) return false; vues.add(k); }
-  return true;
-}
-/* Toutes les mains de 4 sans doublon, parmi la liste apprenable. Rend des tableaux d'ids. */
-function simuToutesLesMains(permis){
-  const out = [];
-  const L = permis.length;
-  for (let a = 0; a < L; a++) for (let b = a + 1; b < L; b++) for (let c = b + 1; c < L; c++) for (let d = c + 1; d < L; d++){
-    const atts = [permis[a], permis[b], permis[c], permis[d]];
-    if (simuMainValide(atts)) out.push(atts.map(x=> x.id));
-  }
-  return out;
-}
-function simuNbMainsPossibles(L){ return L < 4 ? 0 : (L * (L - 1) * (L - 2) * (L - 3)) / 24; }
-/* Une main jouée contre tout le panel. Rend { score, pv, parAdversaire:{ id:{taux, n} }, combats }. */
-function simuEvaluerMain(m, ids, panel, n){
-  const cfgHaut = simuCfg(m, 'player', ids), cfgBas = simuCfg(m, 'enemy', ids);
-  const res = { score:0, pv:0, parAdversaire:{}, combats:0 };
-  let victoires = 0, total = 0, pv = 0;
-  panel.forEach(p=>{
-    const nHaut = Math.ceil(n / 2), nBas = n - nHaut;
-    const h = simuSerie(cfgHaut, p.bas, nHaut);
-    const b = nBas ? simuSerie(p.haut, cfgBas, nBas) : null;
-    const v = h.victoiresA + (b ? b.victoiresB : 0);
-    const nn = nHaut + nBas;
-    res.parAdversaire[p.m.id] = { taux: Math.round(100 * v / Math.max(1, nn)), n: nn };
-    victoires += v; total += nn;
-    pv += h.pvA + (b ? b.pvB : 0);   // pvA / pvB sont déjà des sommes sur les combats joués
-  });
-  res.score = Math.round(1000 * victoires / Math.max(1, total)) / 10;
-  res.pv = Math.round(pv / Math.max(1, total));
-  res.combats = total;
-  return res;
-}
-function simuMieux(x, y){ return x.score > y.score || (x.score === y.score && x.pv > y.pv); }
-
-async function simuChercherMains(modeles, n){
-  if (combatState && !combatState.finished){ showToast('Un combat est en cours — le simulateur attend'); return; }
-  if (simuEnCours){ showToast('La grille tourne — attends la fin ou arrête-la'); return; }
-  if (!modeles.length){ showToast('Aucun modèle'); return; }
-  const btn = document.getElementById('simuMainsBtn'), prog = document.getElementById('simuMainsProgress');
-  simuMainsEnCours = true; simuStop = false;
-  btn.textContent = '⏹️ Arrêter';
-  const t0 = performance.now();
-  const resultats = [];
-  let combatsTotal = 0;
-  const souffler = ()=> new Promise(r=> setTimeout(r, 0));
-  try {
-    for (const m of modeles){
-      if (simuStop) break;
-      const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
-      if (permis.length < 4){ resultats.push({ modele:m, erreur:'moins de quatre attaques apprenables' }); continue; }
-      /* le panel : les autres modèles avec leur jeu actuel ; seul au catalogue → contre lui-même */
-      let autres = robotsModeles.filter(x=> x.id !== m.id);
-      if (!autres.length) autres = [m];
-      const panel = autres.map(p=> ({ m:p, haut: simuCfg(p, 'player'), bas: simuCfg(p, 'enemy') })).filter(p=> p.haut && p.bas);
-      const actuelleIds = mainDeModele(m, m.jeu).map(a=> a.id);
-      const cache = {};
-      let joues = 0;
-      const evaluer = (ids)=>{
-        const k = simuCleMain(ids);
-        if (!cache[k]){ cache[k] = Object.assign({ ids: ids.slice() }, simuEvaluerMain(m, ids, panel, n)); joues++; combatsTotal += cache[k].combats; }
-        return cache[k];
-      };
-      const nbPossibles = simuNbMainsPossibles(permis.length);
-      const mode = nbPossibles <= SIMU_MAINS_EXHAUSTIF ? 'exhaustif' : 'local';
-      const tm0 = performance.now();
-      const actuelle = evaluer(actuelleIds);
-      if (mode === 'exhaustif'){
-        const toutes = simuToutesLesMains(permis);
-        for (let i = 0; i < toutes.length && !simuStop; i++){
-          evaluer(toutes[i]);
-          if (i % 5 === 0){ prog.textContent = `${m.nom} — main ${i + 1}/${toutes.length} · ${Math.round((performance.now() - t0) / 1000)} s`; await souffler(); }
-        }
-      } else {
-        /* recherche locale : depuis la main actuelle, puis depuis des mains tirées au hasard */
-        const departs = [actuelleIds];
-        for (let r = 0; r < SIMU_MAINS_RESTARTS; r++){
-          let essai = 0, tirage = null;
-          while (essai++ < 50){
-            const mel = permis.slice().sort(()=> Math.random() - 0.5).slice(0, 4);
-            if (simuMainValide(mel)){ tirage = mel.map(a=> a.id); break; }
-          }
-          if (tirage) departs.push(tirage);
-        }
-        for (let d = 0; d < departs.length && !simuStop; d++){
-          let courante = evaluer(departs[d]);
-          let ameliore = true;
-          while (ameliore && !simuStop){
-            ameliore = false;
-            for (let pos = 0; pos < 4 && !ameliore && !simuStop; pos++){
-              for (const a of permis){
-                if (simuStop) break;
-                if (courante.ids.includes(a.id)) continue;
-                const ids = courante.ids.slice(); ids[pos] = a.id;
-                if (!simuMainValide(ids.map(attaqueParId))) continue;
-                const cand = evaluer(ids);
-                prog.textContent = `${m.nom} — départ ${d + 1}/${departs.length}, ${joues} mains jouées, meilleure ${courante.score} % · ${Math.round((performance.now() - t0) / 1000)} s`;
-                await souffler();
-                if (simuMieux(cand, courante)){ courante = cand; ameliore = true; break; }
-              }
-            }
-          }
-        }
-      }
-      /* les meilleures, rejouées avec trois fois plus de combats pour confirmer le classement */
-      let classees = Object.values(cache).sort((x,y)=> simuMieux(x, y) ? -1 : (simuMieux(y, x) ? 1 : 0)).slice(0, SIMU_MAINS_TOP);
-      if (!simuStop){
-        prog.textContent = `${m.nom} — confirmation des ${classees.length} meilleures…`;
-        await souffler();
-        classees = classees.map(c=>{ const conf = simuEvaluerMain(m, c.ids, panel, n * 3); combatsTotal += conf.combats; return Object.assign({}, c, conf, { confirme:true }); })
-                           .sort((x,y)=> simuMieux(x, y) ? -1 : (simuMieux(y, x) ? 1 : 0));
-      }
-      const actuelleConfirmee = classees.find(c=> simuCleMain(c.ids) === simuCleMain(actuelleIds)) || actuelle;
-      resultats.push({ modele:m, actuelle: actuelleConfirmee, meilleures:classees, nbMains:joues, nbPossibles, mode, panel: panel.map(p=> p.m), duree: Math.round((performance.now() - tm0) / 1000) });
-    }
-  } catch(e){
-    journal('erreur', 'simulateur : constructeur de mains interrompu', (e && e.message) || String(e), true);
-    showToast('Le constructeur a planté : ' + ((e && e.message) || e));
-  }
-  simuMainsEnCours = false;
-  btn.textContent = '🃏 Chercher';
-  const duree = Math.round((performance.now() - t0) / 1000);
-  prog.textContent = `${resultats.length} modèle(s), ${combatsTotal} combats en ${duree} s${simuStop ? ' — arrêté' : ''}.`;
-  simuDernierMains = { n, resultats, duree };
-  simuAfficherMains(simuDernierMains);
-  journal('simulateur', 'mains', resultats.map(r=> r.erreur ? `${r.modele.nom} : ${r.erreur}` : `${r.modele.nom} : ${r.actuelle.score} % → ${r.meilleures[0] ? r.meilleures[0].score : '?'} % (${r.mode}, ${r.nbMains} mains)`).join(' · '), true);
-}
-function simuAfficherMains(d){
-  const wrap = document.getElementById('simuMainsResultat');
-  if (!wrap) return;
-  const nomAtt = (id)=> { const a = attaqueParId(id); return a ? `${a.nom} <span class="meta" style="font-size:10px;">${iconeFamille(a)}${(a.cout||0) ? '🔷' + a.cout : ''}</span>` : id; };
-  const ligneMain = (r, c, rang)=>{
-    const estActuelle = simuCleMain(c.ids) === simuCleMain(r.actuelle.ids);
-    const vsPanel = r.panel.map(p=> { const x = c.parAdversaire[p.id]; return x ? `${(VICES[p.vice]||{}).emoji||'🤖'} ${x.taux}` : ''; }).filter(Boolean).join(' · ');
-    return `
-      <div style="border:1px solid ${rang === 0 ? '#43a047' : '#ddd'}; border-radius:10px; padding:6px 8px; margin-top:6px; font-size:12px; line-height:1.45;">
-        <div><strong>${rang === 0 ? '🏆 ' : ''}${c.score} %</strong> <span class="meta">· PV restants ${c.pv} % · ${c.combats} combats${estActuelle ? ' · <strong>c\'est la main actuelle</strong>' : ''}</span></div>
-        <div>${c.ids.map(nomAtt).join(' · ')}</div>
-        <div class="meta" style="font-size:11px;">contre : ${vsPanel}</div>
-        ${estActuelle ? '' : `<button class="btn-secondary" data-simu-appliquer="${r.modele.id}" data-simu-main="${c.ids.join(',')}" style="margin-top:4px; width:100%;">✅ Appliquer cette main au modèle</button>`}
-      </div>`;
-  };
-  wrap.innerHTML = d.resultats.map(r=>{
-    if (r.erreur) return `<div style="margin-top:10px; font-size:12px;"><strong>${(VICES[r.modele.vice]||{}).emoji||'🤖'} ${r.modele.nom}</strong> — ${r.erreur}.</div>`;
-    const meilleure = r.meilleures[0];
-    const gain = meilleure ? Math.round(10 * (meilleure.score - r.actuelle.score)) / 10 : 0;
-    return `
-      <div style="margin-top:12px;">
-        <div class="field-label" style="margin-top:0;">${(VICES[r.modele.vice]||{}).emoji||'🤖'} ${r.modele.nom}</div>
-        <div class="meta">Main actuelle : <strong>${r.actuelle.score} %</strong> · meilleure trouvée : <strong style="color:${gain > 0 ? '#43a047' : '#78909c'};">${meilleure ? meilleure.score : '?'} %</strong> (${gain > 0 ? '+' : ''}${gain}) · ${r.mode === 'exhaustif' ? `toutes les ${r.nbMains} mains essayées` : `recherche locale, ${r.nbMains} mains sur ${Math.round(r.nbPossibles)} possibles`} · ${r.duree} s</div>
-        <div class="meta" style="font-size:11px;">Actuelle : ${r.actuelle.ids.map(nomAtt).join(' · ')}</div>
-        ${r.meilleures.map((c, i)=> ligneMain(r, c, i)).join('')}
-      </div>`;
-  }).join('') + `<p class="meta" style="margin:8px 0 0;">Le score = victoires moyennes contre le panel, moitié en camp du haut, moitié en camp du bas. Les 5 meilleures ont été rejouées avec ${d.n * 3} combats par adversaire ; les écarts de moins de 3 points sont dans le bruit.</p>`;
-  wrap.querySelectorAll('[data-simu-appliquer]').forEach(b=> b.addEventListener('click', async ()=>{
-    const m = ctModele(b.dataset.simuAppliquer);
-    const ids = b.dataset.simuMain.split(',').filter(Boolean);
-    if (!m || ids.length !== 4){ showToast('Main introuvable'); return; }
-    if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
-    const noms = ids.map(id=> (attaqueParId(id) || {}).nom || id).join(', ');
-    if (!(await appConfirm(`Remplacer le jeu de départ de ${m.nom} par : ${noms} ?`))) return;
-    try {
-      await robotsModelesCol.doc(m.id).set({ jeu: ids, updatedAt: Date.now() }, { merge:true });
-      showToast(`Jeu de ${m.nom} mis à jour`);
-      journal('simulateur', 'main appliquée', `${m.nom} : ${noms}`, true);
-    } catch(err){ showToast('Échec : ' + err.message); }
-  }));
-}
+/* v476 : le constructeur de mains du simulateur (lot 2 du 03/09) est retiré — il cherchait la
+   meilleure main dans une liste apprenable qui n'existe plus. Ce qu'il veut : confronter un
+   modèle TEL QU'IL L'A FAIT aux autres, et c'est la grille A contre B. */
 
 /* =====================================================================================
    ÉTAPE 3a DU PORTAGE (02/09) — LES BRANCHEMENTS DU MOTEUR M2 SUR LE JEU.
@@ -16357,10 +16089,11 @@ function remplirSelecteurModele(){
     + robotsModeles.map(m=> `<option value="${htmlEsc(m.id)}">${htmlEsc((VICES[m.vice] ? VICES[m.vice].emoji + ' ' : '') + m.nom)}</option>`).join('');
   sel.value = voulu;
   if (sel.value !== voulu) sel.value = '';
-  majBlocsModele(null, true);
+  majBlocsModele();
 }
-/* Montre les champs de l'exemplaire quand un modèle est choisi, et les anciens champs sinon. */
-function majBlocsModele(mainVoulue, garderMain){
+/* Montre les champs de l'exemplaire quand un modèle est choisi, et les anciens champs sinon.
+   v476 : la fiche ne choisit plus de main — elle montre les quatre attaques du modèle. */
+function majBlocsModele(){
   const sel = document.getElementById('editCombatModele');
   if (!sel) return;
   const m = ctModele(sel.value);
@@ -16370,43 +16103,23 @@ function majBlocsModele(mainVoulue, garderMain){
   const bloc = document.getElementById('combatExemplaireBlock');
   if (bloc) bloc.style.display = m ? 'block' : 'none';
   if (!m) return;
-  const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
-  const actuelle = [0,1,2,3].map(i=> (document.getElementById('editCombatMain' + i) || {}).value || '');
-  const base = mainVoulue ? mainVoulue.slice() : (garderMain && actuelle.some(Boolean) ? actuelle : (m.jeu || []).slice());
-  [0,1,2,3].forEach(i=>{
-    const s = document.getElementById('editCombatMain' + i);
-    if (!s) return;
-    s.innerHTML = '<option value="">— libre —</option>' + permis.map(a=> `<option value="${htmlEsc(a.id)}">${htmlEsc((a.emoji ? a.emoji + ' ' : '') + a.nom)}</option>`).join('');
-    s.value = base[i] || '';
-    if (s.value !== (base[i] || '')) s.value = '';
-  });
-  majResumeMain();
+  const box = document.getElementById('editCombatMainSlots');
+  if (box) box.innerHTML = htmlMainLectureSeule(m);
 }
-/* v456 — LE CHOIX DE LA MAIN DE DÉPART, refait (son constat du test v455 : le récap sous les
-   listes déroulantes montrait bien le contenu, mais il fallait choisir AVANT de voir).
-   Quatre rectangles au format des boutons de combat ; taper un rectangle ouvre la grille des
-   attaques apprenables du modèle. Les <select> d'origine restent, cachés : ils portent la
-   valeur, donc l'enregistrement et le remplissage des options ne changent pas.
-   Le contenu d'un rectangle est celui d'un bouton de combat — nom, symboles, descriptif —
-   pour qu'on choisisse sur ce qu'on verra vraiment en jeu. */
+/* Les quatre attaques d'un modèle, en lecture seule, au format des boutons de combat. */
+function htmlMainLectureSeule(m){
+  const main = mainDeModele(m, m.jeu);
+  if (!main.length) return '<p class="meta">Ce modèle n\'a pas encore ses quatre attaques : ouvre-le dans Robots → Modèles.</p>';
+  return main.map(a=> `<div class="main-slot" style="cursor:default;">${htmlContenuAttaque(a, false)}</div>`).join('');
+}
+/* v456 (refait en v476) — LES RECTANGLES D'ATTAQUE hors combat : le contenu d'un bouton de
+   combat — nom, symboles, descriptif — pour qu'on choisisse sur ce qu'on verra vraiment en jeu.
+   Le petit « i » ouvre la fiche complète sans rien choisir. */
 function htmlContenuAttaque(a, avecI){
   return `<span class="ms-nom">${avecI ? '<span class="aide-i ms-i" data-fiche="1" title="Fiche complète">i</span>' : ''}${
     htmlEsc((a.emoji ? a.emoji + ' ' : '') + (a.nom || ''))}</span>
     <span class="ms-sym">${htmlEsc(resumeAttaque(a))}</span>
     ${a.desc ? `<span class="ms-desc">${htmlEsc(a.desc)}</span>` : ''}`;
-}
-function majResumeMain(){
-  const box = document.getElementById('editCombatMainSlots');
-  if (!box) return;
-  box.innerHTML = [0,1,2,3].map(i=>{
-    const s = document.getElementById('editCombatMain' + i);
-    const a = s && s.value ? attaqueParId(s.value) : null;
-    if (!a) return `<button type="button" class="main-slot vide" data-slot="${i}">+ Emplacement ${i + 1}</button>`;
-    return `<button type="button" class="main-slot" data-slot="${i}">${htmlContenuAttaque(a, false)}</button>`;
-  }).join('');
-  box.querySelectorAll('[data-slot]').forEach(b=>{
-    b.addEventListener('click', ()=> ouvrirChoixMain(parseInt(b.dataset.slot, 10)));
-  });
 }
 /* La fiche complète d'une attaque, hors combat : M2.ficheAttaque écrit dans le panneau de
    combat, qui n'existe pas ici. On redonne les mêmes informations à partir de l'attaque. */
@@ -16422,23 +16135,22 @@ function corpsFicheAttaque(a){
   if (a.usageUnique) c += `<div class="meta">Une seule fois par combat.</div>`;
   return c;
 }
-/* Taper une attaque déjà posée la retire : même geste pour poser et pour enlever, comme il l'a
-   demandé. Le petit « i » ouvre la fiche sans rien choisir — pas d'appui long, il ne s'annonce
-   pas et il se confondait avec le réglage du rectangle en combat (leçon de la v451). */
-function ouvrirChoixMain(slot){
-  const sel = document.getElementById('editCombatModele');
-  const m = sel ? ctModele(sel.value) : null;
-  if (!m) return;
-  const permis = (m.liste || []).map(attaqueParId).filter(Boolean);
-  const champ = document.getElementById('editCombatMain' + slot);
-  if (!champ) return;
+/* v476 — LA GRILLE DE CHOIX D'UNE ATTAQUE, pour l'éditeur de modèle et le combat de test.
+   Toutes les attaques du jeu, groupées par vice, le vice du modèle en premier. Taper une attaque
+   la choisit ; retaper celle déjà posée la retire (même geste pour poser et pour enlever, comme
+   il l'a demandé). Le petit « i » ouvre la fiche sans rien choisir — pas d'appui long, il ne
+   s'annonce pas et il se confondait avec le réglage du rectangle en combat (leçon de la v451).
+   opts : { vice, actuel (id posé ou ''), titre, onChoix(id ou '') } */
+function ouvrirChoixAttaque(opts){
+  const o = opts || {};
+  const ordre = [o.vice, ...CLES_VICES.filter(v=> v !== o.vice)].filter(Boolean);
   const fond = document.createElement('div');
   fond.className = 'overlay show';
   fond.style.zIndex = '5200';
   fond.innerHTML = `
     <div class="sheet" style="max-height:82vh; display:flex; flex-direction:column;">
       <div class="sheet-top">
-        <h3 style="margin-top:0;">Choisis une attaque pour l'emplacement ${slot + 1}</h3>
+        <h3 style="margin-top:0;">${htmlEsc(o.titre || 'Choisis une attaque')}</h3>
         <button class="sheet-x" data-fermer>✕</button>
       </div>
       <div data-corps style="overflow-y:auto; flex:1;"></div>
@@ -16448,19 +16160,19 @@ function ouvrirChoixMain(slot){
   const fermer = ()=> fond.remove();
   fond.querySelector('[data-fermer]').addEventListener('click', fermer);
   fond.addEventListener('click', (e)=>{ if (e.target === fond) fermer(); });
-
   const dessiner = ()=>{
-    if (!permis.length){
-      corps.innerHTML = '<p class="meta">Ce modèle n\'a aucune attaque apprenable.</p>';
-      return;
-    }
-    corps.innerHTML = `<p class="meta" style="margin:0 0 6px;">Retape l\'attaque posée pour la retirer.</p>
-      <div class="main-grille">${permis.map((a, k)=>
-        `<button type="button" class="main-slot${champ.value === a.id ? ' posee' : ''}" data-att="${k}">${
-          htmlContenuAttaque(a, true)}</button>`).join('')}</div>`;
+    if (!attaques.length){ corps.innerHTML = '<p class="meta">Aucune attaque dans le jeu pour l\'instant.</p>'; return; }
+    corps.innerHTML = `<p class="meta" style="margin:0 0 6px;">Retape l\'attaque posée pour la retirer.</p>` + ordre.map(v=>{
+      const pool = attaquesDuVice(v);
+      if (!pool.length) return '';
+      return `<div class="field-label" style="margin-top:8px;">${VICES[v].emoji} ${VICES[v].nom}${v === o.vice ? ' (son vice)' : ''}</div>
+        <div class="main-grille">${pool.map(a=>
+          `<button type="button" class="main-slot${o.actuel === a.id ? ' posee' : ''}" data-att="${htmlEsc(a.id)}">${htmlContenuAttaque(a, true)}</button>`).join('')}</div>`;
+    }).join('');
     corps.querySelectorAll('[data-att]').forEach(b=>{
       b.addEventListener('click', (ev)=>{
-        const a = permis[parseInt(b.dataset.att, 10)];
+        const a = attaqueParId(b.dataset.att);
+        if (!a) return;
         if (ev.target && ev.target.closest && ev.target.closest('[data-fiche]')){
           ev.stopPropagation();
           corps.innerHTML = `<div style="padding:2px;">${corpsFicheAttaque(a)}</div>
@@ -16468,36 +16180,24 @@ function ouvrirChoixMain(slot){
           corps.querySelector('[data-retour]').addEventListener('click', dessiner);
           return;
         }
-        /* Une attaque déjà placée AILLEURS se déplace ici : la garder deux fois donnerait une
-           main de trois attaques sans le dire. */
-        if (champ.value === a.id) champ.value = '';
-        else {
-          [0,1,2,3].forEach(j=>{
-            const autre = document.getElementById('editCombatMain' + j);
-            if (autre && j !== slot && autre.value === a.id) autre.value = '';
-          });
-          champ.value = a.id;
-        }
-        majResumeMain();
         fermer();
+        if (typeof o.onChoix === 'function') o.onChoix(o.actuel === a.id ? '' : a.id);
       });
     });
   };
   dessiner();
 }
-/* La main de départ d'une fiche : ses choix, restreints à la liste du modèle ; à défaut le jeu du modèle. */
+/* v476 : la main d'une fiche ou d'une recrue est TOUJOURS celle du modèle (les anciens
+   `mainIds` d'une fiche et `learnedAttackIds` d'une recrue ne sont plus lus). */
 function mainDeDepartDeFiche(cs, m){
-  const liste = m.liste || [];
-  let ids = (cs.mainIds || []).filter(id=> liste.includes(id) && attaqueParId(id));
-  if (!ids.length) ids = (m.jeu || []).filter(id=> attaqueParId(id));
-  return ids.slice(0, 4);
+  return mainDeModele(m, m.jeu).map(a=> a.id);
 }
 function remettreModeleAZero(){
   const sel = document.getElementById('editCombatModele');
   if (!sel) return;
   sel.dataset.voulu = ''; sel.value = '';
   const e = document.getElementById('editCombatEcart'); if (e) e.value = '5';
-  majBlocsModele([]);
+  majBlocsModele();
 }
 
 /* =====================================================================================
@@ -16646,7 +16346,7 @@ function m2CfgDepuisRecrue(r){
   return {
     nom: r.name || m.nom, vice: m.vice, profil: m.profil || 'equilibre', trait: m.trait || 'aucun',
     immunites: (m.immunites || []).slice(),
-    main: m2MainDepuisIds(r.learnedAttackIds, combatAttaquesAutorisees),
+    main: m2MainDepuisIds(mainDeDepartDeFiche({}, m), combatAttaquesAutorisees),   // v476 : la main du modèle
     equipement: m2EquipementDeRecrue(r), ia: 'normal', ecart: r.ecartStats || null,
     hpInit: Math.max(0, Math.min(st.hp, recruitEffectiveHp(r))),
     sourceId: r.id, modeleId: m.id, ...m2ImagesDepuisModele(m),
@@ -16918,41 +16618,10 @@ function m2SauvegarderCombat(){
     });
 }
 
-/* ---------- L'APPRENTISSAGE SUR LE NOUVEAU CATALOGUE ---------- */
-function ouvrirChoixApprentissageM2(recruit){
-  raiseAbovePlan('baseLearnChooserOverlay');
-  const listEl = document.getElementById('baseLearnChooserList');
-  const m = ctModele(recruit.robotModeleId);
-  const learned = recruit.learnedAttackIds || [];
-  const eligible = m ? (m.liste || []).map(attaqueParId).filter(a=> a && !learned.includes(a.id)
-    && (baseResources[(items.find(it=> it.teachesAttackId === a.id) || {}).id] || 0) > 0) : [];
-  listEl.innerHTML = eligible.length ? eligible.map(a=>{
-    const manuel = items.find(it=> it.teachesAttackId === a.id);
-    return `
-    <div class="choice-row">
-      <b>${a.emoji || '✨'} ${htmlEsc(a.nom)}</b>
-      <div class="meta">${htmlEsc(a.desc || '')} — manuel : ${manuel ? htmlEsc(manuel.name) : '?'}</div>
-      <button class="btn-capture" data-learn-attack="${htmlEsc(a.id)}" style="width:100%; margin-top:6px;">Apprendre</button>
-    </div>`;
-  }).join('') : (m ? '<p class="meta">Aucun manuel du sac ne correspond à une attaque que ce robot peut apprendre (liste de son modèle).</p>' : '<p class="meta">Modèle de robot introuvable.</p>');
-  listEl.querySelectorAll('button[data-learn-attack]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const attack = attaqueAffichable(btn.dataset.learnAttack);
-      if (!attack) return;
-      if (learned.length >= 4){ openForgetAttackChooser(recruit, attack, learned); return; }
-      startAttackTraining(recruit, attack, null);
-    });
-  });
-  document.getElementById('baseLearnChooserOverlay').classList.add('show');
-}
 /* Le sélecteur de modèle réagit tout de suite : les champs de l'exemplaire apparaissent, les anciens s'effacent. */
 (function(){
   const sel = document.getElementById('editCombatModele');
-  if (sel) sel.addEventListener('change', ()=>{ sel.dataset.voulu = sel.value; majBlocsModele(null); });
-  [0,1,2,3].forEach(i=>{
-    const s = document.getElementById('editCombatMain' + i);
-    if (s) s.addEventListener('change', majResumeMain);
-  });
+  if (sel) sel.addEventListener('change', ()=>{ sel.dataset.voulu = sel.value; majBlocsModele(); });
 })();
 
 /* =====================================================================================
@@ -17570,17 +17239,9 @@ async function importerCatalogueProto(){
   CLES_VICES.forEach(v=>{
     (CATALOGUE_PROTO_ATTAQUES[v] || []).forEach(a=>{
       const { element, ...reste } = a;   // l'élément (feu, ombre…) a été retiré du jeu
-      const doc = { ...reste, vice: v, emoji: VICES[v].emoji, learnDuration: 600, fx: {}, fxSelf: {}, importe: 'proto20', updatedAt: maintenant };
+      const doc = { ...reste, vice: v, emoji: VICES[v].emoji, fx: {}, fxSelf: {}, importe: 'proto20', updatedAt: maintenant };
       Object.keys(doc).forEach(k=>{ if (doc[k] === undefined) delete doc[k]; });
       ecritures.push([attaquesCol.doc(idAttaqueProto(v, a.nom)), doc]);
-      /* étape 3 : un manuel par attaque, comme l'éditeur en crée un à l'enregistrement */
-      const idAtt = idAttaqueProto(v, a.nom);
-      ecritures.push([itemsCol.doc('man_' + idAtt), {
-        name: 'Manuel : ' + a.nom, emoji: '📖', imageUrl: '', type: 'apprentissage',
-        description: `Permet à un robot compatible d'apprendre l'attaque "${a.nom}".`,
-        teachesAttackId: idAtt, equippable: false, effectType: null, effectValue: 0, effectDuration: 'permanent', effectSeconds: 0, effectMetiers: [],
-        sellable: false, basePrice: 0, importe: 'proto20', updatedAt: maintenant,
-      }]);
     });
   });
   CLES_VICES.forEach(v=>{
@@ -17589,7 +17250,7 @@ async function importerCatalogueProto(){
     const jeu = premier ? premier.attaques.map(nm=> idAttaqueProto(v, nm)) : pool.slice(0, 4).map(a=> idAttaqueProto(v, a.nom));
     ecritures.push([robotsModelesCol.doc('ref_' + v), {
       nom: 'Référence ' + VICES[v].nom.toLowerCase(), vice: v, profil: 'equilibre', trait: 'aucun',
-      immunites: (IMMUNITES_PAR_VICE[v] || []).slice(), liste: pool.map(a=> idAttaqueProto(v, a.nom)), jeu,
+      immunites: (IMMUNITES_PAR_VICE[v] || []).slice(), jeu,
       importe: 'proto20', updatedAt: maintenant,
     }]);
   });
@@ -17804,7 +17465,8 @@ function recruitBestStat(r){
   return pairs[0][0];
 }
 function recruitHasAttackKind(r, test){
-  return resolveFighterAttacks(r.learnedAttackIds || []).some(test);
+  const m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;   // v476 : la main du modèle
+  return resolveFighterAttacks(m ? (m.jeu || []) : []).some(test);
 }
 function recruitMatchesDomain(r, domainId){
   if (!domainId) return false;
@@ -19139,17 +18801,6 @@ document.getElementById('baseEquipChooserCloseBtn').addEventListener('click', ()
   document.getElementById('baseEquipChooserOverlay').classList.remove('show');
 });
 
-/* ---------- Apprentissage d'attaques ---------- */
-function recruitTrainingProgress(recruit){
-  if (!recruit.trainingAttackId || !recruit.trainingStartedAt) return 0;
-  const duration = recruit.trainingDuration || 1;
-  return Math.max(0, Math.min(1, (Date.now() - recruit.trainingStartedAt) / duration));
-}
-function recruitTrainingRemainingMs(recruit){
-  if (!recruit.trainingAttackId || !recruit.trainingStartedAt) return 0;
-  const duration = recruit.trainingDuration || 0;
-  return Math.max(0, duration - (Date.now() - recruit.trainingStartedAt));
-}
 function renderRecruitCombatStatsSection(recruit){
   const el = document.getElementById('recruitCombatStatsSection');
   if (!el) return;
@@ -19341,34 +18992,11 @@ function renderRecruitAttacksSection(recruit){
   const labelEl = document.getElementById('recruitAttacksLabel');
   if (recruit.recruitType !== 'combattant'){ el.innerHTML = ''; if (labelEl) labelEl.style.display = 'none'; return; }
   if (labelEl) labelEl.style.display = 'block';
-  const learned = recruit.learnedAttackIds || [];
-  if (recruit.trainingAttackId){
-    const atk = attaqueAffichable(recruit.trainingAttackId);
-    const pct = Math.round(recruitTrainingProgress(recruit)*100);
-    const remainingLabel = formatRemainingDuration(recruitTrainingRemainingMs(recruit));
-    el.innerHTML = `
-      <div class="pos-status">${atk ? (atk.emoji||'✨')+' '+atk.name : '…'} — ${remainingLabel}</div>
-      <div style="height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px;">
-        <div style="height:100%; width:${pct}%; background:var(--accent);"></div>
-      </div>
-      <button class="btn-secondary" id="cancelTrainingBtn" style="width:100%; margin-top:8px; color:var(--danger); border-color:rgba(192,57,43,.4);">Annuler l'entraînement</button>
-    `;
-    document.getElementById('cancelTrainingBtn').addEventListener('click', async ()=>{
-      if (!(await appConfirm('Annuler cet entraînement ? Le manuel déjà utilisé ne sera pas remboursé.'))) return;
-      recruitsCol.doc(recruit.id).update({ trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
-        .then(()=> showToast('Entraînement annulé (le manuel déjà utilisé n\'est pas remboursé)'));
-    });
-  } else {
-    const knownLabel = learned.length ? learned.map(id=>{
-      const a = attaqueAffichable(id);
-      return a ? `<span class="btn-secondary" style="display:inline-flex; align-items:center; gap:4px; margin:2px;">${a.emoji||'✨'} ${a.name}</span>` : '';
-    }).join('') : '<p class="meta">Aucune attaque apprise pour l\'instant.</p>';
-    el.innerHTML = `
-      <div style="margin-bottom:6px;">${knownLabel}</div>
-      <button class="btn-capture" id="openLearnChooserBtn" style="width:100%;">📖 Apprendre une attaque</button>
-    `;
-    document.getElementById('openLearnChooserBtn').addEventListener('click', ()=> openBaseLearnChooser(recruit));
-  }
+  /* v476 : plus rien à apprendre — les quatre attaques du modèle, en lecture seule. */
+  const m = recruit.robotModeleId ? ctModele(recruit.robotModeleId) : null;
+  if (!m){ el.innerHTML = '<p class="meta">Ce robot n\'a pas de modèle : il ne peut pas se battre.</p>'; return; }
+  el.innerHTML = `<div class="main-slots" style="grid-template-columns:1fr;">${htmlMainLectureSeule(m)}</div>
+    <p class="meta" style="margin:4px 0 0;">La combinaison du modèle ${htmlEsc(m.nom || '')} — tous ses exemplaires se battent avec.</p>`;
 }
 function recruitRecipeTrainingProgress(recruit){
   if (!recruit.recipeTrainingId || !recruit.recipeTrainingStartedAt) return 0;
@@ -19456,86 +19084,7 @@ function openBaseLearnRecipeChooser(recruit){
 document.getElementById('baseLearnRecipeChooserCloseBtn').addEventListener('click', ()=>{
   document.getElementById('baseLearnRecipeChooserOverlay').classList.remove('show');
 });
-function startAttackTraining(recruit, attack, forgetAttackId){
-  const manuel = items.find(it=>it.teachesAttackId===attack.id);
-  if (!manuel){ showToast('Manuel introuvable'); return; }
-  playerDocRef.set({ inventory: { [manuel.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
-    recruitsCol.doc(recruit.id).update({
-      trainingAttackId: attack.id,
-      trainingStartedAt: Date.now(),
-      trainingDuration: (attack.learnDuration||60) * 1000,
-      trainingForgetAttackId: forgetAttackId
-    });
-    document.getElementById('baseLearnChooserOverlay').classList.remove('show');
-    document.getElementById('forgetAttackChooserOverlay').classList.remove('show');
-    showToast(`${recruit.name} commence l'entraînement !`);
-  });
-}
-function openForgetAttackChooser(recruit, newAttack, learned){
-  document.getElementById('forgetAttackChooserIntro').textContent = `${recruit.name} connaît déjà 4 attaques. Choisis celle à oublier pour apprendre "${newAttack.name}" :`;
-  const listEl = document.getElementById('forgetAttackChooserList');
-  listEl.innerHTML = learned.map(id=>{
-    const a = attaqueAffichable(id) || {};
-    return `
-    <div class="choice-row">
-      <b>${a.emoji||'✨'} ${a.name||'?'}</b>
-      <div class="meta">${a.description || ''}</div>
-      <button class="btn-secondary" data-forget-attack="${id}" style="width:100%; margin-top:6px; color:var(--danger); border-color:rgba(192,57,43,.4);">Oublier celle-ci</button>
-    </div>`;
-  }).join('');
-  listEl.querySelectorAll('button[data-forget-attack]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const forgetId = btn.dataset.forgetAttack;
-      const forgetAttack = attaqueAffichable(forgetId);
-      if (!(await appConfirm(`Confirmer : oublier "${forgetAttack ? forgetAttack.name : '?'}" pour apprendre "${newAttack.name}" ?`))) return;
-      startAttackTraining(recruit, newAttack, forgetId);
-    });
-  });
-  document.getElementById('baseLearnChooserOverlay').classList.remove('show');
-  document.getElementById('forgetAttackChooserOverlay').classList.add('show');
-}
-document.getElementById('forgetAttackChooserCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('forgetAttackChooserOverlay').classList.remove('show');
-  document.getElementById('baseLearnChooserOverlay').classList.add('show');
-});
-function openBaseLearnChooser(recruit){
-  if (recruit && recruit.robotModeleId) return ouvrirChoixApprentissageM2(recruit);   // étape 3
-  raiseAbovePlan('baseLearnChooserOverlay');
-  const listEl = document.getElementById('baseLearnChooserList');
-  const learnedAlready = recruit.learnedAttackIds || [];
-  const eligible = attacks.filter(a =>
-    !learnedAlready.includes(a.id)
-    && (baseResources[(items.find(it=>it.teachesAttackId===a.id)||{}).id]||0) > 0
-    && (!a.allowedMetiers || !a.allowedMetiers.length || a.allowedMetiers.includes(recruit.metierId))
-  );
-  listEl.innerHTML = eligible.length ? eligible.map(a=>{
-    const manuel = items.find(it=>it.teachesAttackId===a.id);
-    return `
-    <div class="choice-row">
-      <b>${a.emoji||'✨'} ${a.name}</b>
-      <div class="meta">${a.description || ''} — manuel : ${manuel ? manuel.name : '?'}</div>
-      <button class="btn-capture" data-learn-attack="${a.id}" style="width:100%; margin-top:6px;">Apprendre</button>
-    </div>
-  `;
-  }).join('') : '<p class="meta">Aucun manuel compatible avec ce métier dans le sac.</p>';
-  listEl.querySelectorAll('button[data-learn-attack]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const attackId = btn.dataset.learnAttack;
-      const attack = attacks.find(a=>a.id===attackId);
-      const learned = recruit.learnedAttackIds || [];
-      if (learned.length >= 4){
-        openForgetAttackChooser(recruit, attack, learned);
-        return;
-      }
-      startAttackTraining(recruit, attack, null);
-    });
-  });
-  document.getElementById('baseLearnChooserOverlay').classList.add('show');
-}
-document.getElementById('baseLearnChooserCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('baseLearnChooserOverlay').classList.remove('show');
-});
-
+/* v476 : l'apprentissage d'attaques (manuels, entraînement, oubli) est retiré — voir mainDeModele. */
 document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
   const recruit = currentRecruit();
   if (recruit) dismissRecruit(recruit);
@@ -19574,13 +19123,6 @@ setInterval(()=>{
         playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
       }
       recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
-    }
-    if (recruit.trainingAttackId && recruitTrainingProgress(recruit) >= 1){
-      const learned = (recruit.learnedAttackIds || []).filter(id => id !== recruit.trainingForgetAttackId);
-      learned.push(recruit.trainingAttackId);
-      const attack = attaqueAffichable(recruit.trainingAttackId);
-      recruitsCol.doc(recruit.id).update({ learnedAttackIds: learned, trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null })
-        .then(()=> showToast(`${recruit.name} a appris ${attack ? attack.name : 'une nouvelle attaque'} !`));
     }
     if (recruit.recipeTrainingId && recruitRecipeTrainingProgress(recruit) >= 1){
       const learnedRecipes = (recruit.learnedRecipeIds || []).concat(recruit.recipeTrainingId);
