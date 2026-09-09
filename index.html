@@ -1217,7 +1217,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v470</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v471</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -26092,7 +26092,7 @@ async function launchZoneCombat(enemyCreatureList, pt, opts){
   }
   combatZoneContext = (opts && opts.sansContexte) ? null : { pt: pt || null };   // le test des Outils part de la carte, sans zone
   const sac = m2ObjetsDuJoueur();
-  await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock }, objetsDef: Object.assign({}, M2.OBJETS, sac.def), avertissements: avertissementsCombat }, arenaBg, {});
+  await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock, enemy: {} }, objetsDef: Object.assign({}, M2.OBJETS, sac.def), avertissements: avertissementsCombat }, arenaBg, {});
 }
 async function startZoneBossCombat(bossCreature, pt){
   await launchZoneCombat([bossCreature], pt);
@@ -26110,11 +26110,26 @@ function rollSceneEncounter(){
     .filter(c=> c && c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
   if (!pool.length) return;
   const chosen = pool.slice().sort(()=> Math.random()-0.5).slice(0, Math.min(3, pool.length));
-  setTimeout(()=>{
-    if (!m2AlliesDepuisEquipe().cfgs.length) return; // pas d'équipe (à modèle) : pas d'embuscade
-    showToast('⚠️ Une rencontre surgit !');
-    launchZoneCombat(chosen, null);
-  }, 350);
+  /* v471 : la rencontre attend que la scène soit VISIBLE (image de fond chargée), puis laisse une
+     seconde au joueur pour voir où il est. Avant, elle partait à 350 ms fixes — sur un téléphone
+     un peu lent, avant même l'affichage de la scène, d'où l'impression d'un combat qui se déclenche
+     depuis la carte. */
+  const sceneId = sceneViewCurrentSceneId, debut = Date.now();
+  const attendre = ()=>{
+    const ov = document.getElementById('sceneViewFull');
+    if (sceneViewCurrentSceneId !== sceneId || !ov || !ov.classList.contains('show')) return; // il a déjà bougé ou quitté
+    const img = document.querySelector('#sceneViewImgWrap img');
+    const prete = img && img.complete && img.naturalWidth > 0;
+    if (!prete && Date.now() - debut < 6000){ setTimeout(attendre, 120); return; }
+    setTimeout(()=>{
+      if (sceneViewCurrentSceneId !== sceneId || !ov.classList.contains('show')) return;
+      if (combatState && !combatState.finished) return;
+      if (!m2AlliesDepuisEquipe().cfgs.length) return; // pas d'équipe (à modèle) : pas d'embuscade
+      showToast('⚠️ Une rencontre surgit !');
+      launchZoneCombat(chosen, null);
+    }, 1000);
+  };
+  setTimeout(attendre, 120);
 }
 
 /* ---------- Robots de départ (bouton des Outils de test) ---------- */
