@@ -1271,7 +1271,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v479</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v480</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3427,10 +3427,8 @@
       <h3 style="margin-top:0;">🛏️ Quartiers</h3>
       <button class="sheet-x" id="quartersCloseBtn">✕</button>
     </div>
-    <div style="display:flex; gap:8px; margin-bottom:10px;">
-      <button class="btn-secondary" data-qtab="combattant" style="flex:1; height:42px;">⚔️ Combattants</button>
-      <button class="btn-secondary" data-qtab="artisan" style="flex:1; height:42px;">🛠️ Artisans</button>
-    </div>
+    <!-- v480 : plus d'onglet Artisans — les quartiers ne listent que les combattants. Un artisan
+         se voit en frappant à sa porte dans le couloir du vaisseau, jamais depuis une liste. -->
     <button class="btn-secondary" id="quartersReorderBtn" style="width:100%; margin-bottom:10px; display:none;">⇅ Réorganiser</button>
     <div id="quartersList"></div>
   </div>
@@ -21331,8 +21329,10 @@ function renderQuartersList(){
     bouton.textContent = quartersReordering ? '✓ Terminer' : '⇅ Réorganiser';
     bouton.style.display = quartersSorted(quartersTab).length > 1 ? 'block' : 'none';
   }
-  if (!recruits.length){
-    el.innerHTML = '<p class="meta">Personne n\'habite encore à bord. Recrute quelqu\'un et sa chambre apparaîtra ici.</p>';
+  /* v480 : on teste les COMBATTANTS, plus l'ensemble des recrues — un vaisseau qui n'a que des
+     artisans a des quartiers vides, et c'est voulu. */
+  if (!quartersSorted('combattant').length){
+    el.innerHTML = '<p class="meta">Aucun combattant à bord. Recrute-en un et sa chambre apparaîtra ici.</p>';
     return;
   }
   /* Un onglet plutôt que deux listes à la suite : avec douze combattants, il fallait traverser
@@ -21343,10 +21343,12 @@ function renderQuartersList(){
     b.style.color = actif ? '#fff' : '';
     b.style.fontWeight = actif ? '800' : '';
   });
+  /* v480 : les artisans ne sont plus listés ici (ça cassait l'immersion : on doit aller frapper
+     à leur porte). `quartersTab` reste à 'combattant' et `quartersOrder.artisan` est conservé
+     pour ne rien perdre dans les profils déjà enregistrés. */
   const sections = [
     { type:'combattant', titre:'⚔️ Combattants' },
-    { type:'artisan',    titre:'🛠️ Artisans' },
-  ].filter(s=> s.type === quartersTab);
+  ];
   const habitants = [];
   el.innerHTML = sections.map(sec=>{
     const gens = quartersSorted(sec.type);
@@ -21443,6 +21445,7 @@ function renderQuartersList(){
          correctif n'a laissé aucune trace visible tant que personne n'a essayé d'ouvrir la porte
          d'un blessé. Les deux testent désormais la même chose. */
       if (recruitIsAway(r)){ showToast(r.name + ' est en mission — sa chambre est fermée'); return; }
+      roomOuverteDepuisPorte = false;   // v480
       openRecruitRoom(r);
     });
   });
@@ -21578,6 +21581,9 @@ async function installerHabitantSurPorte(recruit, porte){
   } catch(err){ showToast('Échec : ' + err.message); }
 }
 
+/* v480 : d'où la pièce a été ouverte. Par une porte du couloir, ↩️ referme simplement l'image et
+   rend le couloir ; depuis la liste des quartiers, il rouvre la liste. */
+let roomOuverteDepuisPorte = false;
 function toucherPorteHabitant(pt){
   if (!sceneViewIsShip){ showToast('Cette porte ne sert que dans le vaisseau'); return; }
   const porte = { sceneId: sceneViewCurrentSceneId, pointId: pt.id };
@@ -21590,7 +21596,7 @@ function toucherPorteHabitant(pt){
     return;
   }
   const occupant = habitantDeLaPorte(pt.id);
-  if (occupant){ openRecruitRoom(occupant); return; }
+  if (occupant){ roomOuverteDepuisPorte = true; openRecruitRoom(occupant); return; }
   showToast('Porte libre — le prochain habitant recruté s\'installera ici');
 }
 
@@ -24967,7 +24973,7 @@ let roomSheetRecruitId = null;
    d'artisanat : les métiers sont trop différents pour tenir dans une seule salle, et le système
    de quartiers résout déjà exactement ce problème. */
 const ROOM_ACTIONS = [
-  { id:'retour',     emoji:'↩️', titre:'Retour aux quartiers' },
+  { id:'retour',     emoji:'↩️', titre:'Retour' },
   { id:'profil',     emoji:'📊', titre:'Profil et statistiques' },
   { id:'equipe',     emoji:'⭐', titre:'Équipe active' },
   { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
@@ -25016,10 +25022,11 @@ function renderRoomActions(recruit){
       if (!r) return;
       const quoi = b.dataset.roomAction;
       if (quoi === 'retour'){
-        /* Revenir à la liste plutôt que tout fermer : on passe ainsi d'une chambre à l'autre
-           sans repasser par la porte des quartiers. */
+        /* Revenir d'où l'on vient : au couloir si on est entré par une porte (v480 — avant, ça
+           rouvrait toujours la liste des quartiers), à la liste sinon, pour passer d'une chambre
+           à l'autre sans repasser par la porte des quartiers. */
         closeSceneBigImage();
-        openQuarters();
+        if (!roomOuverteDepuisPorte) openQuarters();
         return;
       }
       if (quoi === 'renvoyer'){ showToast('Reste appuyé pour renvoyer'); return; }
