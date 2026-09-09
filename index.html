@@ -1276,7 +1276,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v473</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v474</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2383,7 +2383,22 @@
         <option value="consommable">Consommable</option>
         <option value="apprentissage">Apprentissage d'attaque</option>
         <option value="equipement">Équipement</option>
+        <option value="composant">Composant de robot (v474)</option>
       </select>
+      <div id="itemComposantBlock" style="display:none;">
+        <div class="field-label">Famille de composant</div>
+        <select id="itemComposantFamille" class="field-input">
+          <option value="processeur">🧠 Processeur</option>
+          <option value="chassis">🦾 Châssis</option>
+          <option value="articulation">⚙️ Articulation</option>
+          <option value="noyau">🔮 Noyau d'énergie (un vice)</option>
+        </select>
+        <div id="itemComposantViceWrap" style="display:none;">
+          <div class="field-label">Vice du noyau</div>
+          <select id="itemComposantVice" class="field-input"></select>
+        </div>
+        <p class="meta" style="margin:4px 0 0;">Les composants servent à l'atelier : la recette d'un modèle de robot demande tant de processeurs, de châssis et d'articulations, plus un noyau de son vice. N'importe quel objet de la famille convient.</p>
+      </div>
 
       <div class="field-label">Description</div>
       <textarea id="itemDescription" class="field-input" style="min-height:60px;" placeholder="Un morceau de bois brut."></textarea>
@@ -3297,6 +3312,17 @@
       <button class="sheet-x" id="plansCloseBtn">✕</button>
     </div>
     <div id="plansSection"></div>
+  </div>
+</div>
+
+<!-- v474 : l'atelier de fabrication (plans + composants → robot, en temps réel) -->
+<div class="overlay" id="atelierOverlay" style="z-index:4640;">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">🔧 Atelier</h3>
+      <button class="sheet-x" id="atelierCloseBtn">✕</button>
+    </div>
+    <div id="atelierSection"></div>
   </div>
 </div>
 
@@ -10741,7 +10767,19 @@ function renderItemEquipMetiers(){
 document.getElementById('itemEquippable').addEventListener('change', (e)=>{
   document.getElementById('itemEffectWrap').style.display = e.target.checked ? 'block' : 'none';
 });
+function majBlocComposant(){
+  const type = document.getElementById('itemType').value;
+  document.getElementById('itemComposantBlock').style.display = type === 'composant' ? 'block' : 'none';
+  const fam = document.getElementById('itemComposantFamille').value;
+  document.getElementById('itemComposantViceWrap').style.display = (type === 'composant' && fam === 'noyau') ? 'block' : 'none';
+  const sel = document.getElementById('itemComposantVice');
+  if (!sel.options.length && typeof VICES !== 'undefined'){
+    sel.innerHTML = Object.keys(VICES).map(k=> `<option value="${k}">${VICES[k].emoji} ${VICES[k].nom}</option>`).join('');
+  }
+}
+document.getElementById('itemComposantFamille').addEventListener('change', majBlocComposant);
 document.getElementById('itemType').addEventListener('change', (e)=>{
+  majBlocComposant();
   const isEquipType = e.target.value === 'equipement';
   document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
   const isConsommable = e.target.value === 'consommable';
@@ -10904,6 +10942,9 @@ function loadItemForEdit(id){
   editingItemId = id;
   document.getElementById('itemName').value = it.name || '';
   document.getElementById('itemType').value = it.type || 'ressource';
+  document.getElementById('itemComposantFamille').value = (it.composant && it.composant.famille) || 'processeur';
+  majBlocComposant();
+  if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
   const equippable = !!it.equippable;
   const isEquipType = (it.type || 'ressource') === 'equipement';
@@ -10959,6 +11000,7 @@ function resetItemForm(){
   document.getElementById('itemImagePreviewWrap').style.display = 'none';
   document.getElementById('itemName').value = '';
   document.getElementById('itemType').value = 'ressource';
+  majBlocComposant();
   document.getElementById('itemDescription').value = '';
   document.getElementById('itemEquippableRow').style.display = 'flex';
   document.getElementById('itemEquippable').checked = false;
@@ -11023,7 +11065,9 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
       }};
     }
   }
-  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, updatedAt: Date.now() };
+  const famC = document.getElementById('itemComposantFamille').value;
+  const composant = type === 'composant' ? { famille: famC, vice: famC === 'noyau' ? (document.getElementById('itemComposantVice').value || null) : null } : null;
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -13563,11 +13607,21 @@ document.getElementById('attackSaveBtn').addEventListener('click', ()=>{
 let editingRobotModeleId = null;
 let rmOuverts = {};           // quels vices sont dépliés dans la liste apprenable
 let rmBrouillon = null;       // la fiche en cours de saisie
+/* v474 : la recette de fabrication d'un modèle — tant de composants par famille, plus UN noyau
+   du vice du modèle (toujours), et une durée. Un modèle rare met plus longtemps. */
+const FABRICATION_DEFAUT = { processeur:1, chassis:1, articulation:2, minutes:60 };
+const FAMILLES_COMPOSANTS = [['processeur','🧠 Processeur'],['chassis','🦾 Châssis'],['articulation','⚙️ Articulation']];
+function fabricationDuModele(m){
+  const f = (m && m.fab) || {};
+  return { processeur: f.processeur != null ? f.processeur : FABRICATION_DEFAUT.processeur, chassis: f.chassis != null ? f.chassis : FABRICATION_DEFAUT.chassis,
+    articulation: f.articulation != null ? f.articulation : FABRICATION_DEFAUT.articulation, minutes: f.minutes != null ? f.minutes : FABRICATION_DEFAUT.minutes };
+}
 
 function robotModeleVierge(vice){
   vice = vice || CLES_VICES[0];
   return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), liste:[], jeu:[],
     pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:PIRATAGE_DEFAUT.zone, pirFuite:PIRATAGE_DEFAUT.fuite,
+    fab: Object.assign({}, FABRICATION_DEFAUT),
     faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null };
 }
 /* Les quatre attaques emportées : celles choisies, restreintes à la liste apprenable, sans doublon,
@@ -13596,6 +13650,8 @@ function lireFormRobotModele(){
   f.pirVitesse = num('rmPirVitesse', 1, 5, PIRATAGE_DEFAUT.vitesse);
   f.pirZone = num('rmPirZone', 8, 50, PIRATAGE_DEFAUT.zone);
   f.pirFuite = num('rmPirFuite', 0, 100, PIRATAGE_DEFAUT.fuite);
+  f.fab = { processeur: num('rmFabProcesseur', 0, 20, FABRICATION_DEFAUT.processeur), chassis: num('rmFabChassis', 0, 20, FABRICATION_DEFAUT.chassis),
+    articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
   return f;
 }
 function htmlJeuModele(f){
@@ -13647,6 +13703,14 @@ function renderRobotModeleForm(){
       <label class="meta">Zone verte (% de la barre)<input type="number" id="rmPirZone" class="field-input" min="8" max="50" value="${f.pirZone!=null?f.pirZone:PIRATAGE_DEFAUT.zone}"></label>
       <label class="meta">Fuite si le piratage rate (%)<input type="number" id="rmPirFuite" class="field-input" min="0" max="100" value="${f.pirFuite!=null?f.pirFuite:PIRATAGE_DEFAUT.fuite}"></label>
     </div>
+    <div class="field-label">🔧 Fabrication — la recette du plan (v474)</div>
+    <p class="meta" style="margin:0 0 6px;">Ce qu'il faut donner à l'atelier avec le plan : des composants par famille (n'importe quel objet de la famille convient), plus <b>un noyau du vice du modèle</b>, toujours. La durée fait sentir la rareté : un modèle rare met plus longtemps.</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+      <label class="meta">🧠 Processeurs<input type="number" id="rmFabProcesseur" class="field-input" min="0" max="20" value="${fabricationDuModele(f).processeur}"></label>
+      <label class="meta">🦾 Châssis<input type="number" id="rmFabChassis" class="field-input" min="0" max="20" value="${fabricationDuModele(f).chassis}"></label>
+      <label class="meta">⚙️ Articulations<input type="number" id="rmFabArticulation" class="field-input" min="0" max="20" value="${fabricationDuModele(f).articulation}"></label>
+      <label class="meta">⏱️ Durée (minutes)<input type="number" id="rmFabMinutes" class="field-input" min="1" value="${fabricationDuModele(f).minutes}"></label>
+    </div>
     ${htmlImageModele('face', 'Combat face', 'Le robot vu de face : c\'est lui qu\'on affronte, et son portrait dans la barre des tours.', f)}
     ${htmlImageModele('dos', 'Combat dos', 'Le robot vu de dos, quand il se bat à tes côtés. Sans image de dos, la face sert des deux côtés.', f)}
     ${htmlApercuCombatModele(f)}
@@ -13696,7 +13760,7 @@ function cablerFormRobotModele(){
     let images;
     try { images = await champsImagesModele(f); } catch(err){ showToast('Image non enregistrée : ' + err.message); return; }
     const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), liste:f.liste.slice(), jeu:f.jeu.slice(),
-      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, ...images, updatedAt: Date.now() };
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -13734,6 +13798,7 @@ function renderRobotsModelesList(){
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), liste:(m.liste||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
+      fab: fabricationDuModele(m),
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
     rmViceAvant = rmBrouillon.vice;
@@ -16272,7 +16337,9 @@ function simuAfficherMains(d){
    - zones, carte, boss, dialogues, fuite, butin, vol, PV persistants, sac réel, équipements,
      manuels et reprise de session passent tous par M2. Le JcJ reste sur l'ancien moteur (3b).
    ===================================================================================== */
-const MULT_CATEGORIE_ROBOT = { recrutable:1, monstre_commun:0.8, mini_boss:1.5, boss:2.5 };
+/* v474 : le ×0,8 des monstres communs est supprimé — un monstre affronté et le plan qu'on lui
+   vole ont les mêmes stats (décision du 09/09). */
+const MULT_CATEGORIE_ROBOT = { recrutable:1, monstre_commun:1, mini_boss:1.5, boss:2.5 };
 let attaquesSnapshotRecu = false, robotsModelesSnapshotRecu = false;
 function htmlEsc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -17560,6 +17627,10 @@ function watchPlayerInventoryForBase(){
     if (doc.exists && Array.isArray(doc.data().plans)) playerPlans = doc.data().plans;   // v470
     const ov = document.getElementById('plansOverlay');
     if (ov && ov.classList.contains('show')) renderEtagerePlans();
+    playerAtelierFile = (doc.exists && Array.isArray(doc.data().atelierFile)) ? doc.data().atelierFile : [];   // v474
+    playerAtelierNouveaux = (doc.exists && Array.isArray(doc.data().atelierNouveaux)) ? doc.data().atelierNouveaux : [];
+    const oa = document.getElementById('atelierOverlay');
+    if (oa && oa.classList.contains('show')) renderAtelier();
     const ordre = (doc.exists && doc.data().quartersOrder) || null;
     quartersOrder = { combattant: (ordre && ordre.combattant) || [], artisan: (ordre && ordre.artisan) || [] };
     /* Les quartiers ne se redessinent que s'ils sont ouverts ET qu'on n'est pas en train de
@@ -22044,10 +22115,12 @@ const SCENE_POINT_TYPES = [
   { id:'decor', label:'🖼️ Décor' },
   { id:'image', label:'🔍 Image en grand' },
   { id:'coffre', label:'📦 Coffre' },
+  { id:'recolte', label:'🌱 Récolte (plante, filon, arbre…)' },
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
   { id:'missions', label:'📨 Terminal de missions' },
   { id:'soin', label:'💚 Soin' },
   { id:'plans', label:'📐 Étagère à plans' },
+  { id:'atelier', label:'🔧 Atelier de fabrication' },
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
@@ -22264,10 +22337,11 @@ async function verifierLiensZone(scenes){
       if (pt.type === 'sortie' && !pt.targetSceneId) soucis.push({ pointId: pt.id, où: oùName, quoi: 'Sortie sans destination' });
       /* Un coffre sans rien dedans s'ouvre sur du vide : c'est le genre d'oubli qui ne
          prévient pas en jeu, le point répond simplement « il n'y a rien ». */
-      if (pt.type === 'coffre'){
-        if (!pt.openImageUrl && !pt.openImagePath) soucis.push({ pointId: pt.id, où: oùName, quoi: 'Coffre sans image d\'ouverture' });
+      if (estCoffre(pt)){
+        const nomT = pt.type === 'recolte' ? 'Récolte' : 'Coffre';
+        if (!pt.openImageUrl && !pt.openImagePath) soucis.push({ pointId: pt.id, où: oùName, quoi: nomT + (pt.type === 'recolte' ? ' sans image « récolté »' : ' sans image d\'ouverture') });
         if (!(pt.loot || []).some(l=> l && l.itemId) && !pt.trapEnabled && !pt.message){
-          soucis.push({ pointId: pt.id, où: oùName, quoi: 'Coffre vide : ni objet, ni piège, ni message' });
+          soucis.push({ pointId: pt.id, où: oùName, quoi: nomT + ' vide : ni objet, ni piège, ni message' });
         }
       }
       if (pt.type === 'sortie' && pt.targetSceneId && !scenes.some(x=> x.id === pt.targetSceneId)){
@@ -22812,6 +22886,9 @@ function getSceneImageDisplayRect(wrap){
    main, et montrer l'image ouverte même en mode « illimité », où rien n'est mémorisé. */
 let chestVisualState = {}; // pointId -> 'open' | 'closed'
 
+/* v474 : un point de RÉCOLTE est un coffre à deux images (plein / récolté) qui se remplit à
+   nouveau après un délai, pour chaque joueur. Tout le mécanisme du coffre lui sert. */
+function estCoffre(pt){ return !!pt && (pt.type === 'coffre' || pt.type === 'recolte'); }
 function chestOpenImageUrl(pt){
   if (pt.openImageUrl) return pt.openImageUrl;
   if (pt.openImagePath) return resolveMediaPath(pt.openImagePath);
@@ -22826,7 +22903,7 @@ function isChestOpen(pt){
 function pointEffectiveImageUrl(pt){
   /* Le coffre ouvert montre sa seconde image ; sans seconde image on garde la première,
      pour qu'un coffre mal configuré reste visible au lieu de disparaître du décor. */
-  if (pt.type === 'coffre' && isChestOpen(pt)){
+  if (estCoffre(pt) && isChestOpen(pt)){
     const ouverte = chestOpenImageUrl(pt);
     if (ouverte) return ouverte;
   }
@@ -23405,6 +23482,10 @@ function renderSceneDetailTypeSpecific(pt){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre l'étagère à plans : tous les plans volés en combat, groupés par modèle de robot, avec leurs stats côte à côte pour les comparer. Rien à régler ici.</p>`;
     return;
   }
+  if (pt.type === 'atelier'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre l'atelier : on choisit un plan, on donne les composants de sa recette (réglée sur le modèle de robot), et le robot se fabrique en temps réel — un seul à la fois, les suivants attendent dans la file. Rien à régler ici.</p>`;
+    return;
+  }
 
   if (pt.type === 'explorateur'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le poste de l'explorateur : envoyer l'explorateur chercher de nouvelles zones, suivre son retour, lire son rapport. Rien à régler ici.</p>`;
@@ -23544,9 +23625,10 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
-  if (pt.type === 'coffre'){
-    if (!pt.resetMode) pt.resetMode = 'perPlayer';
-    if (!pt.resetMinutes) pt.resetMinutes = 60;
+  if (estCoffre(pt)){
+    const rec = pt.type === 'recolte';
+    if (!pt.resetMode) pt.resetMode = rec ? 'timedPerPlayer' : 'perPlayer';
+    if (!pt.resetMinutes) pt.resetMinutes = rec ? 360 : 60;
     if (!pt.lockType) pt.lockType = 'none';
     if (!pt.trapMode) pt.trapMode = 'flat';
     if (!pt.trapTarget) pt.trapTarget = 'team';
@@ -23563,9 +23645,9 @@ function renderSceneDetailTypeSpecific(pt){
       </div>`;
     }).join('');
     typeWrap.innerHTML = `
-      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Le joueur touche le coffre : il s'ouvre, l'image change, et il reçoit ce qu'il y a dedans. L'image FERMÉE est celle réglée dans « Apparence du point ».</p>
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">${rec ? 'Le joueur touche la plante (ou le filon, l\'arbre…) : il récolte ce qu\'il y a, et l\'image passe à la version RÉCOLTÉE jusqu\'à ce que ça repousse. L\'image PLEINE est celle réglée dans « Apparence du point ». Un noyau d\'énergie est un objet comme un autre : mets-le dans le contenu.' : 'Le joueur touche le coffre : il s\'ouvre, l\'image change, et il reçoit ce qu\'il y a dedans. L\'image FERMÉE est celle réglée dans « Apparence du point ».'}</p>
 
-      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Image une fois ouvert</div>
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">${rec ? 'Image une fois récolté' : 'Image une fois ouvert'}</div>
       ${ouverte ? `<img src="${ouverte}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image d'ouverture : le coffre gardera son image fermée.</p>`}
       <button type="button" class="btn-secondary" data-coffre-img-github style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
       <button type="button" class="btn-secondary" data-coffre-img-pick style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🖼️ Importer depuis le téléphone</button>
@@ -23612,22 +23694,23 @@ function renderSceneDetailTypeSpecific(pt){
         <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Les PV ne remontent jamais seuls : il faudra une potion, ou le 💚 Soin du vaisseau. Un combattant déjà K.O. est épargné.</p>
       </div>
 
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Refermer</div>
-      <label style="display:flex; align-items:center; gap:8px; color:rgba(255,255,255,.85);">
-        <input type="checkbox" data-coffre-reclose ${pt.chestReclosable?'checked':''}> On peut le refermer en le touchant
+      <div class="field-label" style="color:rgba(255,255,255,.75);">${rec ? 'Déjà récolté' : 'Refermer'}</div>
+      <label style="display:${rec ? 'none' : 'flex'}; align-items:center; gap:8px; color:rgba(255,255,255,.85);">
+        <input type="checkbox" data-coffre-reclose ${pt.chestReclosable && !rec ?'checked':''}> On peut le refermer en le touchant
       </label>
       <div data-coffre-emptymsg-wrap style="display:${pt.chestReclosable?'none':'block'}; margin-top:6px;">
-        <input type="text" data-coffre-emptymsg class="field-input" placeholder="Ex. Tu as déjà fouillé ça." value="${(pt.emptyMessage||'').replace(/"/g,'&quot;')}">
+        <input type="text" data-coffre-emptymsg class="field-input" placeholder="${rec ? 'Ex. Rien à récolter pour l\'instant, ça repousse.' : 'Ex. Tu as déjà fouillé ça.'}" value="${(pt.emptyMessage||'').replace(/"/g,'&quot;')}">
       </div>
 
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Réapparition du contenu</div>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">${rec ? 'Repousse' : 'Réapparition du contenu'}</div>
       <select data-coffre-reset class="field-input">
-        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Chaque joueur peut le fouiller une fois</option>
+        <option value="timedPerPlayer" ${pt.resetMode==='timedPerPlayer'?'selected':''}>${rec ? 'Repousse après un délai, pour chaque joueur' : 'Se remplit à nouveau après un délai, pour chaque joueur'}</option>
+        <option value="perPlayer" ${pt.resetMode==='perPlayer'?'selected':''}>Chaque joueur peut le ${rec ? 'récolter' : 'fouiller'} une fois</option>
         <option value="once" ${pt.resetMode==='once'?'selected':''}>Une seule fois, pour tout le monde</option>
-        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>Se remplit à nouveau après un délai</option>
-        <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>Toujours ouvrable</option>
+        <option value="timed" ${pt.resetMode==='timed'?'selected':''}>${rec ? 'Repousse après un délai (pour tout le monde)' : 'Se remplit à nouveau après un délai (pour tout le monde)'}</option>
+        <option value="unlimited" ${pt.resetMode==='unlimited'?'selected':''}>${rec ? 'Toujours récoltable' : 'Toujours ouvrable'}</option>
       </select>
-      <div data-coffre-reset-min-wrap style="display:${pt.resetMode==='timed'?'block':'none'}; margin-top:6px;">
+      <div data-coffre-reset-min-wrap style="display:${(pt.resetMode==='timed' || pt.resetMode==='timedPerPlayer')?'block':'none'}; margin-top:6px;">
         <input type="number" data-coffre-reset-min class="field-input" value="${pt.resetMinutes}" min="1" placeholder="Minutes avant de se remplir">
       </div>
     `;
@@ -24294,6 +24377,12 @@ function isScenePointAvailable(pt){
   const mode = pt.resetMode || (pt.type === 'pnj' ? 'unlimited' : 'perPlayer');
   if (mode === 'unlimited') return true;
   if (mode === 'perPlayer') return !sceneViewTakenMap[pt.id];
+  if (mode === 'timedPerPlayer'){   // v474 : un horodatage par joueur, à la place du simple « pris »
+    const t = sceneViewTakenMap[pt.id];
+    if (!t) return true;
+    if (t === true) return false;
+    return (Date.now() - t) >= (pt.resetMinutes || 60) * 60000;
+  }
   const state = sceneViewPointState[pt.id];
   if (!state || !state.takenAt) return true;
   if (mode === 'once') return false;
@@ -24307,11 +24396,12 @@ function isScenePointAvailable(pt){
 function markScenePointTaken(pt){
   const mode = pt.resetMode || (pt.type === 'pnj' ? 'unlimited' : 'perPlayer');
   if (mode === 'unlimited') return Promise.resolve();
-  if (mode === 'perPlayer'){
-    sceneViewTakenMap[pt.id] = true;
+  if (mode === 'perPlayer' || mode === 'timedPerPlayer'){
+    const marque = mode === 'perPlayer' ? true : Date.now();
+    sceneViewTakenMap[pt.id] = marque;
     if (!currentUser || !db) return Promise.resolve();
     return db.collection('players').doc(currentUser.uid).set({
-      sceneItemsTaken: { [sceneViewCreature.id]: { [pt.id]: true } }
+      sceneItemsTaken: { [sceneViewCreature.id]: { [pt.id]: marque } }
     }, { merge: true });
   }
   sceneViewPointState[pt.id] = { takenAt: Date.now() };
@@ -24510,6 +24600,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openExplorerRoom();
     } else if (pt.type === 'plans'){
       wrapPointActions[pt.id] = ()=> openEtagerePlans();
+    } else if (pt.type === 'atelier'){
+      wrapPointActions[pt.id] = ()=> openAtelier();
     } else if (pt.type === 'soin' || pt.type === 'infirmerie'){
       /* `infirmerie` est l'ancien type, celui de la pièce à capsules supprimée en v408 : un
          point déjà posé garde ainsi un sens au lieu de ne plus rien faire. */
@@ -24526,7 +24618,7 @@ async function renderSceneViewCurrentScene(){
         }
         showToast('Ce point n\'a pas encore d\'image configurée');
       };
-    } else if (pt.type === 'coffre'){
+    } else if (estCoffre(pt)){
       wrapPointActions[pt.id] = ()=>{
         /* Coffre déjà ouvert : soit on le referme (et il redevient ouvrable seulement si
            son mode de réapparition le permet), soit on rappelle qu'il est vide. */
@@ -24535,7 +24627,7 @@ async function renderSceneViewCurrentScene(){
             chestVisualState[pt.id] = 'closed';
             renderSceneViewCurrentScene();
           } else {
-            showToast(pt.emptyMessage || 'Tu as déjà fouillé ça.');
+            showToast(pt.emptyMessage || (pt.type === 'recolte' ? 'Rien à récolter pour l\'instant, ça repousse.' : 'Tu as déjà fouillé ça.'));
           }
           return;
         }
@@ -24556,7 +24648,7 @@ async function renderSceneViewCurrentScene(){
             lignes.push('💥 ' + touches.map(t=> t.nom + ' −' + t.degats + ' PV').join(', ')
               + (kos.length ? ' — ' + kos.map(t=> t.nom).join(', ') + ' est K.O.' : ''));
           }
-          if (!donnes && !(touches && touches.length) && !pt.message) lignes.push('Il n\'y a rien à l\'intérieur.');
+          if (!donnes && !(touches && touches.length) && !pt.message) lignes.push(pt.type === 'recolte' ? 'Il n\'y a rien à récolter.' : 'Il n\'y a rien à l\'intérieur.');
           /* Le piège peut mettre le dernier combattant valide à terre : dans ce cas on ne
              laisse pas le joueur planté dans le décor, il rentre se faire soigner. */
           const plusPersonne = !equipeApteAuCombat();
@@ -25802,6 +25894,245 @@ function renderEtagerePlans(){
   }
 }
 document.getElementById('plAideBtn').addEventListener('click', ()=>{ plansAideVisible = !plansAideVisible; renderEtagerePlans(); });
+
+/* ---------- v474 : L'ATELIER DE FABRICATION ---------- */
+/* Le joueur choisit un plan (les mêmes cartes que l'étagère), l'atelier montre la recette du
+   modèle et ce qui manque dans le sac, puis fabrique en TEMPS RÉEL : un robot à la fois, les
+   suivants s'enchaînent tout seuls (`atelierFile` du document joueur). Le plan et les
+   composants sont consommés au lancement. À la fin, le robot devient une recrue avec les
+   stats du plan, et l'atelier l'annonce à l'ouverture suivante (`atelierNouveaux`). */
+let playerAtelierFile = [];
+let playerAtelierNouveaux = [];
+let atelierPlanChoisi = null;
+let atelierTermineEnCours = false;
+function openAtelier(){
+  document.getElementById('atelierOverlay').classList.add('show');
+  armGhostTapGuard(400);
+  atelierPlanChoisi = null;
+  verifierAtelier().then(()=> renderAtelier());
+  renderAtelier();
+}
+document.getElementById('atelierCloseBtn').addEventListener('click', ()=> document.getElementById('atelierOverlay').classList.remove('show'));
+/* Les composants du sac, groupés par famille (et par vice pour les noyaux). */
+function composantsDuSac(){
+  const out = { processeur:[], chassis:[], articulation:[], noyau:[] };
+  items.forEach(it=>{
+    if (it.type !== 'composant' || !it.composant) return;
+    const q = baseResources[it.id] || 0;
+    if (q <= 0) return;
+    const fam = it.composant.famille;
+    if (out[fam]) out[fam].push({ item: it, qty: q, vice: it.composant.vice || null });
+  });
+  return out;
+}
+/* La recette d'un plan, confrontée au sac : ce qu'il faut, ce qu'on a, ce qui manque. */
+function bilanRecette(plan){
+  const m = plan.modeleId ? ctModele(plan.modeleId) : null;
+  if (!m) return null;
+  const fab = fabricationDuModele(m);
+  const sac = composantsDuSac();
+  const lignes = FAMILLES_COMPOSANTS.map(([fam, lib])=>{
+    const besoin = fab[fam] || 0;
+    const dispo = sac[fam].reduce((a, c)=> a + c.qty, 0);
+    return { fam, lib, besoin, dispo, ok: dispo >= besoin };
+  }).filter(l=> l.besoin > 0);
+  const V = VICES[m.vice] || {};
+  const noyaux = sac.noyau.filter(c=> c.vice === m.vice);
+  const dispoN = noyaux.reduce((a, c)=> a + c.qty, 0);
+  lignes.push({ fam:'noyau', lib:'🔮 Noyau ' + (V.nom || m.vice), besoin:1, dispo:dispoN, ok: dispoN >= 1 });
+  return { modele: m, fab, lignes, complet: lignes.every(l=> l.ok), sac };
+}
+/* Choisit quels objets consommer pour une famille : on prend dans l'ordre du sac. */
+function prelevementComposants(bilan){
+  const conso = {};
+  bilan.lignes.forEach(l=>{
+    let reste = l.besoin;
+    const source = l.fam === 'noyau' ? bilan.sac.noyau.filter(c=> c.vice === bilan.modele.vice) : bilan.sac[l.fam];
+    source.forEach(c=>{
+      if (reste <= 0) return;
+      const pris = Math.min(reste, c.qty);
+      conso[c.item.id] = (conso[c.item.id] || 0) + pris;
+      reste -= pris;
+    });
+  });
+  return conso;
+}
+function dureeFabricationMs(plan){
+  const m = plan.modeleId ? ctModele(plan.modeleId) : null;
+  return fabricationDuModele(m).minutes * 60000;
+}
+/* Les jalons de la file : le premier a démarré, les suivants partent quand le précédent finit. */
+function jalonsAtelier(file){
+  let t = null;
+  return (file || []).map((job, i)=>{
+    const debut = i === 0 ? (job.startedAt || Date.now()) : t;
+    const fin = debut + (job.dureeMs || 0);
+    t = fin;
+    return { job, debut, fin };
+  });
+}
+async function lancerFabrication(plan){
+  const bilan = bilanRecette(plan);
+  if (!bilan || !bilan.complet || !playerDocRef) return;
+  const conso = prelevementComposants(bilan);
+  const inventory = {};
+  Object.keys(conso).forEach(id=> inventory[id] = firebase.firestore.FieldValue.increment(-conso[id]));
+  const job = { id: 'fab_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), plan, modeleId: plan.modeleId, nom: plan.modele,
+    dureeMs: dureeFabricationMs(plan), startedAt: playerAtelierFile.length ? null : Date.now(), createdAt: Date.now() };
+  playerPlans = playerPlans.filter(p=> p.id !== plan.id);
+  playerAtelierFile = playerAtelierFile.concat([job]);
+  Object.keys(conso).forEach(id=> baseResources[id] = Math.max(0, (baseResources[id] || 0) - conso[id]));
+  try {
+    await playerDocRef.set({ inventory, plans: firebase.firestore.FieldValue.arrayRemove(plan), atelierFile: playerAtelierFile }, { merge:true });
+    showToast(job.startedAt ? 'Fabrication lancée : ' + plan.modele : 'Ajouté à la file : ' + plan.modele);
+  } catch(err){ showToast('Fabrication non lancée : ' + err.message); }
+}
+/* Crée la recrue à partir du plan : les stats de l'exemplaire piraté, la main du modèle. */
+function recrueDepuisPlan(plan){
+  const m = plan.modeleId ? ctModele(plan.modeleId) : null;
+  if (!m) return null;
+  const st = statsDeLExemplaire({ robotModeleId: m.id, ecartStats: plan.ecart || {} }) || plan.stats || {};
+  const main = mainDeModele(m, m.jeu).map(a=> a.id);
+  return {
+    robotModeleId: m.id, ecartStats: plan.ecart || {},
+    name: m.nom, metierId: null, ownerUid: currentUser ? currentUser.uid : null,
+    imageUrl: urlImageModele(m, 'face') || '',
+    combatImageRef: m.faceImageRef || null, combatImagePath: m.faceImagePath || null,
+    backImageRef: m.dosImageRef || null, backImagePath: m.dosImagePath || null,
+    bustImagePath: null, bustImageRef: null,
+    combatImageScale: m.imageScale == null ? 100 : m.imageScale, combatImageOffsetY: m.offsetFace || 0, backImageOffsetY: m.offsetDos || 0,
+    combatPortraitCrop: m.portraitCrop || null,
+    equippedItemIds: { arme:null, armure:null, accessoire:null },
+    task: null, taskTarget: null, craftingRecipeId: null, craftingStartedAt: null,
+    recruitType: 'combattant', sourceCreatureId: null, roomSlot: null,
+    combatStats: Object.assign({ robotModeleId: m.id, recruitable: true, attackIds: main, startingAttackIds: main, ecartStats: 0 }, st),
+    learnedAttackIds: main, learnedRecipeIds: [],
+    trainingAttackId: null, trainingStartedAt: null, trainingDuration: null, trainingForgetAttackId: null,
+    recipeTrainingId: null, recipeTrainingStartedAt: null, recipeTrainingDuration: null,
+    fabriqueDepuisPlan: { planId: plan.id, source: plan.source || null, date: Date.now() },
+    createdAt: Date.now(),
+  };
+}
+/* Fait avancer la file : chaque robot dont l'heure est passée devient une recrue. */
+async function verifierAtelier(){
+  if (!currentUser || !playerDocRef || !playerAtelierFile.length || atelierTermineEnCours) return;
+  const jalons = jalonsAtelier(playerAtelierFile);
+  const finis = jalons.filter(j=> Date.now() >= j.fin);
+  if (!finis.length) return;
+  atelierTermineEnCours = true;
+  try {
+    const nouveaux = [];
+    for (const j of finis){
+      const r = recrueDepuisPlan(j.job.plan);
+      if (r){ await db.collection('recruits').add(r); nouveaux.push(j.job.nom || (r.name)); }
+      else journal('erreur', 'atelier : modèle introuvable', j.job.modeleId || '?', true);
+    }
+    const restants = playerAtelierFile.slice(finis.length);
+    if (restants.length) restants[0].startedAt = jalons[finis.length - 1].fin;   // le suivant a démarré quand le précédent a fini
+    playerAtelierFile = restants;
+    playerAtelierNouveaux = playerAtelierNouveaux.concat(nouveaux);
+    await playerDocRef.set({ atelierFile: restants, atelierNouveaux: playerAtelierNouveaux }, { merge:true });
+    if (nouveaux.length) showToast('🔧 Robot terminé : ' + nouveaux.join(', '));
+  } catch(err){ journal('erreur', 'atelier : fin de fabrication', err.message || String(err), true); }
+  atelierTermineEnCours = false;
+}
+setInterval(()=>{ verifierAtelier(); }, 15000);
+function dureeCourte(ms){
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600), mn = Math.floor((s % 3600) / 60);
+  if (h) return h + ' h ' + (mn ? mn + ' min' : '');
+  if (mn) return mn + ' min';
+  return s + ' s';
+}
+function renderAtelier(){
+  const el = document.getElementById('atelierSection');
+  if (!el) return;
+  if (!currentUser || !playerDocRef){ el.innerHTML = '<p class="meta">Firebase indisponible ici.</p>'; return; }
+  const html = [];
+  /* Les robots terminés depuis la dernière visite. */
+  if (playerAtelierNouveaux.length){
+    html.push(`<div style="border:1px solid var(--accent); border-radius:10px; padding:8px 10px; margin:0 0 10px;">
+      <b>🎉 Terminé pendant ton absence :</b> ${playerAtelierNouveaux.map(htmlEsc).join(', ')}.<br><span class="meta">Retrouve-le dans les quartiers, prêt à rejoindre l'équipe.</span>
+      <button type="button" class="btn-secondary" id="atNouveauxOk" style="width:100%; margin-top:6px;">OK</button></div>`);
+  }
+  /* La file. */
+  const jalons = jalonsAtelier(playerAtelierFile);
+  if (jalons.length){
+    html.push(`<div class="field-label" style="margin-top:0;">En cours</div>`);
+    jalons.forEach((j, i)=>{
+      const reste = j.fin - Date.now();
+      const pct = i === 0 ? Math.max(0, Math.min(100, Math.round(100 * (Date.now() - j.debut) / Math.max(1, j.job.dureeMs)))) : 0;
+      html.push(`<div style="border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-bottom:6px;">
+        <div style="display:flex; justify-content:space-between;"><b>${i === 0 ? '🔧' : '⏳'} ${htmlEsc(j.job.nom || '?')}</b><span class="meta">${reste <= 0 ? 'terminé…' : (i === 0 ? 'encore ' : 'dans ') + dureeCourte(reste)}</span></div>
+        ${i === 0 ? `<div style="height:6px; background:var(--line); border-radius:3px; margin-top:6px; overflow:hidden;"><div style="width:${pct}%; height:100%; background:var(--accent);"></div></div>` : `<div class="meta" style="font-size:11px;">${i}${i === 1 ? 'er' : 'e'} dans la file</div>`}
+      </div>`);
+    });
+  } else {
+    html.push(`<p class="meta" style="margin:0 0 8px;">L'atelier est libre.</p>`);
+  }
+  /* Le choix du plan. */
+  const plans = (playerPlans || []).filter(Boolean);
+  html.push(`<div class="field-label">Fabriquer</div>`);
+  if (!plans.length){
+    html.push(`<p class="meta">Aucun plan sur l'étagère. En combat, « 📡 Pirater » un robot sauvage pour voler le sien.</p>`);
+  } else if (!atelierPlanChoisi){
+    const groupes = {};
+    plans.forEach(p=>{ const k = p.modeleId || ('?' + p.modele); (groupes[k] = groupes[k] || []).push(p); });
+    Object.keys(groupes).sort((a, b)=> (groupes[a][0].modele || '').localeCompare(groupes[b][0].modele || '')).forEach(k=>{
+      const g = groupes[k].slice().sort((a, b)=> planQualite(b) - planQualite(a));
+      const m = g[0].modeleId ? ctModele(g[0].modeleId) : null;
+      const V = VICES[(m && m.vice) || g[0].vice] || {};
+      const couleur = V.couleur || '#7fd0ff';
+      html.push(`<div class="pl-modele"><div class="pl-modele-titre" style="cursor:default;">${V.emoji || '🤖'} ${htmlEsc(g[0].modele || '?')} <span class="n">· ${g.length} plan${g.length > 1 ? 's' : ''} · ${dureeCourte(fabricationDuModele(m).minutes * 60000)}</span></div>
+        <div class="pl-rail${g.length === 1 ? ' seul' : ''}">${g.map((p, idx)=>{
+          const q = planQualite(p);
+          const st = p.stats || {};
+          return `<div class="pl-carte" data-plan="${htmlEsc(p.id)}" style="cursor:pointer;">
+            <span class="coin hg"></span><span class="coin hd"></span><span class="coin bg"></span><span class="coin bd"></span>
+            <div class="pl-tete"><span>Plan nº ${idx + 1}/${g.length}</span><span>Qualité ${q >= 0 ? '+' : ''}${q.toFixed(1)} %</span></div>
+            <div class="pl-corps"><div class="pl-img">${planImageHtml(p)}</div><div class="pl-radar">${planRadarSvg(p.ecart, couleur)}</div></div>
+            <div class="pl-stats">${STATS_PLAN_COURTES.map(([c])=> `<div class="pl-stat"><span class="e">${PLAN_LIBELLES[c]}</span><span class="v">${st[c] == null ? '—' : st[c]}</span></div>`).join('')}</div>
+            <div class="pl-origine"><span>Volé sur <b>${htmlEsc(p.source || '?')}</b></span><span>▶ choisir</span></div>
+          </div>`; }).join('')}</div></div>`);
+    });
+  } else {
+    const p = atelierPlanChoisi;
+    const bilan = bilanRecette(p);
+    if (!bilan){
+      html.push(`<p class="meta">Le modèle de ce plan n'existe plus.</p><button type="button" class="btn-secondary" id="atRetour" style="width:100%;">← Retour</button>`);
+    } else {
+      const V = VICES[bilan.modele.vice] || {};
+      html.push(`<div style="border:1px solid var(--line); border-radius:10px; padding:8px 10px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;"><b>${V.emoji || '🤖'} ${htmlEsc(p.modele || '?')}</b><span class="meta">Qualité ${planQualite(p) >= 0 ? '+' : ''}${planQualite(p).toFixed(1)} % · ${dureeCourte(bilan.fab.minutes * 60000)}</span></div>
+        <div class="field-label" style="font-size:12px;">Recette</div>
+        ${bilan.lignes.map(l=> `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px dotted var(--line); ${l.ok ? '' : 'color:var(--danger);'}"><span>${l.lib}</span><span>${l.dispo} / ${l.besoin} ${l.ok ? '✔' : '✘'}</span></div>`).join('')}
+        <p class="meta" style="margin:6px 0 0; font-size:11px;">${bilan.complet ? 'Tout y est. Le plan et les composants seront consommés au lancement.' : 'Il manque des composants : boutiques, butin des combats, ou points de récolte pour les noyaux.'}</p>
+        <button type="button" class="btn-capture" id="atLancer" style="width:100%; margin-top:8px;${bilan.complet ? '' : ' opacity:.5;'}" ${bilan.complet ? '' : 'disabled'}>🔧 ${playerAtelierFile.length ? 'Ajouter à la file' : 'Lancer la fabrication'}</button>
+        <button type="button" class="btn-secondary" id="atRetour" style="width:100%; margin-top:6px;">← Choisir un autre plan</button>
+      </div>`);
+    }
+  }
+  el.innerHTML = html.join('');
+  const ok = el.querySelector('#atNouveauxOk');
+  if (ok) ok.addEventListener('click', ()=>{ playerAtelierNouveaux = []; playerDocRef.set({ atelierNouveaux: [] }, { merge:true }).catch(()=>{}); renderAtelier(); });
+  el.querySelectorAll('.pl-carte[data-plan]').forEach(c=> c.addEventListener('click', ()=>{ atelierPlanChoisi = plans.find(p=> p.id === c.dataset.plan) || null; renderAtelier(); }));
+  const ret = el.querySelector('#atRetour');
+  if (ret) ret.addEventListener('click', ()=>{ atelierPlanChoisi = null; renderAtelier(); });
+  const lancer = el.querySelector('#atLancer');
+  if (lancer) lancer.addEventListener('click', async ()=>{
+    const p = atelierPlanChoisi;
+    if (!p) return;
+    if (!(await appConfirm('Lancer la fabrication de ' + (p.modele || 'ce robot') + ' ? Le plan et les composants seront consommés.'))) return;
+    await lancerFabrication(p);
+    atelierPlanChoisi = null;
+    renderAtelier();
+  });
+}
+/* Le compte à rebours de la fabrication en cours se rafraîchit tant que l'atelier est ouvert. */
+setInterval(()=>{
+  const oa = document.getElementById('atelierOverlay');
+  if (oa && oa.classList.contains('show') && playerAtelierFile.length && !atelierPlanChoisi) renderAtelier();
+}, 30000);
 document.getElementById('plansCloseBtn').addEventListener('click', ()=> document.getElementById('plansOverlay').classList.remove('show'));
 
 function openExplorerRoom(){
@@ -27698,8 +28029,8 @@ async function importerScenario(sc){
           /* Un point « image en grand » ouvre une image plein écran : l'import
              n'en apporte aucune, il faut la poser à la main dans l'éditeur. */
           if (pt.type === 'image') journal.push('⚠️ Zone « ' + z.name + ' » : point « image en grand » — pense à y poser l\'image dans l\'éditeur');
-          if (pt.type === 'coffre' && !pt.openImageUrl && !pt.openImagePath) journal.push('⚠️ Zone « ' + z.name + ' » : coffre sans image d\'ouverture — il gardera son image fermée');
-          if (pt.type === 'coffre' && !(pt.loot||[]).some(l=>l && l.itemId) && !pt.trapEnabled && !pt.message) journal.push('⚠️ Zone « ' + z.name + ' » : coffre vide — ni objet, ni piège, ni message');
+          if (estCoffre(pt) && !pt.openImageUrl && !pt.openImagePath) journal.push('⚠️ Zone « ' + z.name + ' » : coffre sans image d\'ouverture — il gardera son image fermée');
+          if (estCoffre(pt) && !(pt.loot||[]).some(l=>l && l.itemId) && !pt.trapEnabled && !pt.message) journal.push('⚠️ Zone « ' + z.name + ' » : coffre vide — ni objet, ni piège, ni message');
           if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
           if (pt.lockItem){
             base.lockType = 'item';
@@ -27826,7 +28157,7 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
    ===================================================================================== */
 const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
 const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
-const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans'];   // points du vaisseau : hors scénario
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier'];   // points du vaisseau : hors scénario
 
 function ctrlEtapesDe(f){
   return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
@@ -27927,12 +28258,12 @@ function ctrlIndexObjets(M){
       const ou = (z.fiche.name || 'Zone') + ' · ' + ctrlNomScene(sc, variante);
       const cible = ctrlCible('zone', z.fiche.id, pt.id);
       if (pt.type === 'objet') ajouter(sources, pt.itemId, { genre:'point', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), conditions: [], zoneId: z.fiche.id, sceneId: sc.id });
-      if (pt.type === 'coffre') (pt.loot || []).forEach(l=>{ if (l && l.itemId) ajouter(sources, l.itemId, { genre:'coffre', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), chance: (l.chance == null || l.chance === '') ? 100 : +l.chance, verrou: pt.lockType, verrouObjet: pt.lockItemId, conditions: [], zoneId: z.fiche.id, sceneId: sc.id }); });
+      if (estCoffre(pt)) (pt.loot || []).forEach(l=>{ if (l && l.itemId) ajouter(sources, l.itemId, { genre:'coffre', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), chance: (l.chance == null || l.chance === '') ? 100 : +l.chance, verrou: pt.lockType, verrouObjet: pt.lockItemId, conditions: [], zoneId: z.fiche.id, sceneId: sc.id }); });
       if (pt.type === 'action'){
         if (pt.reqItemId){ ajouter(besoins, pt.reqItemId, { genre:'action', ou, cible }); ajouter(consommations, pt.reqItemId, { genre:'action', ou, cible, qty: pt.reqQty || 1 }); }
         if (pt.resultType === 'give' && pt.resultItemId) ajouter(sources, pt.resultItemId, { genre:'action', ou, cible, once: !ctrlRenouvelable(pt), renouvelable: ctrlRenouvelable(pt), conditions: [], requiert: pt.reqItemId, zoneId: z.fiche.id, sceneId: sc.id });
       }
-      if ((pt.type === 'sortie' || pt.type === 'coffre') && pt.lockType === 'item' && pt.lockItemId) ajouter(besoins, pt.lockItemId, { genre:'verrou', ou, cible });
+      if ((pt.type === 'sortie' || estCoffre(pt)) && pt.lockType === 'item' && pt.lockItemId) ajouter(besoins, pt.lockItemId, { genre:'verrou', ou, cible });
     });
   });
   M.quetes.forEach(q=>{
@@ -28222,7 +28553,7 @@ function verifierScenario(modele){
         else if (!z.scenes.some(x=> x.id === pt.targetSceneId)) dire('erreur', cp, n, 'Porte vers une scène supprimée.');
         if ((pt.openRanges || []).some(c=> c && (c.start || c.end))) dire('info', cp, n, 'Porte à créneaux horaires : fermée en dehors, même avec la clé.');
       }
-      if (pt.type === 'sortie' || pt.type === 'coffre'){
+      if (pt.type === 'sortie' || estCoffre(pt)){
         if (pt.lockType === 'item'){
           if (!pt.lockItemId) dire('avert', cp, n, 'Verrou « objet requis » sans objet choisi : la porte / le coffre s\'ouvre librement.');
           else if (!M.objetParId[pt.lockItemId]) dire('erreur', cp, n, 'Verrou sur un objet supprimé.');
@@ -28230,14 +28561,14 @@ function verifierScenario(modele){
           else {
             const srcs = IO.sources[pt.lockItemId] || [];
             const derriere = pt.type === 'sortie' ? (pt.targetSceneId ? ctrlScenesDerriere(z, pointsZ, pt.targetSceneId, sc.id) : new Set()) : new Set();
-            const toutesDerriere = srcs.length && srcs.every(s=> s.zoneId === z.fiche.id && (derriere.has(s.sceneId) || (pt.type === 'coffre' && s.cible.pointId === pt.id)));
+            const toutesDerriere = srcs.length && srcs.every(s=> s.zoneId === z.fiche.id && (derriere.has(s.sceneId) || (estCoffre(pt) && s.cible.pointId === pt.id)));
             if (toutesDerriere) dire('erreur', cp, n, nomObjet(pt.lockItemId) + ' ouvre ce verrou mais ne s\'obtient que derrière lui : cercle vicieux.');
           }
         }
         if (pt.lockType === 'code' && !String(pt.lockCode || '').trim()) dire('erreur', cp, n, 'Verrou « code » sans code réglé : impossible à ouvrir.');
         if (pt.lockType === 'code' && String(pt.lockCode || '').trim()) dire('info', cp, n, 'Code numérique « ' + pt.lockCode + ' » : vérifie qu\'un indice le donne au joueur.');
       }
-      if (pt.type === 'coffre'){
+      if (estCoffre(pt)){
         if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
         const loot = (pt.loot || []).filter(l=> l && l.itemId);
         if (!loot.length && !pt.message && !pt.trapEnabled) dire('avert', cp, n, 'Coffre vide, sans message : il dira « il n\'y a rien à l\'intérieur ».');
@@ -28261,7 +28592,7 @@ function verifierScenario(modele){
     /* objet indispensable dans une scène non reliée */
     pointsZ.forEach(({ sc, pt })=>{
       if (atteintes.has(sc.id)) return;
-      const ids = pt.type === 'objet' ? [pt.itemId] : pt.type === 'coffre' ? (pt.loot || []).map(l=> l && l.itemId) : pt.type === 'action' && pt.resultType === 'give' ? [pt.resultItemId] : [];
+      const ids = pt.type === 'objet' ? [pt.itemId] : estCoffre(pt) ? (pt.loot || []).map(l=> l && l.itemId) : pt.type === 'action' && pt.resultType === 'give' ? [pt.resultItemId] : [];
       ids.filter(Boolean).forEach(id=>{ if ((IO.besoins[id] || []).length) dire('erreur', ctrlCible('zone', z.fiche.id, pt.id), nomZ + ' · ' + ctrlNomScene(sc), nomObjet(id) + ' est requis mais se trouve dans une scène inaccessible.'); });
     });
     if (!isActiveNow(z.fiche)) dire('info', cz, nomZ, 'Zone fermée en ce moment (horaires) : le message de fermeture s\'affiche.');
@@ -28608,7 +28939,7 @@ function simJouerZone(P, e0, z, couverture, origineLibelle){
         if (!ctrlRenouvelable(pt)) s.pris[clePris(pt)] = true;
         couverture.points.add(clePris(pt));
         pile.push({ sc, etat: s, chemin: chemin + ' › action (' + nomPt + ')' });
-      } else if (pt.type === 'coffre'){
+      } else if (estCoffre(pt)){
         if (!simVerrouOuvert(pt, etat)) return;
         couverture.points.add(clePris(pt));
         const loot = (pt.loot || []).filter(l=> l && l.itemId && P.M.objetParId[l.itemId]);
@@ -28913,7 +29244,7 @@ function ctrlArbreHtml(M, R){
           let desc = pt.type || 'point';
           if (pt.type === 'pnj') desc += ' ' + (pt.linkedPnjId ? nomPnj(pt.linkedPnjId) : '?');
           if (pt.type === 'objet') desc += ' ' + nomObjet(pt.itemId);
-          if (pt.type === 'coffre') desc += ' (' + (pt.loot || []).filter(l=> l && l.itemId).map(l=> nomObjet(l.itemId) + (l.chance != null && l.chance !== '' && +l.chance < 100 ? ' ' + l.chance + ' %' : '')).join(', ') + ')';
+          if (estCoffre(pt)) desc += ' (' + (pt.loot || []).filter(l=> l && l.itemId).map(l=> nomObjet(l.itemId) + (l.chance != null && l.chance !== '' && +l.chance < 100 ? ' ' + l.chance + ' %' : '')).join(', ') + ')';
           if (pt.type === 'sortie') desc += ' → ' + (pt.targetSceneId ? ((z.scenes.find(x=> x.id === pt.targetSceneId) || {}).name || '?') : 'ferme la zone');
           if (pt.type === 'action') desc += ' (' + nomObjet(pt.reqItemId) + ' → ' + (pt.resultType === 'give' ? nomObjet(pt.resultItemId) : 'message') + ')';
           if (pt.lockType === 'item') desc += ' 🔒 ' + nomObjet(pt.lockItemId);
