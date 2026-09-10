@@ -726,11 +726,14 @@
   }
   .scene-full.show{ display:flex; }
   /* Sac accessible pendant l'exploration : soigner sans avoir à quitter la zone */
-  #sceneViewBagBtn{
+  #sceneViewBagBtn, #sceneViewFicheBtn, #sceneViewPorteBtn{
     position:absolute; right:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px));
     z-index:4100; background:rgba(0,0,0,.55); color:#fff;
     border:1px solid rgba(255,255,255,.35); border-radius:50%; width:46px; height:46px; font-size:20px;
   }
+  /* v488 : empilés au-dessus du sac, à gauche de l'écran pour ne pas le gêner */
+  #sceneViewFicheBtn{ right:auto; left:12px; }
+  #sceneViewPorteBtn{ right:auto; left:12px; bottom:calc(66px + env(safe-area-inset-bottom, 0px)); }
   /* l'inventaire doit passer AU-DESSUS de l'écran de zone (4000) */
   #inventoryOverlay{ z-index:4600; }
   .scene-imgwrap{
@@ -1271,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v486</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v488</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2666,8 +2669,9 @@
       <!-- v479 : la fonction à bord. Un recruté non combattant occupe une PORTE du vaisseau et y
            apporte sa fonction (son atelier, son dojo…). C'est elle qui s'affiche sur la porte. -->
       <div id="fonctionBlock">
-        <div class="field-label">Fonction à bord (si ce PNJ peut être recruté sans être un combattant)</div>
+        <div class="field-label">Fonction à bord (facultatif — seulement si ce PNJ peut être recruté sans être un combattant)</div>
         <select id="editFonction" class="field-input">
+          <option value="">— Aucune —</option>
           <option value="artisanat">🛠️ Artisanat (atelier)</option>
           <option value="dojo">🥋 Dojo</option>
           <option value="bibliotheque">📚 Bibliothèque</option>
@@ -2675,6 +2679,13 @@
           <option value="autre">✨ Autre</option>
         </select>
         <p class="meta" style="margin-top:4px;">Une fois recruté, il s'installe derrière une porte 🚪 libre du vaisseau et son panneau affiche cette fonction.</p>
+        <!-- v488 : l'atelier est une VRAIE zone d'exploration, créée comme les autres. La porte
+             d'habitant l'ouvre en annexe du vaisseau. Sans zone, on retombe sur l'image à plat. -->
+        <div class="field-label" style="margin-top:10px;">Atelier — zone d'exploration (facultatif)</div>
+        <select id="editAtelierZone" class="field-input">
+          <option value="">— Aucune (image à plat ci-dessous) —</option>
+        </select>
+        <p class="meta" style="margin-top:4px;">Derrière sa porte, le joueur entre dans cette zone comme dans une pièce du vaisseau : pose-y ce PNJ, ses machines, une sortie 🚪 sans destination pour revenir au couloir.</p>
       </div>
 
       <div class="field-label">Photo depuis ton téléphone</div>
@@ -3345,6 +3356,10 @@
     <div class="scene-empty" id="sceneViewEmpty">Cette zone n'a pas encore de scène configurée.</div>
   </div>
   <button class="icon-btn" id="sceneViewBagBtn" title="Sac">🎒</button>
+  <!-- v488 : dans une annexe (atelier d'un habitant), l'accès à sa fiche et au changement de
+       porte — les deux seules choses que la colonne de boutons de l'ancienne chambre apportait. -->
+  <button class="icon-btn" id="sceneViewFicheBtn" title="Fiche de l'habitant" style="display:none;">📋</button>
+  <button class="icon-btn" id="sceneViewPorteBtn" title="Changer de porte" style="display:none;">🚪</button>
   <!-- Voile du point 💚 Soin. Hors de #sceneViewImgWrap volontairement : la transition
        d'entrée en combat clone ce conteneur, on ne veut pas d'un voile dans la photo. -->
   <div id="sceneHealFlash"></div>
@@ -4169,8 +4184,14 @@ let selectedCombatRewards = new Set();
    trouver une ligne. On ouvre donc une fenêtre dédiée, avec un champ de recherche, et on
    ne garde dans la fiche que ce qui est choisi. La fenêtre est construite à la volée :
    rien à ajouter au corps du document, et elle sert à n'importe quelle liste. */
+/* v487 — en dessous de ce nombre d'entrées, la liste tient à l'écran d'un coup d'œil :
+   la barre de recherche n'apporte rien et son focus automatique ouvrirait le clavier
+   du téléphone par-dessus la liste. Elle reste dans le DOM (le code de filtrage lit
+   sa valeur vide sans broncher), simplement masquée et sans focus. */
+const SELECTEUR_SEUIL_RECHERCHE = 8;
 function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir, fermerApresChoix }){
   const dejaPris = new Set(selectionnes || []);
+  const avecRecherche = (items || []).length >= SELECTEUR_SEUIL_RECHERCHE;
   const fond = document.createElement('div');
   fond.className = 'overlay show';
   fond.style.zIndex = '5200';
@@ -4180,7 +4201,7 @@ function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir, fermerApr
         <h3 style="margin-top:0;">${titre}</h3>
         <button class="sheet-x" data-fermer>✕</button>
       </div>
-      <input type="search" class="field-input" data-recherche placeholder="Rechercher…" style="margin-bottom:8px;">
+      <input type="search" class="field-input" data-recherche placeholder="Rechercher…" style="margin-bottom:8px;${avecRecherche ? '' : ' display:none;'}">
       <div data-liste style="overflow-y:auto; flex:1;"></div>
     </div>`;
   document.body.appendChild(fond);
@@ -4220,7 +4241,7 @@ function ouvrirSelecteur({ titre, items, selectionnes, max, onChoisir, fermerApr
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
   fond.addEventListener('click', (e)=>{ if (e.target === fond) fond.remove(); });
   dessiner();
-  setTimeout(()=> champ.focus(), 50);
+  if (avecRecherche) setTimeout(()=> champ.focus(), 50);
 }
 
 /* Trois emplacements côte à côte plutôt qu'une liste à cocher : on voit d'un coup d'œil qui
@@ -7577,7 +7598,8 @@ function recruitCreatureEcrire(creature, metierId, porte){
     craftingRecipeId: null,
     craftingStartedAt: null,
     recruitType: isCombattant ? 'combattant' : 'artisan',
-    fonction: isCombattant ? null : (creature.fonction || 'artisanat'),   // v479
+    fonction: isCombattant ? null : (creature.fonction || ''),   // v479, facultatif depuis la v487
+    atelierZoneId: isCombattant ? null : (creature.atelierZoneId || null),   // v488
     porte: porte || null,                                                 // v479 : { sceneId, pointId }
     sourceCreatureId: creature.id,
     roomSlot: null, // attribué au premier passage dans le vaisseau
@@ -9656,7 +9678,8 @@ function loadForEdit(id){
   document.getElementById('editHideImmediately').checked = !!d.hideOnExitRadius;
   document.getElementById('editName').value = d.name || '';
   document.getElementById('editMetier').value = d.metier || '';
-  document.getElementById('editFonction').value = d.fonction || 'artisanat';   // v479
+  document.getElementById('editFonction').value = d.fonction || '';   // v479, facultatif depuis la v487
+  renderPnjAtelierZoneSelect(d.atelierZoneId || '');   // v488
   if (Array.isArray(d.dialogueSteps) && d.dialogueSteps.length){
     currentDialogueSteps = JSON.parse(JSON.stringify(d.dialogueSteps));
     currentDialogueSteps.forEach(s=>{ if (!s.textVariants) s.textVariants = []; });
@@ -10134,7 +10157,8 @@ function resetForm(){
   document.getElementById('imagePreview').removeAttribute('src');
   document.getElementById('editName').value = '';
   document.getElementById('editMetier').value = '';
-  document.getElementById('editFonction').value = 'artisanat';   // v479
+  document.getElementById('editFonction').value = '';   // v479, facultatif depuis la v487
+  renderPnjAtelierZoneSelect('');   // v488
   document.getElementById('editVisibilityQuest').value = '';
   document.getElementById('editVisibilityState').style.display = 'none';
   document.getElementById('editVisibilityState').value = 'not_completed';
@@ -10690,7 +10714,8 @@ document.getElementById('optionsSignOutBtn').addEventListener('click', async ()=
 document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const name = document.getElementById('editName').value.trim();
   const metier = document.getElementById('editMetier').value || '';
-  const fonction = document.getElementById('editFonction').value || 'artisanat';   // v479
+  const fonction = document.getElementById('editFonction').value || '';   // v479, facultatif depuis la v487
+  const atelierZoneId = (document.getElementById('editAtelierZone') || {}).value || null;   // v488
   const emoji = '🐾';
   const imageUrl = uploadedImageDataUrl || '';
   const visQuestId = document.getElementById('editVisibilityQuest').value;
@@ -10832,7 +10857,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, fonction, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, fonction, atelierZoneId, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -11130,6 +11155,20 @@ if (metiersCol){
     renderRecipeMetiers();
     if (document.getElementById('dialogueStepsBuilder')) renderDialogueBuilder();
   });
+}
+/* v488 — les zones qu'un artisan peut désigner comme atelier : toutes les zones d'exploration,
+   sauf les modèles de vaisseau (une coque n'est pas un atelier) et la fiche elle-même. */
+function renderPnjAtelierZoneSelect(valeur){
+  const sel = document.getElementById('editAtelierZone');
+  if (!sel) return;
+  const voulu = (valeur !== undefined) ? (valeur || '') : (sel.value || '');
+  const zones = toutesLesFiches()
+    .filter(f=> (f.interactionType || '') === 'zone' && !ficheEstModeleVaisseau(f) && f.id !== editingId)
+    .sort((a, b)=> (a.name || '').localeCompare(b.name || ''));
+  sel.innerHTML = '<option value="">— Aucune (image à plat ci-dessous) —</option>'
+    + zones.map(z=> `<option value="${z.id}">${z.name || '(sans nom)'}${z.enTravaux ? ' 🚧' : ''}</option>`).join('');
+  sel.value = voulu;
+  if (sel.value !== voulu) sel.value = '';   // zone supprimée depuis : on ne garde pas un id mort
 }
 function renderPnjMetierSelect(){
   const sel = document.getElementById('editMetier');
@@ -11729,6 +11768,22 @@ document.getElementById('inventoryBtn').addEventListener('click', ()=>{
   document.getElementById('inventorySearch').value = '';
   renderInventory();
   document.getElementById('inventoryOverlay').classList.add('show');
+});
+/* v488 — les boutons de l'annexe */
+document.getElementById('sceneViewFicheBtn').addEventListener('click', ()=>{
+  if (!sceneViewAnnexe || isGhostTap()) return;
+  const r = recruits.find(x=> x.id === sceneViewAnnexe.recruitId);
+  if (!r){ showToast('Cet habitant n\'est plus à bord'); return; }
+  document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+  openRecruitSheet(r.id, null);
+});
+document.getElementById('sceneViewPorteBtn').addEventListener('click', ()=>{
+  if (!sceneViewAnnexe || isGhostTap()) return;
+  const r = recruits.find(x=> x.id === sceneViewAnnexe.recruitId);
+  if (!r){ showToast('Cet habitant n\'est plus à bord'); return; }
+  /* Le déplacement se fait dans le couloir : on y retourne, puis on lance le mode. */
+  revenirAuVaisseauDepuisAnnexe();
+  commencerDeplacement(r);
 });
 document.getElementById('sceneViewBagBtn').addEventListener('click', ()=>{
   inventoryPage = 0;
@@ -17856,7 +17911,12 @@ function teinteEcranDuVaisseau(){
 /* Des glyphes au trait plutôt que des emojis de couleur : sur un décor de console, un emoji
    trahit tout de suite l'application. Ils prennent la teinte de l'écran. */
 const MT_GLYPHES = {
-  rapport: '<path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/>',
+  /* v487 — une feuille de résultats à coin corné, avec deux lignes cochées : lisible en petit
+     et impossible à confondre avec l'enveloppe d'une mission proposée. */
+  rapport: '<path d="M6 3h8.5L19 7.5V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>'
+         + '<path d="M14.5 3v4.5H19"/>'
+         + '<path d="M7.8 12.4l1.3 1.3 2.2-2.4"/><path d="M13.2 12.6h3.3"/>'
+         + '<path d="M7.8 17.1l1.3 1.3 2.2-2.4"/><path d="M13.2 17.3h3.3"/>',
   /* v485 : plus de pastille DESSINÉE dans l'enveloppe. Le non-lu est déjà signalé par la
      vraie pastille posée sur la vignette, elle qui sait s'éteindre une fois le courrier ouvert.
      Celle-ci faisait partie du trait, donc restait allumée à jamais. */
@@ -19175,7 +19235,7 @@ function sceneDeSoinDuVaisseau(){
 function ramenerAInfirmerie(){
   /* On quitte la zone, puis on REMONTE À BORD : être vaincu ramène chez soi, pas sur la
      carte. C'est ensuite au joueur de ressortir quand il se sent prêt. */
-  if (document.getElementById('sceneViewFull').classList.contains('show') && !sceneViewIsShip){
+  if (document.getElementById('sceneViewFull').classList.contains('show') && !aBord()){
     clearCurrentZoneScene();
   }
   soignerToutLeMondeInstantanement();
@@ -21920,7 +21980,8 @@ const FONCTIONS_HABITANT = [
   { id:'autre',        label:'' },
 ];
 function fonctionLabel(id){
-  const f = FONCTIONS_HABITANT.find(x=> x.id === (id || 'artisanat'));
+  if (!id) return '';   // v487 : « aucune fonction » est un cas normal, pas un artisan par défaut
+  const f = FONCTIONS_HABITANT.find(x=> x.id === id);
   return f ? f.label : '';
 }
 function estHabitantAPorte(r){ return !!r && r.recruitType !== 'combattant'; }
@@ -21932,9 +21993,11 @@ function habitantDeLaPorte(pointId){
    le prénom en petit ; « Libre » en terne sur une porte vide. */
 function texteHolo(occupant){
   if (!occupant) return { l1:'Libre', l2:'', libre:true };
-  const fonction = occupant.fonction || 'artisanat';
+  const fonction = occupant.fonction || '';
   let l1 = fonctionLabel(fonction);
-  if (fonction === 'artisanat'){ const m = metierNom(occupant); if (m) l1 = m; }
+  /* v487 — sans fonction déclarée, le métier prend le relais s'il y en a un ; sinon c'est le
+     prénom qui passe en gros sur le panneau. Une porte occupée n'affiche jamais rien. */
+  if (!fonction || fonction === 'artisanat'){ const m = metierNom(occupant); if (m) l1 = m; }
   if (!l1) l1 = occupant.name || 'Habitant';
   const l2 = (l1 === occupant.name) ? '' : (occupant.name || '');
   return { l1, l2, libre:false };
@@ -22036,6 +22099,16 @@ function toucherPorteHabitant(pt){
 
 function openRecruitRoom(hab){
   const pasAmenagee = ()=> showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
+  /* v488 — un habitant dont la fiche désigne un atelier-zone y entre directement. On relit la
+     fiche d'abord (l'auteur peut avoir changé de zone après le recrutement), le recruté ensuite. */
+  const zoneAnnexe = ()=>{
+    const f = hab.sourceCreatureId ? ficheParId(hab.sourceCreatureId) : null;
+    return (f && f.atelierZoneId) || hab.atelierZoneId || null;
+  };
+  if (estHabitantAPorte(hab)){
+    const zid = zoneAnnexe();
+    if (zid){ ouvrirAnnexeDuVaisseau(hab, zid); return; }
+  }
   /* v475 : un robot FABRIQUÉ à l'atelier ne vient d'aucune fiche de PNJ — `sourceCreatureId`
      est nul, et l'ancienne version s'arrêtait là, porte close. La chambre est désormais portée
      par le MODÈLE de robot : tous les exemplaires d'un même modèle partagent le même décor,
@@ -24770,6 +24843,37 @@ let lastZoneExitId = null, lastZoneExitAt = 0;
 const ZONE_REENTRY_COOLDOWN_MS = 3000;
 let sceneViewScenes = [];
 let sceneViewIsShip = false;
+/* v488 — une ANNEXE du vaisseau : une zone d'exploration ouverte depuis une porte d'habitant.
+   Elle se joue avec tout l'éditeur de scènes, mais se comporte comme une pièce du bord — pas
+   de rencontre, pas de sauvegarde de position, entrée toujours permise — et sa sortie ramène
+   au couloir, à la scène d'où l'on vient. `null` hors annexe. */
+let sceneViewAnnexe = null;   // { recruitId, retourSceneId }
+function aBord(){ return sceneViewIsShip || !!sceneViewAnnexe; }
+function revenirAuVaisseauDepuisAnnexe(){
+  const a = sceneViewAnnexe;
+  sceneViewAnnexe = null;
+  if (!shipZoneId){ document.getElementById('sceneViewFull').classList.remove('show'); return; }
+  armGhostTapGuard(400);
+  openSceneView({ id: shipZoneId, name: nomDuVaisseauActif() }, (a && a.retourSceneId) || null, { isShip:true });
+}
+function ouvrirAnnexeDuVaisseau(hab, zoneId){
+  const z = ficheParId(zoneId);
+  if (!z){ showToast('L\'atelier de ' + hab.name + ' n\'existe plus'); return; }
+  document.getElementById('quartersOverlay').classList.remove('show');
+  showToast('🛠️ Atelier de ' + hab.name);
+  const retour = sceneViewIsShip ? sceneViewCurrentSceneId : null;
+  openSceneView({ id: zoneId, name: z.name || hab.name }, null, { annexe: { recruitId: hab.id, retourSceneId: retour } });
+}
+/* Les deux boutons de l'annexe : la fiche du recruté (équipement, renvoi) et le changement de
+   porte. Ils remplacent la colonne de boutons de l'ancienne chambre à plat. */
+function rendreBoutonsAnnexe(){
+  const fiche = document.getElementById('sceneViewFicheBtn');
+  const porte = document.getElementById('sceneViewPorteBtn');
+  if (!fiche || !porte) return;
+  const visible = !!sceneViewAnnexe;
+  fiche.style.display = visible ? '' : 'none';
+  porte.style.display = visible ? '' : 'none';
+}
 let sceneViewCurrentSceneId = null;
 let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
 let sceneViewPointState = {}; // état partagé de la zone (modes once/timed) : { [pointId]: { takenAt } }
@@ -24836,6 +24940,8 @@ function zoneComporteDesCombats(zone){
 }
 function openSceneView(creature, resumeSceneId, opts){
   sceneViewIsShip = !!(opts && opts.isShip);
+  sceneViewAnnexe = (opts && opts.annexe) ? opts.annexe : null;   // v488
+  rendreBoutonsAnnexe();
   annulerDeplacement(true);   // v479 : un déplacement ne survit pas à un changement de lieu
   /* En montant à bord, on annonce les rapports qui attendent. Différé d'un instant : la scène
      doit être là derrière, sinon la fenêtre s'ouvre sur du vide. */
@@ -24861,7 +24967,7 @@ function openSceneView(creature, resumeSceneId, opts){
     }
     /* On refuse l'entrée AVANT d'afficher quoi que ce soit, et seulement pour les zones où l'on
        risque une rencontre : une zone purement narrative reste visitable les mains vides. */
-    if (!sceneViewIsShip && zoneComporteDesCombats(norm) && !equipeApteAuCombat()){
+    if (!aBord() && zoneComporteDesCombats(norm) && !equipeApteAuCombat()){
       document.getElementById('sceneViewFull').classList.remove('show');
       const aucun = !recruits.some(r=> r.recruitType === 'combattant');
       /* v456 : trois cas distincts. Envoyer au Soin quelqu'un dont l'équipe n'a pas de modèle
@@ -24882,7 +24988,7 @@ function openSceneView(creature, resumeSceneId, opts){
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
-    if (!sceneViewIsShip){
+    if (!aBord()){
       saveCurrentZoneScene();
       if (!resumeSceneId) rollSceneEncounter();
     }
@@ -24981,7 +25087,10 @@ async function renderSceneViewCurrentScene(){
             sceneViewCurrentSceneId = pt.targetSceneId;
             agressionsJouees = new Set();   // nouvelle pièce, nouveaux agresseurs
             renderSceneViewCurrentScene();
-            if (!sceneViewIsShip){ saveCurrentZoneScene(); rollSceneEncounter(); }
+            if (!aBord()){ saveCurrentZoneScene(); rollSceneEncounter(); }
+          } else if (sceneViewAnnexe){
+            /* v488 : dans une annexe, une sortie sans destination ramène au couloir du vaisseau. */
+            revenirAuVaisseauDepuisAnnexe();
           } else {
             document.getElementById('sceneViewFull').classList.remove('show');
             if (!combatState) await clearSavedCombat();
@@ -25319,6 +25428,12 @@ async function getScenePnjInfo(sc){
       partis.add(doc.id); // par joueur : recruté par toi
     }
   });
+  /* v488 — dans une annexe, l'habitant est CHEZ LUI : sa fiche est bien recrutée, mais c'est
+     justement pour ça qu'on le trouve dans son atelier. On ne le cache pas. */
+  if (sceneViewAnnexe){
+    const occ = recruits.find(r=> r.id === sceneViewAnnexe.recruitId);
+    if (occ && occ.sourceCreatureId) partis.delete(occ.sourceCreatureId);
+  }
   return { partis, fiches };
 }
 
@@ -25350,7 +25465,7 @@ let fermetureEnCours = false;
 async function verifierFermetureZone(){
   const plein = document.getElementById('sceneViewFull');
   if (!plein || !plein.classList.contains('show')) return;
-  if (sceneViewIsShip || fermetureEnCours || !sceneViewCreature) return;
+  if (aBord() || fermetureEnCours || !sceneViewCreature) return;
   if (isActiveNow(sceneViewCreature)) return;
   fermetureEnCours = true;
   try {
@@ -25364,6 +25479,8 @@ setInterval(verifierFermetureZone, 15000);
 /* Sortir d'une zone, par sa porte. Les contrôles vivent ici plutôt que sur un bouton de
    fenêtre : c'est le geste du joueur qui compte, quel que soit l'endroit d'où il part. */
 async function quitterLaZoneCourante(){
+  /* v488 : la sortie de zone d'une annexe ramène au couloir, jamais sur la carte. */
+  if (sceneViewAnnexe){ revenirAuVaisseauDepuisAnnexe(); return true; }
   /* On ne descend pas du vaisseau les mains vides : dehors il y a des combats, et sans
      personne en état de se battre le joueur ne pourrait rien faire — il l'a déjà vécu. */
   if (sceneViewIsShip && !equipeApteAuCombat()){
@@ -26685,7 +26802,7 @@ function saveCurrentZoneScene(){
      ECRASAIT `currentZoneId` — et la zone que le joueur explorait vraiment était perdue pour
      la reprise. De toute façon le vaisseau est le point de départ par défaut : il n'y a rien
      à mémoriser pour y revenir. */
-  if (sceneViewIsShip) return;
+  if (aBord()) return;
   db.collection('players').doc(currentUser.uid).set({
     currentZoneId: sceneViewCreature.id, currentSceneId: sceneViewCurrentSceneId, zoneSavedAt: Date.now()
   }, { merge:true }).catch(()=>{});
@@ -26849,6 +26966,8 @@ function fermerLeVaisseauPourReprise(){
   const el = document.getElementById('sceneViewFull');
   if (el) el.classList.remove('show', 'reveal');
   sceneViewIsShip = false;
+  sceneViewAnnexe = null;   // v488
+  rendreBoutonsAnnexe();
 }
 let repriseAbandonnee = false;
 async function abandonnerRepriseBloquee(message){
@@ -26930,7 +27049,7 @@ async function tryResumeSession(forcer){
      session en cours : sinon un vaisseau ouvert au démarrage interdit toute reprise. Une VRAIE
      exploration, elle, reste intouchable. */
   if (document.getElementById('sceneViewFull').classList.contains('show')){
-    if (!sceneViewIsShip) return;                 // vraie exploration : on n'y touche pas
+    if (!aBord()) return;                          // vraie exploration : on n'y touche pas
     journal('reprise', 'vaisseau refermé', 'il occupait la place de la reprise', true);
     fermerLeVaisseauPourReprise();
   }
@@ -27667,7 +27786,7 @@ document.getElementById('combatEndCloseBtn').addEventListener('click', async ()=
       document.getElementById('sceneViewFull').classList.add('show');
       await renderSceneViewCurrentScene();
     } else if (result === 'defeat'){
-      if (auraUnMotDeLaFin && !sceneViewIsShip){
+      if (auraUnMotDeLaFin && !aBord()){
         /* On laisse le vaincu dire son mot dans le décor, puis la sortie se fait à la
            fermeture — soit par l'infirmerie si l'équipe est à terre, soit tout court. */
         document.getElementById('sceneViewFull').classList.add('show');
