@@ -1271,7 +1271,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v480</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v481</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2845,6 +2845,10 @@
               <input type="number" id="editVaisseauPrix" class="field-input" min="0" value="0">
             </div>
           </div>
+          <div class="field-label" style="margin-top:10px;">🖥️ Teinte de l'écran du capitaine</div>
+          <p class="meta" style="margin:0 0 6px;">La couleur lumineuse du terminal de missions à bord de ce vaisseau. Deux modèles n'ont pas le même écran.</p>
+          <input type="color" id="editVaisseauTeinte" class="field-input" value="#5ff2ff" style="height:42px; padding:2px;">
+
           <div class="field-label" style="margin-top:10px;">🧩 Matériaux demandés en plus du prix</div>
           <p class="meta" style="margin:0 0 6px;">Laisse vide pour un vaisseau qui s'achète simplement.</p>
           <div id="vaisseauMateriauxList"></div>
@@ -3397,6 +3401,35 @@
      vaisseau, avec un point 💚 Soin dedans. -->
 
 <!-- Terminal de missions : le même écran que l'onglet de la Base, posé sur un décor de console -->
+<style>
+/* v481 — l'écran du capitaine. Tout ce qui est lumineux prend la teinte --mt, réglée sur la
+   fiche du modèle de vaisseau : deux vaisseaux n'ont pas le même écran. */
+#missionTerminalFrame{ --mt: #5ff2ff; }
+#missionTerminalFrame .mt-glyph{ width:13px; height:13px; display:block; color:var(--mt);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--mt) 55%, transparent)); }
+#missionTerminalFrame .mt-lum{ color:var(--mt);
+  text-shadow: 0 0 5px color-mix(in srgb, var(--mt) 45%, transparent); }
+/* Allumage : la lumière monte, un balayage descend une fois. Extinction : l'image se replie
+   sur une ligne, comme un vieux tube. Les deux passent par le même voile. */
+@keyframes mtOn   { 0%{ opacity:1; } 100%{ opacity:0; } }
+@keyframes mtSweep{ 0%{ transform:translateY(-100%); } 100%{ transform:translateY(400%); } }
+@keyframes mtOff  { 0%{ opacity:0; } 45%{ opacity:.85; } 100%{ opacity:1; } }
+@keyframes mtCrush{ 0%{ transform:scaleY(1); filter:brightness(1); }
+                    70%{ transform:scaleY(.06); filter:brightness(2.2); }
+                    100%{ transform:scaleY(.004); filter:brightness(3); } }
+#missionTerminalFrame.mt-boot #mtVeil{ background:var(--mt); animation: mtOn .42s ease-out forwards; }
+#missionTerminalFrame.mt-boot::after{ content:''; position:absolute; left:0; right:0; top:0;
+  height:22%; pointer-events:none;
+  background:linear-gradient(to bottom, transparent, color-mix(in srgb, var(--mt) 30%, transparent), transparent);
+  animation: mtSweep .55s linear 1 forwards; }
+#missionTerminalFrame.mt-shutdown{ animation: mtCrush .3s ease-in forwards; transform-origin:center; }
+#missionTerminalFrame.mt-shutdown #mtVeil{ background:var(--mt); animation: mtOff .3s ease-in forwards; }
+/* Le bouton d'extinction est sur le châssis, sous l'image : c'est un objet, pas une croix. */
+#mtPowerBtn{ position:absolute; left:50%; transform:translateX(-50%); bottom:.6%;
+  display:flex; align-items:center; gap:5px; background:rgba(0,0,0,.5); color:var(--mt);
+  border:1px solid color-mix(in srgb, var(--mt) 45%, transparent); border-radius:999px;
+  padding:3px 12px; font:inherit; font-size:11px; font-weight:800; letter-spacing:.05em; }
+</style>
 <div class="overlay" id="missionTerminalOverlay" style="z-index:4550; align-items:center; justify-content:center; background:rgba(0,0,0,.82); padding:2px; overflow:auto;">
   <!-- Le décor est découpé en trois : un haut et un bas de proportions fixes, et un milieu qui
        s'étire pour contenir le courrier. C'est ce qui donne le même rendu sur tous les écrans :
@@ -3408,6 +3441,9 @@
        puisqu'elles sont en % du cadre, qui épouse exactement l'image. -->
   <div id="missionTerminalFrame" style="position:relative; width:100%; max-width:560px; flex:none;">
     <img id="missionTerminalBg" alt="" style="width:100%; height:auto; display:block; pointer-events:none;">
+    <!-- v481 : le voile d'allumage/extinction. Il couvre l'écran le temps de l'animation puis
+         se retire ; il ne prend jamais le doigt du joueur. -->
+    <div id="mtVeil" style="position:absolute; inset:0; pointer-events:none; opacity:0;"></div>
     <div id="mtZone-titre" style="position:absolute; overflow:hidden; display:flex; align-items:center; justify-content:center;"></div>
     <div id="mtZone-case1" style="position:absolute; overflow:hidden;"></div>
     <div id="mtZone-case2" style="position:absolute; overflow:hidden;"></div>
@@ -3416,7 +3452,7 @@
     <div id="mtZone-entete" style="position:absolute; overflow:hidden; display:flex; align-items:center;"></div>
     <div id="mtZone-lecture" style="position:absolute; overflow-y:auto;"></div>
     <div id="mtZone-pied" style="position:absolute; overflow:hidden; display:flex; align-items:center; gap:6px;"></div>
-    <button class="sheet-x" id="missionTerminalCloseBtn" style="position:absolute; top:1%; right:2%; background:rgba(0,0,0,.45); color:#fff; border:none;">✕</button>
+    <button type="button" id="mtPowerBtn"><svg class="mt-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v9"/><path d="M18.4 6.4a9 9 0 1 1-12.8 0"/></svg>ÉTEINDRE</button>
   </div>
 </div>
 
@@ -9569,6 +9605,7 @@ function loadForEdit(id){
   document.getElementById('editVaisseauNom').value = (vz && vz.nom) || '';
   document.getElementById('editVaisseauEmplacements').value = (vz && typeof vz.emplacements === 'number') ? vz.emplacements : 2;
   document.getElementById('editVaisseauPrix').value = (vz && typeof vz.prix === 'number') ? vz.prix : 0;
+  document.getElementById('editVaisseauTeinte').value = (vz && vz.teinteEcran) || MT_TEINTE_DEFAUT;
   currentVaisseauMateriaux = (vz && Array.isArray(vz.materiaux)) ? vz.materiaux.map(x=>({ itemId: x.itemId || '', qty: Math.max(1, parseInt(x.qty, 10) || 1) })) : [];
   renderVaisseauMateriaux();
   /* v444 : plus d'allumage inconditionnel des boutons de scène ici — c'est `majBlocsSelonType`
@@ -10601,6 +10638,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
     nom: document.getElementById('editVaisseauNom').value.trim(),
     emplacements: Math.max(0, parseInt(document.getElementById('editVaisseauEmplacements').value, 10) || 0),
     prix: Math.max(0, parseInt(document.getElementById('editVaisseauPrix').value, 10) || 0),
+    teinteEcran: document.getElementById('editVaisseauTeinte').value || MT_TEINTE_DEFAUT,
     materiaux: currentVaisseauMateriaux.filter(x=> x.itemId).map(x=>({ itemId: x.itemId, qty: Math.max(1, parseInt(x.qty, 10) || 1) })),
   } : null;
   ficheModifiee = false;   // ce qui suit part en base : il n'y a plus rien à perdre
@@ -17730,6 +17768,25 @@ const MT_ZONES = [
   { id:'pied',    nom:'Barre du bas',          defaut:{ x:12, y:88, w:76, h:6  } },
 ];
 const MT_CASES = ['case1','case2','case3','case4'];
+/* v481 : la teinte de l'écran. Chaque modèle de vaisseau peut avoir la sienne ; celle-ci sert
+   quand la fiche n'en porte pas (vaisseau ancien, ou champ laissé vide). */
+const MT_TEINTE_DEFAUT = '#5ff2ff';
+function teinteEcranDuVaisseau(){
+  const f = (typeof shipZoneId !== 'undefined' && shipZoneId) ? ficheParId(shipZoneId) : null;
+  return (f && f.vaisseau && f.vaisseau.teinteEcran) || MT_TEINTE_DEFAUT;
+}
+/* Des glyphes au trait plutôt que des emojis de couleur : sur un décor de console, un emoji
+   trahit tout de suite l'application. Ils prennent la teinte de l'écran. */
+const MT_GLYPHES = {
+  rapport: '<path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/>',
+  nouveau: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/><circle cx="19" cy="6" r="3" fill="currentColor" stroke="none"/>',
+  encours: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  veille:  '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+};
+function mtGlyphe(kind){
+  return '<svg class="mt-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'
+    + (MT_GLYPHES[kind] || '') + '</svg>';
+}
 let mtPage = 0;
 let missionTerminalZones = {};
 MT_ZONES.forEach(z=> missionTerminalZones[z.id] = Object.assign({}, z.defaut));
@@ -18017,16 +18074,22 @@ function renderMissionTerminal(){
   /* Une entrée de liste par mission : d'abord ceux qui sont rentrés, puis le courrier du jour,
      puis les missions en cours. C'est l'ordre dans lequel le joueur a quelque chose à faire. */
   const entrees = [
-    ...rentres.map(x=> ({ id:x.id, m:x.m, etat:'📬 Rapport', run:x.run })),
-    ...dispo.map(m=> ({ id:m.id, m, etat:'✉️ Nouveau' })),
-    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, etat:'⏳ ' + formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
+    ...rentres.map(x=> ({ id:x.id, m:x.m, kind:'rapport', etat:'Rapport', run:x.run })),
+    ...dispo.map(m=> ({ id:m.id, m, kind:'nouveau', etat:'Nouveau' })),
+    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
   ];
   if (!entrees.some(e=> e.id === missionTerminalSelectedId)) {
     missionTerminalSelectedId = entrees.length ? entrees[0].id : null;
   }
   const choisie = entrees.find(e=> e.id === missionTerminalSelectedId) || null;
 
-  zTitre.innerHTML = `<span style="font-size:12px; font-weight:800; letter-spacing:.06em; opacity:.75;">COURRIER DU VAISSEAU</span>`;
+  /* v481 : la bande de titre devient la barre d'état de l'écran — le vaisseau à gauche, l'heure
+     à droite. L'heure sert vraiment : elle dit si le concessionnaire trouvé est ouvert. */
+  const maintenant = new Date();
+  const hh = String(maintenant.getHours()).padStart(2,'0') + ':' + String(maintenant.getMinutes()).padStart(2,'0');
+  zTitre.style.justifyContent = 'space-between';
+  zTitre.innerHTML = `<span class="mt-lum" style="font-size:11px; font-weight:800; letter-spacing:.06em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-left:6px;">${nomDuVaisseauActif()}</span>`
+    + `<span class="mt-lum" style="font-size:11px; font-weight:800; letter-spacing:.04em; flex:none; padding-right:6px;">${hh}</span>`;
 
   /* Chaque courrier occupe une case du décor. Au-delà de quatre, on tourne les pages. */
   const pages = Math.max(1, Math.ceil(entrees.length / MT_CASES.length));
@@ -18039,8 +18102,9 @@ function renderMissionTerminal(){
     if (!e){ box.innerHTML = ''; return; }
     const actif = (e.id === missionTerminalSelectedId);
     box.innerHTML = `<button type="button" data-mt-pick="${e.id}" style="display:flex; align-items:center; gap:6px; width:100%; height:100%; text-align:left; background:${actif ? 'rgba(0,0,0,.09)' : 'transparent'}; border:none; border-radius:6px; padding:0 8px; font:inherit;">
-      <span style="flex:none; font-size:12px;">${e.etat.split(' ')[0]}</span>
+      <span style="flex:none;">${mtGlyphe(e.kind)}</span>
       <span style="flex:1; min-width:0; font-size:12px; font-weight:${actif ? '800' : '600'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${e.m.name || '(sans nom)'}</span>
+      ${e.kind === 'encours' ? `<span class="mt-lum" style="flex:none; font-size:10px; font-weight:700;">${e.etat}</span>` : ''}
     </button>`;
     box.querySelector('[data-mt-pick]').addEventListener('click', ()=>{
       if (isGhostTap()) return;
@@ -18052,8 +18116,26 @@ function renderMissionTerminal(){
   });
 
   if (!choisie){
-    zEntete.innerHTML = entrees.length ? '' : `<span class="meta" style="font-size:11px;">Aucun courrier aujourd'hui.</span>`;
-    zLecture.innerHTML = '';
+    /* v481 — l'écran au repos. C'est l'état le plus fréquent : il ne montre que ce qui avance
+       tout seul pendant que le joueur fait autre chose. Rien de décoratif. */
+    const jour = maintenant.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+    const partis = Object.keys(playerMissionRuns)
+      .map(id=> ({ run: playerMissionRuns[id], m: missionTemplates.find(x=> x.id === id) }))
+      .filter(x=> x.m && !missionIsBack(x.run));
+    const prochain = partis.slice().sort((a,b)=> missionRemainingMs(a.run) - missionRemainingMs(b.run))[0];
+    const nomDe = (run)=>{ const r = recruits.find(x=> x.id === run.recruitId); return r ? r.name : 'Un combattant'; };
+    const ligne = (texte)=> `<div class="mt-lum" style="font-size:11px; font-weight:700; margin-top:5px;">${texte}</div>`;
+    zEntete.innerHTML = '';
+    zLecture.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="flex:none;">${mtGlyphe('veille')}</span>
+        <span class="mt-lum" style="font-size:12px; font-weight:800; letter-spacing:.04em;">${jour.charAt(0).toUpperCase() + jour.slice(1)}</span>
+      </div>
+      ${partis.length
+        ? ligne(`${partis.length} en mission` + (prochain ? ` · ${nomDe(prochain.run)} rentre dans ${formatRemainingDuration(missionRemainingMs(prochain.run))}` : ''))
+        : ligne('Personne en mission')}
+      ${ligne('Aucune recherche en cours')}
+      <div class="meta" style="font-size:10px; margin-top:8px; opacity:.6;">${entrees.length ? 'Choisis un courrier ci-dessus.' : 'Pas de courrier.'}</div>`;
     zPied.innerHTML = '';
   } else {
     const m = choisie.m;
@@ -18073,7 +18155,7 @@ function renderMissionTerminal(){
     const bouton = (attr, texte, couleur)=>
       `<button type="button" ${attr} style="flex:1; height:100%; background:transparent; border:none; font:inherit; font-size:13px; font-weight:800; color:${couleur}; letter-spacing:.02em;">${texte}</button>`;
     if (choisie.run && missionIsBack(choisie.run)){
-      zPied.innerHTML = bouton(`data-mt-report="${choisie.id}"`, '📬 Lire le rapport', 'var(--accent)');
+      zPied.innerHTML = bouton(`data-mt-report="${choisie.id}"`, 'Lire le rapport', 'var(--accent)');
     } else if (choisie.run){
       zPied.innerHTML = bouton(`data-mt-cancel="${choisie.id}"`, 'Rappeler', 'var(--danger)');
     } else {
@@ -21242,15 +21324,37 @@ function openMissionTerminal(){
     return;
   }
   document.getElementById('missionTerminalBg').src = missionTerminalImage;
+  const frame = document.getElementById('missionTerminalFrame');
+  /* v481 : l'écran s'allume tout seul — pas de clic pour rien. C'est l'animation, et non un
+     bouton, qui dit qu'on a affaire à un appareil. Seule l'extinction demande un geste. */
+  if (frame){
+    frame.style.setProperty('--mt', teinteEcranDuVaisseau());
+    frame.classList.remove('mt-shutdown', 'mt-boot');
+    void frame.offsetWidth;              // force le navigateur à rejouer l'animation
+    frame.classList.add('mt-boot');
+    setTimeout(()=> frame.classList.remove('mt-boot'), 620);
+  }
   document.getElementById('missionTerminalOverlay').classList.add('show');
   armGhostTapGuard(400);
   applyMissionTerminalFrame();
   renderMissionTracker();
 }
+function fermerMissionTerminal(){
+  const ov = document.getElementById('missionTerminalOverlay');
+  const frame = document.getElementById('missionTerminalFrame');
+  if (!ov) return;
+  if (!frame){ ov.classList.remove('show'); armGhostTapGuard(400); return; }
+  frame.classList.add('mt-shutdown');
+  setTimeout(()=>{
+    frame.classList.remove('mt-shutdown');
+    ov.classList.remove('show');
+    armGhostTapGuard(400);
+  }, 300);
+}
 
-document.getElementById('missionTerminalCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('missionTerminalOverlay').classList.remove('show');
-  armGhostTapGuard(400);
+document.getElementById('mtPowerBtn').addEventListener('click', ()=>{
+  if (isGhostTap()) return;
+  fermerMissionTerminal();
 });
 function openQuarters(){
   renderQuartersList();
