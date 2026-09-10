@@ -1271,7 +1271,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v485</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v486</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1659,6 +1659,13 @@
       <input type="number" id="missionsPerDayInput" class="field-input" min="1" max="10" step="1" placeholder="4">
       <button class="btn-secondary" id="saveMissionsPerDayBtn" style="flex:1;">Enregistrer</button>
     </div>
+    <div class="field-label" style="margin-top:14px;">🔎 Durée d'une recherche (heures)</div>
+    <div style="display:flex; gap:6px;">
+      <input type="number" id="searchHoursInput" class="field-input" min="1" max="72" step="1" placeholder="8">
+      <button class="btn-secondary" id="saveSearchHoursBtn" style="flex:1;">Enregistrer</button>
+    </div>
+    <p class="meta" style="margin:4px 0 0;">Le temps que met l'assistante du capitaine à répondre. Une seule recherche à la fois : c'est le choix qui coûte, pas l'argent.</p>
+    <button class="btn-secondary" id="finishSearchBtn" style="width:100%; margin-top:6px;">⏩ Conclure ma recherche tout de suite</button>
     <button class="btn-secondary" id="toggleMissionChanceBtn" style="width:100%; margin-top:6px;">👁️ Afficher domaine et % (équilibrage)</button>
     <p class="meta" style="margin:4px 0 0;">Les joueurs ne voient ni le domaine ni le pourcentage : ils doivent lire le courrier pour deviner quel profil envoyer.</p>
 
@@ -5057,7 +5064,7 @@ function renderDialogueBuilder(){
     cBar.appendChild(b);
   });
   const addChoiceBtn = dlgPill('➕ Choix', false, ()=>{
-    step.choices.push({ id:newChoiceId(), label:'', next:null, itemGrant:null, recruit:null, questGive:null, questValidate:null, showIf:null, once:false });
+    step.choices.push({ id:newChoiceId(), label:'', next:null, itemGrant:null, recruit:null, recherche:false, questGive:null, questValidate:null, showIf:null, once:false });
     dlgChoiceIdx = step.choices.length - 1;
     renderDialogueBuilder();
   });
@@ -5614,6 +5621,12 @@ function fenetreEffetsReponse(ch){
       ouvrirSelecteur({ titre:'Quelle quête valider ?', items: quests.map(q=> ({ id:q.id, label:q.name, emoji:'✅' })),
         selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.questValidate = { questId: ids[0] }; dessiner(); } });
     });
+    /* v486 — la capacité propre à l'assistante du capitaine. C'est un effet de choix comme
+       un autre : n'importe quel PNJ pourrait l'avoir, mais dans les faits c'est elle. */
+    ligne('🔎 Lancer une recherche', ch.recherche ? 'oui' : 'non', ()=>{
+      ch.recherche = !ch.recherche;
+      dessiner();
+    });
     const nomMetier = (m)=> !m ? 'sans métier' : ((metiers.find(x=> x.id === m) || {}).name || 'métier supprimé');
     ligne('🤝 Le recruter', ch.recruit ? nomMetier(ch.recruit.metierId) : 'non', ()=>{
       if (ch.recruit){ ch.recruit = null; dessiner(); return; }
@@ -6062,6 +6075,7 @@ function renderDialogueParcours(wrap){
     const effets = [];
     if (ch.itemGrant && ch.itemGrant.itemName) effets.push('🎁 ' + ch.itemGrant.itemName);
     if (ch.recruit) effets.push('🤝 recrutement');
+    if (ch.recherche) effets.push('🔎 recherche');
     if (ch.questGive) effets.push('📜 quête');
     if (ch.questValidate) effets.push('✅ quête validée');
     if (ch.combat) effets.push('⚔️ combat');
@@ -6176,6 +6190,7 @@ function renderDialogueScript(wrap){
     const p = [];
     if (ch.itemGrant && ch.itemGrant.itemName) p.push('🎁 ' + ch.itemGrant.itemName);
     if (ch.recruit) p.push('🤝 recrutement');
+    if (ch.recherche) p.push('🔎 recherche');
     if (ch.questGive) p.push('📜 donne une quête');
     if (ch.questValidate) p.push('✅ valide une quête');
     if (ch.combat){
@@ -7390,6 +7405,7 @@ function renderSheet(){
       btn.disabled = true;   // v462 : un appui = un effet, même si l'écriture prend quelques ms
       if (shouldRememberChoice(ch)) markChoiceUsed(key);
       if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
+      if (ch.recherche) setTimeout(ouvrirMenuRecherche, 320);  // v486 : le temps que le dialogue se referme
       const suite = ()=>{
         /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
            Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
@@ -17711,6 +17727,8 @@ function watchPlayerInventoryForBase(){
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
     playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
     playerMailRead = (doc.exists && doc.data().mailRead) || [];
+    playerSearch = (doc.exists && doc.data().search) || null;
+    playerSearchReports = (doc.exists && doc.data().searchReports) || [];
     if (doc.exists && Array.isArray(doc.data().plans)) playerPlans = doc.data().plans;   // v470
     const ov = document.getElementById('plansOverlay');
     if (ov && ov.classList.contains('show')) renderEtagerePlans();
@@ -17844,6 +17862,8 @@ const MT_GLYPHES = {
      Celle-ci faisait partie du trait, donc restait allumée à jamais. */
   nouveau: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
   encours: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  /* v486 — la loupe du rapport de recherche : le seul courrier que le joueur supprime. */
+  recherche: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4L21 21"/>',
   veille:  '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
 };
 function mtGlyphe(kind){
@@ -17860,6 +17880,135 @@ let playerDailyMissions = { date:null, ids:[] };
 /* v484 — les courriers déjà ouverts, en clés `identifiant|nature`. Sur la fiche du joueur et
    non en mémoire locale : la pastille doit se taire aussi quand il change de téléphone. */
 let playerMailRead = [];
+
+/* ═══════════ LES RECHERCHES DE L'ASSISTANTE DU CAPITAINE (v486) ═══════════
+   On lui DEMANDE de chercher, ça prend des heures, et elle répond par un rapport qui
+   arrive sur l'écran. Deux recherches de base ; les autres seront débloquées par les
+   pièces du vaisseau (pas dans ce lot).
+
+   Ce qu'elle sait reconnaître existait déjà sur les fiches :
+   - un CONCESSIONNAIRE, c'est une fiche de nature `concession`
+   - un ARTISAN, c'est une fiche de PNJ à qui l'auteur a donné un MÉTIER              */
+const MT_RECHERCHES = {
+  concession: {
+    nom: 'Un concessionnaire de vaisseaux',
+    court: 'Concessionnaire',
+    emoji: '🚀',
+    retient: (f)=> f.interactionType === 'concession',
+  },
+  artisan: {
+    nom: 'Un artisan',
+    court: 'Artisan',
+    emoji: '🛠️',
+    retient: (f)=> !!f.metier && f.interactionType !== 'zone' && f.interactionType !== 'concession',
+  },
+};
+const MT_RECHERCHE_RESULTATS = 3;      // « les trois plus proches », comme l'exploration
+let rechercheHeures = 8;               // réglable dans Outils de test
+let playerSearch = null;               // la recherche en cours : une seule à la fois
+let playerSearchReports = [];          // les rapports reçus, que le joueur supprime lui-même
+
+function rechercheRestanteMs(){
+  if (!playerSearch) return 0;
+  return Math.max(0, (playerSearch.startedAt + playerSearch.durationMs) - Date.now());
+}
+function rechercheEstFinie(){ return !!playerSearch && rechercheRestanteMs() <= 0; }
+
+/* Le point de départ est celui d'où le joueur a POSÉ la question, pas celui où il se trouve
+   quand le rapport tombe. Sans cela, une recherche lancée en ville et relevée à la maison
+   renverrait les voisins du domicile — et le joueur ne comprendrait pas d'où ça sort. */
+function lancerRecherche(type){
+  if (!MT_RECHERCHES[type]) return false;
+  if (playerSearch){ showToast('Elle cherche déjà quelque chose'); return false; }
+  playerSearch = {
+    type,
+    startedAt: Date.now(),
+    durationMs: Math.max(1, rechercheHeures) * 3600 * 1000,
+    fromLat: playerPos ? playerPos.lat : null,
+    fromLng: playerPos ? playerPos.lng : null,
+  };
+  sauverRecherche();
+  return true;
+}
+function annulerRecherche(){
+  playerSearch = null;
+  sauverRecherche();
+  renderMissionTracker();
+}
+function sauverRecherche(){
+  if (!playerDocRef) return;
+  playerDocRef.set({ search: playerSearch, searchReports: playerSearchReports }, { merge:true })
+    .catch(e=> console.warn('recherche', e));
+}
+
+/* Les trois plus proches du point de départ. On écarte les brouillons et les fiches sans
+   position : une adresse qu'on ne peut pas rejoindre n'est pas un résultat. */
+function rechercheCandidats(type, depuis){
+  const def = MT_RECHERCHES[type];
+  if (!def || !depuis || depuis.lat == null) return [];
+  return creatures
+    .filter(f=> f && f.lat != null && f.lng != null && !f.enTravaux && def.retient(f))
+    .map(f=> ({ f, dist: haversineDist(depuis.lat, depuis.lng, f.lat, f.lng) }))
+    .sort((a,b)=> a.dist - b.dist)
+    .slice(0, MT_RECHERCHE_RESULTATS)
+    .map(x=> ({
+      ficheId: x.f.id,
+      name: x.f.name || '(sans nom)',
+      metres: Math.round(x.dist),
+      horaires: libelleHoraireVersion(x.f),
+      /* La date de fin vient de la fiche : c'est le PNJ qui porte sa limite, pas le rapport.
+         Un artisan de passage pour une semaine s'affiche donc avec sa date. */
+      finLe: x.f.endDate || '',
+    }));
+}
+
+/* Appelé à chaque battement tant que le terminal est ouvert, et à son ouverture. Une
+   recherche terminée se transforme en rapport, et la recherche en cours se libère : c'est
+   ce qui rend le « une seule à la fois » indolore — on n'a rien à annuler à la main. */
+function finaliserRechercheSiBesoin(){
+  if (!rechercheEstFinie()) return false;
+  const depuis = (playerSearch.fromLat != null)
+    ? { lat: playerSearch.fromLat, lng: playerSearch.fromLng }
+    : playerPos;
+  const resultats = rechercheCandidats(playerSearch.type, depuis);
+  playerSearchReports = playerSearchReports.concat([{
+    id: 'rech_' + playerSearch.startedAt,
+    type: playerSearch.type,
+    doneAt: Date.now(),
+    resultats,
+  }]).slice(-20);
+  playerSearch = null;
+  sauverRecherche();
+  return true;
+}
+function supprimerRapportRecherche(id){
+  playerSearchReports = playerSearchReports.filter(r=> r.id !== id);
+  sauverRecherche();
+}
+
+/* Le menu qu'ouvre l'assistante. Il réutilise le sélecteur générique du jeu : pas de
+   nouvelle fenêtre à dessiner, et le joueur retrouve un geste qu'il connaît déjà. */
+function ouvrirMenuRecherche(){
+  if (playerSearch){
+    const reste = formatRemainingDuration(rechercheRestanteMs());
+    const def = MT_RECHERCHES[playerSearch.type] || {};
+    appConfirm('Elle cherche déjà : ' + (def.nom || '?') + '.\nEncore ' + reste + '.\n\nAbandonner cette recherche ?')
+      .then(ok=>{ if (ok) annulerRecherche(); });
+    return;
+  }
+  const items = Object.keys(MT_RECHERCHES).map(k=> ({ id:k, label: MT_RECHERCHES[k].nom, emoji: MT_RECHERCHES[k].emoji }));
+  ouvrirSelecteur({
+    titre: 'Que doit-elle chercher ?',
+    items, selectionnes: [], max: 1,
+    onChoisir: (ids)=>{
+      if (!ids[0]) return;
+      if (lancerRecherche(ids[0])){
+        showToast('Elle s\'y met. Elle t\'enverra son rapport.');
+        renderMissionTracker();
+      }
+    },
+  });
+}
 function mailIsRead(id, kind){ return playerMailRead.includes(id + '|' + kind); }
 function markMailRead(id, kind){
   const cle = id + '|' + kind;
@@ -17883,6 +18032,9 @@ if (typeof db !== 'undefined' && db){
   db.collection('app_config').doc('missions').onSnapshot((doc)=>{
     const d = doc.exists ? doc.data() : {};
     if (d.perDay != null) missionsPerDay = d.perDay;
+    if (d.searchHours != null) rechercheHeures = d.searchHours;
+    const inputRech = document.getElementById('searchHoursInput');
+    if (inputRech && document.activeElement !== inputRech) inputRech.value = rechercheHeures;
     missionShowChance = !!d.showChance;
     const b = document.getElementById('toggleMissionChanceBtn');
     if (b) b.textContent = missionShowChance ? '👁️ Masquer domaine et % (vue joueur)' : '👁️ Afficher domaine et % (équilibrage)';
@@ -18152,6 +18304,7 @@ function mtBrancherBarreSysteme(zPied, zGrille){
 }
 function renderMissionTerminal(){
   ensureDailyMissions();
+  finaliserRechercheSiBesoin();   // v486 : une recherche échue devient un rapport
   /* Ne jamais redessiner par-dessus la liste des combattants dépliée : elle disparaîtrait sous
      le doigt du joueur, comme cela s'était produit à l'infirmerie (v217). Les appels qui doivent
      forcer le rafraîchissement vident la liste avant. */
@@ -18172,15 +18325,27 @@ function renderMissionTerminal(){
     .filter(m=> m && !playerMissionRuns[m.id] && !dejaFaites.includes(m.id));
 
   const rentres = enCours.filter(x=> missionIsBack(x.run));
+  /* v486 : un rapport de recherche non lu allume la pastille du vaisseau au même titre
+     qu'un combattant rentré — sinon le joueur devrait ouvrir l'écran pour savoir. */
+  const rechNonLues = (playerSearchReports || []).filter(r=> !mailIsRead(r.id, 'recherche'));
   const badge = document.getElementById('missionBadge');
-  if (badge) badge.style.display = rentres.length ? 'block' : 'none';
+  if (badge) badge.style.display = (rentres.length || rechNonLues.length) ? 'block' : 'none';
 
   /* Une icône par courrier : d'abord ceux qui sont rentrés, puis le courrier du jour, puis les
      missions en cours. C'est l'ordre dans lequel le joueur a quelque chose à faire. */
+  /* v486 : les rapports de recherche passent en tête — c'est le joueur qui les a demandés,
+     donc c'est ce qu'il vient voir. Toutes les entrées portent désormais un `nom` : un
+     rapport de recherche n'a pas de fiche de mission derrière lui. */
+  const rapportsRecherche = (playerSearchReports || []).slice().sort((a,b)=> b.doneAt - a.doneAt);
   const entrees = [
-    ...rentres.map(x=> ({ id:x.id, m:x.m, kind:'rapport', etat:'Rapport', run:x.run })),
-    ...dispo.map(m=> ({ id:m.id, m, kind:'nouveau', etat:'Nouveau' })),
-    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
+    ...rapportsRecherche.map(r=> ({
+      id: r.id, kind:'recherche', rech: r,
+      nom: 'Recherche · ' + ((MT_RECHERCHES[r.type] || {}).court || '?'),
+      etat: r.resultats.length + ' trouvé' + (r.resultats.length > 1 ? 's' : ''),
+    })),
+    ...rentres.map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'rapport', etat:'Rapport', run:x.run })),
+    ...dispo.map(m=> ({ id:m.id, m, nom:m.name, kind:'nouveau', etat:'Nouveau' })),
+    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
   ];
   /* v482 : plus de sélection d'office. Rien d'ouvert = on est sur l'ACCUEIL, comme un téléphone
      qu'on allume. Le joueur choisit lui-même quel courrier lire. */
@@ -18204,17 +18369,21 @@ function renderMissionTerminal(){
     zEtat.style.justifyContent = 'flex-start';
     zEtat.innerHTML = `<div style="padding:0 6px; min-width:0;">
       <div class="mt-lum" style="font-size:11px; font-weight:800; letter-spacing:.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${jour.charAt(0).toUpperCase() + jour.slice(1)}</div>
-      <div class="mt-lum" style="font-size:10px; font-weight:600; opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Aucune recherche en cours</div>
+      <div class="mt-lum" style="font-size:10px; font-weight:600; opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${
+        playerSearch
+          ? 'Recherche : ' + ((MT_RECHERCHES[playerSearch.type] || {}).court || '?') + ' · ' + formatRemainingDuration(rechercheRestanteMs())
+          : 'Aucune recherche en cours'
+      }</div>
     </div>`;
 
     /* La grille d'icônes. Trois par rangée : au-delà, la vignette devient trop petite pour qu'on
        distingue le glyphe, et le nom du courrier ne tient plus sur deux lignes. */
     zGrille.innerHTML = entrees.length
       ? `<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px 6px; padding:8px 6px;">`
-        + entrees.map(e=> `<button type="button" data-mt-open="${e.id}" class="mt-tile" title="${(e.m.name || '').replace(/"/g,'&quot;')}">
+        + entrees.map(e=> `<button type="button" data-mt-open="${e.id}" class="mt-tile" title="${(e.nom || '').replace(/"/g,'&quot;')}">
             <span class="mt-tile-box">${mtGlyphe(e.kind)}${e.kind !== 'encours' && !mailIsRead(e.id, e.kind) ? '<i class="mt-dot"></i>' : ''}</span>
-            <span class="mt-tile-name">${e.m.name || '(sans nom)'}</span>
-            ${e.kind === 'encours' ? `<span class="mt-tile-sub">${e.etat}</span>` : ''}
+            <span class="mt-tile-name">${e.nom || '(sans nom)'}</span>
+            ${(e.kind === 'encours' || e.kind === 'recherche') ? `<span class="mt-tile-sub">${e.etat}</span>` : ''}
           </button>`).join('')
         + `</div>`
       : `<div class="mt-lum" style="display:flex; align-items:center; justify-content:center; height:100%; font-size:11px; font-weight:700; opacity:.6;">Pas de courrier.</div>`;
@@ -18226,6 +18395,48 @@ function renderMissionTerminal(){
         missionTerminalSelectedId = b.dataset.mtOpen;
         const e0 = entrees.find(x=> x.id === b.dataset.mtOpen);
         if (e0) markMailRead(e0.id, e0.kind);   // ouvert = lu, la pastille s'éteint
+        renderMissionTerminal();
+      }));
+    return;
+  }
+
+  /* ---------- LE RAPPORT DE RECHERCHE (v486) ---------- */
+  if (choisie.kind === 'recherche'){
+    const r = choisie.rech;
+    const def = MT_RECHERCHES[r.type] || {};
+    zEtat.style.justifyContent = 'flex-start';
+    zEtat.innerHTML = `<div style="display:flex; align-items:center; gap:7px; padding:0 6px; min-width:0;">
+      <span style="flex:none;">${mtGlyphe('recherche')}</span>
+      <span style="min-width:0;">
+        <span class="mt-lum" style="display:block; font-size:12px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${def.nom || 'Recherche'}</span>
+        <span class="mt-lum" style="display:block; font-size:10px; font-weight:600; opacity:.8;">Rapport de recherche</span>
+      </span>
+    </div>`;
+    const distance = (mm)=> mm >= 1000 ? (mm / 1000).toFixed(1).replace('.', ',') + ' km' : mm + ' m';
+    zGrille.innerHTML = `
+      <div style="padding:8px 8px 10px;">
+        ${r.resultats.length ? r.resultats.map(x=> `
+          <div style="margin-bottom:9px; padding-bottom:9px; border-bottom:1px solid color-mix(in srgb, var(--mt) 22%, transparent);">
+            <div style="font-size:12.5px; font-weight:800;">${x.name}</div>
+            <div class="meta" style="font-size:11px;">${distance(x.metres)} · ${x.horaires}${x.finLe ? ' · jusqu\'au ' + x.finLe : ''}</div>
+            <button type="button" class="mt-cta" data-mt-guide="${x.ficheId}" style="color:var(--accent); margin-top:6px; font-size:12px; padding:5px 10px;">🧭 M'y conduire</button>
+          </div>`).join('')
+          : `<div class="meta" style="font-size:11.5px;">Elle n'a rien trouvé dans les environs. Éloigne-toi et redemande-lui.</div>`}
+        <button type="button" class="mt-cta" data-mt-suppr="${r.id}" style="color:var(--danger); border-color:color-mix(in srgb, var(--danger) 45%, transparent); background:color-mix(in srgb, var(--danger) 10%, transparent);">🗑️ Supprimer ce rapport</button>
+      </div>`;
+    zPied.innerHTML = mtBarreSysteme(true);
+    mtBrancherBarreSysteme(zPied, zGrille);
+    zGrille.querySelectorAll('[data-mt-guide]').forEach(b=>
+      b.addEventListener('click', ()=>{
+        if (isGhostTap()) return;
+        guiderVers(b.dataset.mtGuide);
+        fermerMissionTerminal();
+      }));
+    zGrille.querySelectorAll('[data-mt-suppr]').forEach(b=>
+      b.addEventListener('click', ()=>{
+        if (isGhostTap()) return;
+        supprimerRapportRecherche(b.dataset.mtSuppr);
+        missionTerminalSelectedId = null;
         renderMissionTerminal();
       }));
     return;
@@ -18486,6 +18697,21 @@ document.querySelectorAll('#questsNav button[data-qmission]').forEach(btn=>{
 document.getElementById('missionReportCloseBtn').addEventListener('click', ()=>{
   document.getElementById('missionReportOverlay').classList.remove('show');
 });
+document.getElementById('saveSearchHoursBtn').addEventListener('click', ()=>{
+  if (!db){ showToast('Firebase indisponible ici'); return; }
+  const n = parseInt(document.getElementById('searchHoursInput').value, 10);
+  if (isNaN(n) || n < 1 || n > 72){ showToast('Entre 1 et 72 heures'); return; }
+  db.collection('app_config').doc('missions').set({ searchHours: n }, { merge:true })
+    .then(()=>{ rechercheHeures = n; showToast('Recherche : ' + n + ' h'); })
+    .catch((err)=> showToast('Échec : ' + err.message));
+});
+document.getElementById('finishSearchBtn').addEventListener('click', ()=>{
+  if (!playerSearch){ showToast('Aucune recherche en cours'); return; }
+  playerSearch.durationMs = 0;
+  finaliserRechercheSiBesoin();
+  renderMissionTracker();
+  showToast('Rapport déposé sur l\'écran');
+});
 document.getElementById('toggleMissionChanceBtn').addEventListener('click', ()=>{
   if (!db){ showToast('Firebase indisponible ici'); return; }
   const v = !missionShowChance;
@@ -18698,6 +18924,9 @@ document.getElementById('saveMissionsPerDayBtn').addEventListener('click', ()=>{
 /* Rafraîchit les comptes à rebours des missions tant que le terminal du vaisseau est ouvert.
    On ne redessine pas si une liste de combattants est dépliée (garde-fou dans le rendu). */
 setInterval(()=>{
+  /* v486 : on conclut la recherche même terminal FERMÉ — c'est ce qui allume la pastille
+     du vaisseau et donne au joueur une raison d'aller voir. */
+  if (finaliserRechercheSiBesoin() && !terminalEstOuvert()) renderMissionTracker();
   if (terminalEstOuvert()) renderMissionTracker();
 }, 5000);
 
@@ -18784,6 +19013,8 @@ document.getElementById('resetDailyMissionsBtn').addEventListener('click', async
   playerMissionRuns = {};
   playerDailyMissions = { date:null, ids:[], done:[] };
   playerMailRead = [];
+  playerSearch = null;
+  playerSearchReports = [];
   playerDocRef.set({
     dailyMissions: firebase.firestore.FieldValue.delete(),
     missionRuns: firebase.firestore.FieldValue.delete(),
