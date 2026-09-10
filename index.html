@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v488</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v489</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7271,6 +7271,10 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
   const inv = (etat && etat.inventaire) || {};
   const combats = (etat && etat.combats) || {};
   const lq = listeQuetes || quests || [];
+  /* v489 : un choix qui recrute disparaît quand le PNJ est déjà à bord — sinon on pouvait
+     recruter deux fois le même artisan depuis son propre atelier (deux recrues, deux portes).
+     Il revient de lui-même si le joueur renvoie le personnage. */
+  if (ch.recruit && etat && etat.recrutes && etat.recrutes.has && etat.recrutes.has(creatureId)) return false;
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
     const st = etatQuete(quetes, ch.questGive.questId);
@@ -7404,6 +7408,7 @@ function renderSheet(){
     quetes: playerQuestsState,
     inventaire: (playerSelfData && playerSelfData.inventory) || {},
     combats: playerCombatsWon,
+    recrutes: recruitedSourceIds,   // v489
   };
   const visibleChoices = step.choices.map((ch, chIdx)=> ({ ch, key: choiceKeyFor(c.id, ch, currentStepIdx, chIdx) }))
     .filter(({ ch, key })=> choixVisible(ch, key, c.id, etatJoueur, quests));
@@ -7546,6 +7551,11 @@ function grantItemToPlayer(grant, quantiteAncienne){
 }
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
+  /* v489 : jamais deux recrues pour la même fiche. */
+  if (recruitedSourceIds.has(creature.id) || recruits.some(r=> r && r.sourceCreatureId === creature.id)){
+    showToast((creature.name || 'Ce personnage') + ' est déjà dans ton équipe');
+    return;
+  }
   const isCombattant = creature.interactionType === 'combat';
   /* v479 : un habitant a besoin d'une porte libre à bord. Aucune → refus, pas de réserve.
      Un vaisseau sans aucune porte posée (l'auteur n'a pas encore fait ce travail) recrute
