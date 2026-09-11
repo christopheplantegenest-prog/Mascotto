@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v493</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v495</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5464,14 +5464,13 @@ function renderDialogueBuilder(){
 
     const recruitSelect = document.createElement('select');
     recruitSelect.className = 'field-input';
-    let recruitOpts = '<option value="">Ne recrute pas</option><option value="__aucun">🤖 Recrute sans métier</option>';
-    metiers.forEach(m=>{ recruitOpts += '<option value="' + m.id + '">' + m.name + '</option>'; });
-    recruitSelect.innerHTML = recruitOpts;
-    /* Trois états, pas deux : ne recrute pas · recrute sans métier · recrute avec un métier.
-       Le vide gardait son sens d'origine (« ne recrute pas »), d'où le sentinelle. */
-    recruitSelect.value = choice.recruit ? (choice.recruit.metierId || '__aucun') : '';
+    /* v494 : le métier ne se choisit plus ici — il vit UNIQUEMENT sur la fiche (menu « Métier »
+       sous le nom). Deux endroits pour la même information faisaient un doublon : la porte et
+       l'assistante ne lisaient que la fiche, le recrutement que le choix. */
+    recruitSelect.innerHTML = '<option value="">Ne recrute pas</option><option value="oui">🤝 Le recruter (métier : celui de la fiche)</option>';
+    recruitSelect.value = choice.recruit ? 'oui' : '';
     recruitSelect.addEventListener('change', ()=>{
-      choice.recruit = recruitSelect.value ? { metierId: recruitSelect.value === '__aucun' ? null : recruitSelect.value } : null;
+      choice.recruit = recruitSelect.value ? { metierId: null } : null;
     });
     row.appendChild(recruitSelect);
 
@@ -5684,18 +5683,11 @@ function fenetreEffetsReponse(ch){
       ch.recherche = !ch.recherche;
       dessiner();
     });
-    const nomMetier = (m)=> !m ? 'sans métier' : ((metiers.find(x=> x.id === m) || {}).name || 'métier supprimé');
-    ligne('🤝 Le recruter', ch.recruit ? nomMetier(ch.recruit.metierId) : 'non', ()=>{
-      if (ch.recruit){ ch.recruit = null; dessiner(); return; }
-      /* « Sans métier » est une option à part entière depuis le portage : un combattant tient
-         tout de son MODÈLE DE ROBOT. Le métier ne sert plus qu'au craft (recettes autorisées),
-         aux bonus de mission et aux effets d'objets — l'imposer pour recruter un robot obligeait
-         à en inventer un au hasard. Le sentinelle '__aucun' est nécessaire : le sélecteur ignore
-         un identifiant vide, qui veut déjà dire « rien choisi ». */
-      const items = [{ id:'__aucun', label:'Sans métier (combattant)', emoji:'🤖' }]
-        .concat(metiers.map(m=> ({ id:m.id, label:m.name, emoji:m.emoji || '🤝' })));
-      ouvrirSelecteur({ titre:'Recruté comme…', items,
-        selectionnes: [], max:1, onChoisir:(ids)=>{ if (ids[0]) ch.recruit = { metierId: ids[0] === '__aucun' ? null : ids[0] }; dessiner(); } });
+    /* v494 : un simple oui/non. Le métier de la recrue est celui de la FICHE (menu « Métier »
+       sous le nom), plus un choix à part — c'était un doublon. */
+    ligne('🤝 Le recruter', ch.recruit ? 'oui (métier de la fiche)' : 'non', ()=>{
+      ch.recruit = ch.recruit ? null : { metierId: null };
+      dessiner();
     });
 
     /* --- conditions : ce que le joueur a déjà dit, ici ou ailleurs. Elles se CUMULENT :
@@ -7466,7 +7458,9 @@ function renderSheet(){
       if (btn.disabled) return;
       btn.disabled = true;   // v462 : un appui = un effet, même si l'écriture prend quelques ms
       if (shouldRememberChoice(ch)) markChoiceUsed(key);
-      if (ch.recruit) recruitCreature(activeCreature, ch.recruit.metierId);
+      /* v494 : le métier vient de la fiche ; l'ancien métier du choix ne sert plus que de repli
+         pour les dialogues écrits avant. */
+      if (ch.recruit) recruitCreature(activeCreature, activeCreature.metier || ch.recruit.metierId || null);
       if (ch.recherche) setTimeout(ouvrirMenuRecherche, 320);  // v486 : le temps que le dialogue se referme
       const suite = ()=>{
         /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
@@ -25224,6 +25218,13 @@ function armerMinuterieBacs(points, sceneId){
     armerMinuterieBacs(points, sceneId);   // le stade suivant, s'il y en a un
   }, Math.max(250, prochain + 300));
 }
+/* v495 : après planter / récolter / déraciner, on ne redessine que les plantes de la scène en
+   cours et on réarme la minuterie — recharger toute la scène faisait l'écran noir. */
+let bacsSceneCourante = { points: [], sceneId: null };
+function rafraichirBacs(){
+  redessinerPlantesDesBacs(bacsSceneCourante.points);
+  armerMinuterieBacs(bacsSceneCourante.points, bacsSceneCourante.sceneId);
+}
 function ecrirePlantation(pt, rec){
   if (rec) plantationsMap[pt.id] = rec; else delete plantationsMap[pt.id];
   if (!currentUser || !db || !sceneViewCreature) return Promise.resolve();
@@ -25239,7 +25240,7 @@ function toucherBac(pt){
   const etat = etatDuBac(pt);
   if (!etat){
     const rec = plantationDuPoint(pt);
-    if (rec){ ecrirePlantation(pt, null); renderSceneViewCurrentScene(); }   // graine supprimée depuis
+    if (rec){ ecrirePlantation(pt, null); rafraichirBacs(); }   // graine supprimée depuis
     ouvrirChoixGraine(pt);
     return;
   }
@@ -25263,7 +25264,7 @@ function ouvrirBacEnCroissance(pt, etat){
     if (!ok) return;
     document.getElementById('serreGraineOverlay').classList.remove('show');
     ecrirePlantation(pt, null);
-    renderSceneViewCurrentScene();
+    rafraichirBacs();
     showToast('🪓 Bac vidé');
   });
   document.getElementById('serreGraineOverlay').classList.add('show');
@@ -25282,7 +25283,7 @@ function recolterLeBac(pt, etat){
   } else {
     ecrirePlantation(pt, null);
   }
-  renderSceneViewCurrentScene();
+  rafraichirBacs();
   /* v493 : le bandeau suffit, plus de fenêtre de dialogue pour trois fruits. */
   showToast(noms.length ? '🧺 ' + noms.join(', ') : 'Rien à récolter');
 }
@@ -25312,7 +25313,7 @@ function planterDansLeBac(pt, seedItemId){
   }
   baseResources[seedItemId] = Math.max(0, (baseResources[seedItemId] || 0) - 1);
   ecrirePlantation(pt, { seedItemId, plantedAt: Date.now(), startStage: 1 });
-  renderSceneViewCurrentScene();
+  rafraichirBacs();
   const it = items.find(i=> i.id === seedItemId);
   showToast('🌱 ' + (it ? it.name : 'Graine') + ' plantée');
 }
@@ -25860,6 +25861,7 @@ async function renderSceneViewCurrentScene(){
   });
 
   positionSceneViewPoints();
+  bacsSceneCourante = { points: sc.points || [], sceneId: scRaw.id };   // v495
   armerMinuterieBacs(sc.points, scRaw.id);   // v492
   declencherAgressions(sc, wrapPointActions);
 }
