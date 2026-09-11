@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v498</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v500</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3044,7 +3044,7 @@
         <button class="btn-secondary" id="reserveBtn" style="width:100%;">📦 Aucun lieu — garder en réserve</button>
       </div>
       <div class="pos-actions" style="margin-top:6px;">
-        <button class="btn-secondary" id="pieceCommuneBtn" style="width:100%;">🚀 Placer dans une pièce du vaisseau (emplacement)</button>
+        <button class="btn-secondary" id="pieceCommuneBtn" style="width:100%;">🧍 Placer sur un emplacement (vaisseau ou zone)</button>
       </div>
       <p class="meta" id="pieceCommuneHint" style="display:none; margin-top:4px;">Cette version se montre dans un emplacement de cette pièce quand son personnage est à bord et que l'heure est la sienne. <span id="pieceCommuneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
       <p class="meta">Pour les fiches qui n'ont pas à être quelque part : monstres de rencontre aléatoire, habitants du vaisseau, personnages préparés à l'avance. Elles s'enregistrent sans emplacement et se retrouvent dans la liste sous « 📦 En réserve ».</p>
@@ -11040,44 +11040,55 @@ document.getElementById('assignZoneClear').addEventListener('click', ()=>{
 });
 /* v497 : choisir une pièce = choisir une SCÈNE parmi celles des vaisseaux et des annexes
    (les pièces derrière les portes d'habitant, repérées par l'atelierZoneId d'une fiche). */
-document.getElementById('pieceCommuneBtn').addEventListener('click', async ()=>{
-  if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
-  const fiches = toutesLesFiches();
-  const zoneIds = new Set();
-  fiches.forEach(f=>{
-    if ((f.interactionType || '') === 'zone' && ficheEstModeleVaisseau(f)) zoneIds.add(f.id);
-    if (f.atelierZoneId) zoneIds.add(f.atelierZoneId);
-  });
-  if (typeof shipZoneId !== 'undefined' && shipZoneId) zoneIds.add(shipZoneId);
-  if (typeof vaisseauDepartId !== 'undefined' && vaisseauDepartId) zoneIds.add(vaisseauDepartId);
-  const items = [];
-  try {
-    const docs = await Promise.all(Array.from(zoneIds).map(id=> zonesCol.doc(id).get().catch(()=> null)));
-    docs.forEach(doc=>{
-      if (!doc || !doc.exists) return;
-      const fz = ficheParId(doc.id);
-      const nomZone = (fz && fz.name) || 'Zone';
-      ((doc.data().scenes) || []).forEach(sc=>{
-        if (!sc || !sc.id) return;
-        items.push({ id: sc.id, zoneId: doc.id, name: nomZone + ' · ' + (sc.name || 'scène'), imageUrl: sc.imageUrl || '', emoji: '🚀' });
-      });
-    });
-  } catch(err){ showToast('Échec : ' + err.message); return; }
-  if (!items.length){ showToast('Aucune scène de vaisseau ni d\'annexe pour l\'instant'); return; }
-  items.sort((a,b)=> a.name.localeCompare(b.name, 'fr'));
+/* v500 : l'emplacement se choisit en DEUX temps — la zone d'abord (vaisseaux et annexes en tête,
+   puis toutes les zones d'exploration), la scène ensuite. */
+function ouvrirChooser(items, cb){
   pnjChooserAll = items;
   pnjChooserFilter = null;
   pnjChooserZonePrioritaire = null;
-  pnjChooserCallback = (id, c)=>{
-    pendingPieceCommune = { zoneId: c.zoneId, sceneId: id, nom: c.name };
-    pendingAssignedZoneId = null;
-    pendingLat = null; pendingLng = null;
-    pendingReserve = false;
-    refreshPosStatusDisplay();
-  };
+  pnjChooserCallback = cb;
   document.getElementById('pnjChooserSearch').value = '';
   document.getElementById('pnjChooserOverlay').classList.add('show');
   renderPnjChooserList();
+}
+function zonesPourEmplacement(){
+  const fiches = toutesLesFiches();
+  const vaisseaux = new Set();
+  fiches.forEach(f=>{
+    if ((f.interactionType || '') === 'zone' && ficheEstModeleVaisseau(f)) vaisseaux.add(f.id);
+    if (f.atelierZoneId) vaisseaux.add(f.atelierZoneId);
+  });
+  if (typeof shipZoneId !== 'undefined' && shipZoneId) vaisseaux.add(shipZoneId);
+  if (typeof vaisseauDepartId !== 'undefined' && vaisseauDepartId) vaisseaux.add(vaisseauDepartId);
+  const items = [];
+  fiches.forEach(f=>{
+    if ((f.interactionType || '') !== 'zone') return;
+    const v = vaisseaux.has(f.id);
+    items.push({ id: f.id, name: f.name || 'Zone', imageUrl: f.imageUrl || '', emoji: v ? '🚀' : '🗺️', vaisseau: v });
+  });
+  items.sort((a,b)=> (a.vaisseau === b.vaisseau) ? a.name.localeCompare(b.name, 'fr') : (a.vaisseau ? -1 : 1));
+  return items;
+}
+document.getElementById('pieceCommuneBtn').addEventListener('click', ()=>{
+  if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
+  const zones = zonesPourEmplacement();
+  if (!zones.length){ showToast('Aucune zone pour l\'instant'); return; }
+  ouvrirChooser(zones, async (zoneId, z)=>{
+    let doc = null;
+    try { doc = await zonesCol.doc(zoneId).get(); } catch(err){ showToast('Échec : ' + err.message); return; }
+    if (!doc || !doc.exists){ showToast('Zone introuvable'); return; }
+    const scenes = ((doc.data().scenes) || []).filter(sc=> sc && sc.id)
+      .map(sc=> ({ id: sc.id, zoneId, name: sc.name || 'scène', imageUrl: sc.imageUrl || '', emoji: z.emoji }));
+    if (!scenes.length){ showToast('Cette zone n\'a aucune scène'); return; }
+    scenes.sort((a,b)=> a.name.localeCompare(b.name, 'fr'));
+    setTimeout(()=> ouvrirChooser(scenes, (sceneId, c)=>{
+      pendingPieceCommune = { zoneId, sceneId, nom: z.name + ' · ' + c.name };
+      pendingAssignedZoneId = null;
+      pendingLat = null; pendingLng = null;
+      pendingReserve = false;
+      refreshPosStatusDisplay();
+    }), 0);
+  });
 });
 document.getElementById('pieceCommuneClear').addEventListener('click', ()=>{
   pendingPieceCommune = null;
@@ -23703,9 +23714,11 @@ function isPointHitAt(pt, div, clientX, clientY){
      opaques, pas sur son cadre) — toucher le personnage, c'est toucher l'emplacement. */
   if (pt.type === 'emplacement'){
     const im = div.querySelector('.pnj-emplace');
-    if (!im) return false;
-    const b = boiteOpaqueAffichee(im);
-    return !!b && clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
+    /* v499 : sans occupant (dans l'éditeur, ou place vide), c'est le rectangle lui-même qui répond */
+    if (im){
+      const b = boiteOpaqueAffichee(im);
+      return !!b && clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
+    }
   }
   const rect = div.getBoundingClientRect();
   if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
@@ -24389,7 +24402,7 @@ function renderSceneDetailTypeSpecific(pt){
        tient dépend des versions de PNJ marquées « pièce commune » sur leur fiche. */
     pt.hideIcon = true;
     typeWrap.innerHTML = `
-      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une place pour un personnage. Le jeu y met lui-même un habitant du vaisseau dont une version est marquée « 🚀 pièce du vaisseau » sur cette scène et active à cette heure — calé par les pieds au bas du rectangle, à l'échelle de sa hauteur, sans déformation. Le dialogue est celui de cette version.</p>
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une place pour un personnage. Le jeu y met lui-même un personnage dont une version est marquée sur cet emplacement (🧍 sur la fiche) et active à cette heure — un personnage recrutable seulement s'il est à bord — calé par les pieds au bas du rectangle, à l'échelle de sa hauteur, sans déformation. Le dialogue est celui de cette version.</p>
       <p class="meta" style="color:rgba(255,255,255,.6); margin:0;">Un emplacement ne tient qu'un personnage, et un personnage n'occupe qu'un emplacement. Quand il y a plus de candidats que de places, les derniers ne s'affichent pas — le détail est dans 🧾 Boîte noire.</p>`;
     return;
   }
@@ -26097,6 +26110,15 @@ function groupesABord(){
   return g;
 }
 
+/* Un personnage est recrutable si l'une de ses versions propose « 🤝 Le recruter » dans un dialogue
+   ou est un combattant recrutable. */
+function groupeRecrutable(g){
+  return toutesLesFiches().some(f=>{
+    if ((f.dupeGroup || f.id) !== g) return false;
+    if (f.interactionType === 'combat' && f.combatStats && f.combatStats.recruitable) return true;
+    return (f.dialogueSteps || []).some(st=> (st.choices || []).some(c=> c && c.recruit));
+  });
+}
 /* Les versions qui se proposent pour cette scène en ce moment, une par personnage. */
 function candidatsEmplacements(sceneId, now){
   const groupes = groupesABord();
@@ -26106,7 +26128,9 @@ function candidatsEmplacements(sceneId, now){
     const f = ficheJouable(brut);
     if (!f || !f.pieceCommune || f.pieceCommune.sceneId !== sceneId) return;
     const g = brut.dupeGroup || brut.id;
-    if (!groupes.has(g)) return;
+    /* v500 : un personnage RECRUTABLE doit être à bord ; un personnage qu'on ne recrute jamais
+       (l'assistante, un habitant d'une zone) se place dès qu'une version est marquée sur la scène. */
+    if (groupeRecrutable(g) && !groupes.has(g)) return;
     if (!isActiveAt(f, now || new Date())) return;
     if (vus.has(g)) return;   // deux versions actives du même personnage : la première suffit
     vus.add(g);
