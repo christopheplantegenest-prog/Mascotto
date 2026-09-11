@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v492</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v493</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1669,6 +1669,7 @@
     </div>
     <p class="meta" style="margin:4px 0 0;">Le temps que met l'assistante du capitaine à répondre. Une seule recherche à la fois : c'est le choix qui coûte, pas l'argent.</p>
     <button class="btn-secondary" id="finishSearchBtn" style="width:100%; margin-top:6px;">⏩ Conclure ma recherche tout de suite</button>
+    <button class="btn-secondary" id="testRechercheBtn" style="width:100%; margin-top:6px;">🔎 Tester la recherche d'artisans (→ boîte noire)</button>
     <button class="btn-secondary" id="toggleMissionChanceBtn" style="width:100%; margin-top:6px;">👁️ Afficher domaine et % (équilibrage)</button>
     <p class="meta" style="margin:4px 0 0;">Les joueurs ne voient ni le domaine ni le pourcentage : ils doivent lire le courrier pour deviner quel profil envoyer.</p>
 
@@ -3585,7 +3586,7 @@
       <div class="emoji">🌱</div>
       <button class="sheet-x" id="serreGraineCloseBtn">✕</button>
     </div>
-    <div class="field-label" style="margin-top:0;">Que planter dans ce bac ?</div>
+    <div class="field-label" style="margin-top:0;" id="serreGraineTitre">Que planter dans ce bac ?</div>
     <div id="serreGraineList"></div>
   </div>
 </div>
@@ -7623,7 +7624,7 @@ function recruitCreatureEcrire(creature, metierId, porte){
     robotModeleId: modeleRecrue ? modeleRecrue.id : null,
     ecartStats: modeleRecrue ? tirerEcartStats(cs.ecartStats != null ? cs.ecartStats : 5) : null,
     name: creature.name || 'PNJ',
-    metierId: metierId,
+    metierId: metierId || creature.metier || null,   // v493 : à défaut, le métier de la fiche
     ownerUid: (currentUser ? currentUser.uid : null),
     imageUrl: creature.imageUrl || '',
     /* L'image de dos suit le personnage quand il rejoint l'équipe : c'est là qu'elle sert. */
@@ -11278,24 +11279,46 @@ function renderGraineStages(){
     wrap.innerHTML = '<p class="meta" style="margin:0;">Aucun stade. Ajoute au moins deux stades : la pousse, puis la plante à récolter.</p>';
     return;
   }
-  wrap.innerHTML = currentGraineStages.map((st, i)=>{
-    const url = st.imageUrl || (st.imagePath ? resolveMediaPath(st.imagePath) : '');
+  /* v493 : une échelle PAR STADE (curseur), et un aperçu de tous les stades côte à côte,
+     calés sur le même sol, pour juger les proportions — la pousse doit être plus petite
+     que l'arbre. C'est cette proportion que le bac reçoit ensuite telle quelle. */
+  const urls = currentGraineStages.map(st=> st.imageUrl || (st.imagePath ? resolveMediaPath(st.imagePath) : ''));
+  wrap.innerHTML = `
+    <div data-graine-apercu style="display:flex; align-items:flex-end; justify-content:space-around; gap:4px; height:120px; padding:6px 4px 0; border:1px solid var(--line); border-bottom:3px solid rgba(120,200,120,.6); border-radius:8px 8px 0 0; background:rgba(0,0,0,.25); overflow:hidden; margin-bottom:6px;">
+      ${currentGraineStages.map((st,i)=> `<div data-graine-apercu-stade="${i}" style="flex:1; height:100%; display:flex; align-items:flex-end; justify-content:center;">${urls[i] ? `<img src="${urls[i]}" style="width:${echelleDuStade(st)}%; height:${echelleDuStade(st)}%; max-width:none; object-fit:contain; object-position:center bottom;">` : '<span style="opacity:.4;">🌱</span>'}</div>`).join('')}
+    </div>` + currentGraineStages.map((st, i)=>{
+    const url = urls[i];
     const dernier = i === currentGraineStages.length - 1;
-    return `<div class="field-row" style="align-items:center; margin-top:6px; gap:6px;">
-      <div style="flex:0 0 auto; width:38px; height:38px; border:1px solid var(--line); border-radius:8px; background:rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; overflow:hidden;">${url ? `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain;">` : '<span style="opacity:.5;">🌱</span>'}</div>
-      <div style="flex:1;">
-        <div class="meta" style="margin:0;">Stade ${i+1}${dernier ? ' — à récolter' : ''}</div>
-        <div style="display:flex; gap:4px; margin-top:2px;">
-          <button type="button" class="btn-secondary" data-graine-img-github="${i}" style="flex:1; padding:4px;">📁</button>
-          <button type="button" class="btn-secondary" data-graine-img-pick="${i}" style="flex:1; padding:4px;">🖼️</button>
+    return `<div style="border:1px solid var(--line); border-radius:8px; padding:6px; margin-top:6px;">
+      <div class="field-row" style="align-items:center; gap:6px; margin:0;">
+        <div style="flex:0 0 auto; width:38px; height:38px; border:1px solid var(--line); border-radius:8px; background:rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; overflow:hidden;">${url ? `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain;">` : '<span style="opacity:.5;">🌱</span>'}</div>
+        <div style="flex:1;">
+          <div class="meta" style="margin:0;">Stade ${i+1}${dernier ? ' — à récolter' : ''}</div>
+          <div style="display:flex; gap:4px; margin-top:2px;">
+            <button type="button" class="btn-secondary" data-graine-img-github="${i}" style="flex:1; padding:4px;">📁</button>
+            <button type="button" class="btn-secondary" data-graine-img-pick="${i}" style="flex:1; padding:4px;">🖼️</button>
+          </div>
         </div>
+        ${dernier ? '<div style="flex:1;"></div>' : `<input type="number" data-graine-min="${i}" class="field-input" value="${st.minutes==null?60:st.minutes}" min="1" style="flex:1;" title="Minutes avant le stade suivant">`}
+        <button type="button" class="btn-secondary" data-graine-del="${i}" style="flex:0 0 auto; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
       </div>
-      ${dernier ? '<div style="flex:1;"></div>' : `<input type="number" data-graine-min="${i}" class="field-input" value="${st.minutes==null?60:st.minutes}" min="1" style="flex:1;" title="Minutes avant le stade suivant">`}
-      <button type="button" class="btn-secondary" data-graine-del="${i}" style="flex:0 0 auto; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+      <div class="field-row" style="align-items:center; gap:8px; margin:4px 0 0;">
+        <span class="meta" style="flex:0 0 auto; margin:0;">Taille</span>
+        <input type="range" data-graine-echelle="${i}" min="5" max="300" step="5" value="${echelleDuStade(st)}" style="flex:1;">
+        <span class="meta" data-graine-echelle-val="${i}" style="flex:0 0 44px; text-align:right; margin:0;">${echelleDuStade(st)} %</span>
+      </div>
     </div>`;
   }).join('');
   wrap.querySelectorAll('[data-graine-min]').forEach(inp=> inp.addEventListener('change', ()=>{
     currentGraineStages[+inp.dataset.graineMin].minutes = parseInt(inp.value,10) || 1;
+  }));
+  wrap.querySelectorAll('[data-graine-echelle]').forEach(inp=> inp.addEventListener('input', ()=>{
+    const i = +inp.dataset.graineEchelle;
+    currentGraineStages[i].echelle = Math.max(5, Math.min(300, parseInt(inp.value,10) || 100));
+    const val = wrap.querySelector('[data-graine-echelle-val="' + i + '"]');
+    if (val) val.textContent = currentGraineStages[i].echelle + ' %';
+    const img = wrap.querySelector('[data-graine-apercu-stade="' + i + '"] img');
+    if (img){ img.style.width = currentGraineStages[i].echelle + '%'; img.style.height = currentGraineStages[i].echelle + '%'; }
   }));
   wrap.querySelectorAll('[data-graine-del]').forEach(b=> b.addEventListener('click', ()=>{
     currentGraineStages.splice(+b.dataset.graineDel, 1); renderGraineStages();
@@ -11340,7 +11363,7 @@ function renderGraineLoot(){
   }));
 }
 document.getElementById('itemGraineAddStage').addEventListener('click', ()=>{
-  currentGraineStages.push({ imageUrl:'', imagePath:null, minutes:60 }); renderGraineStages();
+  currentGraineStages.push({ imageUrl:'', imagePath:null, minutes:60, echelle:100 }); renderGraineStages();
 });
 document.getElementById('itemGraineAddLoot').addEventListener('click', ()=>{
   currentGraineLoot.push({ itemId:'', qty:1 }); renderGraineLoot();
@@ -11692,7 +11715,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   if (type === 'graine'){
     const after = document.getElementById('itemGraineAfter').value;
     culture = {
-      stages: currentGraineStages.map(st=> ({ imageUrl: st.imageUrl || '', imagePath: st.imagePath || null, minutes: parseInt(st.minutes,10) || 60 })),
+      stages: currentGraineStages.map(st=> ({ imageUrl: st.imageUrl || '', imagePath: st.imagePath || null, minutes: parseInt(st.minutes,10) || 60, echelle: echelleDuStade(st) })),
       loot: currentGraineLoot.filter(l=> l.itemId).map(l=> ({ itemId: l.itemId, qty: parseInt(l.qty,10) || 1 })),
       after,
       restartStage: after === 'restart' ? (parseInt(document.getElementById('itemGraineRestart').value,10) || 2) : null,
@@ -18193,14 +18216,34 @@ function sauverRecherche(){
     .catch(e=> console.warn('recherche', e));
 }
 
-/* Les trois plus proches du point de départ. On écarte les brouillons et les fiches sans
-   position : une adresse qu'on ne peut pas rejoindre n'est pas un résultat. */
-function rechercheCandidats(type, depuis){
+/* Les trois plus proches du point de départ. On écarte les brouillons jamais publiés et les
+   fiches sans position : une adresse qu'on ne peut pas rejoindre n'est pas un résultat.
+   v493 : on cherche dans TOUTES les fiches publiées (`toutesLesFiches`), plus dans la liste
+   des PNJ visibles sur la carte à l'instant T — celle-ci exclut les PNJ hors horaires, les
+   recrutés, les conditions non remplies. Et une fiche « en travaux » qui a une version publiée
+   compte (avant, `!f.enTravaux` l'écartait). Chaque décision s'écrit dans la boîte noire. */
+function rechercheCandidats(type, depuis, journalDetaille){
   const def = MT_RECHERCHES[type];
-  if (!def || !depuis || depuis.lat == null) return [];
-  return creatures
-    .filter(f=> f && f.lat != null && f.lng != null && !f.enTravaux && def.retient(f))
-    .map(f=> ({ f, dist: haversineDist(depuis.lat, depuis.lng, f.lat, f.lng) }))
+  const dire = (m, d)=>{ if (typeof journal === 'function') journal('base', 'recherche ' + type + ' : ' + m, d); };
+  if (!def){ dire('type inconnu'); return []; }
+  if (!depuis || depuis.lat == null){ dire('AUCUN point de départ (GPS pas fixé au lancement ni maintenant) → rapport vide'); return []; }
+  dire('départ ' + (+depuis.lat).toFixed(5) + ', ' + (+depuis.lng).toFixed(5));
+  const source = (typeof toutesLesFiches === 'function') ? toutesLesFiches() : creatures;
+  const retenus = [];
+  source.forEach(brut=>{
+    if (!brut) return;
+    const f = ficheJouable(brut) || brut;   // en travaux jamais publiée : on la regarde quand même pour le diagnostic
+    const nom = (f.name || brut.name || '(sans nom)') + ' [' + (f.interactionType || 'dialogue') + (f.metier ? ', métier ' + f.metier : ', sans métier') + ']';
+    let pourquoi = '';
+    if (!def.retient(f)) pourquoi = (type === 'artisan' && !f.metier) ? 'pas de métier sur la fiche' : 'pas de la bonne nature';
+    else if (!ficheJouable(brut)) pourquoi = 'en travaux, jamais publiée';
+    else if (typeof f.lat !== 'number' || typeof f.lng !== 'number') pourquoi = 'PAS DE POSITION GPS' + (f.assignedZoneId ? ' (rattachée à une zone)' : '');
+    if (pourquoi){ if (def.retient(f) || journalDetaille) dire('écartée : ' + nom, pourquoi); return; }
+    retenus.push({ f, dist: haversineDist(depuis.lat, depuis.lng, f.lat, f.lng) });
+    dire('retenue : ' + nom, Math.round(retenus[retenus.length - 1].dist) + ' m');
+  });
+  dire(retenus.length + ' retenue(s) sur ' + source.length + ' fiche(s) lues');
+  return retenus
     .sort((a,b)=> a.dist - b.dist)
     .slice(0, MT_RECHERCHE_RESULTATS)
     .map(x=> ({
@@ -18956,6 +18999,12 @@ document.getElementById('saveSearchHoursBtn').addEventListener('click', ()=>{
   db.collection('app_config').doc('missions').set({ searchHours: n }, { merge:true })
     .then(()=>{ rechercheHeures = n; showToast('Recherche : ' + n + ' h'); })
     .catch((err)=> showToast('Échec : ' + err.message));
+});
+/* v493 : le diagnostic tout de suite, sans attendre les 8 h — chaque fiche et la raison
+   de son rejet s'écrivent dans la boîte noire, à copier-coller. */
+document.getElementById('testRechercheBtn').addEventListener('click', ()=>{
+  const res = rechercheCandidats('artisan', playerPos, true);
+  showToast(res.length + ' artisan(s) retenu(s) — détail dans 🧾 Boîte noire');
 });
 document.getElementById('finishSearchBtn').addEventListener('click', ()=>{
   if (!playerSearch){ showToast('Aucune recherche en cours'); return; }
@@ -21973,12 +22022,19 @@ let quartersTab = 'combattant';
    un. Selon la façon dont il a été recruté, `metierId` porte un identifiant ou directement un
    nom — on accepte les deux plutôt que de n'afficher rien. */
 function metierNom(r){
-  if (!r.metierId) return '';
-  const m = metiers.find(x=> x.id === r.metierId);
+  /* v493 : sans métier sur la recrue (recrutée par un choix « Le recruter » sans métier),
+     on reprend celui de la FICHE d'origine — c'est là que l'auteur l'a rempli. */
+  let id = r.metierId;
+  if (!id && r.sourceCreatureId && typeof ficheParId === 'function'){
+    const f = ficheParId(r.sourceCreatureId);
+    if (f && f.metier) id = f.metier;
+  }
+  if (!id) return '';
+  const m = metiers.find(x=> x.id === id);
   if (m) return m.name;
-  const parNom = metiers.find(x=> x.name === r.metierId);
+  const parNom = metiers.find(x=> x.name === id);
   if (parNom) return parNom.name;
-  return String(r.metierId).length > 24 ? '' : String(r.metierId); // un identifiant brut ne s'affiche pas
+  return String(id).length > 24 ? '' : String(id); // un identifiant brut ne s'affiche pas
 }
 function quartersSorted(type){
   const rang = quartersOrder[type] || [];
@@ -22188,8 +22244,10 @@ function texteHolo(occupant){
   const fonction = occupant.fonction || '';
   let l1 = fonctionLabel(fonction);
   /* v487 — sans fonction déclarée, le métier prend le relais s'il y en a un ; sinon c'est le
-     prénom qui passe en gros sur le panneau. Une porte occupée n'affiche jamais rien. */
-  if (!fonction || fonction === 'artisanat'){ const m = metierNom(occupant); if (m) l1 = m; }
+     prénom qui passe en gros sur le panneau. Une porte occupée n'affiche jamais rien.
+     v493 — une fonction SANS étiquette (« Autre ») laissait le métier de côté et n'affichait
+     que le prénom : le métier passe en grand dès que la fonction n'en donne pas. */
+  if (!l1 || fonction === 'artisanat'){ const m = metierNom(occupant); if (m) l1 = m; }
   if (!l1) l1 = occupant.name || 'Habitant';
   const l2 = (l1 === occupant.name) ? '' : (occupant.name || '');
   return { l1, l2, libre:false };
@@ -23650,8 +23708,8 @@ function renderSceneEditorPoints(){
     /* v492 : sur le bac sélectionné, l'aperçu de la plante choisie dans le panneau, avec les
        réglages d'échelle et de pied du point — exactement comme le jeu la dessinera. */
     if (pt.type === 'bac' && selected){
-      const u = urlApercuBac();
-      if (u){ el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, u)); }
+      const st = stadeApercuBac();
+      if (st && imageDuStade(st)){ el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, st)); }
     }
 
     /* Lien mort : le point renvoie à une fiche qui n'existe plus. En jeu il serait sauté
@@ -24155,58 +24213,50 @@ function renderSceneDetailTypeSpecific(pt){
   }
 
   if (pt.type === 'bac'){
-    /* v492 : la plante se dessine PAR-DESSUS le bac, et c'est le bac qui règle sa taille
-       (chaque bac a ses proportions). L'aperçu se fait avec une vraie graine, sur le bac
-       sélectionné dans la scène ET dans la vignette ci-dessous. Rien de l'aperçu n'est
+    /* v492 : la plante se dessine PAR-DESSUS le bac. v493 : des CURSEURS (plus de
+       pourcentages à taper), et l'aperçu se fait uniquement sur le bac sélectionné dans la
+       scène, au-dessus — la vignette à part trompait (« ce qui dépasse du cadre ne
+       s'affichera pas », alors que dans la scène rien n'est coupé). Rien de l'aperçu n'est
        enregistré : seuls les deux réglages (échelle, pied) sont sur le point. */
     const r = reglagesPlante(pt);
     const graines = items.filter(it=> it.type === 'graine' && cultureDeLaGraine(it.id));
     if (apercuBac.seedId && !graines.some(g=> g.id === apercuBac.seedId)) apercuBac = { seedId:'', stade:-1 };
+    if (!apercuBac.seedId && graines.length === 1) apercuBac = { seedId: graines[0].id, stade:-1 };
     const cSel = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
-    const optStades = cSel ? cSel.stages.map((s,i)=> `<option value="${i}" ${(apercuBac.stade < 0 ? i === cSel.stages.length - 1 : i === apercuBac.stade) ? 'selected' : ''}>${i + 1}${i === cSel.stages.length - 1 ? ' (mûr)' : ''}</option>`).join('') : '';
-    const urlBac = pointEffectiveImageUrl(pt);
+    const optStades = (c)=> c ? c.stages.map((s,i)=> `<option value="${i}" ${(apercuBac.stade < 0 ? i === c.stages.length - 1 : i === apercuBac.stade) ? 'selected' : ''}>${i + 1}${i === c.stages.length - 1 ? ' (mûr)' : ''}</option>`).join('') : '';
     typeWrap.innerHTML = `
-      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Un bac de la serre. La <b>graine</b> plantée décide des stades, des durées et de la récolte (Édition → Objets, type « Graine à planter »). L'image du point est celle du <b>bac vide</b> ; la plante se pose <b>par-dessus</b>, et c'est ici que tu règles sa taille pour CE bac. Les stades d'une même graine gardent leurs proportions entre eux.</p>
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Taille de la plante (% du bac)</div>
-      <input type="number" class="field-input" data-bac-echelle min="10" max="400" step="5" value="${r.echelle}">
-      <div class="field-label" style="color:rgba(255,255,255,.75);">Pied de la plante (% de la hauteur du bac, 0 = bord haut, 100 = bord bas)</div>
-      <input type="number" class="field-input" data-bac-base min="-100" max="200" step="5" value="${r.base}">
-      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:10px;">Aperçu avec une graine</div>
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Un bac de la serre. La <b>graine</b> plantée décide des stades, des durées, de la récolte et de la taille de chaque stade (Édition → Objets). L'image du point est celle du <b>bac vide</b> ; la plante se pose <b>par-dessus</b>. Ici tu règles sa taille et son pied pour CE bac — <b>regarde le bac dans la scène</b> pendant que tu glisses.</p>
       ${graines.length ? `
-        <select class="field-input" data-bac-graine>
-          <option value="">— choisir une graine —</option>
-          ${graines.map(g=> `<option value="${g.id}" ${g.id === apercuBac.seedId ? 'selected' : ''}>${g.name}</option>`).join('')}
-        </select>
-        <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-          <span class="meta" style="white-space:nowrap;">Stade</span>
-          <select class="field-input" data-bac-stade style="flex:1;" ${cSel ? '' : 'disabled'}>${optStades}</select>
+        <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Aperçu avec</div>
+        <div class="field-row" style="align-items:center; gap:6px;">
+          <select class="field-input" data-bac-graine style="flex:2;">
+            <option value="">— une graine —</option>
+            ${graines.map(g=> `<option value="${g.id}" ${g.id === apercuBac.seedId ? 'selected' : ''}>${g.name}</option>`).join('')}
+          </select>
+          <select class="field-input" data-bac-stade style="flex:1;" ${cSel ? '' : 'disabled'}>${optStades(cSel)}</select>
         </div>
       ` : `<p class="meta" style="margin:0;">Aucune graine décrite pour l'instant (Édition → Objets).</p>`}
-      <div data-bac-vignette style="position:relative; width:160px; height:160px; margin:10px auto 0; background:rgba(255,255,255,.06); border:1px dashed rgba(255,255,255,.3); border-radius:8px; overflow:visible;">
-        ${urlBac ? `<img src="${urlBac}" style="width:100%; height:100%; object-fit:contain; pointer-events:none;">` : `<div class="meta" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:8px;">Donne d'abord une image au point (bac vide)</div>`}
-        ${htmlPlanteDuBac(pt, urlApercuBac())}
-      </div>
-      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px; text-align:center;">Le même aperçu s'affiche sur le bac dans la scène, au-dessus.</p>`;
-    const rafraichir = ()=>{
-      const vig = typeWrap.querySelector('[data-bac-vignette]');
-      if (vig){
-        const ancienne = vig.querySelector('.bac-plante');
-        if (ancienne) ancienne.remove();
-        vig.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, urlApercuBac()));
-      }
-      renderSceneEditorPoints();
-    };
-    typeWrap.querySelector('[data-bac-echelle]').addEventListener('input', (e)=>{ pt.planteEchelle = Math.max(10, Math.min(400, +e.target.value || PLANTE_ECHELLE_DEFAUT)); rafraichir(); });
-    typeWrap.querySelector('[data-bac-base]').addEventListener('input', (e)=>{ pt.planteBase = Math.max(-100, Math.min(200, +e.target.value || 0)); rafraichir(); });
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Taille de la plante <span data-bac-echelle-val>${r.echelle}</span> %</div>
+      <input type="range" data-bac-echelle min="10" max="400" step="5" value="${r.echelle}" style="width:100%; margin:4px 0 8px;">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Pied de la plante <span data-bac-base-val>${r.base}</span> (0 = haut du bac, 100 = bas)</div>
+      <input type="range" data-bac-base min="-100" max="200" step="1" value="${r.base}" style="width:100%; margin:4px 0 8px;">`;
+    const rafraichir = ()=>{ renderSceneEditorPoints(); };
+    typeWrap.querySelector('[data-bac-echelle]').addEventListener('input', (e)=>{
+      pt.planteEchelle = Math.max(10, Math.min(400, +e.target.value || PLANTE_ECHELLE_DEFAUT));
+      typeWrap.querySelector('[data-bac-echelle-val]').textContent = pt.planteEchelle;
+      rafraichir();
+    });
+    typeWrap.querySelector('[data-bac-base]').addEventListener('input', (e)=>{
+      pt.planteBase = Math.max(-100, Math.min(200, +e.target.value || 0));
+      typeWrap.querySelector('[data-bac-base-val]').textContent = pt.planteBase;
+      rafraichir();
+    });
     const selG = typeWrap.querySelector('[data-bac-graine]');
     if (selG) selG.addEventListener('change', (e)=>{
       apercuBac = { seedId: e.target.value, stade:-1 };
       const c = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
       const selS = typeWrap.querySelector('[data-bac-stade]');
-      if (selS){
-        selS.disabled = !c;
-        selS.innerHTML = c ? c.stages.map((s,i)=> `<option value="${i}" ${i === c.stages.length - 1 ? 'selected' : ''}>${i + 1}${i === c.stages.length - 1 ? ' (mûr)' : ''}</option>`).join('') : '';
-      }
+      if (selS){ selS.disabled = !c; selS.innerHTML = optStades(c); }
       rafraichir();
     });
     const selS = typeWrap.querySelector('[data-bac-stade]');
@@ -25096,12 +25146,15 @@ function imageDuStade(st){
   if (st.imagePath) return resolveMediaPath(st.imagePath);
   return '';
 }
-/* v492 : la plante posée sur le bac. Deux réglages, portés par le POINT (chaque bac a ses
-   propres proportions, la graine ne sait pas dans quel bac elle sera plantée) :
+/* v492 : la plante posée sur le bac. v493 : la taille se règle à DEUX niveaux.
+   - Sur la GRAINE, une échelle PAR STADE (stage.echelle, 100 = taille de référence) : c'est
+     là qu'on dit qu'une pousse est plus petite qu'un arbre. Ces proportions voyagent avec la
+     graine dans toutes les scènes.
+   - Sur le BAC (le point), UN SEUL réglage global qui multiplie le tout, plus la hauteur du
+     pied : chaque bac a ses proportions, la graine ne sait pas dans quel bac elle sera.
    - planteEchelle : taille du cadre de la plante, en % du rectangle du bac (100 = même taille)
    - planteBase    : où repose le PIED de la plante, en % de la hauteur du bac depuis le haut
-                     (0 = bord haut, 100 = bord bas). La plante est calée par le bas et centrée,
-                     donc tous les stades d'une même graine gardent leurs proportions entre eux. */
+                     (0 = bord haut, 100 = bord bas). La plante est calée par le bas et centrée. */
 const PLANTE_ECHELLE_DEFAUT = 100;
 const PLANTE_BASE_DEFAUT = 55;
 function reglagesPlante(pt){
@@ -25110,25 +25163,50 @@ function reglagesPlante(pt){
     base:    Math.max(-100, Math.min(200, pt.planteBase == null ? PLANTE_BASE_DEFAUT : +pt.planteBase))
   };
 }
-function htmlPlanteDuBac(pt, url){
+function echelleDuStade(st){
+  if (!st || st.echelle == null || st.echelle === '') return 100;
+  return Math.max(5, Math.min(300, +st.echelle || 100));
+}
+/* La plante d'un stade, par-dessus un bac : taille du bac × échelle du stade. */
+function htmlPlanteDuBac(pt, st){
+  const url = imageDuStade(st);
   if (!url) return '';
   const r = reglagesPlante(pt);
-  return `<img class="bac-plante" src="${url}" style="position:absolute; left:50%; bottom:${100 - r.base}%; width:${r.echelle}%; height:${r.echelle}%; transform:translateX(-50%); object-fit:contain; object-position:center bottom; pointer-events:none; -webkit-touch-callout:none;">`;
+  const taille = r.echelle * echelleDuStade(st) / 100;
+  return `<img class="bac-plante" src="${url}" style="position:absolute; left:50%; bottom:${100 - r.base}%; width:${taille}%; height:${taille}%; transform:translateX(-50%); object-fit:contain; object-position:center bottom; pointer-events:none; -webkit-touch-callout:none;">`;
 }
 /* Aperçu dans l'éditeur : quelle graine et quel stade poser sur le bac sélectionné.
    Rien de tout ça n'est enregistré — c'est un outil de réglage. */
 let apercuBac = { seedId:'', stade:-1 };
-function urlApercuBac(){
+function stadeApercuBac(){
   const c = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
-  if (!c) return '';
+  if (!c) return null;
   const i = apercuBac.stade >= 0 && apercuBac.stade < c.stages.length ? apercuBac.stade : c.stages.length - 1;
-  return imageDuStade(c.stages[i]);
+  return c.stages[i] || null;
 }
 /* Redessin sur place au passage de stade : l'état du bac se déduit de l'heure, mais rien ne
    redessinait la scène — il fallait sortir et revenir pour voir la plante grandir. On arme
    une seule minuterie sur le prochain changement, et on vérifie à l'échéance qu'on est
-   toujours dans la même scène. */
+   toujours dans la même scène.
+   v493 : à l'échéance on ne redessine QUE les calques de plante (le fond ne bouge pas) —
+   redessiner toute la scène faisait un écran noir le temps de recharger l'image. */
 let bacMinuterie = null;
+function redessinerPlantesDesBacs(points){
+  const wrap = document.getElementById('sceneViewImgWrap');
+  if (!wrap) return;
+  (points || []).forEach(pt=>{
+    if (pt.type !== 'bac') return;
+    const el = wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]');
+    if (!el) return;
+    el.querySelectorAll('.bac-plante').forEach(x=> x.remove());
+    const etat = etatDuBac(pt);
+    if (!etat) return;
+    const st = etat.culture.stages[etat.index];
+    if (imageDuStade(st)) ensurePointPixelCache(imageDuStade(st));
+    el.style.overflow = 'visible';
+    el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, st));
+  });
+}
 function armerMinuterieBacs(points, sceneId){
   if (bacMinuterie){ clearTimeout(bacMinuterie); bacMinuterie = null; }
   let prochain = Infinity;
@@ -25141,7 +25219,9 @@ function armerMinuterieBacs(points, sceneId){
   bacMinuterie = setTimeout(()=>{
     bacMinuterie = null;
     const full = document.getElementById('sceneViewFull');
-    if (full && full.classList.contains('show') && sceneViewCurrentSceneId === sceneId) renderSceneViewCurrentScene();
+    if (!(full && full.classList.contains('show') && sceneViewCurrentSceneId === sceneId)) return;
+    redessinerPlantesDesBacs(points);
+    armerMinuterieBacs(points, sceneId);   // le stade suivant, s'il y en a un
   }, Math.max(250, prochain + 300));
 }
 function ecrirePlantation(pt, rec){
@@ -25164,11 +25244,29 @@ function toucherBac(pt){
     return;
   }
   if (!etat.mature){
-    const st = etat.culture.stages[etat.index];
-    showToast('🌱 ' + (etat.index + 1) + 'ᵉ stade — encore ' + formatRemainingDuration(etat.restantMs));
+    ouvrirBacEnCroissance(pt, etat);
     return;
   }
   recolterLeBac(pt, etat);
+}
+/* v493 : un bac en croissance s'ouvre sur son stade, son temps restant, et le bouton
+   Déraciner — sinon un bac serait condamné à vie dès qu'on s'est trompé de graine. On ne
+   rend rien : la graine se récupère au premier fruit, il n'y avait donc rien à rendre. */
+function ouvrirBacEnCroissance(pt, etat){
+  const it = items.find(i=> i.id === etat.rec.seedItemId);
+  document.getElementById('serreGraineTitre').textContent = '🌱 ' + (it ? it.name : 'Plante') + ' — ' + (etat.index + 1) + 'ᵉ stade';
+  const liste = document.getElementById('serreGraineList');
+  liste.innerHTML = `<p class="meta" style="margin:0 0 10px;">Encore ${formatRemainingDuration(etat.restantMs)} avant le stade suivant.</p>
+    <button class="choice-btn" data-deraciner style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">🪓 Déraciner</button>`;
+  liste.querySelector('[data-deraciner]').addEventListener('click', async ()=>{
+    const ok = await appConfirm('Déraciner ' + (it ? it.name : 'cette plante') + ' ? Tout est perdu, le bac redevient vide.');
+    if (!ok) return;
+    document.getElementById('serreGraineOverlay').classList.remove('show');
+    ecrirePlantation(pt, null);
+    renderSceneViewCurrentScene();
+    showToast('🪓 Bac vidé');
+  });
+  document.getElementById('serreGraineOverlay').classList.add('show');
 }
 function recolterLeBac(pt, etat){
   const noms = [];
@@ -25185,14 +25283,13 @@ function recolterLeBac(pt, etat){
     ecrirePlantation(pt, null);
   }
   renderSceneViewCurrentScene();
-  document.getElementById('sceneDialogueText').textContent = noms.length
-    ? 'Récolte : ' + noms.join(', ') + '.'
-    : 'Tu récoltes, mais il n\'y avait rien à prendre.';
-  document.getElementById('sceneDialogueOverlay').classList.add('show');
+  /* v493 : le bandeau suffit, plus de fenêtre de dialogue pour trois fruits. */
+  showToast(noms.length ? '🧺 ' + noms.join(', ') : 'Rien à récolter');
 }
 function ouvrirChoixGraine(pt){
   const dispo = grainesDuSac();
   const liste = document.getElementById('serreGraineList');
+  document.getElementById('serreGraineTitre').textContent = 'Que planter dans ce bac ?';
   if (!dispo.length){
     liste.innerHTML = '<p class="meta" style="margin:0;">Tu n\'as aucune graine dans ton sac.</p>';
   } else {
@@ -25504,8 +25601,9 @@ async function renderSceneViewCurrentScene(){
          que l'icône est masquée : le rectangle du point sert alors de repère). */
       const etat = etatDuBac(pt);
       if (etat){
-        const u = imageDuStade(etat.culture.stages[etat.index]);
-        if (u){ ensurePointPixelCache(u); el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, u)); }
+        const st = etat.culture.stages[etat.index];
+        const u = imageDuStade(st);
+        if (u){ ensurePointPixelCache(u); el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, st)); }
       }
     }
 
