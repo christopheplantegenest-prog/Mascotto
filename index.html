@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v500</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v501</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3046,7 +3046,7 @@
       <div class="pos-actions" style="margin-top:6px;">
         <button class="btn-secondary" id="pieceCommuneBtn" style="width:100%;">🧍 Placer sur un emplacement (vaisseau ou zone)</button>
       </div>
-      <p class="meta" id="pieceCommuneHint" style="display:none; margin-top:4px;">Cette version se montre dans un emplacement de cette pièce quand son personnage est à bord et que l'heure est la sienne. <span id="pieceCommuneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
+      <p class="meta" id="pieceCommuneHint" style="display:none; margin-top:4px;">Cette version se montre dans un emplacement 🧍 de cette scène quand l'heure est la sienne (un personnage recrutable : seulement à bord). <span id="pieceCommuneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span><br><span id="pieceCommuneOccupation"></span></p>
       <p class="meta">Pour les fiches qui n'ont pas à être quelque part : monstres de rencontre aléatoire, habitants du vaisseau, personnages préparés à l'avance. Elles s'enregistrent sans emplacement et se retrouvent dans la liste sous « 📦 En réserve ».</p>
       <p class="meta" id="assignZoneHint" style="display:none; margin-top:4px;">Ce PNJ est assigné à une zone d'exploration plutôt qu'à un point sur la carte. <span id="assignZoneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
 
@@ -10925,6 +10925,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   }
   /* v443 : une nouvelle version part d'une fiche chargée mais doit devenir un document NEUF. */
   const enCreation = (!editingId || forcerCreation);
+  /* v501 : à deux endroits à la fois, ou trop de monde dans la pièce → on prévient, on ne bloque pas. */
+  if (!(await controlerChevauchements(data, enCreation ? null : editingId))) return;
   const op = enCreation ? creatureCol.add({ ...data, createdAt: Date.now() }) : creatureCol.doc(editingId).set(data);
   op.then((ref)=>{
     /* Un PNJ créé depuis une zone doit pouvoir être posé sur la scène au retour — or une fiche
@@ -10988,14 +10990,164 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
 /* ---------- Placement : nouvel emplacement (crosshair) ---------- */
 let placementTarget = 'creature'; // 'creature' ou 'pickup'
 
+/* ===== v501 : CHEVAUCHEMENTS DE VERSIONS et PLACES DANS LA PIÈCE =====
+   Plutôt que de comparer des créneaux à la main (jours, passage de minuit, dates de début et
+   de fin…), on ÉCHANTILLONNE : la semaine à venir est découpée en tranches de 15 minutes et
+   on demande à isActiveAt, la seule autorité, si la version est active à chaque tranche. Deux
+   versions se chevauchent si une tranche est active pour les deux. */
+const TRANCHES_PAR_JOUR = 96;
+function baseSemaine(){ const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function masqueActivite(f, base){
+  base = base || baseSemaine();
+  const m = new Uint8Array(7 * TRANCHES_PAR_JOUR);
+  for (let i = 0; i < m.length; i++){
+    /* On sonde à la minute 1 de la tranche : une fin à 20:00 (inclusive dans isActiveAt) ne
+       fait pas déborder la tranche 20:00–20:15, et un début à 18:00 n'allume pas 17:45. */
+    const t = new Date(base.getTime() + i * 15 * 60000 + 60000);
+    if (isActiveAt(f, t)) m[i] = 1;
+  }
+  return m;
+}
+function ficheALieu(f){
+  return !!(f && ((f.lat != null && f.lng != null) || f.assignedZoneId || (f.pieceCommune && f.pieceCommune.sceneId)));
+}
+function heureDeTranche(i){ const h = Math.floor(i / 4), mn = (i % 4) * 15; return String(h).padStart(2, '0') + ':' + String(mn).padStart(2, '0'); }
+/* « lundi 18:00–20:00, mardi toute la journée » — ou « tous les jours 18:00–20:00 » quand les
+   sept jours sont identiques. */
+function decrireMasque(m, base){
+  base = base || baseSemaine();
+  const jours = [];
+  for (let d = 0; d < 7; d++){
+    const plages = [];
+    let debut = -1;
+    for (let q = 0; q <= TRANCHES_PAR_JOUR; q++){
+      const on = q < TRANCHES_PAR_JOUR && m[d * TRANCHES_PAR_JOUR + q];
+      if (on && debut < 0) debut = q;
+      if (!on && debut >= 0){ plages.push([debut, q]); debut = -1; }
+    }
+    if (!plages.length) continue;
+    const texte = (plages.length === 1 && plages[0][0] === 0 && plages[0][1] === TRANCHES_PAR_JOUR)
+      ? 'toute la journée'
+      : plages.map(p=> heureDeTranche(p[0]) + '–' + (p[1] === TRANCHES_PAR_JOUR ? '24:00' : heureDeTranche(p[1]))).join(', ');
+    const jour = new Date(base.getTime() + d * 86400000).getDay();
+    jours.push({ jour, texte });
+  }
+  if (!jours.length) return '';
+  if (jours.length === 7 && jours.every(j=> j.texte === jours[0].texte)) return 'tous les jours ' + jours[0].texte;
+  return jours.map(j=> PL_LONG[j.jour] + ' ' + j.texte).join(' ; ');
+}
+function masquesSeCroisent(a, b){
+  const m = new Uint8Array(a.length);
+  let un = false;
+  for (let i = 0; i < a.length; i++){ if (a[i] && b[i]){ m[i] = 1; un = true; } }
+  return un ? m : null;
+}
+/* Les autres versions du même personnage qui sont quelque part en même temps que celle-ci. */
+function chevauchementsDeVersion(data, exclureId){
+  if (!ficheALieu(data)) return [];
+  const groupe = data.dupeGroup || exclureId;
+  if (!groupe) return [];
+  const base = baseSemaine();
+  const moi = masqueActivite(data, base);
+  const out = [];
+  toutesLesFiches().forEach(f=>{
+    if (!f || f.id === exclureId) return;
+    if ((f.dupeGroup || f.id) !== groupe) return;
+    if (!ficheALieu(f)) return;
+    const croise = masquesSeCroisent(moi, masqueActivite(f, base));
+    if (croise) out.push({ id: f.id, nom: f.name || '(sans nom)', lieu: libelleLieuVersion ? libelleLieuVersion(f) : '', texte: decrireMasque(croise, base) });
+  });
+  return out;
+}
+/* Les personnages (autres que le mien) marqués sur la même scène, et les tranches où il y a
+   plus de monde que de rectangles. */
+async function nombrePlacesScene(zoneId, sceneId){
+  if (!zonesCol || !zoneId) return null;
+  try {
+    const doc = await zonesCol.doc(zoneId).get();
+    if (!doc || !doc.exists) return null;
+    const sc = ((doc.data().scenes) || []).find(x=> x && x.id === sceneId);
+    return sc ? (sc.points || []).filter(p=> p && p.type === 'emplacement').length : null;
+  } catch(e){ return null; }
+}
+function occupationPiece(data, exclureId){
+  const pc = data.pieceCommune;
+  if (!pc || !pc.sceneId) return { occupants: [], depassement: null };
+  const groupe = data.dupeGroup || exclureId;
+  const base = baseSemaine();
+  const parGroupe = {};
+  toutesLesFiches().forEach(f=>{
+    if (!f || f.id === exclureId) return;
+    if (!f.pieceCommune || f.pieceCommune.sceneId !== pc.sceneId) return;
+    const g = f.dupeGroup || f.id;
+    if (g === groupe) return;
+    const m = masqueActivite(f, base);
+    if (!parGroupe[g]) parGroupe[g] = { nom: f.name || '(sans nom)', masque: new Uint8Array(m.length) };
+    for (let i = 0; i < m.length; i++) if (m[i]) parGroupe[g].masque[i] = 1;
+  });
+  const occupants = Object.keys(parGroupe).map(g=> ({ nom: parGroupe[g].nom, texte: decrireMasque(parGroupe[g].masque, base) }));
+  const moi = masqueActivite(data, base);
+  const compte = new Uint8Array(moi.length);
+  for (let i = 0; i < moi.length; i++){
+    if (!moi[i]) continue;
+    compte[i] = 1;
+    Object.keys(parGroupe).forEach(g=>{ if (parGroupe[g].masque[i]) compte[i]++; });
+  }
+  return { occupants, compte, base };
+}
+/* Le contrôle à l'enregistrement : avertit avec le détail, n'empêche rien, ne remplace rien. */
+async function controlerChevauchements(data, exclureId){
+  const lignes = [];
+  chevauchementsDeVersion(data, exclureId).forEach(c=>{
+    lignes.push('⚠️ Ce personnage serait à deux endroits à la fois : la version « ' + c.nom + ' »' + (c.lieu ? ' (' + c.lieu + ')' : '') + ' est aussi active ' + c.texte + '.');
+  });
+  if (data.pieceCommune && data.pieceCommune.sceneId){
+    const places = await nombrePlacesScene(data.pieceCommune.zoneId, data.pieceCommune.sceneId);
+    if (places === 0) lignes.push('⚠️ La scène « ' + (data.pieceCommune.nom || '') + ' » n\'a AUCUN emplacement 🧍 : cette version ne s\'y affichera pas.');
+    else if (places){
+      const occ = occupationPiece(data, exclureId);
+      const trop = new Uint8Array(occ.compte.length);
+      let un = false;
+      for (let i = 0; i < trop.length; i++){ if (occ.compte[i] > places){ trop[i] = 1; un = true; } }
+      if (un) lignes.push('⚠️ Pas assez de places dans « ' + (data.pieceCommune.nom || '') + ' » (' + places + ') : ' + decrireMasque(trop, occ.base) + ', quelqu\'un ne sera pas affiché. Déjà marqués ici : ' + occ.occupants.map(o=> o.nom + ' (' + o.texte + ')').join(', ') + '.');
+    }
+  }
+  if (!lignes.length) return true;
+  const msg = document.getElementById('appConfirmMessage');
+  if (msg) msg.style.whiteSpace = 'pre-line';
+  const ok = await appConfirm(lignes.join('\n\n') + '\n\nEnregistrer quand même ?');
+  if (msg) msg.style.whiteSpace = '';
+  return ok;
+}
+/* L'aide sous le lieu : le nombre de rectangles de la scène et les personnages déjà marqués dessus. */
+let aidePieceJeton = 0;
+async function majAidePiece(){
+  const el = document.getElementById('pieceCommuneOccupation');
+  if (!el) return;
+  const pc = pendingPieceCommune;
+  if (!pc){ el.textContent = ''; return; }
+  const jeton = ++aidePieceJeton;
+  el.textContent = '⏳ places…';
+  const exclureId = (editingId && !forcerCreation) ? editingId : null;
+  const src = exclureId ? ficheParId(exclureId) : null;
+  const groupe = (typeof currentDupeGroup !== 'undefined' && currentDupeGroup) || (src && (src.dupeGroup || src.id)) || null;
+  const places = await nombrePlacesScene(pc.zoneId, pc.sceneId);
+  if (jeton !== aidePieceJeton) return;
+  const occ = occupationPiece({ pieceCommune: pc, dupeGroup: groupe, timeRanges: [] }, exclureId);
+  let t = (places == null) ? 'places : ?' : (places + ' place' + (places > 1 ? 's' : '') + ' 🧍');
+  t += occ.occupants.length ? ' · déjà marqués ici : ' + occ.occupants.map(o=> o.nom + ' (' + o.texte + ')').join(', ') : ' · personne d\'autre pour l\'instant';
+  el.textContent = t;
+}
+
 function refreshPosStatusDisplay(){
   const el = document.getElementById('posStatusText');
   const hint = document.getElementById('assignZoneHint');
   const hintPiece = document.getElementById('pieceCommuneHint');
   if (hintPiece) hintPiece.style.display = pendingPieceCommune ? 'block' : 'none';
   if (pendingPieceCommune){
-    el.textContent = '🚀 ' + (pendingPieceCommune.nom || 'Pièce du vaisseau');
+    el.textContent = '🧍 ' + (pendingPieceCommune.nom || 'Emplacement');
     hint.style.display = 'none';
+    majAidePiece();   // v501
   } else if (pendingAssignedZoneId){
     const zone = creatures.find(c=>c.id===pendingAssignedZoneId);
     el.textContent = '🗺️ Zone : ' + (zone ? zone.name : 'zone sélectionnée');
