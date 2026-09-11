@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v491</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v492</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -23549,12 +23549,9 @@ function isChestOpen(pt){
 }
 
 function pointEffectiveImageUrl(pt){
-  /* v491 : un bac planté montre le stade où en est sa plante ; vide, il garde son image. */
-  if (pt.type === 'bac'){
-    const etat = etatDuBac(pt);
-    const url = etat ? imageDuStade(etat.culture.stages[etat.index]) : '';
-    if (url) return url;
-  }
+  /* v492 : le bac garde TOUJOURS son image (le bac vide) ; la plante est posée PAR-DESSUS,
+     voir htmlPlanteDuBac(). En v491 l'image du stade remplaçait le bac, ce qui faisait
+     disparaître le pot et interdisait tout réglage de proportion plante/bac. */
   /* Le coffre ouvert montre sa seconde image ; sans seconde image on garde la première,
      pour qu'un coffre mal configuré reste visible au lieu de disparaître du décor. */
   if (estCoffre(pt) && isChestOpen(pt)){
@@ -23573,6 +23570,15 @@ function pointEffectiveImageUrl(pt){
 
 /* Teste si un clic touche la zone opaque de l'image d'un point (sinon rectangle simple si pas d'image ou image tournée) */
 function isPointHitAt(pt, div, clientX, clientY){
+  /* v492 : la plante d'un bac dépasse souvent du rectangle du point (elle est plus grande
+     que le pot) — toucher la plante doit compter comme toucher le bac. */
+  if (pt.type === 'bac'){
+    const plante = div.querySelector('.bac-plante');
+    if (plante){
+      const pr = plante.getBoundingClientRect();
+      if (clientX >= pr.left && clientX <= pr.right && clientY >= pr.top && clientY <= pr.bottom) return true;
+    }
+  }
   const rect = div.getBoundingClientRect();
   if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
   /* Point masqué : plus d'image affichée, donc plus de pixels à tester — tout le rectangle répond. */
@@ -23641,6 +23647,13 @@ function renderSceneEditorPoints(){
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:26px; min-height:26px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
       el.innerHTML = `<div style="width:100%; height:100%; border-radius:50%; background:rgba(255,255,255,.92); border:2px solid ${selected?'var(--danger)':'var(--accent)'}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 2px 6px rgba(0,0,0,.4);">${sceneTypeEmoji(pt.type)}</div>`;
     }
+    /* v492 : sur le bac sélectionné, l'aperçu de la plante choisie dans le panneau, avec les
+       réglages d'échelle et de pied du point — exactement comme le jeu la dessinera. */
+    if (pt.type === 'bac' && selected){
+      const u = urlApercuBac();
+      if (u){ el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, u)); }
+    }
+
     /* Lien mort : le point renvoie à une fiche qui n'existe plus. En jeu il serait sauté
        sans un mot, alors qu'ici il affiche encore le nom mémorisé — d'où le liseré rouge. */
     if (sceneEditorLiensCasses.has(pt.id)){
@@ -24142,7 +24155,62 @@ function renderSceneDetailTypeSpecific(pt){
   }
 
   if (pt.type === 'bac'){
-    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Un bac de la serre. <b>Rien à régler ici</b> : c'est la GRAINE plantée qui décide de tout — ses stades de croissance, leur durée, et ce qu'on récolte. Tu règles ça dans Édition → Objets, sur un objet de type « Graine à planter ».<br><br>L'image que tu donnes au point dans « Apparence du point » est celle du <b>bac vide</b>. Dès qu'on plante, elle laisse place à l'image du stade en cours.</p>`;
+    /* v492 : la plante se dessine PAR-DESSUS le bac, et c'est le bac qui règle sa taille
+       (chaque bac a ses proportions). L'aperçu se fait avec une vraie graine, sur le bac
+       sélectionné dans la scène ET dans la vignette ci-dessous. Rien de l'aperçu n'est
+       enregistré : seuls les deux réglages (échelle, pied) sont sur le point. */
+    const r = reglagesPlante(pt);
+    const graines = items.filter(it=> it.type === 'graine' && cultureDeLaGraine(it.id));
+    if (apercuBac.seedId && !graines.some(g=> g.id === apercuBac.seedId)) apercuBac = { seedId:'', stade:-1 };
+    const cSel = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
+    const optStades = cSel ? cSel.stages.map((s,i)=> `<option value="${i}" ${(apercuBac.stade < 0 ? i === cSel.stages.length - 1 : i === apercuBac.stade) ? 'selected' : ''}>${i + 1}${i === cSel.stages.length - 1 ? ' (mûr)' : ''}</option>`).join('') : '';
+    const urlBac = pointEffectiveImageUrl(pt);
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Un bac de la serre. La <b>graine</b> plantée décide des stades, des durées et de la récolte (Édition → Objets, type « Graine à planter »). L'image du point est celle du <b>bac vide</b> ; la plante se pose <b>par-dessus</b>, et c'est ici que tu règles sa taille pour CE bac. Les stades d'une même graine gardent leurs proportions entre eux.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Taille de la plante (% du bac)</div>
+      <input type="number" class="field-input" data-bac-echelle min="10" max="400" step="5" value="${r.echelle}">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Pied de la plante (% de la hauteur du bac, 0 = bord haut, 100 = bord bas)</div>
+      <input type="number" class="field-input" data-bac-base min="-100" max="200" step="5" value="${r.base}">
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:10px;">Aperçu avec une graine</div>
+      ${graines.length ? `
+        <select class="field-input" data-bac-graine>
+          <option value="">— choisir une graine —</option>
+          ${graines.map(g=> `<option value="${g.id}" ${g.id === apercuBac.seedId ? 'selected' : ''}>${g.name}</option>`).join('')}
+        </select>
+        <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
+          <span class="meta" style="white-space:nowrap;">Stade</span>
+          <select class="field-input" data-bac-stade style="flex:1;" ${cSel ? '' : 'disabled'}>${optStades}</select>
+        </div>
+      ` : `<p class="meta" style="margin:0;">Aucune graine décrite pour l'instant (Édition → Objets).</p>`}
+      <div data-bac-vignette style="position:relative; width:160px; height:160px; margin:10px auto 0; background:rgba(255,255,255,.06); border:1px dashed rgba(255,255,255,.3); border-radius:8px; overflow:visible;">
+        ${urlBac ? `<img src="${urlBac}" style="width:100%; height:100%; object-fit:contain; pointer-events:none;">` : `<div class="meta" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:8px;">Donne d'abord une image au point (bac vide)</div>`}
+        ${htmlPlanteDuBac(pt, urlApercuBac())}
+      </div>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px; text-align:center;">Le même aperçu s'affiche sur le bac dans la scène, au-dessus.</p>`;
+    const rafraichir = ()=>{
+      const vig = typeWrap.querySelector('[data-bac-vignette]');
+      if (vig){
+        const ancienne = vig.querySelector('.bac-plante');
+        if (ancienne) ancienne.remove();
+        vig.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, urlApercuBac()));
+      }
+      renderSceneEditorPoints();
+    };
+    typeWrap.querySelector('[data-bac-echelle]').addEventListener('input', (e)=>{ pt.planteEchelle = Math.max(10, Math.min(400, +e.target.value || PLANTE_ECHELLE_DEFAUT)); rafraichir(); });
+    typeWrap.querySelector('[data-bac-base]').addEventListener('input', (e)=>{ pt.planteBase = Math.max(-100, Math.min(200, +e.target.value || 0)); rafraichir(); });
+    const selG = typeWrap.querySelector('[data-bac-graine]');
+    if (selG) selG.addEventListener('change', (e)=>{
+      apercuBac = { seedId: e.target.value, stade:-1 };
+      const c = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
+      const selS = typeWrap.querySelector('[data-bac-stade]');
+      if (selS){
+        selS.disabled = !c;
+        selS.innerHTML = c ? c.stages.map((s,i)=> `<option value="${i}" ${i === c.stages.length - 1 ? 'selected' : ''}>${i + 1}${i === c.stages.length - 1 ? ' (mûr)' : ''}</option>`).join('') : '';
+      }
+      rafraichir();
+    });
+    const selS = typeWrap.querySelector('[data-bac-stade]');
+    if (selS) selS.addEventListener('change', (e)=>{ apercuBac.stade = +e.target.value; rafraichir(); });
     return;
   }
 
@@ -25028,6 +25096,54 @@ function imageDuStade(st){
   if (st.imagePath) return resolveMediaPath(st.imagePath);
   return '';
 }
+/* v492 : la plante posée sur le bac. Deux réglages, portés par le POINT (chaque bac a ses
+   propres proportions, la graine ne sait pas dans quel bac elle sera plantée) :
+   - planteEchelle : taille du cadre de la plante, en % du rectangle du bac (100 = même taille)
+   - planteBase    : où repose le PIED de la plante, en % de la hauteur du bac depuis le haut
+                     (0 = bord haut, 100 = bord bas). La plante est calée par le bas et centrée,
+                     donc tous les stades d'une même graine gardent leurs proportions entre eux. */
+const PLANTE_ECHELLE_DEFAUT = 100;
+const PLANTE_BASE_DEFAUT = 55;
+function reglagesPlante(pt){
+  return {
+    echelle: Math.max(10, Math.min(400, pt.planteEchelle == null ? PLANTE_ECHELLE_DEFAUT : +pt.planteEchelle || PLANTE_ECHELLE_DEFAUT)),
+    base:    Math.max(-100, Math.min(200, pt.planteBase == null ? PLANTE_BASE_DEFAUT : +pt.planteBase))
+  };
+}
+function htmlPlanteDuBac(pt, url){
+  if (!url) return '';
+  const r = reglagesPlante(pt);
+  return `<img class="bac-plante" src="${url}" style="position:absolute; left:50%; bottom:${100 - r.base}%; width:${r.echelle}%; height:${r.echelle}%; transform:translateX(-50%); object-fit:contain; object-position:center bottom; pointer-events:none; -webkit-touch-callout:none;">`;
+}
+/* Aperçu dans l'éditeur : quelle graine et quel stade poser sur le bac sélectionné.
+   Rien de tout ça n'est enregistré — c'est un outil de réglage. */
+let apercuBac = { seedId:'', stade:-1 };
+function urlApercuBac(){
+  const c = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
+  if (!c) return '';
+  const i = apercuBac.stade >= 0 && apercuBac.stade < c.stages.length ? apercuBac.stade : c.stages.length - 1;
+  return imageDuStade(c.stages[i]);
+}
+/* Redessin sur place au passage de stade : l'état du bac se déduit de l'heure, mais rien ne
+   redessinait la scène — il fallait sortir et revenir pour voir la plante grandir. On arme
+   une seule minuterie sur le prochain changement, et on vérifie à l'échéance qu'on est
+   toujours dans la même scène. */
+let bacMinuterie = null;
+function armerMinuterieBacs(points, sceneId){
+  if (bacMinuterie){ clearTimeout(bacMinuterie); bacMinuterie = null; }
+  let prochain = Infinity;
+  (points || []).forEach(pt=>{
+    if (pt.type !== 'bac') return;
+    const etat = etatDuBac(pt);
+    if (etat && !etat.mature && etat.restantMs < prochain) prochain = etat.restantMs;
+  });
+  if (!isFinite(prochain)) return;
+  bacMinuterie = setTimeout(()=>{
+    bacMinuterie = null;
+    const full = document.getElementById('sceneViewFull');
+    if (full && full.classList.contains('show') && sceneViewCurrentSceneId === sceneId) renderSceneViewCurrentScene();
+  }, Math.max(250, prochain + 300));
+}
 function ecrirePlantation(pt, rec){
   if (rec) plantationsMap[pt.id] = rec; else delete plantationsMap[pt.id];
   if (!currentUser || !db || !sceneViewCreature) return Promise.resolve();
@@ -25383,6 +25499,16 @@ async function renderSceneViewCurrentScene(){
       el.textContent = sceneTypeEmoji(pt.type);
     }
 
+    if (pt.type === 'bac'){
+      /* v492 : la plante par-dessus le bac (aussi quand le bac est dessiné dans le décor et
+         que l'icône est masquée : le rectangle du point sert alors de repère). */
+      const etat = etatDuBac(pt);
+      if (etat){
+        const u = imageDuStade(etat.culture.stages[etat.index]);
+        if (u){ ensurePointPixelCache(u); el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, u)); }
+      }
+    }
+
     if (pt.type === 'habitant'){
       /* v479 : le panneau holographique par-dessus la porte. Il n'attrape pas les touchers :
          c'est le rectangle du point qui reçoit le doigt, comme pour toute porte. */
@@ -25636,6 +25762,7 @@ async function renderSceneViewCurrentScene(){
   });
 
   positionSceneViewPoints();
+  armerMinuterieBacs(sc.points, scRaw.id);   // v492
   declencherAgressions(sc, wrapPointActions);
 }
 

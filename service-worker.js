@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v461";
+const CACHE_NAME = "mascotto-v492";
 const ASSETS = [
   "./",
   "./index.html",
