@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v490</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v491</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2375,6 +2375,7 @@
         <option value="apprentissage">Apprentissage d'attaque</option>
         <option value="equipement">Équipement</option>
         <option value="composant">Composant de robot</option>
+        <option value="graine">Graine à planter</option>
       </select>
       <div id="itemComposantBlock" style="display:none;">
         <div class="field-label">Famille de composant</div>
@@ -2389,6 +2390,29 @@
           <select id="itemComposantVice" class="field-input"></select>
         </div>
         <p class="meta" style="margin:4px 0 0;">Les composants servent à l'atelier : la recette d'un modèle de robot demande tant de processeurs, de châssis et d'articulations, plus un noyau de son vice. N'importe quel objet de la famille convient.</p>
+      </div>
+
+      <div id="itemGraineBlock" style="display:none;">
+        <p class="meta" style="margin:4px 0 8px;">Cette graine se plante dans un <b>bac</b> de la serre. Tu décris ici sa croissance : une image par stade et le temps qu'il met à passer au suivant. <b>Le dernier stade est celui qu'on récolte</b> : il ne s'épuise pas tout seul, il attend le joueur.</p>
+        <div class="field-label">Stades de croissance</div>
+        <div id="itemGraineStages"></div>
+        <button type="button" class="btn-secondary" id="itemGraineAddStage" style="width:100%; margin-top:6px;">＋ Ajouter un stade</button>
+        <input type="file" id="itemGraineStageFile" accept="image/*" style="display:none;">
+
+        <div class="field-label">Ce qu'on récolte</div>
+        <div id="itemGraineLoot"></div>
+        <button type="button" class="btn-secondary" id="itemGraineAddLoot" style="width:100%; margin-top:6px;">＋ Ajouter un objet récolté</button>
+
+        <div class="field-label">Après la récolte</div>
+        <select id="itemGraineAfter" class="field-input">
+          <option value="clear">Le bac se vide (légume : il faut replanter)</option>
+          <option value="restart">La plante repart à un stade (arbre : il refait des fruits)</option>
+        </select>
+        <div id="itemGraineRestartWrap" style="display:none;">
+          <div class="field-label">Stade de reprise</div>
+          <input type="number" id="itemGraineRestart" class="field-input" min="1" value="2">
+          <p class="meta" style="margin:4px 0 0;">Numéro du stade auquel l'arbre revient après la cueillette — en général l'avant-dernier, l'arbre adulte sans fruits.</p>
+        </div>
       </div>
 
       <div class="field-label">Description</div>
@@ -3555,6 +3579,17 @@
 </div>
 
 <!-- Petit dialogue simple, déclenché par un point de type "Dialogue" en scène -->
+<div class="overlay" id="serreGraineOverlay" style="z-index:4600;">
+  <div class="sheet">
+    <div class="sheet-top">
+      <div class="emoji">🌱</div>
+      <button class="sheet-x" id="serreGraineCloseBtn">✕</button>
+    </div>
+    <div class="field-label" style="margin-top:0;">Que planter dans ce bac ?</div>
+    <div id="serreGraineList"></div>
+  </div>
+</div>
+
 <div class="overlay" id="sceneDialogueOverlay" style="z-index:4500;">
   <div class="sheet">
     <div class="sheet-top">
@@ -11230,9 +11265,118 @@ function renderItemEquipMetiers(){
 document.getElementById('itemEquippable').addEventListener('change', (e)=>{
   document.getElementById('itemEffectWrap').style.display = e.target.checked ? 'block' : 'none';
 });
+/* v491 : la serre. Une graine porte toute la description de sa plante — les stades, la
+   récolte, et ce qui se passe après — pour qu'une plante nouvelle ne soit qu'un objet de
+   plus, sans une ligne de code. Le bac, lui, n'a rien à régler. */
+let currentGraineStages = [];
+let currentGraineLoot = [];
+let graineStageCible = -1;   // index du stade en attente d'une image importée du téléphone
+function renderGraineStages(){
+  const wrap = document.getElementById('itemGraineStages');
+  if (!wrap) return;
+  if (!currentGraineStages.length){
+    wrap.innerHTML = '<p class="meta" style="margin:0;">Aucun stade. Ajoute au moins deux stades : la pousse, puis la plante à récolter.</p>';
+    return;
+  }
+  wrap.innerHTML = currentGraineStages.map((st, i)=>{
+    const url = st.imageUrl || (st.imagePath ? resolveMediaPath(st.imagePath) : '');
+    const dernier = i === currentGraineStages.length - 1;
+    return `<div class="field-row" style="align-items:center; margin-top:6px; gap:6px;">
+      <div style="flex:0 0 auto; width:38px; height:38px; border:1px solid var(--line); border-radius:8px; background:rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; overflow:hidden;">${url ? `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain;">` : '<span style="opacity:.5;">🌱</span>'}</div>
+      <div style="flex:1;">
+        <div class="meta" style="margin:0;">Stade ${i+1}${dernier ? ' — à récolter' : ''}</div>
+        <div style="display:flex; gap:4px; margin-top:2px;">
+          <button type="button" class="btn-secondary" data-graine-img-github="${i}" style="flex:1; padding:4px;">📁</button>
+          <button type="button" class="btn-secondary" data-graine-img-pick="${i}" style="flex:1; padding:4px;">🖼️</button>
+        </div>
+      </div>
+      ${dernier ? '<div style="flex:1;"></div>' : `<input type="number" data-graine-min="${i}" class="field-input" value="${st.minutes==null?60:st.minutes}" min="1" style="flex:1;" title="Minutes avant le stade suivant">`}
+      <button type="button" class="btn-secondary" data-graine-del="${i}" style="flex:0 0 auto; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-graine-min]').forEach(inp=> inp.addEventListener('change', ()=>{
+    currentGraineStages[+inp.dataset.graineMin].minutes = parseInt(inp.value,10) || 1;
+  }));
+  wrap.querySelectorAll('[data-graine-del]').forEach(b=> b.addEventListener('click', ()=>{
+    currentGraineStages.splice(+b.dataset.graineDel, 1); renderGraineStages();
+  }));
+  wrap.querySelectorAll('[data-graine-img-github]').forEach(b=> b.addEventListener('click', ()=>{
+    const i = +b.dataset.graineImgGithub;
+    openGithubFilePicker(null, (item)=>{
+      currentGraineStages[i].imagePath = item.path;
+      currentGraineStages[i].imageUrl = '';
+      renderGraineStages();
+    });
+  }));
+  wrap.querySelectorAll('[data-graine-img-pick]').forEach(b=> b.addEventListener('click', ()=>{
+    graineStageCible = +b.dataset.graineImgPick;
+    document.getElementById('itemGraineStageFile').click();
+  }));
+}
+function renderGraineLoot(){
+  const wrap = document.getElementById('itemGraineLoot');
+  if (!wrap) return;
+  if (!currentGraineLoot.length){
+    wrap.innerHTML = '<p class="meta" style="margin:0;">Rien pour l\'instant : la récolte ne donnerait aucun objet.</p>';
+    return;
+  }
+  wrap.innerHTML = currentGraineLoot.map((l,i)=>{
+    const it = items.find(x=>x.id===l.itemId);
+    return `<div class="field-row" style="align-items:center; margin-top:6px;">
+      <button type="button" class="btn-secondary" data-graine-loot-pick="${i}" style="flex:2; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${it ? (itemThumbHtml(it)+' '+it.name) : '— choisir —'}</button>
+      <input type="number" data-graine-loot-qty="${i}" class="field-input" value="${l.qty||1}" min="1" style="flex:1;" title="Quantité">
+      <button type="button" class="btn-secondary" data-graine-loot-del="${i}" style="flex:0 0 auto; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-graine-loot-pick]').forEach(b=> b.addEventListener('click', ()=>{
+    const i = +b.dataset.graineLootPick;
+    openRecipeItemChooser((itemId)=>{ currentGraineLoot[i].itemId = itemId; renderGraineLoot(); });
+  }));
+  wrap.querySelectorAll('[data-graine-loot-qty]').forEach(inp=> inp.addEventListener('change', ()=>{
+    currentGraineLoot[+inp.dataset.graineLootQty].qty = parseInt(inp.value,10) || 1;
+  }));
+  wrap.querySelectorAll('[data-graine-loot-del]').forEach(b=> b.addEventListener('click', ()=>{
+    currentGraineLoot.splice(+b.dataset.graineLootDel, 1); renderGraineLoot();
+  }));
+}
+document.getElementById('itemGraineAddStage').addEventListener('click', ()=>{
+  currentGraineStages.push({ imageUrl:'', imagePath:null, minutes:60 }); renderGraineStages();
+});
+document.getElementById('itemGraineAddLoot').addEventListener('click', ()=>{
+  currentGraineLoot.push({ itemId:'', qty:1 }); renderGraineLoot();
+});
+document.getElementById('itemGraineAfter').addEventListener('change', (e)=>{
+  document.getElementById('itemGraineRestartWrap').style.display = e.target.value === 'restart' ? 'block' : 'none';
+});
+document.getElementById('itemGraineStageFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  const i = graineStageCible;
+  e.target.value = '';
+  if (!file || i < 0 || !currentGraineStages[i]) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 220;
+      let w = img.width, h = img.height;
+      if (w > h){ h = Math.round(h * maxSize/w); w = maxSize; } else { w = Math.round(w * maxSize/h); h = maxSize; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      currentGraineStages[i].imageUrl = canvas.toDataURL('image/png');
+      currentGraineStages[i].imagePath = null;
+      renderGraineStages();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
 function majBlocComposant(){
   const type = document.getElementById('itemType').value;
   document.getElementById('itemComposantBlock').style.display = type === 'composant' ? 'block' : 'none';
+  const gb = document.getElementById('itemGraineBlock');
+  if (gb) gb.style.display = type === 'graine' ? 'block' : 'none';
   const fam = document.getElementById('itemComposantFamille').value;
   document.getElementById('itemComposantViceWrap').style.display = (type === 'composant' && fam === 'noyau') ? 'block' : 'none';
   const sel = document.getElementById('itemComposantVice');
@@ -11406,6 +11550,15 @@ function loadItemForEdit(id){
   document.getElementById('itemName').value = it.name || '';
   document.getElementById('itemType').value = it.type || 'ressource';
   document.getElementById('itemComposantFamille').value = (it.composant && it.composant.famille) || 'processeur';
+  {   /* v491 : la culture portée par la graine */
+    const c = it.culture || {};
+    currentGraineStages = JSON.parse(JSON.stringify(c.stages || []));
+    currentGraineLoot = JSON.parse(JSON.stringify(c.loot || []));
+    document.getElementById('itemGraineAfter').value = c.after === 'restart' ? 'restart' : 'clear';
+    document.getElementById('itemGraineRestartWrap').style.display = c.after === 'restart' ? 'block' : 'none';
+    document.getElementById('itemGraineRestart').value = c.restartStage || 2;
+    renderGraineStages(); renderGraineLoot();
+  }
   majBlocComposant();
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
@@ -11463,6 +11616,11 @@ function resetItemForm(){
   document.getElementById('itemImagePreviewWrap').style.display = 'none';
   document.getElementById('itemName').value = '';
   document.getElementById('itemType').value = 'ressource';
+  currentGraineStages = []; currentGraineLoot = [];
+  document.getElementById('itemGraineAfter').value = 'clear';
+  document.getElementById('itemGraineRestartWrap').style.display = 'none';
+  document.getElementById('itemGraineRestart').value = 2;
+  renderGraineStages(); renderGraineLoot();
   majBlocComposant();
   document.getElementById('itemDescription').value = '';
   document.getElementById('itemEquippableRow').style.display = 'flex';
@@ -11530,7 +11688,18 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   }
   const famC = document.getElementById('itemComposantFamille').value;
   const composant = type === 'composant' ? { famille: famC, vice: famC === 'noyau' ? (document.getElementById('itemComposantVice').value || null) : null } : null;
-  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, updatedAt: Date.now() };
+  let culture = null;
+  if (type === 'graine'){
+    const after = document.getElementById('itemGraineAfter').value;
+    culture = {
+      stages: currentGraineStages.map(st=> ({ imageUrl: st.imageUrl || '', imagePath: st.imagePath || null, minutes: parseInt(st.minutes,10) || 60 })),
+      loot: currentGraineLoot.filter(l=> l.itemId).map(l=> ({ itemId: l.itemId, qty: parseInt(l.qty,10) || 1 })),
+      after,
+      restartStage: after === 'restart' ? (parseInt(document.getElementById('itemGraineRestart').value,10) || 2) : null,
+    };
+    if (culture.stages.length < 2){ showToast('Une graine demande au moins deux stades'); return; }
+  }
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -11790,6 +11959,9 @@ function ouvrirEtabliDeLHabitant(){
   document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
   openRecruitSheet(r.id, 'artisanat');
 }
+document.getElementById('serreGraineCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('serreGraineOverlay').classList.remove('show');
+});
 document.getElementById('sceneViewFicheBtn').addEventListener('click', ()=>{
   if (!sceneViewAnnexe || isGhostTap()) return;
   const r = recruits.find(x=> x.id === sceneViewAnnexe.recruitId);
@@ -22596,6 +22768,7 @@ const SCENE_POINT_TYPES = [
   { id:'plans', label:'📐 Étagère à plans' },
   { id:'atelier', label:'🔧 Atelier de fabrication' },
   { id:'etabli', label:'⚗️ Établi de l\'habitant (creuset, fourneau…)' },   // v490
+  { id:'bac', label:'🪴 Bac de culture (serre)' },   // v491
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
@@ -23376,6 +23549,12 @@ function isChestOpen(pt){
 }
 
 function pointEffectiveImageUrl(pt){
+  /* v491 : un bac planté montre le stade où en est sa plante ; vide, il garde son image. */
+  if (pt.type === 'bac'){
+    const etat = etatDuBac(pt);
+    const url = etat ? imageDuStade(etat.culture.stages[etat.index]) : '';
+    if (url) return url;
+  }
   /* Le coffre ouvert montre sa seconde image ; sans seconde image on garde la première,
      pour qu'un coffre mal configuré reste visible au lieu de disparaître du décor. */
   if (estCoffre(pt) && isChestOpen(pt)){
@@ -23959,6 +24138,11 @@ function renderSceneDetailTypeSpecific(pt){
   }
   if (pt.type === 'atelier'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre l'atelier : on choisit un plan, on donne les composants de sa recette (réglée sur le modèle de robot), et le robot se fabrique en temps réel — un seul à la fois, les suivants attendent dans la file. Rien à régler ici.</p>`;
+    return;
+  }
+
+  if (pt.type === 'bac'){
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Un bac de la serre. <b>Rien à régler ici</b> : c'est la GRAINE plantée qui décide de tout — ses stades de croissance, leur durée, et ce qu'on récolte. Tu règles ça dans Édition → Objets, sur un objet de type « Graine à planter ».<br><br>L'image que tu donnes au point dans « Apparence du point » est celle du <b>bac vide</b>. Dès qu'on plante, elle laisse place à l'image du stade en cours.</p>`;
     return;
   }
 
@@ -24809,6 +24993,117 @@ document.getElementById('sceneEditorSaveBtn').addEventListener('click', ()=>{
 /* Butin d'un coffre : chaque ligne a sa propre chance sur cent, tirée séparément.
    Une chance vide ou à 100 est un objet garanti. Rien ne sort ? on le dit, sinon le
    joueur croit à un bug. Renvoie le nombre de lignes effectivement données. */
+/* ============ v491 : la serre — bacs, graines, stades de croissance ============
+   Le bac ne sait rien : toute la plante est décrite sur la graine (items.culture), si bien
+   qu'une espèce nouvelle est un objet de plus et pas une ligne de code. Le stade affiché se
+   déduit de l'heure de plantation, donc plusieurs bacs vivent chacun leur vie en même temps
+   sans rien faire tourner en arrière-plan. */
+function cultureDeLaGraine(seedItemId){
+  const it = items.find(i=> i.id === seedItemId);
+  const c = it && it.culture;
+  if (!c || !Array.isArray(c.stages) || c.stages.length < 2) return null;
+  return c;
+}
+function plantationDuPoint(pt){ return (pt && plantationsMap[pt.id]) || null; }
+/* Renvoie { index, mature, restantMs } — index dans la liste des stades de la graine. */
+function etatDuBac(pt){
+  const rec = plantationDuPoint(pt);
+  if (!rec) return null;
+  const c = cultureDeLaGraine(rec.seedItemId);
+  if (!c) return null;
+  const debut = Math.max(0, (rec.startStage || 1) - 1);
+  let i = debut;
+  let restant = Date.now() - (rec.plantedAt || 0);
+  while (i < c.stages.length - 1){
+    const duree = Math.max(1, (c.stages[i].minutes || 60)) * 60000;
+    if (restant < duree) return { index:i, mature:false, restantMs: duree - restant, culture:c, rec };
+    restant -= duree;
+    i++;
+  }
+  return { index: c.stages.length - 1, mature:true, restantMs:0, culture:c, rec };
+}
+function imageDuStade(st){
+  if (!st) return '';
+  if (st.imageUrl) return st.imageUrl;
+  if (st.imagePath) return resolveMediaPath(st.imagePath);
+  return '';
+}
+function ecrirePlantation(pt, rec){
+  if (rec) plantationsMap[pt.id] = rec; else delete plantationsMap[pt.id];
+  if (!currentUser || !db || !sceneViewCreature) return Promise.resolve();
+  const valeur = rec ? rec : firebase.firestore.FieldValue.delete();
+  return db.collection('players').doc(currentUser.uid).set({
+    plantations: { [sceneViewCreature.id]: { [pt.id]: valeur } }
+  }, { merge:true });
+}
+function grainesDuSac(){
+  return items.filter(it=> it.type === 'graine' && cultureDeLaGraine(it.id) && (baseResources[it.id] || 0) > 0);
+}
+function toucherBac(pt){
+  const etat = etatDuBac(pt);
+  if (!etat){
+    const rec = plantationDuPoint(pt);
+    if (rec){ ecrirePlantation(pt, null); renderSceneViewCurrentScene(); }   // graine supprimée depuis
+    ouvrirChoixGraine(pt);
+    return;
+  }
+  if (!etat.mature){
+    const st = etat.culture.stages[etat.index];
+    showToast('🌱 ' + (etat.index + 1) + 'ᵉ stade — encore ' + formatRemainingDuration(etat.restantMs));
+    return;
+  }
+  recolterLeBac(pt, etat);
+}
+function recolterLeBac(pt, etat){
+  const noms = [];
+  (etat.culture.loot || []).forEach(l=>{
+    if (!l.itemId) return;
+    grantItemByIdToPlayer(l.itemId, l.qty || 1);
+    const it = items.find(i=> i.id === l.itemId);
+    noms.push((l.qty || 1) + ' × ' + (it ? it.name : 'objet'));
+  });
+  if (etat.culture.after === 'restart'){
+    const reprise = Math.min(Math.max(1, etat.culture.restartStage || 2), etat.culture.stages.length - 1);
+    ecrirePlantation(pt, { seedItemId: etat.rec.seedItemId, plantedAt: Date.now(), startStage: reprise });
+  } else {
+    ecrirePlantation(pt, null);
+  }
+  renderSceneViewCurrentScene();
+  document.getElementById('sceneDialogueText').textContent = noms.length
+    ? 'Récolte : ' + noms.join(', ') + '.'
+    : 'Tu récoltes, mais il n\'y avait rien à prendre.';
+  document.getElementById('sceneDialogueOverlay').classList.add('show');
+}
+function ouvrirChoixGraine(pt){
+  const dispo = grainesDuSac();
+  const liste = document.getElementById('serreGraineList');
+  if (!dispo.length){
+    liste.innerHTML = '<p class="meta" style="margin:0;">Tu n\'as aucune graine dans ton sac.</p>';
+  } else {
+    liste.innerHTML = dispo.map(it=> `<button class="choice-btn" data-graine="${it.id}" style="display:flex; align-items:center; gap:8px; text-align:left;">${itemThumbHtml(it)} ${it.name} <span class="meta" style="margin-left:auto;">× ${baseResources[it.id] || 0}</span></button>`).join('');
+    liste.querySelectorAll('[data-graine]').forEach(b=> b.addEventListener('click', ()=>{
+      document.getElementById('serreGraineOverlay').classList.remove('show');
+      planterDansLeBac(pt, b.dataset.graine);
+    }));
+  }
+  document.getElementById('serreGraineOverlay').classList.add('show');
+}
+function planterDansLeBac(pt, seedItemId){
+  if ((baseResources[seedItemId] || 0) <= 0){ showToast('Tu n\'as plus cette graine'); return; }
+  const c = cultureDeLaGraine(seedItemId);
+  if (!c){ showToast('Cette graine n\'est pas décrite'); return; }
+  if (currentUser && db){
+    db.collection('players').doc(currentUser.uid).set({
+      inventory: { [seedItemId]: firebase.firestore.FieldValue.increment(-1) }
+    }, { merge:true }).catch(()=>{});
+  }
+  baseResources[seedItemId] = Math.max(0, (baseResources[seedItemId] || 0) - 1);
+  ecrirePlantation(pt, { seedItemId, plantedAt: Date.now(), startStage: 1 });
+  renderSceneViewCurrentScene();
+  const it = items.find(i=> i.id === seedItemId);
+  showToast('🌱 ' + (it ? it.name : 'Graine') + ' plantée');
+}
+
 function donnerButinCoffre(pt){
   const table = Array.isArray(pt.loot) ? pt.loot.filter(l=> l && l.itemId) : [];
   let donnes = 0;
@@ -24902,6 +25197,9 @@ function rendreBoutonsAnnexe(){
 }
 let sceneViewCurrentSceneId = null;
 let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
+/* v491 : les bacs de la serre. pointId -> { seedItemId, plantedAt, startStage }.
+   Même famille que sceneItemsTaken : un état de joueur, rangé par zone. */
+let plantationsMap = {};
 let sceneViewPointState = {}; // état partagé de la zone (modes once/timed) : { [pointId]: { takenAt } }
 
 function isScenePointAvailable(pt){
@@ -25012,6 +25310,7 @@ function openSceneView(creature, resumeSceneId, opts){
     zoneQuittee = false;            // on entre pour de bon : la position peut de nouveau s'enregistrer
     agressionsJouees = new Set();   // on entre dans la zone : personne n'est encore venu
     sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creature.id]) || {};
+    plantationsMap = (playerDoc && playerDoc.exists && playerDoc.data().plantations && playerDoc.data().plantations[creature.id]) || {};   // v491
     sceneViewPointState = (d && d.pointState) || {};
     renderSceneViewCurrentScene();
     if (!aBord()){
@@ -25162,6 +25461,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openEtagerePlans();
     } else if (pt.type === 'atelier'){
       wrapPointActions[pt.id] = ()=> openAtelier();
+    } else if (pt.type === 'bac'){
+      wrapPointActions[pt.id] = ()=> toucherBac(pt);   // v491
     } else if (pt.type === 'etabli'){
       /* v490 : l'établi de la pièce ouvre la fabrication de SON habitant, sans passer par
          sa fiche. Il n'a de sens que dans un atelier ouvert depuis une porte d'habitant. */
@@ -26915,6 +27216,7 @@ async function tryResumeSavedCombat(saved){
         sceneViewScenes = norm.scenes;
         sceneViewCurrentSceneId = (saved.sceneId && norm.scenes.some(s=>s.id===saved.sceneId)) ? saved.sceneId : norm.startSceneId;
         sceneViewTakenMap = (playerDoc && playerDoc.exists && playerDoc.data().sceneItemsTaken && playerDoc.data().sceneItemsTaken[creatureDoc.id]) || {};
+        plantationsMap = (playerDoc && playerDoc.exists && playerDoc.data().plantations && playerDoc.data().plantations[creatureDoc.id]) || {};   // v491
         sceneViewPointState = (d && d.pointState) || {};
       }
     } catch(e){ journal('reprise', 'décor du combat abandonné', (e && e.message) || String(e), true); }
@@ -28745,7 +29047,7 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
    ===================================================================================== */
 const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
 const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
-const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli'];   // points du vaisseau : hors scénario
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli','bac'];   // points du vaisseau : hors scénario
 
 function ctrlEtapesDe(f){
   return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
