@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v496</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v497</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3043,6 +3043,10 @@
       <div class="pos-actions" style="margin-top:6px;">
         <button class="btn-secondary" id="reserveBtn" style="width:100%;">📦 Aucun lieu — garder en réserve</button>
       </div>
+      <div class="pos-actions" style="margin-top:6px;">
+        <button class="btn-secondary" id="pieceCommuneBtn" style="width:100%;">🚀 Placer dans une pièce du vaisseau (emplacement)</button>
+      </div>
+      <p class="meta" id="pieceCommuneHint" style="display:none; margin-top:4px;">Cette version se montre dans un emplacement de cette pièce quand son personnage est à bord et que l'heure est la sienne. <span id="pieceCommuneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
       <p class="meta">Pour les fiches qui n'ont pas à être quelque part : monstres de rencontre aléatoire, habitants du vaisseau, personnages préparés à l'avance. Elles s'enregistrent sans emplacement et se retrouvent dans la liste sous « 📦 En réserve ».</p>
       <p class="meta" id="assignZoneHint" style="display:none; margin-top:4px;">Ce PNJ est assigné à une zone d'exploration plutôt qu'à un point sur la carte. <span id="assignZoneClear" style="text-decoration:underline; cursor:pointer;">Retirer</span></p>
 
@@ -8499,6 +8503,7 @@ function versionsDuPersonnage(){
 }
 
 function libelleLieuVersion(f){
+  if (f.pieceCommune && f.pieceCommune.sceneId) return '🚀 ' + (f.pieceCommune.nom || 'Pièce du vaisseau');   // v497
   if (f.assignedZoneId){
     const z = ficheParId(f.assignedZoneId);
     return z ? (z.name || 'Zone') : 'Zone supprimée';
@@ -8547,6 +8552,7 @@ function versionsTriees(){
 function ficheOuverteVueDuFormulaire(){
   return {
     assignedZoneId: pendingAssignedZoneId || null,
+    pieceCommune: pendingPieceCommune || null,
     lat: pendingLat, lng: pendingLng,
     daysOfWeek: Array.from(selectedDays),
     timeRanges: (typeof editTimeRanges !== 'undefined' ? editTimeRanges : []).filter(c=> c && (c.start || c.end)),
@@ -8967,6 +8973,7 @@ let pendingMapIconScale = 1, pendingMapIconRotation = 0;
 let pendingCombatPortraitCrop = null;
 let pendingAssignedZoneId = null;
 let pendingReserve = false;      // fiche volontairement sans lieu
+let pendingPieceCommune = null;  // v497 : { zoneId, sceneId, nom } — version qui vit dans un emplacement du vaisseau
 let pnjChooserZonePrioritaire = null;   // zone en cours de montage, pour le regroupement de la liste
 let uploadedImageDataUrl = null;
 let uploadedImagePath = null; // chemin relatif si l'image est hébergée (voir resolveMediaPath)
@@ -9631,8 +9638,11 @@ function renderEditorList(snap){
       dedans.forEach(doc=>{
         /* Trois cas, pas deux : rattaché à une zone · posé sur la carte · en réserve (aucun des deux). */
         const d0 = doc.data();
-        const zid = d0.assignedZoneId
-          || ((typeof d0.lat === 'number' && typeof d0.lng === 'number') ? '' : 'reserve');
+        const zid = (d0.pieceCommune && d0.pieceCommune.sceneId)
+          ? 'piece:' + d0.pieceCommune.sceneId   // v497
+          : (d0.assignedZoneId
+          || ((typeof d0.lat === 'number' && typeof d0.lng === 'number') ? '' : 'reserve'));
+        if (zid.startsWith('piece:') && !nomsDeZone[zid]) nomsDeZone[zid] = '🚀 ' + (d0.pieceCommune.nom || 'Pièce du vaisseau');
         (groupes[zid] = groupes[zid] || []).push(doc);
       });
       const cles = Object.keys(groupes).sort((a,b)=>{
@@ -9644,7 +9654,7 @@ function renderEditorList(snap){
       });
       cles.forEach(zid=>{
         const nom = !zid ? '🌍 Sur la carte'
-          : (zid === 'reserve' ? '📦 En réserve (aucun lieu)' : '📍 ' + (nomsDeZone[zid] || 'Zone supprimée'));
+          : (zid === 'reserve' ? '📦 En réserve (aucun lieu)' : (zid.startsWith('piece:') ? nomsDeZone[zid] : '📍 ' + (nomsDeZone[zid] || 'Zone supprimée')));
         conteneur.appendChild(titre(nom + '  (' + groupes[zid].length + ')', 2));
         groupes[zid].sort(parNom).forEach(doc=> conteneur.appendChild(ligne(doc)));
       });
@@ -9879,7 +9889,11 @@ function loadForEdit(id){
     document.getElementById('imagePreviewWrap').style.display = 'none';
   }
 
-  if (d.assignedZoneId){
+  pendingPieceCommune = (d.pieceCommune && d.pieceCommune.sceneId) ? { ...d.pieceCommune } : null;   // v497
+  if (pendingPieceCommune){
+    pendingLat = null; pendingLng = null;
+    pendingAssignedZoneId = null; pendingReserve = false;
+  } else if (d.assignedZoneId){
     pendingLat = null; pendingLng = null;
     pendingAssignedZoneId = d.assignedZoneId; pendingReserve = false;
   } else if (typeof d.lat === 'number' && typeof d.lng === 'number'){
@@ -10047,7 +10061,7 @@ async function creerNouvelleVersion(choix){
   currentDupeGroup = groupe;
 
   pendingLat = null; pendingLng = null;
-  pendingAssignedZoneId = null; pendingReserve = false;
+  pendingAssignedZoneId = null; pendingReserve = false; pendingPieceCommune = null;
   refreshPosStatusDisplay();
   /* v445/v446 : un ＋ tapé dans le planning pré-coche ce jour-là — c'est la seule chose que
      le planning décide à la place de « Où et quand », l'heure restant saisie au clavier.
@@ -10186,6 +10200,7 @@ function resetForm(){
   pendingMapIconScale = 1; pendingMapIconRotation = 0;
   pendingAssignedZoneId = null;
   pendingReserve = false;
+  pendingPieceCommune = null;
   uploadedImageDataUrl = null;
   uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
@@ -10834,7 +10849,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   /* Une fiche « en réserve » est volontairement sans lieu : on ne la refuse plus.
      La règle d'origine protégeait des fiches oubliées, mais elle obligeait surtout à inventer
      un emplacement bidon pour tout ce qui n'a pas à être quelque part. */
-  if (pendingLat === null && !pendingAssignedZoneId && !pendingReserve){ showToast('Choisis un emplacement, une zone d\'exploration, ou mets la fiche en réserve'); return; }
+  if (pendingLat === null && !pendingAssignedZoneId && !pendingReserve && !pendingPieceCommune){ showToast('Choisis un emplacement, une zone d\'exploration, une pièce du vaisseau, ou mets la fiche en réserve'); return; }
   if (interactionType === 'combat' && !combatStats.robotModeleId && selectedCombatAttacks.size && !selectedStartingAttacks.size){ showToast('Marque au moins une attaque de départ (⭐)'); return; }
   /* L'image de buste est obligatoire : sans elle, le dialogue retombait sur l'image en
      pied et affichait le personnage debout en pleine conversation. Une règle claire vaut
@@ -10897,7 +10912,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, fonction, atelierZoneId, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, fonction, atelierZoneId, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, pieceCommune: pendingPieceCommune || null, startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -10976,7 +10991,12 @@ let placementTarget = 'creature'; // 'creature' ou 'pickup'
 function refreshPosStatusDisplay(){
   const el = document.getElementById('posStatusText');
   const hint = document.getElementById('assignZoneHint');
-  if (pendingAssignedZoneId){
+  const hintPiece = document.getElementById('pieceCommuneHint');
+  if (hintPiece) hintPiece.style.display = pendingPieceCommune ? 'block' : 'none';
+  if (pendingPieceCommune){
+    el.textContent = '🚀 ' + (pendingPieceCommune.nom || 'Pièce du vaisseau');
+    hint.style.display = 'none';
+  } else if (pendingAssignedZoneId){
     const zone = creatures.find(c=>c.id===pendingAssignedZoneId);
     el.textContent = '🗺️ Zone : ' + (zone ? zone.name : 'zone sélectionnée');
     hint.style.display = 'block';
@@ -11004,6 +11024,7 @@ document.getElementById('assignZoneBtn').addEventListener('click', ()=>{
     pnjChooserZonePrioritaire = null;
     pnjChooserCallback = (id, c)=>{
       pendingAssignedZoneId = id;
+      pendingPieceCommune = null;
       pendingLat = null; pendingLng = null;
       pendingReserve = false;
       refreshPosStatusDisplay();
@@ -11017,8 +11038,54 @@ document.getElementById('assignZoneClear').addEventListener('click', ()=>{
   pendingAssignedZoneId = null;
   refreshPosStatusDisplay();
 });
+/* v497 : choisir une pièce = choisir une SCÈNE parmi celles des vaisseaux et des annexes
+   (les pièces derrière les portes d'habitant, repérées par l'atelierZoneId d'une fiche). */
+document.getElementById('pieceCommuneBtn').addEventListener('click', async ()=>{
+  if (!zonesCol){ showToast('Firebase indisponible ici'); return; }
+  const fiches = toutesLesFiches();
+  const zoneIds = new Set();
+  fiches.forEach(f=>{
+    if ((f.interactionType || '') === 'zone' && ficheEstModeleVaisseau(f)) zoneIds.add(f.id);
+    if (f.atelierZoneId) zoneIds.add(f.atelierZoneId);
+  });
+  if (typeof shipZoneId !== 'undefined' && shipZoneId) zoneIds.add(shipZoneId);
+  if (typeof vaisseauDepartId !== 'undefined' && vaisseauDepartId) zoneIds.add(vaisseauDepartId);
+  const items = [];
+  try {
+    const docs = await Promise.all(Array.from(zoneIds).map(id=> zonesCol.doc(id).get().catch(()=> null)));
+    docs.forEach(doc=>{
+      if (!doc || !doc.exists) return;
+      const fz = ficheParId(doc.id);
+      const nomZone = (fz && fz.name) || 'Zone';
+      ((doc.data().scenes) || []).forEach(sc=>{
+        if (!sc || !sc.id) return;
+        items.push({ id: sc.id, zoneId: doc.id, name: nomZone + ' · ' + (sc.name || 'scène'), imageUrl: sc.imageUrl || '', emoji: '🚀' });
+      });
+    });
+  } catch(err){ showToast('Échec : ' + err.message); return; }
+  if (!items.length){ showToast('Aucune scène de vaisseau ni d\'annexe pour l\'instant'); return; }
+  items.sort((a,b)=> a.name.localeCompare(b.name, 'fr'));
+  pnjChooserAll = items;
+  pnjChooserFilter = null;
+  pnjChooserZonePrioritaire = null;
+  pnjChooserCallback = (id, c)=>{
+    pendingPieceCommune = { zoneId: c.zoneId, sceneId: id, nom: c.name };
+    pendingAssignedZoneId = null;
+    pendingLat = null; pendingLng = null;
+    pendingReserve = false;
+    refreshPosStatusDisplay();
+  };
+  document.getElementById('pnjChooserSearch').value = '';
+  document.getElementById('pnjChooserOverlay').classList.add('show');
+  renderPnjChooserList();
+});
+document.getElementById('pieceCommuneClear').addEventListener('click', ()=>{
+  pendingPieceCommune = null;
+  refreshPosStatusDisplay();
+});
 document.getElementById('reserveBtn').addEventListener('click', ()=>{
   pendingReserve = true;
+  pendingPieceCommune = null;
   pendingAssignedZoneId = null;
   pendingLat = null; pendingLng = null;
   refreshPosStatusDisplay();
@@ -22821,6 +22888,7 @@ const SCENE_POINT_TYPES = [
   { id:'atelier', label:'🔧 Atelier de fabrication' },
   { id:'etabli', label:'⚗️ Établi de l\'habitant (creuset, fourneau…)' },   // v490
   { id:'bac', label:'🪴 Bac de culture (serre)' },   // v491
+  { id:'emplacement', label:'🧍 Emplacement de PNJ (pièce commune)' },   // v497
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
 ];
 
@@ -23631,6 +23699,14 @@ function isPointHitAt(pt, div, clientX, clientY){
       if (clientX >= pr.left && clientX <= pr.right && clientY >= pr.top && clientY <= pr.bottom) return true;
     }
   }
+  /* v497 : l'occupant d'un emplacement déborde souvent du rectangle (il est calé sur ses pixels
+     opaques, pas sur son cadre) — toucher le personnage, c'est toucher l'emplacement. */
+  if (pt.type === 'emplacement'){
+    const im = div.querySelector('.pnj-emplace');
+    if (!im) return false;
+    const b = boiteOpaqueAffichee(im);
+    return !!b && clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
+  }
   const rect = div.getBoundingClientRect();
   if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
   /* Point masqué : plus d'image affichée, donc plus de pixels à tester — tout le rectangle répond. */
@@ -23686,7 +23762,13 @@ function renderSceneEditorPoints(){
     const w = (pt.w/100)*rect.width;
     const h = (pt.h/100)*rect.height;
     const url = pointEffectiveImageUrl(pt);
-    if (url){
+    if (pt.type === 'emplacement'){
+      /* v497 : l'emplacement se dessine en rectangle pointillé, avec son étiquette — le jeu y
+         posera lui-même l'habitant du moment, calé sur ses pixels opaques. */
+      el.className = 'scene-point';
+      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(95,242,255,.10); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(95,242,255,.85)'}; box-shadow:none; border-radius:6px; pointer-events:none; display:flex; align-items:flex-end; justify-content:center;`;
+      el.innerHTML = `<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; margin-bottom:3px; white-space:nowrap;">🧍 emplacement</span>`;
+    } else if (url){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
@@ -23820,6 +23902,8 @@ function addNewScenePoint(typeId){
     x: 50, y: 50, w: 18, h: 18, rotation: 0, flipped: false,
   });
   const newPt = sceneEditorPoints[sceneEditorPoints.length - 1];
+  /* v497 : un emplacement est un rectangle debout, sans icône — c'est la place d'un personnage. */
+  if (typeId === 'emplacement'){ newPt.w = 14; newPt.h = 40; newPt.hideIcon = true; }
   renderSceneEditorPoints();
   selectScenePoint(newPt.id);
 }
@@ -24297,6 +24381,16 @@ function renderSceneDetailTypeSpecific(pt){
     typeWrap.querySelector('[data-holo-taille]').addEventListener('input', (e)=>{ pt.holoTaille = Math.max(30, Math.min(300, +e.target.value || 100)); });
     typeWrap.querySelector('[data-holo-y]').addEventListener('input', (e)=>{ pt.holoY = Math.max(-300, Math.min(300, +e.target.value || 0)); });
     typeWrap.querySelector('[data-holo-teinte]').addEventListener('input', (e)=>{ pt.holoTeinte = e.target.value || HOLO_TEINTE_DEFAUT; });
+    return;
+  }
+
+  if (pt.type === 'emplacement'){
+    /* v497 : rien à régler ici. Le rectangle dit seulement « ici il y a de la place » ; qui s'y
+       tient dépend des versions de PNJ marquées « pièce commune » sur leur fiche. */
+    pt.hideIcon = true;
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une place pour un personnage. Le jeu y met lui-même un habitant du vaisseau dont une version est marquée « 🚀 pièce du vaisseau » sur cette scène et active à cette heure — calé par les pieds au bas du rectangle, à l'échelle de sa hauteur, sans déformation. Le dialogue est celui de cette version.</p>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin:0;">Un emplacement ne tient qu'un personnage, et un personnage n'occupe qu'un emplacement. Quand il y a plus de candidats que de places, les derniers ne s'affichent pas — le détail est dans 🧾 Boîte noire.</p>`;
     return;
   }
 
@@ -25574,8 +25668,12 @@ async function renderSceneViewCurrentScene(){
 
   const wrapPointActions = {};
   sceneViewPointActions = wrapPointActions;
+  /* v497 : qui se tient dans les emplacements de cette pièce, décidé une fois pour toute la scène. */
+  const attribution = attribuerEmplacements(sc, scRaw.id);
+  emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
   (sc.points || []).forEach(pt=>{
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
+    if (pt.type === 'emplacement' && !attribution[pt.id]) return;   // v497 : place vide, rien à dessiner
     if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
     if (pt.type === 'pnj' && !isScenePointAvailable(pt)) return;
     /* v462 (Parcours A6) : la condition d'apparition de la fiche vaut aussi dans une zone (strictement) */
@@ -25608,6 +25706,12 @@ async function renderSceneViewCurrentScene(){
         const u = imageDuStade(st);
         if (u){ ensurePointPixelCache(u); el.style.overflow = 'visible'; el.insertAdjacentHTML('beforeend', htmlPlanteDuBac(pt, st)); }
       }
+    }
+
+    if (pt.type === 'emplacement'){
+      /* v497 : l'habitant du moment, posé dans le rectangle par ses pixels opaques. */
+      el.style.overflow = 'visible';
+      el.appendChild(imageOccupantEmplacement(attribution[pt.id]));
     }
 
     if (pt.type === 'habitant'){
@@ -25690,6 +25794,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openAtelier();
     } else if (pt.type === 'bac'){
       wrapPointActions[pt.id] = ()=> toucherBac(pt);   // v491
+    } else if (pt.type === 'emplacement'){
+      wrapPointActions[pt.id] = ()=> toucherEmplacement(pt);   // v497
     } else if (pt.type === 'etabli'){
       /* v490 : l'établi de la pièce ouvre la fabrication de SON habitant, sans passer par
          sa fiche. Il n'a de sens que dans un atelier ouvert depuis une porte d'habitant. */
@@ -25971,6 +26077,174 @@ function positionSceneViewPoints(){
    Le créneau n'était vérifié que pour les marqueurs de la CARTE — un PNJ posé dans une
    scène s'affichait à toute heure, si bien que deux versions d'un même personnage aux
    horaires différents apparaissaient en même temps. */
+/* ---------- v497 : LES EMPLACEMENTS DE PNJ (pièces communes) ----------
+   Un rectangle posé dans une scène du vaisseau dit « ici il y a de la place ». Il ne porte ni
+   nom, ni métier, ni horaire : c'est la FICHE du personnage qui décide. Une version marquée
+   « pièce du vaisseau » sur cette scène, active à cette heure, dont le personnage est à bord
+   chez CE joueur, vient s'y tenir. Chez un autre joueur, c'est son botaniste à lui — ou personne.
+   Un habitant n'occupe qu'un emplacement, un emplacement ne tient qu'un habitant : les
+   candidats de trop ne s'affichent pas, et la boîte noire dit lesquels. */
+let emplacementsSceneCourante = null;   // { points, sceneId, attribution: { pointId → fiche } }
+
+/* Les groupes de personnages (dupeGroup, ou l'id de l'originale) présents à bord chez ce joueur. */
+function groupesABord(){
+  const g = new Set();
+  (recruits || []).forEach(r=>{
+    if (!r || !r.sourceCreatureId) return;
+    const f = ficheParId(r.sourceCreatureId);
+    g.add(f ? (f.dupeGroup || f.id) : r.sourceCreatureId);
+  });
+  return g;
+}
+
+/* Les versions qui se proposent pour cette scène en ce moment, une par personnage. */
+function candidatsEmplacements(sceneId, now){
+  const groupes = groupesABord();
+  const vus = new Set();
+  const out = [];
+  toutesLesFiches().forEach(brut=>{
+    const f = ficheJouable(brut);
+    if (!f || !f.pieceCommune || f.pieceCommune.sceneId !== sceneId) return;
+    const g = brut.dupeGroup || brut.id;
+    if (!groupes.has(g)) return;
+    if (!isActiveAt(f, now || new Date())) return;
+    if (vus.has(g)) return;   // deux versions actives du même personnage : la première suffit
+    vus.add(g);
+    out.push({ id: brut.id, ...f });
+  });
+  out.sort((a,b)=> (a.name || '').localeCompare(b.name || '', 'fr'));
+  return out;
+}
+
+function attribuerEmplacements(sc, sceneId, now){
+  const places = (sc.points || []).filter(p=> p && p.type === 'emplacement');
+  const attribution = {};
+  if (!places.length) return attribution;
+  const cand = candidatsEmplacements(sceneId, now);
+  places.forEach((p, i)=>{ if (cand[i]) attribution[p.id] = cand[i]; });
+  const dire = (m, d)=>{ if (typeof journal === 'function') journal('base', 'emplacements : ' + m, d); };
+  Object.keys(attribution).forEach(id=> dire('placé', attribution[id].name || '(sans nom)'));
+  if (cand.length > places.length){
+    dire('PAS ASSEZ DE PLACES — ' + places.length + ' pour ' + cand.length + ' candidat(s)',
+      'non affichés : ' + cand.slice(places.length).map(c=> c.name || '(sans nom)').join(', '));
+  }
+  return attribution;
+}
+
+function urlImageDeFiche(f){
+  if (!f) return '';
+  return f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+}
+
+/* La boîte des pixels opaques d'une image (dans ses propres pixels), calculée une fois. Si le
+   canevas est teinté (image d'un autre domaine sans CORS), on retombe sur le cadre entier. */
+const bornesOpaquesCache = {};
+function bornesOpaques(img){
+  const url = img.src;
+  if (bornesOpaquesCache[url]) return bornesOpaquesCache[url];
+  const w = img.naturalWidth, h = img.naturalHeight;
+  let b = { x:0, y:0, w, h };
+  try {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++){
+      for (let x = 0; x < w; x++){
+        if (d[(y*w + x)*4 + 3] > 15){
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (x1 >= 0) b = { x:x0, y:y0, w:x1 - x0 + 1, h:y1 - y0 + 1 };
+  } catch(e){ /* canevas teinté : cadre entier */ }
+  bornesOpaquesCache[url] = b;
+  return b;
+}
+
+/* Place l'image dans son rectangle : la partie opaque tient dans le rectangle (hauteur ou
+   largeur, la plus contraignante), pieds au bas, centrée. Tout est écrit en pourcentage du
+   rectangle : quand l'écran tourne, le rectangle change de taille mais pas de proportions. */
+function caler(img, W, H, nat, b){
+  const s = Math.min(H / b.h, W / b.w);
+  const dispW = nat.w * s, dispH = nat.h * s;
+  img.style.width = (dispW / W * 100) + '%';
+  img.style.height = (dispH / H * 100) + '%';
+  img.style.left = ((W / 2 - (b.x + b.w / 2) * s) / W * 100) + '%';
+  img.style.bottom = (-(nat.h - b.y - b.h) * s / H * 100) + '%';
+  img.dataset.cale = '1';
+}
+function imageOccupantEmplacement(f){
+  const img = document.createElement('img');
+  img.className = 'pnj-emplace';
+  img.dataset.ficheid = f.id;
+  img.style.cssText = 'position:absolute; max-width:none; max-height:none; object-fit:fill; pointer-events:none; -webkit-touch-callout:none; visibility:hidden;';
+  const url = urlImageDeFiche(f);
+  if (/^https?:/i.test(url)) img.crossOrigin = 'anonymous';
+  img.onload = ()=>{
+    const poser = ()=>{
+      const el = img.parentElement; if (!el) return;
+      const W = el.clientWidth, H = el.clientHeight;
+      if (!W || !H){ requestAnimationFrame(poser); return; }
+      caler(img, W, H, { w: img.naturalWidth, h: img.naturalHeight }, bornesOpaques(img));
+      img.style.visibility = '';
+    };
+    poser();
+  };
+  img.src = url;
+  return img;
+}
+/* La boîte opaque telle qu'affichée à l'écran (pour le toucher). */
+function boiteOpaqueAffichee(img){
+  if (!img.dataset.cale || !img.naturalWidth) return null;
+  const r = img.getBoundingClientRect();
+  const b = bornesOpaques(img);
+  const s = r.width / img.naturalWidth;
+  return { left: r.left + b.x * s, right: r.left + (b.x + b.w) * s, top: r.top + b.y * s, bottom: r.top + (b.y + b.h) * s };
+}
+
+function toucherEmplacement(pt){
+  const f = emplacementsSceneCourante && emplacementsSceneCourante.attribution[pt.id];
+  if (!f) return;
+  if (f.interactionType === 'shop'){ openShopWindow(f); return; }
+  document.getElementById('overlay').style.zIndex = '4200';
+  openSheet(f);
+}
+
+/* Toutes les 15 s, comme les horaires des PNJ : si l'occupant d'une place change, on ne
+   redessine que cette place — pas la pièce entière (leçon de la serre, v495). */
+function majEmplacementsScene(){
+  const plein = document.getElementById('sceneViewFull');
+  if (!plein || !plein.classList.contains('show') || !emplacementsSceneCourante) return;
+  const wrap = document.getElementById('sceneViewImgWrap');
+  if (!wrap) return;
+  const cur = emplacementsSceneCourante;
+  const scLike = { points: cur.points };
+  const neuf = attribuerEmplacements(scLike, cur.sceneId);
+  const places = cur.points.filter(p=> p && p.type === 'emplacement');
+  let change = false;
+  places.forEach(pt=>{
+    const avant = cur.attribution[pt.id] ? cur.attribution[pt.id].id : null;
+    const apres = neuf[pt.id] ? neuf[pt.id].id : null;
+    if (avant === apres) return;
+    change = true;
+    const ancien = wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]');
+    if (ancien) ancien.remove();
+    if (!neuf[pt.id]) return;
+    const el = document.createElement('div');
+    el.className = 'scene-point';
+    el.dataset.ptid = pt.id;
+    el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w||8; el.dataset.pth = pt.h||8;
+    el.style.cssText = `position:absolute; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; pointer-events:none; overflow:visible;`;
+    el.appendChild(imageOccupantEmplacement(neuf[pt.id]));
+    wrap.appendChild(el);
+  });
+  cur.attribution = neuf;
+  if (change) positionSceneViewPoints();
+}
+setInterval(majEmplacementsScene, 15000);
+
 async function getScenePnjInfo(sc){
   const pnjIds = Array.from(new Set((sc.points || []).filter(pt=> pt.type==='pnj' && pt.linkedPnjId).map(pt=> pt.linkedPnjId)));
   const partis = new Set(); // recrutés ou supprimés : ils ne reviendront pas, on ne les dessine pas
