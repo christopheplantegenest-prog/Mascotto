@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v503</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v504</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1936,7 +1936,9 @@
     <div class="field-label" id="recruitEquipLabel">Équipement</div>
     <div id="recruitEquipSection"></div>
 
-    <button class="btn-secondary" id="recruitDismissBtn" style="width:100%; margin-top:14px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Renvoyer ce PNJ</button>
+    <!-- v504 : le renvoi passe par le DIALOGUE du personnage (action 🚪 Le renvoyer). Le bouton
+         reste dans le HTML pour l'ancien code, mais ne s'affiche plus. -->
+    <button class="btn-secondary" id="recruitDismissBtn" style="display:none; width:100%; margin-top:14px; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Renvoyer ce PNJ</button>
   </div>
 </div>
 
@@ -7484,7 +7486,8 @@ function renderSheet(){
       if (ch.recruit) recruitCreature(activeCreature, activeCreature.metier || ch.recruit.metierId || null);
       /* v486 : le temps que le dialogue se referme. v502 : un type précis part tout de suite. */
       if (ch.recherche) setTimeout(()=>{ (typeof ch.recherche === 'string') ? lancerRechercheDepuisChoix(ch.recherche) : ouvrirMenuRecherche(); }, 320);
-      if (ch.action) setTimeout(()=> executerActionABord(ch.action, activeCreature), 320);   // v502
+      if (ch.action === 'renvoyer') executerActionABord(ch.action, activeCreature);   // v504 : tout de suite, le dialogue continue sur l'adieu
+      else if (ch.action) setTimeout(()=> executerActionABord(ch.action, activeCreature), 320);   // v502
       const suite = ()=>{
         /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
            Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
@@ -7548,9 +7551,11 @@ function executerActionABord(action, creature){
   if (!r){ showToast((creature && creature.name || 'Ce personnage') + ' n\'est pas à bord'); return; }
   if (action === 'renvoyer'){
     const dansAnnexe = !!(typeof sceneViewAnnexe !== 'undefined' && sceneViewAnnexe && sceneViewAnnexe.recruitId === r.id);
-    /* Renvoyé depuis sa propre pièce : on ressort dans le couloir, sinon on resterait dans un
-       atelier dont la porte vient de se refermer. */
-    dismissRecruit(r, dansAnnexe ? ()=> revenirAuVaisseauDepuisAnnexe() : null);
+    /* v504 : pas de fenêtre de confirmation — la question fait partie du dialogue. Le renvoi
+       part tout de suite, la phrase d'adieu s'affiche, et si on était dans sa pièce on ressort
+       dans le couloir à la fermeture du dialogue (une porte qui vient de se refermer). */
+    executerRenvoi(r, null);
+    if (dansAnnexe) apresFermetureDialogue = ()=> revenirAuVaisseauDepuisAnnexe();
     return;
   }
   if (action === 'deplacer'){
@@ -20420,6 +20425,27 @@ document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
 async function dismissRecruit(recruit, apres){
   if (!recruit) return;
   if (!(await appConfirm(`Renvoyer ${recruit.name} ? Cette action est définitive.`))) return;
+  return executerRenvoi(recruit, apres);
+}
+/* v504 — le renvoi lui-même, SANS confirmation : depuis le dialogue, c'est l'auteur qui a écrit
+   la question et les deux réponses. Les bacs de son atelier sont vidés : tout ce qui y
+   poussait est perdu. */
+function viderBacsDeLAtelier(recruit){
+  const src = recruit && recruit.sourceCreatureId ? ficheParId(recruit.sourceCreatureId) : null;
+  const zoneId = (src && src.atelierZoneId) || (recruit && recruit.atelierZoneId) || null;
+  if (!zoneId) return;
+  if (typeof sceneViewCreature !== 'undefined' && sceneViewCreature && sceneViewCreature.id === zoneId){
+    plantationsMap = {};
+    if (typeof rafraichirBacs === 'function') rafraichirBacs();
+  }
+  if (!currentUser || !db) return;
+  db.collection('players').doc(currentUser.uid).set({
+    plantations: { [zoneId]: firebase.firestore.FieldValue.delete() }
+  }, { merge:true }).catch(e=> console.warn('plantations', e));
+}
+function executerRenvoi(recruit, apres){
+  if (!recruit) return;
+  viderBacsDeLAtelier(recruit);
   recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
   if (playerDocRef && activeTeamIds.includes(recruit.id)){
     const team = activeTeamIds.filter(id=>id!==recruit.id);
