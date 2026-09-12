@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v502</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v503</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6671,7 +6671,7 @@ function renderAllCreatures(snap){
     if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
     if (d.recruitScope === 'shared'){
       if (d.recruited) return; // partagé : recruté par n'importe qui, disparaît définitivement pour tout le monde
-    } else if (recruitedSourceIds.has(doc.id)) return; // par joueur : disparu uniquement pour toi
+    } else if (recruitedSourceIds.has(doc.id) || personnageRecrute({ id: doc.id, ...d })) return; // par joueur : disparu uniquement pour toi (v503 : toutes ses versions)
     /* Une ZONE hors de ses horaires reste sur la carte : elle est simplement fermée, et
        toucher son marqueur affiche un message au lieu d'ouvrir la scène. Un PNJ, lui,
        disparaît toujours — quelqu'un qui n'est pas là n'est pas là. */
@@ -7320,7 +7320,7 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
   /* v489 : un choix qui recrute disparaît quand le PNJ est déjà à bord — sinon on pouvait
      recruter deux fois le même artisan depuis son propre atelier (deux recrues, deux portes).
      Il revient de lui-même si le joueur renvoie le personnage. */
-  if (ch.recruit && etat && etat.recrutes && etat.recrutes.has && etat.recrutes.has(creatureId)) return false;
+  if (ch.recruit && etat && etat.recrutes && etat.recrutes.has && (etat.recrutes.has(creatureId) || (typeof personnageRecrute === 'function' && personnageRecrute(creatureId)))) return false;   // v503 : par groupe de versions
   /* v502 : une action à bord (renvoyer, déplacer, fabrication, équipement) n'a de sens que si
      le personnage est effectivement recruté. */
   if (ch.action && typeof recrueDuPersonnage === 'function' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId && !recrueDuPersonnage(activeCreature)) return false;
@@ -7655,8 +7655,8 @@ function grantItemToPlayer(grant, quantiteAncienne){
 function recruitCreature(creature, metierId){
   if (!creature || !creature.id || !db) return;
   /* v489 : jamais deux recrues pour la même fiche. */
-  if (recruitedSourceIds.has(creature.id) || recruits.some(r=> r && r.sourceCreatureId === creature.id)){
-    showToast((creature.name || 'Ce personnage') + ' est déjà dans ton équipe');
+  if (recruitedSourceIds.has(creature.id) || recruits.some(r=> r && r.sourceCreatureId === creature.id) || personnageRecrute(creature)){
+    showToast((creature.name || 'Ce personnage') + ' est déjà dans ton équipe');   // v503 : quelle que soit la version
     return;
   }
   const isCombattant = creature.interactionType === 'combat';
@@ -26348,6 +26348,32 @@ function positionSceneViewPoints(){
 let emplacementsSceneCourante = null;   // { points, sceneId, attribution: { pointId → fiche } }
 
 /* Les groupes de personnages (dupeGroup, ou l'id de l'originale) présents à bord chez ce joueur. */
+/* v503 — LES DEUX EMPLACEMENTS DE L'ARTISAN. Un personnage recrutable existe DEHORS (dans le
+   monde, pour le recrutement) et DANS SA PIÈCE une fois à bord. Le recrutement masque TOUTES
+   ses versions dehors (par groupe, pas seulement la version exacte recrutée), le renvoi les
+   fait revenir. `zoneEstABord` dit si une zone appartient au vaisseau (modèle, atelier d'un
+   habitant, vaisseau actif ou de départ). */
+function zoneEstABord(zoneId){
+  if (!zoneId) return false;
+  if (typeof shipZoneId !== 'undefined' && shipZoneId === zoneId) return true;
+  if (typeof vaisseauDepartId !== 'undefined' && vaisseauDepartId === zoneId) return true;
+  const z = ficheParId(zoneId);
+  if (z && ficheEstModeleVaisseau(z)) return true;
+  return toutesLesFiches().some(f=> f && f.atelierZoneId === zoneId);
+}
+/* Le personnage (toutes versions confondues) est-il recruté par ce joueur ? */
+function personnageRecrute(ficheOuId){
+  const f = (typeof ficheOuId === 'string') ? ficheParId(ficheOuId) : ficheOuId;
+  if (!f) return (typeof ficheOuId === 'string') ? recruitedSourceIds.has(ficheOuId) : false;
+  const g = groupeDeFiche(f);
+  if (recruitedSourceIds.has(f.id)) return true;
+  return (recruits || []).some(r=>{
+    if (!r || !r.sourceCreatureId) return false;
+    if (r.sourceCreatureId === f.id) return true;
+    const src = ficheParId(r.sourceCreatureId);
+    return src ? groupeDeFiche(src) === g : false;
+  });
+}
 function groupesABord(){
   const g = new Set();
   (recruits || []).forEach(r=>{
@@ -26378,7 +26404,13 @@ function candidatsEmplacements(sceneId, now){
     const g = brut.dupeGroup || brut.id;
     /* v500 : un personnage RECRUTABLE doit être à bord ; un personnage qu'on ne recrute jamais
        (l'assistante, un habitant d'une zone) se place dès qu'une version est marquée sur la scène. */
-    if (groupeRecrutable(g) && !groupes.has(g)) return;
+    if (groupeRecrutable(g)){
+      /* v503 : à bord (vaisseau, atelier) il faut être recruté ; DEHORS il faut ne pas l'être —
+         c'est l'emplacement de recrutement. */
+      const aBord = groupes.has(g);
+      const dehors = !!f.pieceCommune.zoneId && !zoneEstABord(f.pieceCommune.zoneId);   // zone inconnue : on considère à bord (ancien comportement)
+      if (dehors ? aBord : !aBord) return;
+    }
     if (!isActiveAt(f, now || new Date())) return;
     if (vus.has(g)) return;   // deux versions actives du même personnage : la première suffit
     vus.add(g);
@@ -26530,15 +26562,22 @@ async function getScenePnjInfo(sc){
     fiches[doc.id] = d;
     if (d.recruitScope === 'shared'){
       if (d.recruited) partis.add(doc.id); // partagé : recruté par n'importe qui
-    } else if (recruitedSourceIds.has(doc.id)){
-      partis.add(doc.id); // par joueur : recruté par toi
+    } else if (recruitedSourceIds.has(doc.id) || personnageRecrute({ id: doc.id, ...d })){
+      partis.add(doc.id); // par joueur : recruté par toi (v503 : toutes ses versions)
     }
   });
   /* v488 — dans une annexe, l'habitant est CHEZ LUI : sa fiche est bien recrutée, mais c'est
      justement pour ça qu'on le trouve dans son atelier. On ne le cache pas. */
   if (sceneViewAnnexe){
     const occ = recruits.find(r=> r.id === sceneViewAnnexe.recruitId);
-    if (occ && occ.sourceCreatureId) partis.delete(occ.sourceCreatureId);
+    if (occ && occ.sourceCreatureId){
+      const src = ficheParId(occ.sourceCreatureId);
+      const g = src ? groupeDeFiche(src) : occ.sourceCreatureId;
+      Array.from(partis).forEach(id=>{
+        const f = fiches[id];
+        if (id === occ.sourceCreatureId || (f && (f.dupeGroup || id) === g)) partis.delete(id);   // v503 : toutes ses versions
+      });
+    }
   }
   return { partis, fiches };
 }
