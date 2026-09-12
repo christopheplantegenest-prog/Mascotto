@@ -1284,7 +1284,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v511</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v512</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3730,7 +3730,14 @@
     <div id="comZone-titre" style="position:absolute; overflow:hidden; display:flex; align-items:center;"></div>
     <div id="comZone-liste" style="position:absolute; overflow-y:auto;"></div>
     <div id="comZone-pied" style="position:absolute; overflow:hidden; display:flex; align-items:center; gap:6px;"></div>
-    <button type="button" id="comPowerBtn" title="Éteindre" style="position:absolute;"></button>
+    <!-- v512 : le symbole d'extinction, posé sur le bouton dessiné du châssis. Sans lui, rien
+         ne disait que c'est là qu'on éteint. -->
+    <button type="button" id="comPowerBtn" title="Éteindre" style="position:absolute; display:flex; align-items:center; justify-content:center;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"
+           style="width:58%; height:58%; color:var(--mt); filter:drop-shadow(0 0 4px color-mix(in srgb, var(--mt) 65%, transparent));">
+        <path d="M12 3v9"/><path d="M18.4 6.4a9 9 0 1 1-12.8 0"/>
+      </svg>
+    </button>
   </div>
 </div>
 
@@ -18881,6 +18888,21 @@ function ouvrirMenuRecherche(){
   });
 }
 function mailIsRead(id, kind){ return playerMailRead.includes(id + '|' + kind); }
+/* v512 — LA CLÉ D'UN COURRIER.
+   Elle était l'identifiant de la MISSION, ce qui était faux : une mission revient dans le
+   courrier d'autres jours, et son nouveau rapport retombait alors sur une clé déjà lue — sa
+   pastille ne s'allumait plus jamais. Les rapports des missions faites une première fois
+   avaient donc leur point, ceux des missions déjà faites n'en avaient pas.
+   Une clé doit identifier l'ÉVÉNEMENT, pas le modèle :
+   - un rapport, c'est un VOYAGE  → l'heure de départ du robot le distingue du suivant
+   - un courrier du jour, c'est un JOUR → la date du lot le distingue de celui de demain
+   Un rapport de recherche garde son propre identifiant : il est déjà unique. */
+function mailKeyRapport(missionId, run){
+  return missionId + '#' + ((run && run.startedAt) || 0);
+}
+function mailKeyNouveau(missionId){
+  return missionId + '#' + (playerDailyMissions.date || '');
+}
 function markMailRead(id, kind){
   const cle = id + '|' + kind;
   if (playerMailRead.includes(cle)) return;
@@ -19228,8 +19250,10 @@ function renderMissionTerminal(){
       nom: 'Recherche · ' + ((MT_RECHERCHES[r.type] || {}).court || '?'),
       etat: r.resultats.length + ' trouvé' + (r.resultats.length > 1 ? 's' : ''),
     })),
-    ...rentres.map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'rapport', etat:'Rapport', run:x.run })),
-    ...dispo.map(m=> ({ id:m.id, m, nom:m.name, kind:'nouveau', etat:'Nouveau' })),
+    /* v512 : `cle` est ce qui décide de la pastille, `id` reste l'identifiant de la mission —
+       c'est lui qui sert à ouvrir le courrier et à retrouver la fiche derrière. */
+    ...rentres.map(x=> ({ id:x.id, cle:mailKeyRapport(x.id, x.run), m:x.m, nom:x.m.name, kind:'rapport', etat:'Rapport', run:x.run })),
+    ...dispo.map(m=> ({ id:m.id, cle:mailKeyNouveau(m.id), m, nom:m.name, kind:'nouveau', etat:'Nouveau' })),
     ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
   ];
   /* v482 : plus de sélection d'office. Rien d'ouvert = on est sur l'ACCUEIL, comme un téléphone
@@ -19266,7 +19290,7 @@ function renderMissionTerminal(){
     zGrille.innerHTML = entrees.length
       ? `<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px 6px; padding:8px 6px;">`
         + entrees.map(e=> `<button type="button" data-mt-open="${e.id}" class="mt-tile" title="${(e.nom || '').replace(/"/g,'&quot;')}">
-            <span class="mt-tile-box">${mtGlyphe(e.kind)}${e.kind !== 'encours' && !mailIsRead(e.id, e.kind) ? '<i class="mt-dot"></i>' : ''}</span>
+            <span class="mt-tile-box">${mtGlyphe(e.kind)}${e.kind !== 'encours' && !mailIsRead(e.cle || e.id, e.kind) ? '<i class="mt-dot"></i>' : ''}</span>
             <span class="mt-tile-name">${e.nom || '(sans nom)'}</span>
             ${(e.kind === 'encours' || e.kind === 'recherche') ? `<span class="mt-tile-sub">${e.etat}</span>` : ''}
           </button>`).join('')
@@ -19279,7 +19303,7 @@ function renderMissionTerminal(){
         if (isGhostTap()) return;
         missionTerminalSelectedId = b.dataset.mtOpen;
         const e0 = entrees.find(x=> x.id === b.dataset.mtOpen);
-        if (e0) markMailRead(e0.id, e0.kind);   // ouvert = lu, la pastille s'éteint
+        if (e0) markMailRead(e0.cle || e0.id, e0.kind);   // ouvert = lu, la pastille s'éteint
         renderMissionTerminal();
       }));
     return;
@@ -22650,7 +22674,9 @@ function comNotifications(){
     if (!run || run.reported) return;
     if (!missionIsBack(run)) return;
     const m = (missionTemplates || []).find(t=> t.id === mid);
-    out.push({ cle:'mis:' + mid, type:'mission',
+    /* v512 : la clé identifie le VOYAGE et non la mission — sans quoi une mission déjà faite
+       un autre jour reviendrait avec une clé déjà lue, et ne serait plus jamais annoncée. */
+    out.push({ cle:'mis:' + mid + '#' + (run.startedAt || 0), type:'mission',
       t1:'Rapport de mission', t2:(m && m.name ? m.name : 'Un combattant est rentré') + ' — tableau de bord' });
   });
 
@@ -26590,9 +26616,9 @@ function openSceneView(creature, resumeSceneId, opts){
   sceneViewAnnexe = (opts && opts.annexe) ? opts.annexe : null;   // v488
   rendreBoutonsAnnexe();
   annulerDeplacement(true);   // v479 : un déplacement ne survit pas à un changement de lieu
-  /* En montant à bord, on annonce les rapports qui attendent. Différé d'un instant : la scène
-     doit être là derrière, sinon la fenêtre s'ouvre sur du vide. */
-  if (sceneViewIsShip && !resumeSceneId) setTimeout(proposerRapports, 700);
+  /* v512 — plus de fenêtre « untel est rentré » en montant à bord. C'est le COMMUNICATEUR qui
+     porte cette information maintenant, et une notification ne s'impose jamais : elle attend
+     qu'on la consulte. `proposerRapports` reste en place, appelable à la main si besoin. */
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
