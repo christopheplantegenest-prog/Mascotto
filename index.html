@@ -1274,7 +1274,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v501</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v502</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -5125,7 +5125,7 @@ function renderDialogueBuilder(){
     cBar.appendChild(b);
   });
   const addChoiceBtn = dlgPill('➕ Choix', false, ()=>{
-    step.choices.push({ id:newChoiceId(), label:'', next:null, itemGrant:null, recruit:null, recherche:false, questGive:null, questValidate:null, showIf:null, once:false });
+    step.choices.push({ id:newChoiceId(), label:'', next:null, itemGrant:null, recruit:null, recherche:false, action:null, questGive:null, questValidate:null, showIf:null, once:false });
     dlgChoiceIdx = step.choices.length - 1;
     renderDialogueBuilder();
   });
@@ -5683,9 +5683,21 @@ function fenetreEffetsReponse(ch){
     });
     /* v486 — la capacité propre à l'assistante du capitaine. C'est un effet de choix comme
        un autre : n'importe quel PNJ pourrait l'avoir, mais dans les faits c'est elle. */
-    ligne('🔎 Lancer une recherche', ch.recherche ? 'oui' : 'non', ()=>{
-      ch.recherche = !ch.recherche;
-      dessiner();
+    /* v502 : le choix porte le TYPE de recherche ; taper la réponse la lance directement.
+       `true` (ancien réglage) ouvre encore le menu, pour les dialogues d'avant. */
+    const nomRecherche = (typeof ch.recherche === 'string') ? ((MT_RECHERCHES[ch.recherche] || {}).nom || ch.recherche) : (ch.recherche ? 'au choix du joueur (ancien menu)' : 'non');
+    ligne('🔎 Lancer une recherche', nomRecherche, ()=>{
+      if (ch.recherche){ ch.recherche = false; dessiner(); return; }
+      const items = Object.keys(MT_RECHERCHES).map(k=> ({ id:k, label: MT_RECHERCHES[k].nom, emoji: MT_RECHERCHES[k].emoji }));
+      ouvrirSelecteur({ titre:'Que cherche-t-elle quand le joueur dit ça ?', items, selectionnes: [], max:1,
+        onChoisir:(ids)=>{ if (ids[0]) ch.recherche = ids[0]; dessiner(); } });
+    });
+    /* v502 : les actions à bord — ce que faisaient les icônes 📋 et 🚪 de l'atelier. */
+    ligne('🚀 Action à bord', ch.action ? ((ACTIONS_A_BORD[ch.action] || {}).nom || ch.action) : 'aucune', ()=>{
+      if (ch.action){ ch.action = null; dessiner(); return; }
+      const items = Object.keys(ACTIONS_A_BORD).map(k=> ({ id:k, label: ACTIONS_A_BORD[k].nom, emoji:'' }));
+      ouvrirSelecteur({ titre:'Que fait cette réponse ? (seulement si le personnage est à bord)', items, selectionnes: [], max:1,
+        onChoisir:(ids)=>{ if (ids[0]) ch.action = ids[0]; dessiner(); } });
     });
     /* v494 : un simple oui/non. Le métier de la recrue est celui de la FICHE (menu « Métier »
        sous le nom), plus un choix à part — c'était un doublon. */
@@ -6128,7 +6140,8 @@ function renderDialogueParcours(wrap){
     const effets = [];
     if (ch.itemGrant && ch.itemGrant.itemName) effets.push('🎁 ' + ch.itemGrant.itemName);
     if (ch.recruit) effets.push('🤝 recrutement');
-    if (ch.recherche) effets.push('🔎 recherche');
+    if (ch.recherche) effets.push('🔎 ' + ((typeof ch.recherche === 'string' && MT_RECHERCHES[ch.recherche]) ? MT_RECHERCHES[ch.recherche].court.toLowerCase() : 'recherche'));
+    if (ch.action) effets.push((ACTIONS_A_BORD[ch.action] || { nom:'🚀 ' + ch.action }).nom);
     if (ch.questGive) effets.push('📜 quête');
     if (ch.questValidate) effets.push('✅ quête validée');
     if (ch.combat) effets.push('⚔️ combat');
@@ -6243,7 +6256,8 @@ function renderDialogueScript(wrap){
     const p = [];
     if (ch.itemGrant && ch.itemGrant.itemName) p.push('🎁 ' + ch.itemGrant.itemName);
     if (ch.recruit) p.push('🤝 recrutement');
-    if (ch.recherche) p.push('🔎 recherche');
+    if (ch.recherche) p.push('🔎 ' + ((typeof ch.recherche === 'string' && MT_RECHERCHES[ch.recherche]) ? MT_RECHERCHES[ch.recherche].court.toLowerCase() : 'recherche'));
+    if (ch.action) p.push((ACTIONS_A_BORD[ch.action] || { nom:'🚀 ' + ch.action }).nom);
     if (ch.questGive) p.push('📜 donne une quête');
     if (ch.questValidate) p.push('✅ valide une quête');
     if (ch.combat){
@@ -7307,6 +7321,9 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
      recruter deux fois le même artisan depuis son propre atelier (deux recrues, deux portes).
      Il revient de lui-même si le joueur renvoie le personnage. */
   if (ch.recruit && etat && etat.recrutes && etat.recrutes.has && etat.recrutes.has(creatureId)) return false;
+  /* v502 : une action à bord (renvoyer, déplacer, fabrication, équipement) n'a de sens que si
+     le personnage est effectivement recruté. */
+  if (ch.action && typeof recrueDuPersonnage === 'function' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId && !recrueDuPersonnage(activeCreature)) return false;
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
     const st = etatQuete(quetes, ch.questGive.questId);
@@ -7465,7 +7482,9 @@ function renderSheet(){
       /* v494 : le métier vient de la fiche ; l'ancien métier du choix ne sert plus que de repli
          pour les dialogues écrits avant. */
       if (ch.recruit) recruitCreature(activeCreature, activeCreature.metier || ch.recruit.metierId || null);
-      if (ch.recherche) setTimeout(ouvrirMenuRecherche, 320);  // v486 : le temps que le dialogue se referme
+      /* v486 : le temps que le dialogue se referme. v502 : un type précis part tout de suite. */
+      if (ch.recherche) setTimeout(()=>{ (typeof ch.recherche === 'string') ? lancerRechercheDepuisChoix(ch.recherche) : ouvrirMenuRecherche(); }, 320);
+      if (ch.action) setTimeout(()=> executerActionABord(ch.action, activeCreature), 320);   // v502
       const suite = ()=>{
         /* Depuis le passage à plusieurs adversaires, le choix porte `creatureIds`.
            Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
@@ -7503,6 +7522,56 @@ function renderSheet(){
    défaite (le mot de la fin se lit sur place, pas une fois dehors), faire disparaître un
    agresseur qui a dit ce qu'il avait à dire. Une action, une seule fois. */
 let apresFermetureDialogue = null;
+/* ═══ v502 — LES ACTIONS À BORD D'UN CHOIX DE DIALOGUE ═══
+   Un choix peut exécuter directement, sans sous-fenêtre, ce que faisaient les icônes de
+   l'atelier et le bas de la fiche : renvoyer l'habitant, le changer de porte, ouvrir sa
+   fabrication ou son équipement. L'auteur écrit la réplique lui-même et coche l'action. Le
+   choix n'apparaît que si le personnage est À BORD (une recrue de son groupe existe). */
+const ACTIONS_A_BORD = {
+  renvoyer:    { nom:'🚪 Le renvoyer du vaisseau' },
+  deplacer:    { nom:'🚪 Le changer de porte (déplacer sa pièce)' },
+  fabrication: { nom:'🔧 Ouvrir sa fabrication (recettes)' },
+  equipement:  { nom:'🎒 Ouvrir son équipement' },
+};
+function recrueDuPersonnage(creature){
+  if (!creature) return null;
+  const g = groupeDeFiche(creature);
+  return (recruits || []).find(r=>{
+    if (!r || !r.sourceCreatureId) return false;
+    if (r.sourceCreatureId === creature.id) return true;
+    const f = ficheParId(r.sourceCreatureId);
+    return f ? groupeDeFiche(f) === g : false;
+  }) || null;
+}
+function executerActionABord(action, creature){
+  const r = recrueDuPersonnage(creature);
+  if (!r){ showToast((creature && creature.name || 'Ce personnage') + ' n\'est pas à bord'); return; }
+  if (action === 'renvoyer'){
+    const dansAnnexe = !!(typeof sceneViewAnnexe !== 'undefined' && sceneViewAnnexe && sceneViewAnnexe.recruitId === r.id);
+    /* Renvoyé depuis sa propre pièce : on ressort dans le couloir, sinon on resterait dans un
+       atelier dont la porte vient de se refermer. */
+    dismissRecruit(r, dansAnnexe ? ()=> revenirAuVaisseauDepuisAnnexe() : null);
+    return;
+  }
+  if (action === 'deplacer'){
+    if (typeof sceneViewAnnexe !== 'undefined' && sceneViewAnnexe) revenirAuVaisseauDepuisAnnexe();
+    commencerDeplacement(r);
+    return;
+  }
+  if (action === 'fabrication'){
+    if (r.recruitType === 'combattant'){ showToast((r.name || 'Cet habitant') + ' ne fabrique rien'); return; }
+    document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+    openRecruitSheet(r.id, 'artisanat');
+    return;
+  }
+  if (action === 'equipement'){
+    document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+    openRecruitSheet(r.id, 'equipement');
+    return;
+  }
+  showToast('Action inconnue : ' + action);
+}
+
 function fermerDialogue(){
   document.getElementById('overlay').classList.remove('show');
   document.getElementById('overlay').style.zIndex = '';
@@ -18401,6 +18470,13 @@ const MT_RECHERCHES = {
     emoji: '🛠️',
     retient: (f)=> !!f.metier && f.interactionType !== 'zone' && f.interactionType !== 'concession',
   },
+  /* v502 — une BOUTIQUE, c'est une fiche de nature `shop`. */
+  boutique: {
+    nom: 'Une boutique',
+    court: 'Boutique',
+    emoji: '🏪',
+    retient: (f)=> f.interactionType === 'shop',
+  },
 };
 const MT_RECHERCHE_RESULTATS = 3;      // « les trois plus proches », comme l'exploration
 let rechercheHeures = 8;               // réglable dans Outils de test
@@ -18505,8 +18581,28 @@ function supprimerRapportRecherche(id){
   sauverRecherche();
 }
 
-/* Le menu qu'ouvre l'assistante. Il réutilise le sélecteur générique du jeu : pas de
-   nouvelle fenêtre à dessiner, et le joueur retrouve un geste qu'il connaît déjà. */
+/* v502 — le choix de dialogue porte lui-même le type de recherche (`ch.recherche` = 'artisan',
+   'concession', 'boutique'…) : taper la réponse lance la recherche, sans sous-menu. Si elle
+   cherche déjà, on propose d'abandonner (c'est la seule fenêtre qui reste, et elle est utile). */
+function lancerRechercheDepuisChoix(type){
+  const def = MT_RECHERCHES[type];
+  if (!def){ showToast('Cette recherche n\'existe pas'); return; }
+  if (playerSearch){
+    const reste = formatRemainingDuration(rechercheRestanteMs());
+    const enCours = MT_RECHERCHES[playerSearch.type] || {};
+    appConfirm('Elle cherche déjà : ' + (enCours.nom || '?') + '.\nEncore ' + reste + '.\n\nAbandonner et chercher ' + def.nom.toLowerCase() + ' à la place ?')
+      .then(ok=>{
+        if (!ok) return;
+        annulerRecherche();
+        if (lancerRecherche(type)){ showToast('Elle s\'y met. Elle t\'enverra son rapport.'); renderMissionTracker(); }
+      });
+    return;
+  }
+  if (lancerRecherche(type)){ showToast('Elle s\'y met. Elle t\'enverra son rapport.'); renderMissionTracker(); }
+}
+
+/* Le menu qu'ouvre l'assistante (ancien mode « recherche : oui », gardé pour les dialogues
+   écrits avant la v502). Il réutilise le sélecteur générique du jeu. */
 function ouvrirMenuRecherche(){
   if (playerSearch){
     const reste = formatRemainingDuration(rechercheRestanteMs());
@@ -25662,13 +25758,13 @@ function ouvrirAnnexeDuVaisseau(hab, zoneId){
 }
 /* Les deux boutons de l'annexe : la fiche du recruté (équipement, renvoi) et le changement de
    porte. Ils remplacent la colonne de boutons de l'ancienne chambre à plat. */
+/* v502 : les deux icônes 📋 et 🚪 ne s'affichent plus. Ce qu'elles faisaient passe par le
+   DIALOGUE de l'habitant, via les actions standardisées d'un choix (voir ACTIONS_A_BORD). */
 function rendreBoutonsAnnexe(){
   const fiche = document.getElementById('sceneViewFicheBtn');
   const porte = document.getElementById('sceneViewPorteBtn');
-  if (!fiche || !porte) return;
-  const visible = !!sceneViewAnnexe;
-  fiche.style.display = visible ? '' : 'none';
-  porte.style.display = visible ? '' : 'none';
+  if (fiche) fiche.style.display = 'none';
+  if (porte) porte.style.display = 'none';
 }
 let sceneViewCurrentSceneId = null;
 let sceneViewTakenMap = {};   // état par joueur (mode perPlayer)
@@ -30770,6 +30866,8 @@ function ctrlArbreHtml(M, R){
     if (ch.questGive) l.push('📜 ' + nomQuete(ch.questGive.questId));
     if (ch.questValidate) l.push('✅ ' + nomQuete(ch.questValidate.questId));
     if (ch.recruit) l.push('🤝 recrute');
+    if (ch.recherche) l.push('🔎 ' + ((typeof ch.recherche === 'string') ? ch.recherche : 'recherche'));
+    if (ch.action) l.push('🚀 ' + ch.action);
     if (ch.once) l.push('une fois');
     return l.length ? ' <span class="meta">(' + ctrlEchap(l.join(', ')) + ')</span>' : '';
   };
