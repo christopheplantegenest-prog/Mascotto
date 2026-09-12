@@ -936,6 +936,10 @@
 .combat-to-item.identify-selected .to-emoji img{ filter:drop-shadow(0 0 2px #4fc3f7) drop-shadow(0 0 3px #4fc3f7) brightness(1.12); }
 @keyframes combatFleeOut{ 0%{ transform:translateY(0); opacity:1; } 100%{ transform:translateY(-160px); opacity:0; } }
 .combat-fighter.combat-fleeing-out{ animation: combatFleeOut .6s ease-in forwards; }
+/* v516 — la place d'un combattant qui a fui : on ne la voit plus, on ne peut plus la toucher,
+   mais elle tient toujours sa largeur. Sans elle, la rangée se réarrangeait et celle du
+   joueur remontait avec. `visibility` et non `display` : c'est ce qui garde la place. */
+.combat-fighter.combat-fui{ visibility:hidden; pointer-events:none; }
 #combatActionPanel{
   /* Collé en bas, hauteur fixe : c'est le repère stable de l'écran, on doit toujours savoir
      où poser le pouce. */
@@ -1284,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v513</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v517</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1689,9 +1693,9 @@
     <p class="meta" style="margin:4px 0 0;">Les joueurs ne voient ni le domaine ni le pourcentage : ils doivent lire le courrier pour deviner quel profil envoyer.</p>
 
     </div>
-    <button type="button" class="btn-secondary tt-cat" data-ttcat="terminal" style="width:100%; margin-bottom:6px; text-align:left;">🖥️ Terminal de missions</button>
+    <button type="button" class="btn-secondary tt-cat" data-ttcat="terminal" style="width:100%; margin-bottom:6px; text-align:left;" data-mot="tableauDeBord">🖥️ Tableau de bord</button>
     <div class="tt-panel" id="ttPanel-terminal" style="display:none; padding:0 0 10px;">
-    <div class="field-label" style="margin-top:14px;">📨 Image du terminal de missions</div>
+    <div class="field-label" style="margin-top:14px;" data-mot="tableauDeBordImage">📨 Image du tableau de bord</div>
     <p class="meta" style="margin:0 0 6px;">Le décor de la console du vaisseau. Le courrier et les boutons viennent se poser dessus.</p>
     <input type="file" id="missionTerminalFile" accept="image/*" class="field-input">
     <button type="button" class="btn-secondary" id="missionTerminalGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
@@ -1720,7 +1724,7 @@
       </div>
       <p class="meta" id="terminalZoneInfo" style="text-align:center; margin:6px 0 0;"></p>
     </div>
-    <button class="btn-secondary" id="terminalPreviewBtn" style="width:100%; margin-top:8px;">👁️ Voir le terminal</button>
+    <button class="btn-secondary" id="terminalPreviewBtn" style="width:100%; margin-top:8px;" data-mot="tableauDeBordVoir">👁️ Voir le tableau de bord</button>
 
     </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="com" style="width:100%; margin-bottom:6px; text-align:left;">📡 Communicateur</button>
@@ -2960,7 +2964,7 @@
             </div>
           </div>
           <div class="field-label" style="margin-top:10px;">🖥️ Teinte de l'écran du capitaine</div>
-          <p class="meta" style="margin:0 0 6px;">La couleur lumineuse du terminal de missions à bord de ce vaisseau. Deux modèles n'ont pas le même écran.</p>
+          <p class="meta" style="margin:0 0 6px;" data-mot="ecranCouleur">La couleur lumineuse de l'écran à bord de ce vaisseau. Deux modèles n'ont pas le même écran.</p>
           <input type="color" id="editVaisseauTeinte" class="field-input" value="#5ff2ff" style="height:42px; padding:2px;">
 
           <div class="field-label" style="margin-top:10px;">🧩 Matériaux demandés en plus du prix</div>
@@ -3781,6 +3785,55 @@
 </div>
 
 <script>
+/* ═══════════════════ v515 — LE LEXIQUE DU JEU ═══════════════════
+   Les noms de l'univers ne sont pas définitifs. Les écrire en dur dans deux cents phrases,
+   c'est s'interdire d'en changer — il faudrait relire tout le jeu à chaque hésitation.
+   Ils vivent donc ici, à un seul endroit, et l'interface les lit.
+
+   COMMENT S'EN SERVIR
+   Dans une chaîne de gabarit : `Un ${MOTS.robot} est prêt`
+   En début de phrase :         `${Maj(MOTS.robot)} prêt`
+   Au pluriel :                 `${plur(MOTS.robot)}` → ajoute un s, sauf mot déjà en s/x/z
+
+   Le module de combat garde son propre `MOT` (mécanique, énergétique, charge) : il est
+   interne à M2 et ne concerne que le vocabulaire des stats. Celui-ci porte celui du monde.
+
+   RÈGLE : un mot n'entre ici que quand l'interface le lit vraiment. Un lexique dont la
+   moitié des entrées ne sert à rien ne dit plus quels mots sont réellement modifiables. */
+const MOTS = {
+  robot:        'robot',
+  plan:         'plan',
+  artisan:      'artisan',
+  combattant:   'combattant',
+  vaisseau:     'vaisseau',
+  mission:      'mission',
+  explorateur:  'explorateur',
+  atelier:      'atelier',
+  tableauDeBord:'tableau de bord',
+  communicateur:'communicateur',
+};
+/* Les libellés posés dans le HTML portent `data-mot` : au démarrage, on les réécrit depuis
+   le lexique. Sans cela il faudrait modifier le mot à deux endroits, et le HTML finirait par
+   mentir sur ce que dit le jeu. */
+const MOTS_LIBELLES = {
+  tableauDeBord:      ()=> '🖥️ ' + Maj(MOTS.tableauDeBord),
+  tableauDeBordImage: ()=> '📨 Image du ' + MOTS.tableauDeBord,
+  tableauDeBordVoir:  ()=> '👁️ Voir le ' + MOTS.tableauDeBord,
+  ecranCouleur:       ()=> "La couleur lumineuse de l'écran à bord de ce " + MOTS.vaisseau
+                         + ". Deux modèles n'ont pas le même écran.",
+};
+function appliquerLexique(){
+  document.querySelectorAll('[data-mot]').forEach(el=>{
+    const f = MOTS_LIBELLES[el.dataset.mot];
+    if (f) el.textContent = f();
+  });
+}
+document.addEventListener('DOMContentLoaded', appliquerLexique);
+/* Majuscule initiale, pour un mot en début de phrase ou en titre. */
+function Maj(m){ return m ? m.charAt(0).toUpperCase() + m.slice(1) : ''; }
+/* Pluriel régulier. Un mot déjà terminé par s, x ou z ne bouge pas. */
+function plur(m){ return /[sxz]$/i.test(m || '') ? m : (m || '') + 's'; }
+
 /* ---------- Authentification anonyme (automatique) + pseudo ---------- */
 let currentUser = null;
 let currentPseudo = null;
@@ -7007,6 +7060,25 @@ document.getElementById('mapIconRotPlusBtn').addEventListener('click', ()=> adju
    que l'icône : object-fit contain) ; s'il est impossible de tester (image pas chargée, canvas absent,
    image hébergée ailleurs qui « salit » le canvas), on accepte l'appui comme avant. */
 const ALPHA_PERSONNAGE_MIN = 40;
+/* v517 — qui est visible sous ce point ? On parcourt les personnages POSÉS SUR LA CARTE, on
+   garde ceux dont le pixel touché est opaque, et on rend le plus haut d'entre eux. Leaflet
+   empile les marqueurs du plus au nord au plus au sud : le `zIndex` réel de l'élément est
+   donc le seul juge fiable de ce que le joueur voit au-dessus. */
+function creatureSousLePoint(evt, sauf){
+  if (!evt || typeof evt.clientX !== 'number') return null;
+  let meilleur = null, meilleurZ = -Infinity;
+  creatures.forEach(c=>{
+    if (!c || c === sauf || !c.marker || !map.hasLayer(c.marker)) return;
+    const el = c.marker.getElement();
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (evt.clientX < r.left || evt.clientX > r.right || evt.clientY < r.top || evt.clientY > r.bottom) return;
+    if (!appuiSurLePersonnage(c, evt)) return;    // lui aussi est transparent à cet endroit
+    const z = parseFloat(el.style.zIndex || 0) || 0;
+    if (z > meilleurZ){ meilleurZ = z; meilleur = c; }
+  });
+  return meilleur;
+}
 function appuiSurLePersonnage(c, evt){
   try {
     if (!c || !c.imageUrl || !evt || typeof evt.clientX !== 'number') return true;
@@ -7043,7 +7115,14 @@ function renderCreatureMarkers(){
       if (isMovingMarker) return;
       if (mapLongPressFired){ mapLongPressFired = false; return; }
       if (isGhostTap()) return; // reste du geste qui vient de fermer un écran
-      if (!appuiSurLePersonnage(c, ev && ev.originalEvent)) return;   // v462 : à côté du personnage, on ne le sélectionne pas
+      /* v517 — le pixel touché est transparent : au lieu de perdre l'appui, on cherche ce qui
+         se trouve DESSOUS à cet endroit précis et on le lui transmet. Le joueur touche ainsi
+         toujours ce qu'il voit, même là où deux icônes se chevauchent. */
+      if (!appuiSurLePersonnage(c, ev && ev.originalEvent)){
+        const dessous = creatureSousLePoint(ev && ev.originalEvent, c);
+        if (dessous) handleCreatureClick(dessous);
+        return;
+      }
       handleCreatureClick(c);
     });
     marker.on('add', ()=>{
@@ -18558,6 +18637,7 @@ function watchPlayerInventoryForBase(){
     if (ov && ov.classList.contains('show')) renderEtagerePlans();
     playerAtelierFile = (doc.exists && Array.isArray(doc.data().atelierFile)) ? doc.data().atelierFile : [];   // v474
     playerAtelierNouveaux = (doc.exists && Array.isArray(doc.data().atelierNouveaux)) ? doc.data().atelierNouveaux : [];
+    playerAtelierNouveauxAt = (doc.exists && doc.data().atelierNouveauxAt) || 0;   // v514
     /* v511 — les notifications déjà lues. Sur la fiche et non en mémoire locale : la pastille
        doit aussi se taire quand le joueur change de téléphone. */
     comLues = (doc.exists && Array.isArray(doc.data().comLues)) ? doc.data().comLues : [];
@@ -19254,9 +19334,17 @@ function renderMissionTerminal(){
     })),
     /* v512 : `cle` est ce qui décide de la pastille, `id` reste l'identifiant de la mission —
        c'est lui qui sert à ouvrir le courrier et à retrouver la fiche derrière. */
-    ...rentres.map(x=> ({ id:x.id, cle:mailKeyRapport(x.id, x.run), m:x.m, nom:x.m.name, kind:'rapport', etat:'Rapport', run:x.run })),
+    /* v514 — les groupes gardent leur ordre (ce qu'il y a à faire d'abord), mais DANS un
+       groupe les vignettes sont rangées, sinon elles changeaient de place d'un rendu à
+       l'autre : `Object.keys` ne garantit pas l'ordre des missions d'un instantané au suivant.
+       Les rentrés : le plus récemment revenu en tête. Les partis : celui qui revient le plus
+       tôt en tête. Le départage sur l'identifiant rend l'ordre reproductible. */
+    ...rentres.slice().sort((a,b)=> ((b.run.startedAt||0) - (a.run.startedAt||0)) || (a.id < b.id ? -1 : 1))
+      .map(x=> ({ id:x.id, cle:mailKeyRapport(x.id, x.run), m:x.m, nom:x.m.name, kind:'rapport', etat:'Rapport', run:x.run })),
     ...dispo.map(m=> ({ id:m.id, cle:mailKeyNouveau(m.id), m, nom:m.name, kind:'nouveau', etat:'Nouveau' })),
-    ...enCours.filter(x=> !missionIsBack(x.run)).map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
+    ...enCours.filter(x=> !missionIsBack(x.run))
+      .sort((a,b)=> (missionRemainingMs(a.run) - missionRemainingMs(b.run)) || (a.id < b.id ? -1 : 1))
+      .map(x=> ({ id:x.id, m:x.m, nom:x.m.name, kind:'encours', etat:formatRemainingDuration(missionRemainingMs(x.run)), run:x.run })),
   ];
   /* v482 : plus de sélection d'office. Rien d'ouvert = on est sur l'ACCUEIL, comme un téléphone
      qu'on allume. Le joueur choisit lui-même quel courrier lire. */
@@ -19814,7 +19902,7 @@ document.getElementById('missionTerminalFile').addEventListener('change', (e)=>{
       if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
       db.collection('app_config').doc('missions')
         .set({ terminalImage: url, terminalPath: null }, { merge:true })
-        .then(()=> showToast('Terminal enregistré'))
+        .then(()=> showToast(Maj(MOTS.tableauDeBord) + ' enregistré'))
         .catch((err)=> showToast('Échec : ' + err.message));
     };
     img.src = ev.target.result;
@@ -19826,7 +19914,7 @@ document.getElementById('missionTerminalGithubBtn').addEventListener('click', ()
     if (!db) return;
     db.collection('app_config').doc('missions')
       .set({ terminalPath: item.path, terminalImage: null }, { merge:true })
-      .then(()=> showToast('Terminal : ' + item.path))
+      .then(()=> showToast(Maj(MOTS.tableauDeBord) + ' : ' + item.path))
       .catch((err)=> showToast('Échec : ' + err.message));
   });
 });
@@ -22592,7 +22680,7 @@ function applyMissionTerminalFrame(){
 }
 function openMissionTerminal(){
   if (!missionTerminalReady()){
-    showToast('Choisis l\'image du terminal dans Édition → Outils de test');
+    showToast('Choisis l\'image du ' + MOTS.tableauDeBord + ' dans Édition → Outils de test');
     return;
   }
   document.getElementById('missionTerminalBg').src = missionTerminalImage;
@@ -22647,6 +22735,7 @@ let comZones = {};
 COM_ZONES.forEach(z=> comZones[z.id] = Object.assign({}, z.defaut));
 let comZoneEnCours = COM_ZONES[0].id;
 let comLues = [];                  // clés de notifications déjà lues, sur la fiche du joueur
+let playerAtelierNouveauxAt = 0;   // v514 : heure du dernier robot sorti de l'atelier
 
 const COM_GLYPHES = {
   mission:   MT_GLYPHES.rapport,
@@ -22679,6 +22768,7 @@ function comNotifications(){
     /* v512 : la clé identifie le VOYAGE et non la mission — sans quoi une mission déjà faite
        un autre jour reviendrait avec une clé déjà lue, et ne serait plus jamais annoncée. */
     out.push({ cle:'mis:' + mid + '#' + (run.startedAt || 0), type:'mission',
+      quand: (run.startedAt || 0) + (run.durationSec || 0) * 1000,   // l'heure du RETOUR
       t1:'Rapport de mission', t2:(m && m.name ? m.name : 'Un combattant est rentré') + ' — tableau de bord' });
   });
 
@@ -22686,12 +22776,14 @@ function comNotifications(){
   if (typeof playerExplorerPendingReport !== 'undefined' && playerExplorerPendingReport){
     const r = playerExplorerPendingReport;
     out.push({ cle:'exp:' + (r.at || r.zoneId || '1'), type:'exploration',
+      quand: r.at || 0,
       t1:"Rapport d'exploration", t2:"L'explorateur est rentré — son poste" });
   }
 
   // 3. Les rapports de recherche de l'assistante
   (playerSearchReports || []).forEach(r=>{
     out.push({ cle:'rech:' + r.id, type:'recherche',
+      quand: r.doneAt || 0,
       t1:'Rapport de recherche', t2:"L'assistante a répondu — tableau de bord" });
   });
 
@@ -22700,6 +22792,7 @@ function comNotifications(){
   const nouveaux = (typeof playerAtelierNouveaux !== 'undefined' && playerAtelierNouveaux) || [];
   if (nouveaux.length){
     out.push({ cle:'ate:' + nouveaux.slice().sort().join('|'), type:'atelier',
+      quand: playerAtelierNouveauxAt || 0,
       t1: nouveaux.length > 1 ? nouveaux.length + ' robots sont prêts' : 'Un robot est prêt',
       t2: nouveaux.join(', ') + " — l'atelier" });
   }
@@ -22709,9 +22802,20 @@ function comNotifications(){
   if (typeof allMyNegotiations === 'function'){
     allMyNegotiations().filter(n=> n.status === 'open').forEach(n=>{
       out.push({ cle:'nego:' + n.id, type:'negoce', ouvre:n.id,
+        quand: n.createdAt || 0,
         t1:'Négociation en attente', t2:'Un joueur veut échanger — ouvrir' });
     });
   }
+  /* v514 — UN ORDRE IMPOSÉ. Sans tri, les rapports de mission sortaient dans l'ordre où
+     Firestore renvoie les clés, qui n'est pas garanti d'un instantané à l'autre : les lignes
+     se réarrangeaient toutes seules, à chaque ouverture et à chaque battement de l'horloge
+     de la pastille, sans que rien n'ait changé au fond.
+     La plus récente en haut — ce qui vient d'arriver se lit en premier — et la clé départage
+     les dates égales, pour que l'ordre soit le MÊME à chaque reconstruction. */
+  out.sort((a, b)=>{
+    const d = (b.quand || 0) - (a.quand || 0);
+    return d !== 0 ? d : (a.cle < b.cle ? -1 : a.cle > b.cle ? 1 : 0);
+  });
   return out;
 }
 /* Les notifications encore à traiter : tout ce qui n'a pas été lu. */
@@ -23826,7 +23930,7 @@ const SCENE_POINT_TYPES = [
   { id:'recolte', label:'🌱 Récolte (plante, filon, arbre…)' },
   { id:'chambre', label:'🛏️ Quartiers (liste des chambres)' },
   { id:'habitant', label:'🚪 Porte d\'habitant (artisan, dojo…)' },   // v479
-  { id:'missions', label:'📨 Terminal de missions' },
+  { id:'missions', label:'📨 ' + Maj(MOTS.tableauDeBord) },
   { id:'soin', label:'💚 Soin' },
   { id:'plans', label:'📐 Étagère à plans' },
   { id:'atelier', label:'🔧 Atelier de fabrication' },
@@ -25394,7 +25498,7 @@ function renderSceneDetailTypeSpecific(pt){
   }
 
   if (pt.type === 'missions'){
-    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le terminal de missions : courrier du jour, envoi d'un combattant, rapports de retour. Rien à régler ici — l'image du terminal se choisit dans Édition → Outils de test.</p>`;
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le ${MOTS.tableauDeBord} : courrier du jour, envoi d'un ${MOTS.combattant}, rapports de retour. Rien à régler ici — son image se choisit dans Édition → Outils de test.</p>`;
     return;
   }
 
@@ -28520,7 +28624,12 @@ async function verifierAtelier(){
     if (restants.length) restants[0].startedAt = jalons[finis.length - 1].fin;   // le suivant a démarré quand le précédent a fini
     playerAtelierFile = restants;
     playerAtelierNouveaux = playerAtelierNouveaux.concat(nouveaux);
-    await playerDocRef.set({ atelierFile: restants, atelierNouveaux: playerAtelierNouveaux }, { merge:true });
+    /* v514 — l'heure du dernier robot sorti. `atelierNouveaux` ne porte que des noms : sans
+       cette date, sa notification n'avait pas de quoi se ranger et changeait de place à
+       chaque reconstruction de la liste. */
+    playerAtelierNouveauxAt = jalons[finis.length - 1].fin;
+    await playerDocRef.set({ atelierFile: restants, atelierNouveaux: playerAtelierNouveaux,
+                             atelierNouveauxAt: playerAtelierNouveauxAt }, { merge:true });
     if (nouveaux.length) showToast('🔧 Robot terminé : ' + nouveaux.join(', '));
   } catch(err){ journal('erreur', 'atelier : fin de fabrication', err.message || String(err), true); }
   atelierTermineEnCours = false;
@@ -28608,7 +28717,7 @@ function renderAtelier(){
   }
   el.innerHTML = html.join('');
   const ok = el.querySelector('#atNouveauxOk');
-  if (ok) ok.addEventListener('click', ()=>{ playerAtelierNouveaux = []; playerDocRef.set({ atelierNouveaux: [] }, { merge:true }).catch(()=>{}); renderAtelier(); });
+  if (ok) ok.addEventListener('click', ()=>{ playerAtelierNouveaux = []; playerAtelierNouveauxAt = 0; playerDocRef.set({ atelierNouveaux: [], atelierNouveauxAt: 0 }, { merge:true }).catch(()=>{}); renderAtelier(); });
   el.querySelectorAll('.pl-carte[data-plan]').forEach(c=> c.addEventListener('click', ()=>{ atelierPlanChoisi = plans.find(p=> p.id === c.dataset.plan) || null; renderAtelier(); }));
   const ret = el.querySelector('#atRetour');
   if (ret) ret.addEventListener('click', ()=>{ atelierPlanChoisi = null; renderAtelier(); });
@@ -29841,7 +29950,10 @@ function fighterCardHtml(f, idx, arr){
   if (!bloqueParProvocation && pendingAttack && pendingActorFighter && f.alive
       && m2CarteHorsCible(f, pendingAttack, pendingActorFighter)) bloqueParProvocation = true;   // v451 : même estompage
   const isHit = (combatState.hitUids||[]).includes(f.uid);
-  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'', f.fleeingOut?'combat-fleeing-out':''].filter(Boolean).join(' ');
+  /* v516 : `combat-fui` est la place tenue par un fuyard — invisible et intouchable, mais
+     elle occupe toujours sa largeur pour que rien ne se réarrange autour d'elle. */
+  const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'',
+    f.fleeingOut?'combat-fleeing-out':'', (f.fled && !f.fleeingOut)?'combat-fui':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
   const infoHtml = m2InfoCarte(f, hpColor);
@@ -30150,7 +30262,12 @@ function majDerniereAction(log){
 function renderCombat(){
   if (!combatState) return;
   renderCombatTurnOrderBar();
-  const ennemis = combatState.fighters.filter(f=>f.side==='enemy' && !f.fled).map(fighterCardHtml).join('');
+  /* v516 — le fuyard reste DANS la rangée, simplement invisible. Le retirer changeait le
+     nombre de cartes : l'arène (`space-evenly`) redistribuait l'espace et faisait remonter la
+     rangée du joueur, et la largeur de carte — calculée sur `arr.length` — élargissait les
+     adversaires restants. Sa place est donc tenue jusqu'à la fin du combat : l'animation de
+     fuite l'emmène hors de l'écran, puis son emplacement reste vide mais occupé. */
+  const ennemis = combatState.fighters.filter(f=>f.side==='enemy').map(fighterCardHtml).join('');
   const joueurs = combatState.fighters.filter(f=>f.side==='player').map(fighterCardHtml).join('');
   let reecrit = false;
   if (ennemis !== dernierRenduArene.ennemis){
