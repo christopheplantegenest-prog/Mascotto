@@ -1279,7 +1279,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v509</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v510</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -18887,14 +18887,28 @@ function todayKey(){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 /* Tire le courrier du jour si on a changé de journée. Les missions déjà en cours restent :
-   elles ne dépendent plus de la liste du jour une fois lancées. */
+   elles ne dépendent plus de la liste du jour une fois lancées.
+   v510 — VERROU DE SESSION. `renderMissionTerminal()` appelle cette fonction à chaque ouverture
+   du terminal, potentiellement des dizaines de fois par jour. Si un instantané du serveur arrive
+   dans le désordre (deux écritures concurrentes sur la fiche joueur : une mission qui se lance
+   pendant qu'une autre se débriefe, par exemple) et ramène temporairement `playerDailyMissions`
+   à une valeur périmée dont la date ne correspond plus à aujourd'hui, la condition ci-dessous
+   redevenait vraie et un tirage TOUT NEUF repartait — avec `done:[]` remis à zéro — donnant
+   l'impression que 4 nouvelles missions arrivaient sans arrêt, même en plein milieu de journée.
+   `dailyMissionsSessionDate` retient qu'on a déjà réglé la question pour aujourd'hui, une bonne
+   fois, et empêche tout nouveau tirage tant que le jour ne change pas — même si la variable
+   globale venait à être écrasée entre-temps par un instantané attardé. */
+let dailyMissionsSessionDate = null;
 function ensureDailyMissions(){
   if (!playerDocRef) return;
-  if (playerDailyMissions.date === todayKey()) return;
+  const today = todayKey();
+  if (dailyMissionsSessionDate === today) return;
+  if (playerDailyMissions.date === today){ dailyMissionsSessionDate = today; return; }
   if (!missionTemplates.length) return;
   const pool = missionTemplates.slice().sort(()=> Math.random() - 0.5);
   const ids = pool.slice(0, Math.max(1, missionsPerDay)).map(m=> m.id);
-  playerDailyMissions = { date: todayKey(), ids, done: [] }; // `done` : traitées aujourd'hui, voir plus bas
+  playerDailyMissions = { date: today, ids, done: [] }; // `done` : traitées aujourd'hui, voir plus bas
+  dailyMissionsSessionDate = today;
   playerDocRef.set({ dailyMissions: playerDailyMissions }, { merge:true })
     .catch((err)=> showToast('Courrier non enregistré : ' + err.message));
 }
