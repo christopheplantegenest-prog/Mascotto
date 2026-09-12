@@ -1279,7 +1279,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v508</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v509</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -26453,6 +26453,7 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=>{
         if (!pt.linkedPnjId){ showToast('Ce point n\'a pas encore de PNJ configuré'); return; }
         if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
+        if (lancementCombatEnCours || (combatState && !combatState.finished)) return;   // v509 : couvre aussi la lecture Firestore ci-dessous
         creatureCol.doc(pt.linkedPnjId).get().then((doc)=>{
           if (!doc.exists){ showToast('Ce PNJ n\'existe plus'); return; }
           const data = ficheJouable(doc.data());
@@ -28553,36 +28554,51 @@ async function tryResumeSession(forcer){
 
 /* Combat déclenché par un PNJ de type Monstre/Combattant (boss) ou par une rencontre aléatoire dans une zone d'exploration. */
 let combatZoneContext = null;
+/* v509 — VERROU DE LANCEMENT. `launchZoneCombat` est le seul entonnoir des combats de zone
+   (rencontre aléatoire, PNJ agressif, boss), mais son début est asynchrone (lecture Firestore
+   du PNJ, résolution de l'image d'arène) : `combatState` n'est posé qu'à la toute fin, dans
+   `startCombatM2`. Deux déclencheurs qui passent leur "if (combatState) return" au même instant
+   — une rencontre tirée pendant qu'un PNJ agressif parle — pouvaient donc tous les deux entrer
+   ici, et le second écrasait combatState pendant que le premier finissait de le construire :
+   les deux combats se mélangeaient. Le verrou se pose AVANT le moindre await et se lève dans
+   un finally, qu'on sorte par succès ou par un des messages d'erreur. */
+let lancementCombatEnCours = false;
 async function launchZoneCombat(enemyCreatureList, pt, opts){
-  /* étape 3 : tout combat de zone, de carte ou de dialogue tourne sur le moteur M2 */
-  const equipe = m2AlliesDepuisEquipe();
-  if (!equipe.cfgs.length){
-    if (equipe.sansModele.length) showToast('Aucun robot de ton équipe n\'a de modèle (' + equipe.sansModele.join(', ') + ') — recrute des robots à modèle');
-    else if (pt) showToast('Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau');
-    return;
+  if (lancementCombatEnCours || (combatState && !combatState.finished)) return;
+  lancementCombatEnCours = true;
+  try {
+    /* étape 3 : tout combat de zone, de carte ou de dialogue tourne sur le moteur M2 */
+    const equipe = m2AlliesDepuisEquipe();
+    if (!equipe.cfgs.length){
+      if (equipe.sansModele.length) showToast('Aucun robot de ton équipe n\'a de modèle (' + equipe.sansModele.join(', ') + ') — recrute des robots à modèle');
+      else if (pt) showToast('Ajoute au moins un combattant à ton équipe — c\'est dans les quartiers du vaisseau');
+      return;
+    }
+    /* Ces avertissements partaient en toast juste avant la transition d'entrée, qui les couvrait
+       aussitôt : illisibles, et arrivés trop tard de toute façon. Ils descendent dans le JOURNAL du
+       combat, où ils restent consultables tout du long. Le vrai signal en amont, c'est le badge
+       « ⚠️ Sans modèle » des quartiers. */
+    const avertissementsCombat = [];
+    if (equipe.sansModele.length) avertissementsCombat.push('🏠 Resté(s) au vaisseau, sans modèle de robot : ' + equipe.sansModele.join(', ') + '.');
+    if (!equipe.cfgs.some(c=> c.hpInit > 0)){
+      showToast('Toute ton équipe est K.O. — un objet de réanimation, ou rentre au vaisseau');
+      return;
+    }
+    const adv = m2EnnemisDepuisFiches(enemyCreatureList);
+    if (!adv.cfgs.length){ showToast('Ce combat est impossible : aucun adversaire n\'a de modèle de robot (' + adv.sansModele.join(', ') + ')'); return; }
+    if (adv.sansModele.length) avertissementsCombat.push('👻 Adversaire(s) sans modèle de robot, absent(s) du combat : ' + adv.sansModele.join(', ') + '.');
+    let arenaBg = DEFAULT_ARENA_BG;
+    if (sceneViewCreature && sceneViewCreature.combatArenaImagePath){
+      arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
+    } else if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
+      try { arenaBg = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef); } catch(e){}
+    }
+    combatZoneContext = (opts && opts.sansContexte) ? null : { pt: pt || null };   // le test des Outils part de la carte, sans zone
+    const sac = m2ObjetsDuJoueur();
+    await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock, enemy: {} }, objetsDef: Object.assign({}, M2.OBJETS, sac.def), avertissements: avertissementsCombat }, arenaBg, {});
+  } finally {
+    lancementCombatEnCours = false;
   }
-  /* Ces avertissements partaient en toast juste avant la transition d'entrée, qui les couvrait
-     aussitôt : illisibles, et arrivés trop tard de toute façon. Ils descendent dans le JOURNAL du
-     combat, où ils restent consultables tout du long. Le vrai signal en amont, c'est le badge
-     « ⚠️ Sans modèle » des quartiers. */
-  const avertissementsCombat = [];
-  if (equipe.sansModele.length) avertissementsCombat.push('🏠 Resté(s) au vaisseau, sans modèle de robot : ' + equipe.sansModele.join(', ') + '.');
-  if (!equipe.cfgs.some(c=> c.hpInit > 0)){
-    showToast('Toute ton équipe est K.O. — un objet de réanimation, ou rentre au vaisseau');
-    return;
-  }
-  const adv = m2EnnemisDepuisFiches(enemyCreatureList);
-  if (!adv.cfgs.length){ showToast('Ce combat est impossible : aucun adversaire n\'a de modèle de robot (' + adv.sansModele.join(', ') + ')'); return; }
-  if (adv.sansModele.length) avertissementsCombat.push('👻 Adversaire(s) sans modèle de robot, absent(s) du combat : ' + adv.sansModele.join(', ') + '.');
-  let arenaBg = DEFAULT_ARENA_BG;
-  if (sceneViewCreature && sceneViewCreature.combatArenaImagePath){
-    arenaBg = resolveMediaPath(sceneViewCreature.combatArenaImagePath);
-  } else if (sceneViewCreature && sceneViewCreature.combatArenaImageRef){
-    try { arenaBg = await internalizeSceneImage(sceneViewCreature.combatArenaImageRef); } catch(e){}
-  }
-  combatZoneContext = (opts && opts.sansContexte) ? null : { pt: pt || null };   // le test des Outils part de la carte, sans zone
-  const sac = m2ObjetsDuJoueur();
-  await startCombatM2({ allies: equipe.cfgs, ennemis: adv.cfgs, objets: { player: sac.stock, enemy: {} }, objetsDef: Object.assign({}, M2.OBJETS, sac.def), avertissements: avertissementsCombat }, arenaBg, {});
 }
 async function startZoneBossCombat(bossCreature, pt){
   await launchZoneCombat([bossCreature], pt);
