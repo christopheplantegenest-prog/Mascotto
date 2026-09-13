@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v527</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v529</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11936,41 +11936,50 @@ let otherPlayerMarkers = {};
 let multiplayerStarted = false;
 const STALE_AFTER_MS = 2 * 60 * 1000; // 2 minutes sans nouvelle position = joueur ignoré
 
+/* v529 — MESURE SEULE, AUCUNE CORRECTION.
+   On veut savoir QUI consomme les ~300 ms qui reviennent toutes les 8 secondes. Chaque
+   ecoute temps reel suspecte est chronometree : si son traitement depasse 50 ms, elle
+   s'inscrit dans la boite noire avec sa duree, le nombre de documents recus et le poids
+   approximatif des donnees. Rien d'autre ne change dans le jeu. */
+function mesurerEcoute(nom, snap, travail){
+  const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  try { return travail(); }
+  finally {
+    const ms = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
+    if (ms >= 50){
+      let detail = ms + ' ms';
+      try {
+        if (snap && typeof snap.size === 'number'){
+          let oct = 0, modifs = 0;
+          snap.forEach((d)=>{ try { oct += JSON.stringify(d.data()).length; } catch(e){} });
+          try { modifs = snap.docChanges().length; } catch(e){}
+          detail += ' · ' + snap.size + ' doc(s), ' + modifs + ' modifié(s), ' + Math.round(oct/1024) + ' ko reçus';
+        } else if (snap && snap.data){
+          let oct = 0;
+          try { oct = JSON.stringify(snap.data() || {}).length; } catch(e){}
+          detail += ' · 1 doc, ' + Math.round(oct/1024) + ' ko reçus';
+        }
+      } catch(e){}
+      window.journal('mesure', 'écoute « ' + nom + ' »', detail, true);
+    }
+  }
+}
 let otherPlayersCache = {}; // { uid: {pseudo, lat, lng, lastSeen} }
 function startMultiplayerSync(){
   if (multiplayerStarted || !currentUser || !db) return;
   multiplayerStarted = true;
 
-  /* v527 — CETTE ECRITURE FIGEAIT LE JEU ~300 ms TOUTES LES 8 SECONDES, en permanence, y
-     compris en plein combat ou la position ne bouge pas d'un metre (vu dans la boite noire :
-     des gels a 8,0 s d'intervalle exactement). On garde le meme role — se montrer aux autres
-     joueurs sur la carte — mais on n'ecrit plus que si la position a VRAIMENT change, avec un
-     battement de coeur de securite pour que `lastSeen` reste frais quand on est immobile. */
-  let posEnvoyee = null, posEnvoyeeAt = 0;
-  const POS_SEUIL_M = 10;          // en deca, ce n'est que du bruit GPS
-  const POS_BATTEMENT_MS = 60000;  // immobile : une ecriture par minute suffit
   setInterval(()=>{
     if (!playerPos || !currentUser) return;
-    /* Pendant un combat on ne bouge pas : rien a dire au serveur. */
-    if (typeof combatState !== 'undefined' && combatState && !combatState.finished) return;
-    const maintenant = Date.now();
-    let bouge = true;
-    if (posEnvoyee){
-      const dm = distanceMetersLL(posEnvoyee, { lat: playerPos.lat, lng: playerPos.lng });
-      bouge = dm >= POS_SEUIL_M;
-    }
-    if (!bouge && (maintenant - posEnvoyeeAt) < POS_BATTEMENT_MS) return;
-    posEnvoyee = { lat: playerPos.lat, lng: playerPos.lng };
-    posEnvoyeeAt = maintenant;
     db.collection('players').doc(currentUser.uid).set({
       pseudo: currentPseudo || 'Joueur',
       lat: playerPos.lat,
       lng: playerPos.lng,
-      lastSeen: maintenant
+      lastSeen: Date.now()
     }, { merge: true }).catch(()=>{});
   }, 8000);
 
-  db.collection('players').onSnapshot((snap)=>{
+  db.collection('players').onSnapshot((snap)=>{ mesurerEcoute('tous les joueurs', snap, ()=>{
     const now = Date.now();
     const seenIds = new Set();
     otherPlayersCache = {};
@@ -12007,7 +12016,7 @@ function startMultiplayerSync(){
       }
     });
     if (document.getElementById('nearbyPlayersOverlay').classList.contains('show')) renderNearbyPlayersList();
-  });
+  }); });
 }
 
 /* ---------- Métiers (partagés entre PNJ, Objets, Recettes) ---------- */
@@ -18953,7 +18962,7 @@ let playerDocRef = null;
 function watchPlayerInventoryForBase(){
   if (!currentUser || playerDocRef) return;
   playerDocRef = db.collection('players').doc(currentUser.uid);
-  playerDocRef.onSnapshot((doc)=>{
+  playerDocRef.onSnapshot((doc)=>{ mesurerEcoute('ma fiche joueur', doc, ()=>{
     baseResources = (doc.exists && doc.data().inventory) || {};
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
@@ -18984,7 +18993,7 @@ function watchPlayerInventoryForBase(){
     if (q && q.classList.contains('show') && !quartersReordering) renderQuartersList();
     renderMissionTracker();
     rafraichirEtatDesCombattants();
-  });
+  }); });
 }
 
 /* ---------- Base : roster des PNJ recrutés (séparé par joueur via ownerUid) ---------- */
@@ -18993,7 +19002,7 @@ let allRecruitsRaw = [];
 let recruits = []; // filtrées : uniquement celles du joueur connecté
 const healedOrphanIds = new Set();
 if (recruitsCol){
-  recruitsCol.onSnapshot((snap)=>{
+  recruitsCol.onSnapshot((snap)=>{ mesurerEcoute('les recrues', snap, ()=>{
     allRecruitsRaw = snap.docs.map(d=>({ id: d.id, ...d.data() }));
     // Migration douce : les recrues créées avant l'ajout de l'appartenance n'ont pas d'ownerUid.
     // On les rattache une fois au joueur connecté qui les rencontre en premier.
@@ -19016,7 +19025,7 @@ if (recruitsCol){
        relance, la reprise n'attendrait leur arrivée que pour se faire doubler par le filet. */
     tryResumeSession();
     if (activeRecruitId) renderRecruitSheet();
-  });
+  }); });
 }
 
 
