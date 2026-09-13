@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v530</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v531</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19032,17 +19032,35 @@ if (recruitsCol){
         }
       });
     }
-    recruits = currentUser ? allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid) : [];
-    recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
-    ecrireRecrutesLocal(recruitedSourceIds);
+    /* v531 — MESURE PAS A PAS. La v530 a montre que le cout n'est PAS la relecture des
+       fiches (une seule modifiee, et toujours ~290 ms) : il est dans ce qui suit. On
+       chronometre donc chaque etape et on n'inscrit QUE la plus lente, une fois, quand
+       le total depasse 50 ms. Aucun comportement ne change. */
+    const _t = ()=> (window.performance && performance.now) ? performance.now() : Date.now();
+    const _etapes = [];
+    const _pas = (nom, fn)=>{ const a = _t(); try { fn(); } finally { _etapes.push([nom, _t() - a]); } };
+
+    _pas('filtrage', ()=>{
+      recruits = currentUser ? allRecruitsRaw.filter(r=> r.ownerUid === currentUser.uid) : [];
+      recruitedSourceIds = new Set(recruits.map(r=> r.sourceCreatureId).filter(Boolean));
+    });
+    _pas('mémoire locale', ()=> ecrireRecrutesLocal(recruitedSourceIds));
     recruitsSnapshotRecu = true;
-    if (!recruitsPrets) majRecruesPretes(); // premier instantané : c'est lui qui déclenche le dessin
-    else redessinerCarte();
-    rafraichirEtatDesCombattants();
+    if (!recruitsPrets) _pas('premier dessin', ()=> majRecruesPretes());
+    else _pas('redessin de la carte', ()=> redessinerCarte());
+    _pas('état des combattants', ()=> rafraichirEtatDesCombattants());
     /* Les recrues portent les images de TON équipe à la reprise d'un combat : sans cette
        relance, la reprise n'attendrait leur arrivée que pour se faire doubler par le filet. */
-    tryResumeSession();
-    if (activeRecruitId) renderRecruitSheet();
+    _pas('reprise de session', ()=> tryResumeSession());
+    if (activeRecruitId) _pas('fiche ouverte', ()=> renderRecruitSheet());
+
+    const _total = _etapes.reduce((a, e)=> a + e[1], 0);
+    if (_total >= 50){
+      _etapes.sort((a, b)=> b[1] - a[1]);
+      window.journal('mesure', 'recrues : étape la plus lente « ' + _etapes[0][0] + ' »',
+        Math.round(_etapes[0][1]) + ' ms sur ' + Math.round(_total) + ' ms — puis ' +
+        _etapes.slice(1, 3).map(e=> e[0] + ' ' + Math.round(e[1]) + ' ms').join(', '), true);
+    }
   }); });
 }
 
