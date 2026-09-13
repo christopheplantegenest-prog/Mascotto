@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v529</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v530</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11947,17 +11947,15 @@ function mesurerEcoute(nom, snap, travail){
   finally {
     const ms = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
     if (ms >= 50){
+      /* v530 : on ne PESE plus les documents ici — parcourir les 28 fiches pour les
+         serialiser coutait a lui seul une partie des 300 ms qu'on cherchait a mesurer.
+         On garde la duree et le nombre de documents changes, qui ne coutent rien. */
       let detail = ms + ' ms';
       try {
         if (snap && typeof snap.size === 'number'){
-          let oct = 0, modifs = 0;
-          snap.forEach((d)=>{ try { oct += JSON.stringify(d.data()).length; } catch(e){} });
+          let modifs = 0;
           try { modifs = snap.docChanges().length; } catch(e){}
-          detail += ' · ' + snap.size + ' doc(s), ' + modifs + ' modifié(s), ' + Math.round(oct/1024) + ' ko reçus';
-        } else if (snap && snap.data){
-          let oct = 0;
-          try { oct = JSON.stringify(snap.data() || {}).length; } catch(e){}
-          detail += ' · 1 doc, ' + Math.round(oct/1024) + ' ko reçus';
+          detail += ' · ' + snap.size + ' doc(s), ' + modifs + ' modifié(s)';
         }
       } catch(e){}
       window.journal('mesure', 'écoute « ' + nom + ' »', detail, true);
@@ -19002,8 +19000,28 @@ let allRecruitsRaw = [];
 let recruits = []; // filtrées : uniquement celles du joueur connecté
 const healedOrphanIds = new Set();
 if (recruitsCol){
+  /* v530 — ON NE RELIT PLUS LES 28 FICHES A CHAQUE CHANGEMENT.
+     Mesure du 13/09 : une seule recrue modifiee (des PV en combat) faisait relire 28 fiches
+     entieres, soit ~9 Mo, parce que `d.data()` recopie tout le document — images comprises,
+     qui sont stockees en base64 dans la fiche. D'ou un gel de ~300 ms a chaque tour.
+     On garde donc un cache par identifiant et on n'appelle `data()` que sur ce qui a
+     VRAIMENT change. L'ordre reste celui de `snap.docs`, donc rien ne bouge en aval.
+     Ce qui ne change pas : le poids en memoire. Le vrai remede reste de sortir les images
+     des fiches (hebergement GitHub, comme pour les images de zone). */
+  const cacheRecrues = new Map();
   recruitsCol.onSnapshot((snap)=>{ mesurerEcoute('les recrues', snap, ()=>{
-    allRecruitsRaw = snap.docs.map(d=>({ id: d.id, ...d.data() }));
+    let changes = null;
+    try { changes = snap.docChanges(); } catch(e){ changes = null; }
+    if (!changes || !cacheRecrues.size){
+      cacheRecrues.clear();
+      snap.docs.forEach(d=> cacheRecrues.set(d.id, { id: d.id, ...d.data() }));
+    } else {
+      changes.forEach((ch)=>{
+        if (ch.type === 'removed') cacheRecrues.delete(ch.doc.id);
+        else cacheRecrues.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+      });
+    }
+    allRecruitsRaw = snap.docs.map(d=> cacheRecrues.get(d.id)).filter(Boolean);
     // Migration douce : les recrues créées avant l'ajout de l'appartenance n'ont pas d'ownerUid.
     // On les rattache une fois au joueur connecté qui les rencontre en premier.
     if (currentUser){
