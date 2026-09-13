@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v526</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v527</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11941,13 +11941,32 @@ function startMultiplayerSync(){
   if (multiplayerStarted || !currentUser || !db) return;
   multiplayerStarted = true;
 
+  /* v527 — CETTE ECRITURE FIGEAIT LE JEU ~300 ms TOUTES LES 8 SECONDES, en permanence, y
+     compris en plein combat ou la position ne bouge pas d'un metre (vu dans la boite noire :
+     des gels a 8,0 s d'intervalle exactement). On garde le meme role — se montrer aux autres
+     joueurs sur la carte — mais on n'ecrit plus que si la position a VRAIMENT change, avec un
+     battement de coeur de securite pour que `lastSeen` reste frais quand on est immobile. */
+  let posEnvoyee = null, posEnvoyeeAt = 0;
+  const POS_SEUIL_M = 10;          // en deca, ce n'est que du bruit GPS
+  const POS_BATTEMENT_MS = 60000;  // immobile : une ecriture par minute suffit
   setInterval(()=>{
     if (!playerPos || !currentUser) return;
+    /* Pendant un combat on ne bouge pas : rien a dire au serveur. */
+    if (typeof combatState !== 'undefined' && combatState && !combatState.finished) return;
+    const maintenant = Date.now();
+    let bouge = true;
+    if (posEnvoyee){
+      const dm = distanceMetersLL(posEnvoyee, { lat: playerPos.lat, lng: playerPos.lng });
+      bouge = dm >= POS_SEUIL_M;
+    }
+    if (!bouge && (maintenant - posEnvoyeeAt) < POS_BATTEMENT_MS) return;
+    posEnvoyee = { lat: playerPos.lat, lng: playerPos.lng };
+    posEnvoyeeAt = maintenant;
     db.collection('players').doc(currentUser.uid).set({
       pseudo: currentPseudo || 'Joueur',
       lat: playerPos.lat,
       lng: playerPos.lng,
-      lastSeen: Date.now()
+      lastSeen: maintenant
     }, { merge: true }).catch(()=>{});
   }, 8000);
 
@@ -18230,8 +18249,19 @@ function m2Restaurer(etat, saved, duel){
   M2.combat = etat;
   return etat;
 }
-function m2SauvegarderCombat(){
+/* v527 : la sauvegarde partait a CHAQUE tour, 8 a 10 ko serialises, et chaque envoi etait
+   suivi d'un gel de ~300 ms dans la boite noire. Elle sert a reprendre un combat apres un
+   rechargement : on l'espace au lieu de la supprimer. Le premier tour est toujours sauve
+   (c'est lui qui rend le combat reprenable), ensuite au plus une fois toutes les 6 secondes.
+   Ce qu'on risque : en cas de plantage, on reprend au plus 6 secondes plus tot. */
+let m2DerniereSauvegardeAt = 0;
+const M2_SAUVEGARDE_MIN_MS = 6000;
+function m2SauvegarderCombat(force){
   if (!currentUser || !db || !combatState || combatState.finished || combatState.test || combatState.isPvp) return;
+  const maintenant = Date.now();
+  const premier = !m2DerniereSauvegardeAt || (combatState.tour || 0) <= 1;
+  if (!force && !premier && (maintenant - m2DerniereSauvegardeAt) < M2_SAUVEGARDE_MIN_MS) return;
+  m2DerniereSauvegardeAt = maintenant;
   const data = {
     moteur2: true,
     fighters: combatState.fighters.map(m2SerialiserCombattant),
@@ -29400,6 +29430,7 @@ function markCombatCleared(){
   try { localStorage.setItem('mascotto_combat_cleared_at', String(Date.now())); } catch(e){}
 }
 function clearSavedCombat(){
+  m2DerniereSauvegardeAt = 0;   // v527 : un nouveau combat repart avec une sauvegarde immediate
   markCombatCleared();
   if (!currentUser || !db) return Promise.resolve();
   return db.collection('players').doc(currentUser.uid).set({ savedCombat: firebase.firestore.FieldValue.delete() }, { merge:true }).catch(()=>{});
@@ -29968,7 +29999,16 @@ function playMusicForKey(key){
   const vol = musicMuted ? 0 : savedMusicVolume * getTrackVolumeFraction(key);
   if (musicAudioUnlocked){
     journal('son', 'musique ' + key);
-    bgLoopPlayer.play(url, { loopPoint, volume: vol }).catch((err)=> journal('son', 'lecture refusée : ' + key, (err && err.message) || '', true));
+    bgLoopPlayer.play(url, { loopPoint, volume: vol }).catch((err)=>{
+      /* v527 : enchainer deux musiques (victoire puis carte) interrompt la premiere, et le
+         navigateur rejette sa promesse. Ce n'est pas une panne — c'est le comportement
+         normal. On ne le compte plus comme une erreur : dans la boite noire, cette seule
+         ligne generait neuf entrees d'affilee et masquait les vrais problemes. */
+      const msg = (err && err.message) || '';
+      const interrompu = /interrupted|aborted|AbortError/i.test(msg) || (err && err.name === 'AbortError');
+      if (interrompu) journal('son', 'musique ' + key + ' interrompue par la suivante');
+      else journal('son', 'lecture refusée : ' + key, msg, true);
+    });
   } else {
     journal('son', 'musique ' + key + ' retardée', 'le son n\'est pas encore débloqué (aucun appui depuis le chargement)');
     bgLoopPlayer.stop();
