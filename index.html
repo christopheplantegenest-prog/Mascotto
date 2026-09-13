@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v518</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v519</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19386,15 +19386,23 @@ function openMissionReport(missionId){
       ? 'Il avait le bon profil, mais la chance n\'était pas de son côté.'
       : 'Ce n\'était pas son domaine : il fallait ' + missionDomainNeed(m.domain) + '.';
   }
-  document.getElementById('missionReportTitle').textContent = (run.success ? '✅ ' : '❌ ') + (m.name || 'Mission');
-  document.getElementById('missionReportBody').innerHTML = `
+  const titre = (run.success ? '✅ ' : '❌ ') + (m.name || 'Mission');
+  const corps = `
     <p class="meta" style="margin-top:0;">${nom} est rentré${run.success ? '' : ''}.</p>
     <p style="font-size:14px;">${resoudreMarqueurs(run.success ? (m.successText || 'La mission est un succès.') : (m.failText || 'La mission a échoué.'))}</p>
     ${lecon ? `<p class="meta">${lecon}</p>` : ''}
     ${extra ? `<p class="meta">${extra}</p>` : ''}
     ${(recompense > 0 && it) || coins > 0 ? `<div class="field-label">Rapporté</div>${(recompense > 0 && it) ? `<div class="pos-status">${itemThumbHtml(it, 18)} ${it.name} × ${recompense}</div>` : ''}${coins > 0 ? `<div class="pos-status">🪙 ${coins} pièce(s)</div>` : ''}` : '<p class="meta">Aucune récompense.</p>'}
   `;
-  document.getElementById('missionReportOverlay').classList.add('show');
+  /* v519 — lu sur l'écran du tableau de bord quand il est allumé, plus dans une fenêtre
+     posée par-dessus : le rapport est du courrier, il se lit là où arrive le courrier. */
+  if (typeof terminalEstOuvert === 'function' && terminalEstOuvert()){
+    mtEcranRapport(titre, corps);
+  } else {
+    document.getElementById('missionReportTitle').textContent = titre;
+    document.getElementById('missionReportBody').innerHTML = corps;
+    document.getElementById('missionReportOverlay').classList.add('show');
+  }
   if (!(playerDailyMissions.done || []).includes(missionId)){
     playerDailyMissions.done = (playerDailyMissions.done || []).concat([missionId]);
     if (playerDocRef){
@@ -19426,6 +19434,21 @@ function mtBarreSysteme(avecRetour){
 }
 /* Le bouton étant redessiné à chaque rendu, son écouteur l'est aussi. Le Retour vide la liste
    des combattants avant de rafraîchir, sinon le garde-fou du début de rendu bloquerait tout. */
+/* v519 — un rapport de mission occupe l'écran du tableau de bord, avec la même barre
+   système que les autres écrans : « Retour » ramène à l'accueil du courrier. */
+function mtEcranRapport(titre, corps){
+  const zEtat = document.getElementById('mtZone-etat');
+  const zGrille = document.getElementById('mtZone-grille');
+  const zPied = document.getElementById('mtZone-pied');
+  if (!zEtat || !zGrille || !zPied) return;
+  zEtat.style.justifyContent = 'flex-start';
+  zEtat.innerHTML = `<div style="display:flex; align-items:center; gap:7px; padding:0 6px; min-width:0;">
+    <span class="mt-lum" style="font-size:12px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${titre}</span>
+  </div>`;
+  zGrille.innerHTML = `<div style="padding:8px 8px 10px; font-size:12px; line-height:1.45;">${corps}</div>`;
+  zPied.innerHTML = mtBarreSysteme(true);
+  mtBrancherBarreSysteme(zPied, zGrille);
+}
 function mtBrancherBarreSysteme(zPied, zGrille){
   zPied.querySelectorAll('[data-mt-power]').forEach(b=>
     b.addEventListener('click', ()=>{
@@ -28827,11 +28850,16 @@ function nsTheme(){
   nsNote(3.95, 110, 2.6, 0.06, 'sine');
 }
 
-function ouvrirNaissance(){
+async function ouvrirNaissance(){
   const job = playerAtelierSortie[0];
   if (!job){ document.getElementById('naissanceOverlay').classList.remove('show'); return; }
   const m = job.modeleId ? ctModele(job.modeleId) : (job.plan && job.plan.modeleId ? ctModele(job.plan.modeleId) : null);
-  const img = m ? (urlImageModele(m, 'face') || '') : '';
+  /* L'image peut être hébergée (adresse directe) ou rangée dans Firestore (référence à
+     aller chercher). Sans ce deuxième cas, la scène se jouait sans robot. */
+  let img = m ? (urlImageModele(m, 'face') || '') : '';
+  if (!img && m && m.faceImageRef){
+    try { img = await internalizeSceneImage(m.faceImageRef) || ''; } catch(e){ img = ''; }
+  }
   const V = (m && VICES[m.vice]) || {};
   const nom = job.nom || (m && m.nom) || 'Robot';
   const st = (job.plan && job.plan.stats) || {};
