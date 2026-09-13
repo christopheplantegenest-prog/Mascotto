@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v524</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v526</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11408,7 +11408,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   if (combatStats.robotModeleId){
     const modeleChoisi = ctModele(combatStats.robotModeleId);
     if (!modeleChoisi){ showToast('Ce modèle de robot n\'existe plus : choisis-en un autre'); return; }
-    combatStats.hp = statsDuProfil(modeleChoisi.profil || 'equilibre').hp;   // pour l'affichage des PV hors combat
+    combatStats.hp = statsDuModele(modeleChoisi).hp;   // pour l'affichage des PV hors combat (v526)
   }
   const startDate = document.getElementById('editStartDate').value;
   const endDate = document.getElementById('editEndDate').value;
@@ -12880,7 +12880,7 @@ function renderInventoryList(){
       const useBtn = document.createElement('button');
       useBtn.className = 'btn-secondary';
       useBtn.style.cssText = 'width:100%; margin:-4px 0 8px; font-size:12px;';
-      useBtn.textContent = (it.combatUse.mode === 'revive') ? '✨ Réanimer un combattant' : '🧪 Soigner un combattant';
+      useBtn.textContent = (it.combatUse.mode === 'revive') ? '✨ Réanimer un combattant' : (it.combatUse.mode === 'mana') ? '🔷 Recharger un combattant' : '🧪 Soigner un combattant';
       const targets = document.createElement('div');
       targets.style.cssText = 'display:none; margin:-4px 0 10px;';
       useBtn.addEventListener('click', ()=>{
@@ -12924,24 +12924,35 @@ function renderInventoryList(){
 /* Un objet consommable réglé en soin ou en réanimation peut servir hors combat */
 function isCareItem(it){
   return !!(it && it.type === 'consommable' && it.combatUse && it.combatUse.enabled
-    && (it.combatUse.mode === 'heal' || it.combatUse.mode === 'revive'));
+    && (it.combatUse.mode === 'heal' || it.combatUse.mode === 'revive' || it.combatUse.mode === 'mana'));
 }
 /* Liste des combattants sur qui l'objet a un effet : les K.O. pour une réanimation,
    les blessés encore debout pour un soin. Un combattant à PV pleins n'est pas proposé. */
 function careTargetsHtml(it){
   const revive = it.combatUse.mode === 'revive';
+  const recharge = it.combatUse.mode === 'mana';   // v525
   const list = recruits.filter(r=>{
     if (r.recruitType !== 'combattant') return false;
     const hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
+    if (recharge) return hp > 0 && recruitEffectiveMana(r) < recruitMaxMana(r);
     return revive ? (hp <= 0) : (hp > 0 && hp < max);
   });
   if (!list.length){
     return '<p class="meta" style="margin:0;">' + (revive
       ? 'Aucun combattant K.O. à réanimer.'
-      : 'Aucun combattant blessé à soigner.') + '</p>';
+      : recharge
+        ? 'Personne à recharger.'
+        : 'Aucun combattant blessé à soigner.') + '</p>';
   }
   return list.map(r=>{
     const hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
+    if (recharge){
+      return `<button class="btn-secondary" data-care-target="${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
+        ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:22px;height:22px;object-fit:contain;border-radius:50%;flex:none;">` : '<span style="flex:none;">⚔️</span>'}
+        <span style="flex:1; text-align:left;">${r.name}</span>
+        <span class="meta" style="font-size:11px;">🔷 ${recruitEffectiveMana(r)}/${recruitMaxMana(r)}</span>
+      </button>`;
+    }
     return `<button class="btn-secondary" data-care-target="${r.id}" style="width:100%; margin-top:4px; font-size:12px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
       ${r.imageUrl ? `<img src="${r.imageUrl}" style="width:22px;height:22px;object-fit:contain;border-radius:50%;flex:none;">` : '<span style="flex:none;">⚔️</span>'}
       <span style="flex:1; text-align:left;">${r.name}</span>
@@ -14270,6 +14281,35 @@ function statsDuProfil(id, budget){
   Object.keys(COUTS_POINTS).forEach(k=> st[k] = Math.max(1, Math.round(B * (p.parts[k]||0) / 100 / COUTS_POINTS[k])));
   return st;
 }
+/* v526 — LA REPARTITION MANUELLE DES POINTS.
+   Un modele peut porter ses PROPRES stats (champ `stats`) au lieu de suivre un profil.
+   Tant que `stats` est absent, rien ne change : le profil decide, comme avant.
+   Le budget reste le meme (REGLAGES_COMBAT.budget, 100 points) et les couts aussi
+   (COUTS_POINTS) : repartir a la main, c'est depenser le meme budget autrement. */
+const CLES_STATS = ['hp','atk','def','matk','mdef','mana','speed','agi','vigi'];
+const LIB_STATS = { hp:'❤️ Points de vie', atk:'⚔️ Attaque', def:'🛡️ Défense', matk:'🔮 Attaque énergétique',
+  mdef:'🧿 Défense énergétique', mana:'🔷 Charge', speed:'💨 Vitesse', agi:'🤸 Agilité', vigi:'👁️ Vigilance' };
+/* Le pas d'une stat : ce qui coûte pile 1 point. PV et charge valent 0,2 point l'unité,
+   donc leur pas est de 5 ; la vitesse coûte 2 points l'unité, son pas reste 1. */
+function pasDeStat(k){ return Math.max(1, Math.round(1 / (COUTS_POINTS[k] || 1))); }
+function coutDesStats(st){
+  let total = 0;
+  CLES_STATS.forEach(k=> total += (st[k] || 0) * (COUTS_POINTS[k] || 0));
+  return Math.round(total * 100) / 100;
+}
+function statsValides(st){
+  if (!st) return null;
+  const out = {};
+  let bon = false;
+  CLES_STATS.forEach(k=>{ const n = parseInt(st[k], 10); out[k] = isNaN(n) ? 1 : Math.max(1, n); if (!isNaN(n)) bon = true; });
+  return bon ? out : null;
+}
+/* LE POINT D'ENTREE UNIQUE des stats d'un modele. Tout ce qui lisait statsDuProfil(m.profil)
+   passe par ici : combat, exemplaires, simulateur, affichage. */
+function statsDuModele(m){
+  const perso = m && statsValides(m.stats);
+  return perso || statsDuProfil((m && m.profil) || 'equilibre');
+}
 function resumeProfil(id){
   const st = statsDuProfil(id);
   return `PV ${st.hp} · ATQ ${st.atk} · DEF ${st.def} · ATQ.É ${st.matk} · DEF.É ${st.mdef} · cristal ${st.mana} · VIT ${st.speed} · agi ${st.agi} · vigi ${st.vigi}`;
@@ -15062,7 +15102,7 @@ function fabricationDuModele(m){
 
 function robotModeleVierge(vice){
   vice = vice || CLES_VICES[0];
-  return { nom:'', vice, profil:'equilibre', trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), jeu:[],
+  return { nom:'', vice, profil:'equilibre', stats:null, trait:'aucun', immunites: (IMMUNITES_PAR_VICE[vice] || []).slice(), jeu:[],
     pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:PIRATAGE_DEFAUT.zone, pirFuite:PIRATAGE_DEFAUT.fuite,
     fab: Object.assign({}, FABRICATION_DEFAUT),
     faceImagePath:null, faceImageRef:null, faceImageDataUrl:null, dosImagePath:null, dosImageRef:null, dosImageDataUrl:null, imageScale:100, offsetFace:0, offsetDos:0, portraitCrop:null,
@@ -15088,6 +15128,8 @@ function lireFormRobotModele(){
   f.nom = v('rmNom').trim();
   f.vice = v('rmVice') || f.vice;
   f.profil = v('rmProfil') || 'equilibre';
+  /* v526 : la repartition manuelle vit dans le brouillon (rmBrouillon.stats), pas dans des
+     champs relus ici — chaque bouton + / - l'a deja mise a jour et bornee au budget. */
   f.trait = v('rmTrait') || 'aucun';
   f.immunites = Array.from(document.querySelectorAll('#rmImmunites input[type="checkbox"]:checked')).map(el=> el.value);
   const num = (id, min, max, def)=>{ const n = parseInt(v(id), 10); return isNaN(n) ? def : Math.max(min, Math.min(max, n)); };
@@ -15127,6 +15169,7 @@ function renderRobotModeleForm(){
     <div class="field-label">Profil de stats</div>
     <select id="rmProfil" class="field-input">${optProfil}</select>
     <p class="meta" id="rmProfilResume" style="margin:4px 0 0;">${resumeProfil(f.profil)}</p>
+    <div id="rmStatsZone">${htmlStatsModele(f)}</div>
     <div class="field-label">Trait</div>
     <select id="rmTrait" class="field-input">${optTraits}</select>
     <div class="field-label">Immunités — exactement 5 <span id="rmImmunCompte" class="meta">(${f.immunites.length} cochée(s))</span></div>
@@ -15167,6 +15210,71 @@ function renderRobotModeleForm(){
     <button class="btn-secondary" id="rmCancelBtn" style="width:100%; margin-top:8px;">Annuler</button>`;
   cablerFormRobotModele();
 }
+/* v526 — LE BLOC DE REPARTITION MANUELLE.
+   Ferme, il n'y a qu'un bouton : le modele suit son profil. Ouvert, neuf lignes avec un
+   bouton moins et un bouton plus, et un compteur de points RESTANTS qui descend a mesure
+   qu'on depense. Le plus est refuse quand il ne reste plus assez : on ne depasse jamais 100. */
+function htmlStatsModele(f){
+  const budget = REGLAGES_COMBAT.budget;
+  if (!f.stats){
+    return `<button type="button" class="btn-secondary" id="rmStatsOuvrir" style="width:100%; margin-top:6px;">✏️ Répartir les points moi-même</button>
+      <p class="meta" style="margin:4px 0 0; font-size:11px;">Le modèle suit son profil. Tu peux aussi placer les ${budget} points toi-même, stat par stat.</p>`;
+  }
+  const utilises = coutDesStats(f.stats);
+  const restants = Math.round((budget - utilises) * 100) / 100;
+  const lignes = CLES_STATS.map(k=>{
+    const pas = pasDeStat(k);
+    const cout = Math.round((COUTS_POINTS[k] || 0) * pas * 100) / 100;
+    return `<div style="display:flex; align-items:center; gap:6px; padding:3px 0;">
+      <span style="flex:1; font-size:12px;">${LIB_STATS[k]}<span class="meta" style="font-size:10px;"> · ${pas} pour ${cout} pt</span></span>
+      <button type="button" class="btn-secondary" data-rmstat-moins="${k}" style="width:34px; flex:none; padding:4px 0;">−</button>
+      <b style="min-width:38px; text-align:center;">${f.stats[k]}</b>
+      <button type="button" class="btn-secondary" data-rmstat-plus="${k}" style="width:34px; flex:none; padding:4px 0;">+</button>
+    </div>`;
+  }).join('');
+  return `<div style="border:1px solid rgba(255,255,255,.12); border-radius:8px; padding:8px; margin-top:6px;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <b style="flex:1;">Points restants</b>
+      <b id="rmStatsRestants" style="font-size:18px; color:${restants > 0 ? 'var(--accent, #4fc3f7)' : 'var(--muted, #888)'};">${restants}</b>
+      <span class="meta" style="font-size:11px;">/ ${budget}</span>
+    </div>
+    ${lignes}
+    <button type="button" class="btn-secondary" id="rmStatsFermer" style="width:100%; margin-top:8px;">↩️ Revenir au profil</button>
+  </div>`;
+}
+function cablerStatsModele(wrap){
+  const f = rmBrouillon;
+  const ouvrir = wrap.querySelector('#rmStatsOuvrir');
+  if (ouvrir) ouvrir.addEventListener('click', ()=>{
+    /* On part des stats du profil choisi : la repartition manuelle commence la ou il en etait. */
+    f.profil = (document.getElementById('rmProfil') || {}).value || f.profil;
+    f.stats = Object.assign({}, statsDuProfil(f.profil));
+    redessinerStatsModele();
+  });
+  const fermer = wrap.querySelector('#rmStatsFermer');
+  if (fermer) fermer.addEventListener('click', ()=>{ f.stats = null; redessinerStatsModele(); });
+  wrap.querySelectorAll('[data-rmstat-plus]').forEach(b=> b.addEventListener('click', ()=>{
+    const k = b.dataset.rmstatPlus, pas = pasDeStat(k);
+    const cout = (COUTS_POINTS[k] || 0) * pas;
+    if (coutDesStats(f.stats) + cout > REGLAGES_COMBAT.budget + 0.001){
+      showToast('Plus assez de points : enlève ailleurs d\'abord');
+      return;
+    }
+    f.stats[k] += pas;
+    redessinerStatsModele();
+  }));
+  wrap.querySelectorAll('[data-rmstat-moins]').forEach(b=> b.addEventListener('click', ()=>{
+    const k = b.dataset.rmstatMoins, pas = pasDeStat(k);
+    f.stats[k] = Math.max(1, f.stats[k] - pas);
+    redessinerStatsModele();
+  }));
+}
+function redessinerStatsModele(){
+  const zone = document.getElementById('rmStatsZone');
+  if (!zone) return;
+  zone.innerHTML = htmlStatsModele(rmBrouillon);
+  cablerStatsModele(zone);
+}
 function cablerFormRobotModele(){
   const wrap = document.getElementById('rmForm');
   wrap.querySelector('#rmVice').addEventListener('change', ()=>{
@@ -15178,7 +15286,13 @@ function cablerFormRobotModele(){
     rmOuverts = {};
     renderRobotModeleForm();
   });
-  wrap.querySelector('#rmProfil').addEventListener('change', (e)=>{ document.getElementById('rmProfilResume').textContent = resumeProfil(e.target.value); });
+  wrap.querySelector('#rmProfil').addEventListener('change', (e)=>{
+    document.getElementById('rmProfilResume').textContent = resumeProfil(e.target.value);
+    /* v526 : changer de profil quand une repartition manuelle est ouverte la remet a ce
+       nouveau profil — sinon le selecteur ne servirait plus a rien. */
+    if (rmBrouillon && rmBrouillon.stats){ rmBrouillon.stats = Object.assign({}, statsDuProfil(e.target.value)); redessinerStatsModele(); }
+  });
+  cablerStatsModele(wrap);
   cablerImageModele('face'); cablerImageModele('dos'); cablerImageModele('chambre'); cablerApercuCombatModele();
   wrap.querySelectorAll('#rmImmunites input[type="checkbox"]').forEach(chk=> chk.addEventListener('change', ()=>{
     const cochees = wrap.querySelectorAll('#rmImmunites input[type="checkbox"]:checked');
@@ -15214,6 +15328,8 @@ function cablerFormRobotModele(){
     let images;
     try { images = await champsImagesModele(f); } catch(err){ showToast('Image non enregistrée : ' + err.message); return; }
     const data = { nom:f.nom, vice:f.vice, profil:f.profil, trait:f.trait, immunites:f.immunites.slice(), jeu:f.jeu.slice(),
+      stats: f.stats ? Object.assign({}, f.stats) : (editingRobotModeleId ? firebase.firestore.FieldValue.delete() : null),   // v526
+
       ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
       pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
@@ -15251,7 +15367,7 @@ function renderRobotsModelesList(){
     const m = robotsModeles.find(x=> x.id === btn.dataset.rmEdit);
     if (!m) return;
     editingRobotModeleId = m.id;
-    rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
+    rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', stats: statsValides(m.stats), trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
       fab: fabricationDuModele(m),
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
@@ -16843,7 +16959,9 @@ function ficheUltime(f){
    cfg : { nom, vice, profil, trait, immunites, main (attaques), equipement {arme, armure, accessoire},
           ia, canFlee, variation (0 = stats exactes du profil ; 0.08 = ±8 % par exemplaire, sa décision du 01/09) } */
 function creerCombattant(cfg, side, idx){
-  const base = statsDuProfil(cfg.profil || 'equilibre');
+  /* v526 : si la config porte une base de stats (repartition manuelle du modele), on part
+     de celle-la ; sinon du profil, comme avant. */
+  const base = statsValides(cfg.statsBase) || statsDuProfil(cfg.profil || 'equilibre');
   const v = (cfg.variation == null) ? 0 : cfg.variation;
   const stats = {};
   /* étape 3 : un exemplaire recruté porte un écart FIGÉ (cfg.ecart) ; un monstre tire le sien (variation) */
@@ -16901,6 +17019,10 @@ function creerCombattant(cfg, side, idx){
   if (cfg.hpInit !== undefined){
     f.hp = Math.max(0, Math.min(f.maxHp, cfg.hpInit));
     if (f.hp <= 0) f.alive = false;
+  }
+  /* v525 : la charge est persistante d'un combat a l'autre, comme les PV. */
+  if (cfg.manaInit !== undefined){
+    f.mana = Math.max(0, Math.min(f.maxMana, cfg.manaInit));
   }
   return f;
 }
@@ -17783,7 +17905,7 @@ function tirerEcartStats(pct){
 function statsDeLExemplaire(r){
   const m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;
   if (!m) return null;
-  const base = statsDuProfil(m.profil || 'equilibre');
+  const base = statsDuModele(m);   // v526 : repartition manuelle si le modele en a une
   const e = r.ecartStats || {};
   const st = {};
   Object.keys(base).forEach(k=> st[k] = Math.max(1, Math.round(base[k] * (e[k] || 1))));
@@ -17861,7 +17983,9 @@ function m2CfgDepuisRecrue(r){
     immunites: (m.immunites || []).slice(),
     main: m2MainDepuisIds(mainDeDepartDeFiche({}, m), combatAttaquesAutorisees),   // v476 : la main du modèle
     equipement: m2EquipementDeRecrue(r), ia: 'normal', ecart: r.ecartStats || null,
+    statsBase: statsValides(m.stats) || null,   // v526
     hpInit: Math.max(0, Math.min(st.hp, recruitEffectiveHp(r))),
+    manaInit: Math.max(0, Math.min(st.mana, recruitEffectiveMana(r))),   // v525
     sourceId: r.id, modeleId: m.id, ...m2ImagesDepuisModele(m),
   };
 }
@@ -17876,6 +18000,7 @@ function m2CfgDepuisFiche(c, nomAffiche){
     main: m2MainDepuisIds(mainDeDepartDeFiche(cs, m), combatAttaquesAutorisees),
     equipement: { arme:null, armure:null, accessoire:null },
     ia: cs.aiPersonality || 'normal',
+    statsBase: statsValides(m.stats) || null,   // v526
     variation: (cs.ecartStats != null ? cs.ecartStats : 5) / 100, multStats: mult,
     canFlee: !!cs.canFlee,
     fleeSeuil: cs.fleeHpThreshold != null ? cs.fleeHpThreshold : 25,
@@ -20281,10 +20406,42 @@ function recruitEffectiveHp(r){
   return Math.max(0, Math.min(max, hp));
 }
 function recruitIsKo(r){ return recruitEffectiveHp(r) <= 0; }
+/* v525 — LA CHARGE (mana) EST PERSISTANTE, exactement comme les PV. Elle ne se
+   regenere plus toute seule entre deux combats : on repart du combat avec ce qu'il
+   reste, et c'est le point 💚 Soin du vaisseau (ou une potion 🔷) qui la remplit.
+   Une charge a zero ne met PAS K.O. : le robot se bat encore, il perd seulement
+   ses attaques couteuses. */
+function recruitMaxMana(r){
+  if (r && r.robotModeleId){ const st = statsDeLExemplaire(r); if (st) return st.mana; }
+  return (r && r.combatStats && r.combatStats.mana) || 0;
+}
+function recruitEffectiveMana(r){
+  const max = recruitMaxMana(r);
+  const m = (r.currentMana == null) ? max : r.currentMana;
+  return Math.max(0, Math.min(max, m));
+}
 function useHealingItemOnRecruit(r, it){
   const max = recruitMaxHp(r);
   const cu = it.combatUse;
   let hp = recruitEffectiveHp(r);
+  if (cu.mode === 'mana'){        // v525 : recharger la charge hors combat
+    const maxM = recruitMaxMana(r);
+    if (hp <= 0){ showToast(r.name + ' est K.O.'); return; }
+    if (!maxM){ showToast(r.name + ' n\'a pas de charge'); return; }
+    const m = Math.min(maxM, recruitEffectiveMana(r) + (cu.manaValue || 30));
+    r.currentMana = m;
+    if (recruitsCol) recruitsCol.doc(r.id).update({ currentMana: m })
+      .catch((err)=> showToast('Recharge non enregistree : ' + err.message));
+    if (playerDocRef){
+      playerDocRef.set({ inventory: { [it.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true })
+        .catch((err)=> showToast('Objet non decompte : ' + err.message));
+    }
+    showToast(r.name + ' : 🔷 ' + m + '/' + maxM);
+    rafraichirEtatDesCombattants();
+    if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventory();
+    if (activeRecruitId === r.id) renderRecruitSheet();
+    return;
+  }
   if (cu.mode === 'revive'){
     if (hp > 0){ showToast(r.name + ' n\'est pas K.O.'); return; }
     hp = Math.max(1, Math.round(max * (cu.revivePercent || 30) / 100));
@@ -20316,7 +20473,8 @@ function writeBackCombatHp(playerFighters, result){
     const r = recruits.find(x=> x.id === f.sourceId);
     const hp = Math.max(0, Math.round(f.hp));
     const upd = { currentHp: hp, restingSince: null };
-    if (r){ r.currentHp = upd.currentHp; r.restingSince = upd.restingSince; }
+    upd.currentMana = Math.max(0, Math.round(f.mana || 0));   // v525
+    if (r){ r.currentHp = upd.currentHp; r.currentMana = upd.currentMana; r.restingSince = upd.restingSince; }
     recruitsCol.doc(f.sourceId).update(upd)
       .catch((err)=> showToast('PV non enregistrés : ' + err.message));
   });
@@ -20331,10 +20489,11 @@ function soignerToutLeMondeInstantanement(){
   recruits.forEach(r=>{
     if (r.recruitType !== 'combattant') return;
     const max = recruitMaxHp(r);
-    if (recruitEffectiveHp(r) >= max && !r.restingSince) return;
-    r.currentHp = max; r.restingSince = null;
+    const maxM = recruitMaxMana(r);   // v525 : le soin remplit aussi la charge
+    if (recruitEffectiveHp(r) >= max && recruitEffectiveMana(r) >= maxM && !r.restingSince) return;
+    r.currentHp = max; r.currentMana = maxM; r.restingSince = null;
     soignes.push(r);
-    if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: max, restingSince: null })
+    if (recruitsCol) recruitsCol.doc(r.id).update({ currentHp: max, currentMana: maxM, restingSince: null })
       .catch((err)=> showToast('Soin non enregistré : ' + err.message));
   });
   return soignes;
@@ -20347,7 +20506,9 @@ function soignerToutLeMondeInstantanement(){
    plus aurait été un réglage à oublier. */
 function joueurAAuMoinsUnBlesse(){
   return recruits.some(r=> r.recruitType === 'combattant'
-    && (recruitEffectiveHp(r) < recruitMaxHp(r) || r.restingSince));
+    && (recruitEffectiveHp(r) < recruitMaxHp(r)
+        || recruitEffectiveMana(r) < recruitMaxMana(r)   // v525
+        || r.restingSince));
 }
 /* Le voile de lumière, posé sur la scène où se trouve le joueur. */
 function jouerVoileDeSoin(texte){
@@ -20859,7 +21020,9 @@ function renderRecruitCombatStatsInner(recruit, cs){
     ${recruitIsAway(recruit) ? '<div class="meta" style="margin:6px 0;">📨 Parti en mission</div>' : ''}
     <div class="meta" style="margin-bottom:6px;">${curHp <= 0
       ? '💀 K.O. — 💚 Soin à bord, ou un objet de réanimation'
-      : curHp + '/' + maxHp + ' PV'}</div>
+      : curHp + '/' + maxHp + ' PV'}${recruitMaxMana(recruit)
+      ? ` · 🔷 ${recruitEffectiveMana(recruit)}/${recruitMaxMana(recruit)}`
+      : ''}</div>
     ${recruit.robotModeleId ? statsExemplaireHtml(recruit) : recruitStatsHtml(cs)}
     <button class="btn-${inTeam ? 'secondary' : 'capture'}" id="toggleTeamBtn" style="width:100%; margin-top:8px; ${inTeam ? 'color:var(--danger); border-color:rgba(192,57,43,.4);' : ''}">${inTeam ? '⭐ Retirer de l\'équipe' : '⭐ Ajouter à l\'équipe'}</button>
   `;
