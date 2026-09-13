@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v531</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v532</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -6999,12 +6999,54 @@ function marquerRecruesPretes(){
    Le garde est ici et nulle part ailleurs : en v287 il n'était posé que sur
    l'instantané des PNJ, et le clignotement revenait par la surveillance de la
    fiche joueur, qui redessinait de son côté avant l'arrivée des recrues. */
-function redessinerCarte(){
+/* v532 — LE REDESSIN DE LA CARTE ETAIT LE COUPABLE DES GELS DE 300 ms.
+   Mesure du 13/09 : « redessin de la carte 300 ms sur 300 ms », toutes les autres etapes a
+   0 ms. Il se relance a CHAQUE changement de recrue — donc a chaque tour de combat, quand
+   la carte n'est meme pas a l'ecran. Deux remedes, aucun ne change ce qui s'affiche :
+   1. on NE REDESSINE PAS quand la carte est cachee (combat en cours, scene d'exploration
+      ouverte, appli en arriere-plan) — on note que c'est du, et on le fait au retour ;
+   2. on GROUPE les demandes rapprochees : quatre recrues modifiees d'un coup en fin de
+      combat ne declenchent plus quatre redessins complets, mais un seul.
+   Reste a traiter un jour : 300 ms, c'est cher meme quand la carte EST visible. */
+let carteARedessiner = false;
+let carteRedessinMinuteur = null;
+function carteEstCachee(){
+  try {
+    if (document.hidden) return true;
+    if (typeof combatState !== 'undefined' && combatState && !combatState.finished) return true;
+    if (typeof sceneViewCurrentSceneId !== 'undefined' && sceneViewCurrentSceneId) return true;
+  } catch(e){}
+  return false;
+}
+function redessinerCarteMaintenant(){
+  carteARedessiner = false;
   if (!recruitsPrets) return;
   if (movingMarker) return;
   if (typeof latestSnap === 'undefined' || !latestSnap) return;
   renderAllCreatures(latestSnap);
 }
+function redessinerCarte(){
+  if (carteEstCachee()){ carteARedessiner = true; return; }
+  carteARedessiner = true;
+  if (carteRedessinMinuteur) return;          // une demande est deja en attente : on la laisse faire
+  carteRedessinMinuteur = setTimeout(()=>{
+    carteRedessinMinuteur = null;
+    if (carteEstCachee()) return;             // l'ecran a change entre-temps : on garde la demande
+    redessinerCarteMaintenant();
+  }, 120);
+}
+/* Le rattrapage : des que la carte redevient visible, le redessin en attente part. Passer par
+   un battement regulier plutot que par des points d'accroche evite d'en oublier un (fin de
+   combat, sortie de scene, retour au premier plan, reprise de session…). */
+setInterval(()=>{
+  if (!carteARedessiner) return;
+  if (carteEstCachee()) return;
+  if (carteRedessinMinuteur) return;
+  redessinerCarteMaintenant();
+}, 1000);
+document.addEventListener('visibilitychange', ()=>{
+  if (!document.hidden && carteARedessiner && !carteEstCachee()) redessinerCarteMaintenant();
+});
 function majRecruesPretes(){
   if (recruitsSnapshotRecu && currentUser) marquerRecruesPretes();
 }
