@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v536</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v537</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2454,6 +2454,23 @@
     <div class="ultimes-section" id="ultsection-list" style="display:none;">
       <div id="ultimesList"></div>
     </div>
+  </div>
+</div>
+
+<!-- v537 — LES EFFETS D'UNE ÉTAPE D'ULTIME (lot 3a).
+     L'écran de réglage des effets est UNIQUE dans la page : on ne le recopie pas ici
+     (les identifiants seraient en double et les deux exemplaires divergeraient), on
+     DÉPLACE le bloc #attackCat-fx dans cet écran le temps du réglage, puis on le remet
+     exactement où il était dans l'éditeur d'attaques. -->
+<div class="overlay" id="ultEtapeFxOverlay">
+  <div class="sheet" style="max-height:90vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;" id="ultEtapeFxTitre">🎬 Effets de l'étape</h3>
+      <button class="sheet-x" id="ultEtapeFxCloseBtn">✕</button>
+    </div>
+    <p class="meta" style="margin-top:0;">Exactement les mêmes réglages que les effets d'une attaque : un effet joué sur la cible, un autre joué sur le lanceur juste avant. Une image vide = rien ne se joue pour cette étape.</p>
+    <div id="ultEtapeFxHost"></div>
+    <button class="btn-capture" id="ultEtapeFxDoneBtn" style="width:100%; margin-top:16px;">✅ Terminé</button>
   </div>
 </div>
 
@@ -15298,6 +15315,7 @@ function resumeEtapeUltime(e){
   if (e.soin) bouts.push('💚 ' + Math.round(e.soin * 100) + ' %');
   if (e.mana) bouts.push('🔷 ' + e.mana);
   if (e.statut) bouts.push(libStatut(e.statut) + (e.chanceStatut != null ? ' ' + e.chanceStatut + ' %' : '') + (e.duree ? ' ' + e.duree + 'T' : ''));
+  if (etapeAUnEffet(e)) bouts.push('🎬');   // v537
   return bouts.join(' · ');
 }
 function vignetteUltime(u){
@@ -15321,6 +15339,10 @@ function lireEtapeOuverte(){
   const typeEl = document.getElementById('ultEtapeType');
   if (!famEl || !typeEl) return;
   const neuf = { famille: famEl.value === 'ener' ? 'ener' : 'meca', type: typeEl.value };
+  /* v537 : l'étape est reconstruite à neuf à chaque lecture — sans ce report, les effets
+     visuels réglés dans l'écran dédié seraient effacés au premier changement de champ. */
+  if (e.fx) neuf.fx = e.fx;
+  if (e.fxSelf) neuf.fxSelf = e.fxSelf;
   const puiEl = document.getElementById('ultEtapePuissance');
   const p = puiEl && puiEl.value !== '' ? parseFloat(puiEl.value) : NaN;
   if (!isNaN(p) && p) neuf.puissance = p;
@@ -15354,9 +15376,68 @@ function formEtapeHtml(e){
     + '<label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="ultEtapeInfaillible"' + (infaillible ? ' checked' : '') + '> 🎯 Ne rate jamais</label>'
     + '</div>'
     + '<div id="ultEtapeParams"></div>'
+    + '<button type="button" class="btn-secondary" id="ultEtapeFxBtn" style="width:100%; margin-top:10px;">🎬 Effets visuels de cette étape' + (etapeAUnEffet(e) ? ' ●' : '') + '</button>'
     + '<button type="button" class="btn-secondary" id="ultEtapeFermerBtn" style="width:100%; margin-top:10px;">Replier l\'étape</button>'
     + '</div>';
 }
+
+/* v537 — LOT 3a : LES EFFETS VISUELS D'UNE ÉTAPE.
+   Une étape d'ultime est une attaque complète du moteur : elle peut donc porter les mêmes
+   champs `fx` (sur la cible) et `fxSelf` (sur le lanceur) qu'une attaque, avec les six types,
+   l'image, le son, les décalages et « derrière le personnage ».
+   Le bloc de réglage #attackCat-fx est DÉMÉNAGÉ ici puis remis à sa place : un seul écran
+   d'effets dans toute la page, donc rien à maintenir en double. */
+function etapeAUnEffet(e){
+  return !!(e && ((e.fx && e.fx.image) || (e.fxSelf && e.fxSelf.image)));
+}
+let ultEtapeFxIndex = null;
+let ultEtapeFxAncrage = null;   // d'où vient le bloc, pour l'y remettre exactement
+
+function ouvrirFxEtape(i){
+  const e = ultimeEtapesBrouillon[i];
+  if (!e) return;
+  const bloc = document.getElementById('attackCat-fx');
+  const hote = document.getElementById('ultEtapeFxHost');
+  if (!bloc || !hote) return;
+  ultEtapeFxIndex = i;
+  editingAttackFx = Object.assign({}, ATTACK_FX_DEFAULTS, e.fx || {});
+  editingAttackFxSelf = Object.assign({}, ATTACK_FX_DEFAULTS, e.fxSelf || {});
+  attackFxMode = 'target';
+  ultEtapeFxAncrage = { parent: bloc.parentNode, suivant: bloc.nextSibling };
+  hote.appendChild(bloc);
+  bloc.style.display = 'block';
+  document.getElementById('ultEtapeFxTitre').textContent = "🎬 Effets de l'étape " + (i + 1);
+  /* L'écran doit être VISIBLE avant de dessiner l'aperçu : la scène se dimensionne sur la
+     largeur réelle du conteneur, et un conteneur caché mesure zéro. */
+  document.getElementById('ultEtapeFxOverlay').classList.add('show');
+  renderAttackFxModeNav();
+  renderAttackFxPreviewStage();
+  renderAttackFxSettingsGrid();
+  renderAttackFxSettingContent();
+  renderAttackFxStaticPreview();
+}
+
+function fermerFxEtape(){
+  if (ultEtapeFxIndex != null){
+    const e = ultimeEtapesBrouillon[ultEtapeFxIndex];
+    if (e){
+      e.fx = Object.assign({}, editingAttackFx);
+      e.fxSelf = Object.assign({}, editingAttackFxSelf);
+    }
+  }
+  const bloc = document.getElementById('attackCat-fx');
+  if (bloc && ultEtapeFxAncrage && ultEtapeFxAncrage.parent){
+    bloc.style.display = 'none';
+    ultEtapeFxAncrage.parent.insertBefore(bloc, ultEtapeFxAncrage.suivant || null);
+  }
+  ultEtapeFxAncrage = null;
+  ultEtapeFxIndex = null;
+  document.getElementById('ultEtapeFxOverlay').classList.remove('show');
+  renderUltimeEtapes();
+}
+
+document.getElementById('ultEtapeFxDoneBtn').addEventListener('click', fermerFxEtape);
+document.getElementById('ultEtapeFxCloseBtn').addEventListener('click', fermerFxEtape);
 
 /* Le champ de précision n'a plus de sens quand « ne rate jamais » est coché : on le cache
    plutôt que d'afficher deux réglages qui se contredisent. */
@@ -15410,6 +15491,11 @@ function renderUltimeEtapes(){
     });
     const infaEl = document.getElementById('ultEtapeInfaillible');
     if (infaEl) infaEl.addEventListener('change', ()=>{ majChampPrecisionEtape(); lireEtapeOuverte(); });
+    const fxBtn = document.getElementById('ultEtapeFxBtn');
+    if (fxBtn) fxBtn.addEventListener('click', ()=>{
+      lireEtapeOuverte();   // v537 : on fige ce qui est saisi avant de partir régler l'effet
+      ouvrirFxEtape(ultimeEtapeOuverte);
+    });
     document.getElementById('ultEtapeFermerBtn').addEventListener('click', ()=>{
       lireEtapeOuverte(); ultimeEtapeOuverte = null; renderUltimeEtapes();
     });
@@ -16292,10 +16378,17 @@ function executerUltime(att, cibleChoisie){
   log(`${att.nom} invoque ${u.nom} (ultime) !`);
   particule(att.uid, u.emoji + ' ' + u.nom, 'combat-particle-heal');
   att.ultime = 0; att.ultimePrete = false;
+  /* v537 — LA TRACE. Le moteur résout toute la suite d'un coup, sans rien afficher ; l'écran
+     de combat a besoin de savoir, APRÈS COUP, quelle étape a frappé qui pour rejouer les
+     effets visuels l'un après l'autre. On note donc chaque étape et la cible réellement
+     retenue par le moteur (celle du joueur pour la première, la sienne pour les suivantes). */
+  combat.traceUltime = [];
   u.etapes.forEach((e, i)=>{
     if (!att.alive) return;
     const etape = Object.assign({ nom: u.nom, desc: u.desc, cout:0, puissance:0, ultime:true }, e);
+    combat.derniereCible = null;
     executerAttaque(att, etape, i === 0 ? cibleChoisie : null);
+    combat.traceUltime.push({ etape, cibleUid: combat.derniereCible ? combat.derniereCible.uid : null });
   });
 }
 /* La première étape qui vise UN adversaire dit si le joueur choisit sa cible. */
@@ -18957,6 +19050,33 @@ async function m2Jouer(acteur, choix, cible){
     clearStrayFxImages();
     await withTimeout(playAttackFx(acteur.uid, cibles.map(t=> t.uid), attaque.fx), 4000);
     clearStrayFxImages();
+  }
+  /* v537 — LOT 3a : L'ULTIME JOUE L'EFFET DE CHAQUE ÉTAPE, L'UNE APRÈS L'AUTRE.
+     Une ultime n'est pas une attaque (`attaque` vaut null) : les deux blocs ci-dessus la
+     sautent. On rejoue ici la trace laissée par le moteur.
+     combatState.anim suspend le redessin périodique du combat : sans lui, renderCombat
+     efface l'image posée dans l'arène au bout de 150 ms (leçon de la v192). */
+  if (choix === 'ultime' && Array.isArray(combatState.traceUltime) && combatState.traceUltime.length){
+    const trace = combatState.traceUltime;
+    combatState.anim = { actorUid: acteur.uid, kind:'magic' };
+    renderCombat();
+    for (let i = 0; i < trace.length; i++){
+      if (!combatState) return;
+      const e = trace[i].etape || {};
+      if (e.fxSelf && e.fxSelf.image){
+        clearStrayFxImages();
+        await withTimeout(playAttackFx(acteur.uid, [acteur.uid], e.fxSelf), 4000);
+        clearStrayFxImages();
+      }
+      if (!combatState) return;
+      if (e.fx && e.fx.image){
+        const cible = combatState.fighters.find(f=> f.uid === trace[i].cibleUid) || null;
+        const cibles = m2CiblesFx(acteur, e, cible);
+        clearStrayFxImages();
+        await withTimeout(playAttackFx(acteur.uid, cibles.map(t=> t.uid), e.fx), 4000);
+        clearStrayFxImages();
+      }
+    }
   }
   if (!combatState) return;
   combatState.anim = null;
@@ -29131,6 +29251,20 @@ function preloadCombatFx(fighters){
       if (a && a.fxSelf && a.fxSelf.sound) prechargerSonFx(a.fxSelf.sound);
     });
   });
+  /* v537 : les étapes d'ultime portent aussi des effets. Sans ce préchargement, le tout
+     premier lancement d'une ultime passerait sous le filet des 3 s de waitImageReady et
+     ne montrerait rien du tout (le bug intermittent de la v217). Elles sont peu nombreuses :
+     on les prend toutes, sans chercher qui porte laquelle. */
+  try {
+    Object.values(ULTIMES || {}).forEach(u=>{
+      ((u && u.etapes) || []).forEach(e=>{
+        if (e && e.fx && e.fx.image) urls.add(e.fx.image);
+        if (e && e.fxSelf && e.fxSelf.image) urls.add(e.fxSelf.image);
+        if (e && e.fx && e.fx.sound) prechargerSonFx(e.fx.sound);
+        if (e && e.fxSelf && e.fxSelf.sound) prechargerSonFx(e.fxSelf.sound);
+      });
+    });
+  } catch(err){ /* jamais bloquer un combat pour un préchargement */ }
   if (!urls.size) return;
   fxPreloadPool = [];
   urls.forEach(url=>{
