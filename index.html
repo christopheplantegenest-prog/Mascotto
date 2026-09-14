@@ -1035,6 +1035,19 @@
   0%,100%{ transform:translateY(0) scale(1); }
   50%{ transform:translateY(-2.4%) scale(1.015); }
 }
+/* v543 — LA POSITION DE CÔTÉ. Elle se range à gauche et rapetisse, le voile s'éclaircit
+   au lieu de tomber : l'arène redevient lisible DERRIÈRE elle et les effets d'attaque
+   peuvent partir pendant qu'elle est encore à l'écran. */
+#combatInvocation.cote .inv-scene{
+  transform:translate(-27%, -3%) scale(.56);
+  transition:transform .66s cubic-bezier(.3,.9,.3,1), opacity .4s ease;
+}
+#combatInvocation.cote .inv-fond{ opacity:.4; }
+#combatInvocation.flotte.cote .inv-scene{ animation:invFlotteCote 2.8s ease-in-out infinite; }
+@keyframes invFlotteCote{
+  0%,100%{ transform:translate(-27%, -3%) scale(.56); }
+  50%{ transform:translate(-27%, -5.2%) scale(.566); }
+}
 #invVues{ position:relative; width:88%; height:72%; }
 #invVues img{
   position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain;
@@ -1388,7 +1401,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v542</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v543</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15539,12 +15552,7 @@ async function apercuSceneUltime(){
     if (full) full.classList.remove('show', 'reveal', 'ultime-scene', 'inv-secousse');
     const inc = document.getElementById('combatIncantation');
     if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
-    const inv = document.getElementById('combatInvocation');
-    if (inv){
-      inv.classList.remove('on','fond','montee','flotte','sortie');
-      const hote = document.getElementById('invVues');
-      if (hote) hote.innerHTML = '';
-    }
+    invocationRetirer();
     clearStrayFxImages();
     libererImagesDeCombat();
     combatState = null;
@@ -19387,20 +19395,35 @@ function secousseCombat(){
   full.classList.add('inv-secousse');
   setTimeout(()=> full.classList.remove('inv-secousse'), 420);
 }
-async function jouerInvocation(acteur, u){
+/* v543 — L'apparition se joue désormais en TROIS TEMPS, et non plus d'un bloc : l'entrée au
+   centre, le rangement sur le côté, et la sortie — qui n'arrive qu'après les effets
+   d'attaque. La minuterie d'alternance des vues vit plus longtemps qu'une seule de ces
+   fonctions, elle est donc gardée à part et arrêtée au retrait. */
+let invocationTimer = null;
+function invocationRetirer(){
+  if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
+  const inv = document.getElementById('combatInvocation');
+  const hote = document.getElementById('invVues');
+  if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie');
+  if (hote) hote.innerHTML = '';
+}
+/* Rend VRAI si la divinité est bien à l'écran — c'est ce qui décide si la suite de la scène
+   se joue avec elle ou sans elle. */
+async function invocationEntree(acteur, u){
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
   const vues = vuesInvocation(u);
-  if (!inv || !hote || !vues.length) return;
+  if (!inv || !hote || !vues.length) return false;
   hote.innerHTML = vues.map((url, i)=>
     '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
-  inv.classList.remove('on','fond','montee','flotte','sortie');
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie');
   inv.classList.add('on');
   void inv.offsetWidth;   // sans cette lecture, le navigateur ne voit aucun changement d'état
   inv.classList.add('fond','montee');
-  let rang = 0, minuterie = null;
+  if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
   if (vues.length > 1){
-    minuterie = setInterval(()=>{
+    let rang = 0;
+    invocationTimer = setInterval(()=>{
       const imgs = hote.querySelectorAll('img');
       if (!imgs.length) return;
       imgs[rang % imgs.length].classList.remove('vue-on');
@@ -19408,22 +19431,34 @@ async function jouerInvocation(acteur, u){
       imgs[rang % imgs.length].classList.add('vue-on');
     }, 160);
   }
-  const fin = ()=>{
-    if (minuterie) clearInterval(minuterie);
-    inv.classList.add('sortie');
-    setTimeout(()=>{
-      inv.classList.remove('on','fond','montee','flotte','sortie');
-      hote.innerHTML = '';
-    }, 400);
-  };
   await sleep(660);
-  if (sceneCoupee()){ fin(); return; }
+  if (sceneCoupee()){ invocationRetirer(); return false; }
   secousseCombat();
   inv.classList.add('flotte');
-  await sleep(1500);
-  fin();
+  await sleep(1100);
+  if (sceneCoupee()){ invocationRetirer(); return false; }
+  return true;
+}
+/* Elle glisse sur le côté et rapetisse. On retire D'ABORD le flottement : une animation CSS
+   écrase une transition, sans quoi elle sauterait à sa nouvelle place au lieu d'y glisser.
+   Puis on le remet, recalé sur la position de côté. */
+async function invocationDeCote(){
+  const inv = document.getElementById('combatInvocation');
+  if (!inv || !inv.classList.contains('on')) return;
+  inv.classList.remove('flotte');
+  void inv.offsetWidth;
+  inv.classList.add('cote');
+  await sleep(680);
   if (sceneCoupee()) return;
-  await sleep(400);
+  inv.classList.add('flotte');
+  await sleep(140);
+}
+async function invocationSortie(){
+  const inv = document.getElementById('combatInvocation');
+  if (!inv || !inv.classList.contains('on')){ invocationRetirer(); return; }
+  inv.classList.add('sortie');
+  await sleep(420);
+  invocationRetirer();
 }
 
 /* v538 — LOT 3b : LA PHASE D'ATTAQUE DE L'ULTIME EST UNE SCÈNE.
@@ -19461,8 +19496,11 @@ async function jouerSceneUltime(acteur){
        Elle joue même quand aucune étape n'a d'effet : il y a toujours quelque chose à voir. */
     await jouerIncantation(acteur, u);
     if (!combatState) return;
-    /* PHASE 2 — l'apparition de la divinité. */
-    await jouerInvocation(acteur, u);
+    /* PHASE 2 — l'apparition de la divinité. Elle ne repart pas : elle se range sur le côté
+       et assiste à son propre coup (v543). */
+    const diviniteLa = await invocationEntree(acteur, u);
+    if (!combatState) return;
+    if (diviniteLa) await invocationDeCote();
     if (!combatState) return;
     /* PHASE 3 — les étapes, chacune avec son effet. */
     for (let i = 0; i < trace.length; i++){
@@ -19494,6 +19532,8 @@ async function jouerSceneUltime(acteur){
         clearStrayFxImages();
       }
     }
+    /* v543 : la divinité ne s'efface qu'ICI, une fois toutes les étapes jouées. */
+    if (combatState && !combatState.ultimeSkip) await invocationSortie();
   } finally {
     /* Quoi qu'il arrive — fin de la suite, bouton « Passer », combat refermé en route —
        l'écran redevient un écran de jeu. Une interface restée masquée bloquerait la partie. */
@@ -19501,12 +19541,7 @@ async function jouerSceneUltime(acteur){
     sceneUltimeEnCours = false;
     const inc = document.getElementById('combatIncantation');
     if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
-    const inv = document.getElementById('combatInvocation');
-    if (inv){
-      inv.classList.remove('on','fond','montee','flotte','sortie');
-      const hote = document.getElementById('invVues');
-      if (hote) hote.innerHTML = '';
-    }
+    invocationRetirer();
     if (full) full.classList.remove('ultime-scene');
     if (combatState){
       combatState.ultimeScene = null;
