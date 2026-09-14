@@ -959,6 +959,22 @@
   display:flex; align-items:center; justify-content:center; padding:0;
 }
 #combatActionPanel > p.meta{ padding:14px 8px; margin:0; text-align:center; }
+/* v538 — LA SCÈNE D'ULTIME (lot 3b). Le temps de l'invocation, l'écran cesse d'être une
+   interface de jeu : le rectangle des attaques, la file des tours et l'icône du journal
+   s'effacent, l'arène reste. Les combattants que l'étape en cours ne vise pas s'effacent
+   eux aussi — en OPACITÉ, jamais en `display` : leur carte doit garder sa place, sinon la
+   rangée se réarrange et l'image de l'effet, posée aux coordonnées de la cible, tombe à côté. */
+#combatFull.ultime-scene #combatActionPanel{ visibility:hidden !important; }
+#combatFull.ultime-scene #combatTurnOrderBar{ opacity:0 !important; pointer-events:none; }
+#combatFull.ultime-scene #combatLogToggleBtn{ opacity:0 !important; pointer-events:none; }
+.combat-fighter{ transition:opacity .22s ease; }
+.combat-fighter.hors-scene{ opacity:0 !important; pointer-events:none; }
+#combatUltimeSkipBtn{
+  display:none; position:absolute; right:8px; bottom:10px; z-index:12;
+  border:1px solid rgba(255,255,255,.35); border-radius:16px; padding:7px 14px;
+  background:rgba(0,0,0,.55); color:#fff; font-size:clamp(11px, 3.2vw, 13px);
+}
+#combatFull.ultime-scene #combatUltimeSkipBtn{ display:block; }
 /* v416 — LE RÉCIT A SON PROPRE RECTANGLE, dans la colonne et non par-dessus l'arène.
    Le panneau du bas est rendu aux boutons d'attaque, qui restent visibles en permanence : y
    loger le récit donnait un très grand cadre pour très peu de texte, et cela écrasait au
@@ -1288,7 +1304,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v537</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v538</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1891,6 +1907,8 @@
       <div id="combatPlayerRow" class="combat-side" style="--avatar-size:var(--avatar-allie, clamp(64px, 36vw, 190px)); transform:translateY(var(--allies-shift, 0px));"></div>
       <div id="combatLastAction"></div>
       <button type="button" id="combatLogToggleBtn" title="Journal de combat">📜</button>
+      <!-- v538 : visible seulement pendant une scène d'ultime (voir .ultime-scene). -->
+      <button type="button" id="combatUltimeSkipBtn">⏩ Passer</button>
     </div>
     <div id="combatRecitBar"></div>
     <div id="combatActionPanel"><p class="meta" style="text-align:center;">En attente du prochain tour…</p></div>
@@ -19020,6 +19038,62 @@ function m2CiblesFx(acteur, attaque, cible){
   if (M2.TYPES_CIBLE_UNIQUE.has(attaque.type) || M2.TYPES_CIBLE_ALLIE.has(attaque.type)) return cible ? [cible] : [];
   return [acteur];
 }
+/* v538 — LOT 3b : LA PHASE D'ATTAQUE DE L'ULTIME EST UNE SCÈNE.
+   Le moteur a déjà tout résolu d'un bloc et laissé sa trace (v537 : quelle étape, quelle
+   cible). On la rejoue ici comme une petite cinématique : l'interface de jeu s'efface,
+   l'arène reste, et à chaque étape seuls le lanceur et les combattants que CETTE étape
+   vise vraiment restent visibles. Le bouton « Passer » coupe court entre deux étapes.
+   `combatState.anim` reste posé pendant toute la scène : il suspend le redessin des
+   150 ms, sans quoi renderCombat effacerait l'image posée dans l'arène (leçon de la v192).
+   Une ultime dont aucune étape n'a d'effet ne déclenche pas de scène : masquer l'interface
+   pour ne rien montrer ferait juste attendre le joueur devant un écran vide. */
+async function jouerSceneUltime(acteur){
+  const trace = (combatState && combatState.traceUltime) || [];
+  const aDesEffets = trace.some(p=> p.etape && ((p.etape.fx && p.etape.fx.image) || (p.etape.fxSelf && p.etape.fxSelf.image)));
+  if (!aDesEffets) return;
+  const full = document.getElementById('combatFull');
+  combatState.ultimeSkip = false;
+  combatState.anim = { actorUid: acteur.uid, kind:'magic' };
+  if (full) full.classList.add('ultime-scene');
+  try {
+    for (let i = 0; i < trace.length; i++){
+      if (!combatState || combatState.ultimeSkip) return;
+      const e = trace[i].etape || {};
+      if (!((e.fx && e.fx.image) || (e.fxSelf && e.fxSelf.image))) continue;
+      const cible = combatState.fighters.find(f=> f.uid === trace[i].cibleUid) || null;
+      const vises = m2CiblesFx(acteur, e, cible).map(t=> t.uid);
+      combatState.ultimeScene = { acteurUid: acteur.uid, vises };
+      renderCombat();
+      await sleep(220);   // le temps que les autres s'effacent avant que l'effet parte
+      if (!combatState || combatState.ultimeSkip) return;
+      if (e.fxSelf && e.fxSelf.image){
+        clearStrayFxImages();
+        await withTimeout(playAttackFx(acteur.uid, [acteur.uid], e.fxSelf), 4000);
+        clearStrayFxImages();
+      }
+      if (!combatState || combatState.ultimeSkip) return;
+      if (e.fx && e.fx.image){
+        clearStrayFxImages();
+        await withTimeout(playAttackFx(acteur.uid, vises, e.fx), 4000);
+        clearStrayFxImages();
+      }
+    }
+  } finally {
+    /* Quoi qu'il arrive — fin de la suite, bouton « Passer », combat refermé en route —
+       l'écran redevient un écran de jeu. Une interface restée masquée bloquerait la partie. */
+    if (full) full.classList.remove('ultime-scene');
+    if (combatState){
+      combatState.ultimeScene = null;
+      combatState.ultimeSkip = false;
+      clearStrayFxImages();
+      renderCombat();
+    }
+  }
+}
+document.getElementById('combatUltimeSkipBtn').addEventListener('click', ()=>{
+  if (combatState) combatState.ultimeSkip = true;
+  clearStrayFxImages();
+});
 async function m2Jouer(acteur, choix, cible){
   combatState.pendingActor = null;
   combatState.pendingAttack = null;
@@ -19051,33 +19125,9 @@ async function m2Jouer(acteur, choix, cible){
     await withTimeout(playAttackFx(acteur.uid, cibles.map(t=> t.uid), attaque.fx), 4000);
     clearStrayFxImages();
   }
-  /* v537 — LOT 3a : L'ULTIME JOUE L'EFFET DE CHAQUE ÉTAPE, L'UNE APRÈS L'AUTRE.
-     Une ultime n'est pas une attaque (`attaque` vaut null) : les deux blocs ci-dessus la
-     sautent. On rejoue ici la trace laissée par le moteur.
-     combatState.anim suspend le redessin périodique du combat : sans lui, renderCombat
-     efface l'image posée dans l'arène au bout de 150 ms (leçon de la v192). */
-  if (choix === 'ultime' && Array.isArray(combatState.traceUltime) && combatState.traceUltime.length){
-    const trace = combatState.traceUltime;
-    combatState.anim = { actorUid: acteur.uid, kind:'magic' };
-    renderCombat();
-    for (let i = 0; i < trace.length; i++){
-      if (!combatState) return;
-      const e = trace[i].etape || {};
-      if (e.fxSelf && e.fxSelf.image){
-        clearStrayFxImages();
-        await withTimeout(playAttackFx(acteur.uid, [acteur.uid], e.fxSelf), 4000);
-        clearStrayFxImages();
-      }
-      if (!combatState) return;
-      if (e.fx && e.fx.image){
-        const cible = combatState.fighters.find(f=> f.uid === trace[i].cibleUid) || null;
-        const cibles = m2CiblesFx(acteur, e, cible);
-        clearStrayFxImages();
-        await withTimeout(playAttackFx(acteur.uid, cibles.map(t=> t.uid), e.fx), 4000);
-        clearStrayFxImages();
-      }
-    }
-  }
+  /* v537/v538 : une ultime n'est pas une attaque (`attaque` vaut null), les deux blocs
+     ci-dessus la sautent. Elle a sa propre scène. */
+  if (choix === 'ultime') await jouerSceneUltime(acteur);
   if (!combatState) return;
   combatState.anim = null;
   combatState.fighters.forEach(f=>{ if (aliveBefore[f.uid] && !f.alive && !f.fled) spawnParticle(f.uid, '💀', ''); });
@@ -31286,8 +31336,13 @@ function fighterCardHtml(f, idx, arr){
   const isHit = (combatState.hitUids||[]).includes(f.uid);
   /* v516 : `combat-fui` est la place tenue par un fuyard — invisible et intouchable, mais
      elle occupe toujours sa largeur pour que rien ne se réarrange autour d'elle. */
+  /* v538 : pendant une scène d'ultime, on ne montre que le lanceur et ce que l'étape en
+     cours vise vraiment — tout le reste s'efface le temps de l'étape. */
+  const sc = combatState.ultimeScene;
+  const horsScene = !!(sc && f.uid !== sc.acteurUid && (sc.vises || []).indexOf(f.uid) === -1);
   const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'',
-    f.fleeingOut?'combat-fleeing-out':'', (f.fled && !f.fleeingOut)?'combat-fui':''].filter(Boolean).join(' ');
+    f.fleeingOut?'combat-fleeing-out':'', (f.fled && !f.fleeingOut)?'combat-fui':'',
+    horsScene?'hors-scene':''].filter(Boolean).join(' ');
   const lungeY = f.side==='player' ? -14 : 14;
   const hpColor = hpPct>50?'#2ecc71':hpPct>20?'#f39c12':'#e74c3c';
   const infoHtml = m2InfoCarte(f, hpColor);
