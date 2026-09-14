@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v535</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v536</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2440,7 +2440,7 @@
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
-      <p class="meta">Une ultime enchaîne une ou plusieurs étapes, chacune étant une attaque complète du moteur. Les étapes sont affichées ici mais pas encore modifiables : c'est le lot suivant.</p>
+      <p class="meta">Une ultime enchaîne une ou plusieurs étapes, chacune étant une attaque complète du moteur, jouée dans l'ordre de la liste. La première étape décide si le joueur choisit une cible. Une étape ne coûte rien : une ultime est gratuite par nature.</p>
 
       <div class="field-label">Identifiant</div>
       <p class="meta" id="ultimeCle" style="margin-top:0;">(l'identifiant sera tiré du nom)</p>
@@ -15116,33 +15116,36 @@ let attackListVice = '';   // filtre de la liste : '' = tous les vices
 
 /* Les paramètres propres au type (état, durée, drain…) : redessinés à chaque changement de type,
    en gardant les valeurs déjà saisies. Même liste que PARAMS_TYPES du proto. */
-function renderAttackParams(valeurs){
+/* v536 — le même moteur de champs sert maintenant à DEUX formulaires : une attaque
+   (préfixe `attackParam-`) et une étape d'ultime (préfixe `ultParam-`). Un seul endroit
+   à corriger le jour où un type gagne un réglage — la leçon des deux tableaux ULTIMES. */
+function renderParamsType(type, valeurs, wrapId, prefixe){
   valeurs = valeurs || {};
-  const type = document.getElementById('attackTypeProto').value;
   const permis = PARAMS_TYPES[type] || [];
-  const wrap = document.getElementById('attackParamsWrap');
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
   if (!permis.length){ wrap.innerHTML = '<p class="meta">Ce type n\'a pas d\'autre réglage.</p>'; return; }
   wrap.innerHTML = permis.map(k=>{
     if (k === 'statut'){
       const opts = ['', ...Object.keys(DUREE_STATUT)].map(s=>`<option value="${s}" ${(valeurs.statut||'')===s?'selected':''}>${s ? libStatut(s, true) : '— aucun —'}</option>`).join('');
-      return `<div class="field-label">État posé</div><select id="attackParam-statut" class="field-input">${opts}</select>`;
+      return `<div class="field-label">État posé</div><select id="${prefixe}statut" class="field-input">${opts}</select>`;
     }
     if (k === 'stat'){
-      return `<div class="field-label">Stat renforcée</div><select id="attackParam-stat" class="field-input"><option value="" ${!valeurs.stat?'selected':''}>attaque</option><option value="vit" ${valeurs.stat==='vit'?'selected':''}>vitesse</option></select>`;
+      return `<div class="field-label">Stat renforcée</div><select id="${prefixe}stat" class="field-input"><option value="" ${!valeurs.stat?'selected':''}>attaque</option><option value="vit" ${valeurs.stat==='vit'?'selected':''}>vitesse</option></select>`;
     }
     if (k === 'precision'){
       /* v449 : saisie en pourcentage direct (sa demande) ; en base on garde le malus du proto (0 = 100 %, -25 = 75 %). */
       const pct = valeurs.precision == null ? 100 : Math.max(0, Math.min(100, 100 + valeurs.precision));
-      return `<div class="field-label">${LIB_PARAMS.precision}</div><input type="number" step="1" min="0" max="100" id="attackParam-precision" class="field-input" value="${pct}">`;
+      return `<div class="field-label">${LIB_PARAMS.precision}</div><input type="number" step="1" min="0" max="100" id="${prefixe}precision" class="field-input" value="${pct}">`;
     }
     const entier = ['charges','chanceStatut','duree','chargesRequises','mana'].includes(k);
-    return `<div class="field-label">${LIB_PARAMS[k] || k}</div><input type="number" step="${entier ? 1 : 0.05}" id="attackParam-${k}" class="field-input" value="${valeurs[k] == null ? '' : valeurs[k]}">`;
+    return `<div class="field-label">${LIB_PARAMS[k] || k}</div><input type="number" step="${entier ? 1 : 0.05}" id="${prefixe}${k}" class="field-input" value="${valeurs[k] == null ? '' : valeurs[k]}">`;
   }).join('');
 }
-function lireParamsAttaque(){
+function lireParamsType(prefixe){
   const out = {};
   Object.keys(LIB_PARAMS).forEach(k=>{
-    const el = document.getElementById('attackParam-' + k);
+    const el = document.getElementById(prefixe + k);
     if (!el) return;
     if (k === 'statut' || k === 'stat'){ if (el.value) out[k] = el.value; return; }
     if (k === 'precision'){ if (el.value !== ''){ const m = Math.round(parseFloat(el.value)) - 100; if (m < 0) out.precision = m; } return; }   // 100 % = pas de malus : rien à stocker
@@ -15150,6 +15153,10 @@ function lireParamsAttaque(){
   });
   return out;
 }
+function renderAttackParams(valeurs){
+  renderParamsType(document.getElementById('attackTypeProto').value, valeurs, 'attackParamsWrap', 'attackParam-');
+}
+function lireParamsAttaque(){ return lireParamsType('attackParam-'); }
 
 function renderAttacksListView(){
   const listEl = document.getElementById('attacksList');
@@ -15298,14 +15305,167 @@ function vignetteUltime(u){
     ? '<img src="' + u.imageUrl + '" alt="">'
     : ((u && u.emoji) || '🌟');
 }
+/* v536 — L'ÉDITEUR D'ÉTAPES. Une seule étape est dépliée à la fois : sur un téléphone,
+   trois formulaires ouverts à la suite rendent la fiche impraticable.
+   Le formulaire n'est JAMAIS redessiné à la frappe (un redessin fait perdre le tap suivant
+   sur mobile) : on lit ce qui est à l'écran juste avant chaque action, par lireEtapeOuverte. */
+let ultimeEtapeOuverte = null;
+
+function etapeVierge(){ return { famille:'meca', type:'degats', puissance:30 }; }
+
+function lireEtapeOuverte(){
+  if (ultimeEtapeOuverte == null) return;
+  const e = ultimeEtapesBrouillon[ultimeEtapeOuverte];
+  if (!e) return;
+  const famEl = document.getElementById('ultEtapeFamille');
+  const typeEl = document.getElementById('ultEtapeType');
+  if (!famEl || !typeEl) return;
+  const neuf = { famille: famEl.value === 'ener' ? 'ener' : 'meca', type: typeEl.value };
+  const puiEl = document.getElementById('ultEtapePuissance');
+  const p = puiEl && puiEl.value !== '' ? parseFloat(puiEl.value) : NaN;
+  if (!isNaN(p) && p) neuf.puissance = p;
+  Object.assign(neuf, lireParamsType('ultParam-'));
+  /* Le coup qui ne rate jamais : le moteur attend 999, pas 100 % — et le champ de
+     pourcentage est borné à 100, il ne peut donc pas porter cette valeur lui-même.
+     Sans ce détour, réenregistrer Jugement du trône lui ferait perdre son infaillibilité. */
+  const infa = document.getElementById('ultEtapeInfaillible');
+  if (infa && infa.checked) neuf.precision = 999;
+  /* Un état sans durée ne s'applique jamais (le bug de Contagion du 31/08). */
+  if (neuf.statut && !neuf.duree && DUREE_STATUT[neuf.statut]) neuf.duree = DUREE_STATUT[neuf.statut];
+  ultimeEtapesBrouillon[ultimeEtapeOuverte] = neuf;
+}
+
+function formEtapeHtml(e){
+  const opts = Object.keys(LIB_TYPES).map(k=>
+    '<option value="' + k + '"' + (e.type === k ? ' selected' : '') + '>' + LIB_TYPES[k] + '</option>').join('');
+  const permis = PARAMS_TYPES[e.type] || [];
+  const infaillible = (e.precision != null && e.precision >= 999);
+  return '<div style="padding:10px 10px 12px; margin:4px 0 10px; border:1px solid rgba(128,128,128,.35); border-radius:8px;">'
+    + '<div class="field-label" style="margin-top:0;">Famille</div>'
+    + '<select id="ultEtapeFamille" class="field-input">'
+    + '<option value="meca"' + (e.famille !== 'ener' ? ' selected' : '') + '>🔧 Mécanique</option>'
+    + '<option value="ener"' + (e.famille === 'ener' ? ' selected' : '') + '>⚡ Énergétique</option>'
+    + '</select>'
+    + '<div class="field-label">Ce que fait l\'étape</div>'
+    + '<select id="ultEtapeType" class="field-input">' + opts + '</select>'
+    + '<div class="field-label">Puissance</div>'
+    + '<input type="number" step="1" id="ultEtapePuissance" class="field-input" value="' + (e.puissance == null ? '' : e.puissance) + '">'
+    + '<div id="ultEtapeInfaillibleWrap" style="display:' + (permis.indexOf('precision') >= 0 ? 'block' : 'none') + '; margin-top:10px;">'
+    + '<label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="ultEtapeInfaillible"' + (infaillible ? ' checked' : '') + '> 🎯 Ne rate jamais</label>'
+    + '</div>'
+    + '<div id="ultEtapeParams"></div>'
+    + '<button type="button" class="btn-secondary" id="ultEtapeFermerBtn" style="width:100%; margin-top:10px;">Replier l\'étape</button>'
+    + '</div>';
+}
+
+/* Le champ de précision n'a plus de sens quand « ne rate jamais » est coché : on le cache
+   plutôt que d'afficher deux réglages qui se contredisent. */
+function majChampPrecisionEtape(){
+  const infa = document.getElementById('ultEtapeInfaillible');
+  const champ = document.getElementById('ultParam-precision');
+  if (!champ) return;
+  const cache = !!(infa && infa.checked);
+  champ.style.display = cache ? 'none' : '';
+  const lbl = champ.previousElementSibling;
+  if (lbl && lbl.classList.contains('field-label')) lbl.style.display = cache ? 'none' : '';
+}
+
 function renderUltimeEtapes(){
   const wrap = document.getElementById('ultimeEtapes');
   if (!wrap) return;
-  wrap.innerHTML = ultimeEtapesBrouillon.length
-    ? ultimeEtapesBrouillon.map((e, i)=>
-        '<div class="editor-list-item"><div class="name">Étape ' + (i + 1) +
-        ' <span class="meta" style="display:block; font-size:11px;">' + resumeEtapeUltime(e) + '</span></div></div>').join('')
-    : '<p class="meta">Aucune étape pour le moment.</p>';
+  const n = ultimeEtapesBrouillon.length;
+  let html = '';
+  if (!n) html += '<p class="meta">Aucune étape pour le moment.</p>';
+  ultimeEtapesBrouillon.forEach((e, i)=>{
+    html += '<div class="editor-list-item" style="flex-direction:column; align-items:stretch;">'
+      + '<div style="display:flex; align-items:center; gap:8px; width:100%;">'
+      + '<div class="name">Étape ' + (i + 1)
+      + '<span class="meta" style="display:block; font-size:11px;">' + resumeEtapeUltime(e) + '</span></div>'
+      + '<button class="btn-secondary" data-ult-etape-monter="' + i + '" style="flex:none;"' + (i === 0 ? ' disabled' : '') + '>▲</button>'
+      + '<button class="btn-secondary" data-ult-etape-descendre="' + i + '" style="flex:none;"' + (i === n - 1 ? ' disabled' : '') + '>▼</button>'
+      + '<button class="btn-secondary" data-ult-etape-ouvrir="' + i + '" style="flex:none;">' + (ultimeEtapeOuverte === i ? '✕' : '✏️') + '</button>'
+      + '<button class="btn-secondary" data-ult-etape-suppr="' + i + '" style="flex:none;">🗑️</button>'
+      + '</div>';
+    if (ultimeEtapeOuverte === i) html += formEtapeHtml(e);
+    html += '</div>';
+  });
+  html += '<button type="button" class="btn-secondary" id="ultEtapeAjouterBtn" style="width:100%; margin-top:8px;">＋ Ajouter une étape</button>';
+  wrap.innerHTML = html;
+
+  if (ultimeEtapeOuverte != null && ultimeEtapesBrouillon[ultimeEtapeOuverte]){
+    const e = ultimeEtapesBrouillon[ultimeEtapeOuverte];
+    renderParamsType(e.type, e, 'ultEtapeParams', 'ultParam-');
+    majChampPrecisionEtape();
+    document.getElementById('ultEtapeFamille').addEventListener('change', lireEtapeOuverte);
+    document.getElementById('ultEtapeType').addEventListener('change', ()=>{
+      const gardees = lireParamsType('ultParam-');
+      const infa = document.getElementById('ultEtapeInfaillible');
+      if (infa && infa.checked) gardees.precision = 999;
+      const t = document.getElementById('ultEtapeType').value;
+      renderParamsType(t, gardees, 'ultEtapeParams', 'ultParam-');
+      const permis = PARAMS_TYPES[t] || [];
+      document.getElementById('ultEtapeInfaillibleWrap').style.display = permis.indexOf('precision') >= 0 ? 'block' : 'none';
+      majChampPrecisionEtape();
+      lireEtapeOuverte();
+    });
+    const infaEl = document.getElementById('ultEtapeInfaillible');
+    if (infaEl) infaEl.addEventListener('change', ()=>{ majChampPrecisionEtape(); lireEtapeOuverte(); });
+    document.getElementById('ultEtapeFermerBtn').addEventListener('click', ()=>{
+      lireEtapeOuverte(); ultimeEtapeOuverte = null; renderUltimeEtapes();
+    });
+  }
+
+  wrap.querySelectorAll('button[data-ult-etape-ouvrir]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const i = parseInt(btn.dataset.ultEtapeOuvrir, 10);
+      lireEtapeOuverte();
+      ultimeEtapeOuverte = (ultimeEtapeOuverte === i) ? null : i;
+      renderUltimeEtapes();
+    });
+  });
+  wrap.querySelectorAll('button[data-ult-etape-monter]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const i = parseInt(btn.dataset.ultEtapeMonter, 10);
+      if (i <= 0) return;
+      lireEtapeOuverte();
+      const t = ultimeEtapesBrouillon[i - 1];
+      ultimeEtapesBrouillon[i - 1] = ultimeEtapesBrouillon[i];
+      ultimeEtapesBrouillon[i] = t;
+      if (ultimeEtapeOuverte === i) ultimeEtapeOuverte = i - 1;
+      else if (ultimeEtapeOuverte === i - 1) ultimeEtapeOuverte = i;
+      renderUltimeEtapes();
+    });
+  });
+  wrap.querySelectorAll('button[data-ult-etape-descendre]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const i = parseInt(btn.dataset.ultEtapeDescendre, 10);
+      if (i >= ultimeEtapesBrouillon.length - 1) return;
+      lireEtapeOuverte();
+      const t = ultimeEtapesBrouillon[i + 1];
+      ultimeEtapesBrouillon[i + 1] = ultimeEtapesBrouillon[i];
+      ultimeEtapesBrouillon[i] = t;
+      if (ultimeEtapeOuverte === i) ultimeEtapeOuverte = i + 1;
+      else if (ultimeEtapeOuverte === i + 1) ultimeEtapeOuverte = i;
+      renderUltimeEtapes();
+    });
+  });
+  wrap.querySelectorAll('button[data-ult-etape-suppr]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const i = parseInt(btn.dataset.ultEtapeSuppr, 10);
+      if (!(await appConfirm('Supprimer l\'étape ' + (i + 1) + ' ?'))) return;
+      if (ultimeEtapeOuverte === i) ultimeEtapeOuverte = null;
+      else if (ultimeEtapeOuverte != null && ultimeEtapeOuverte > i) ultimeEtapeOuverte--;
+      ultimeEtapesBrouillon.splice(i, 1);
+      renderUltimeEtapes();
+    });
+  });
+  const ajout = document.getElementById('ultEtapeAjouterBtn');
+  if (ajout) ajout.addEventListener('click', ()=>{
+    lireEtapeOuverte();
+    ultimeEtapesBrouillon.push(etapeVierge());
+    ultimeEtapeOuverte = ultimeEtapesBrouillon.length - 1;
+    renderUltimeEtapes();
+  });
 }
 function showUltimesSection(name){
   document.querySelectorAll('.ultimes-section').forEach(el=> el.style.display = 'none');
@@ -15317,6 +15477,7 @@ function resetUltimeForm(){
   ultimeImageDataUrl = null;
   ultimeImagePath = null;
   ultimeEtapesBrouillon = [];
+  ultimeEtapeOuverte = null;
   document.getElementById('ultimeName').value = '';
   document.getElementById('ultimeEmoji').value = '';
   document.getElementById('ultimeDesc').value = '';
@@ -15345,6 +15506,7 @@ function loadUltimeForEdit(cle){
     wrapImg.style.display = 'block';
   } else wrapImg.style.display = 'none';
   ultimeEtapesBrouillon = JSON.parse(JSON.stringify(u.etapes || []));
+  ultimeEtapeOuverte = null;
   document.getElementById('ultimeCle').textContent = cle;
   document.getElementById('ultimeSaveBtn').textContent = "Mettre à jour l'ultime";
   document.getElementById('ultimeCancelBtn').style.display = 'block';
@@ -15419,6 +15581,7 @@ document.getElementById('ultimeClearImageBtn').addEventListener('click', ()=>{
 });
 
 document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
+  lireEtapeOuverte();   // v536 : l'étape dépliée n'est lue qu'ici, jamais à la frappe
   const nom = document.getElementById('ultimeName').value.trim();
   const emoji = document.getElementById('ultimeEmoji').value.trim();
   const desc = document.getElementById('ultimeDesc').value.trim();
@@ -15427,6 +15590,7 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
   const cle = editingUltimeId || slugId(nom);
   if (!cle){ showToast('Ce nom ne donne aucun identifiant : mets au moins une lettre'); return; }
   if (!editingUltimeId && ULTIMES[cle]){ showToast('Une ultime porte déjà ce nom — modifie-la depuis la liste'); return; }
+  if (!ultimeEtapesBrouillon.length){ showToast('Une ultime sans étape ne fait rien : ajoute au moins une étape'); return; }
   if (!ultimesCol){ showToast('Firebase indisponible ici'); return; }
   const data = { nom, emoji, desc,
     imageUrl: ultimeImageDataUrl || '',
