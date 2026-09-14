@@ -1404,7 +1404,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v544</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v545</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2591,6 +2591,20 @@
         <option value="gauche">Elle arrive par la gauche</option>
         <option value="droite">Elle arrive par la droite</option>
       </select>
+
+      <div class="field-label">⚡ Attaque de la divinité (v545)</div>
+      <p class="meta">L'effet est <b>calculé</b>, pas dessiné : il part d'où elle est et arrive sur les cartes visées, quel que soit le nombre d'adversaires. Quand un type est choisi, il remplace les effets d'étape personnalisés.</p>
+      <select id="ultimeEffet" class="field-input">
+        <option value="rayon">Le rayon — un trait de lumière tendu jusqu'à la cible</option>
+        <option value="onde">L'onde de choc — un anneau qui se propage depuis elle</option>
+        <option value="projectiles">La volée — une pluie de projectiles qui convergent</option>
+        <option value="colonne">La colonne — une coulée qui tombe du ciel sur la cible</option>
+        <option value="aucun">Aucun — je garde mes effets d'étape</option>
+      </select>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+        <input type="color" id="ultimeCouleur" value="#7CFF4F" style="width:64px; height:38px; flex:none; border:none; background:none;">
+        <span class="meta" style="flex:1;">La couleur de l'attaque. Prends celle de la divinité — le vert venin pour Hariman.</span>
+      </div>
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
@@ -14877,6 +14891,7 @@ function ultimePersoVersMoteur(cle, u){
            replique: u.replique || '',
            vues: Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [],
            mes: u.mes || 'traversee', mesCote: u.mesCote || 'gauche',
+           effet: u.effet || 'rayon', couleur: u.couleur || '#7CFF4F',
            imageUrl: u.imageUrl || '', imagePath: u.imagePath || null,
            etapes: JSON.parse(JSON.stringify(etapes)) };
 }
@@ -15517,6 +15532,8 @@ function ultimeApercuDepuisFormulaire(){
     vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
     mes: document.getElementById('ultimeMes').value || 'traversee',
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
+    effet: document.getElementById('ultimeEffet').value || 'rayon',
+    couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
   };
 }
 
@@ -15840,6 +15857,8 @@ function resetUltimeForm(){
   renderUltimeVues();
   document.getElementById('ultimeMes').value = 'traversee';
   document.getElementById('ultimeMesCote').value = 'gauche';
+  document.getElementById('ultimeEffet').value = 'rayon';
+  document.getElementById('ultimeCouleur').value = '#7CFF4F';
   document.getElementById('ultimeName').value = '';
   document.getElementById('ultimeEmoji').value = '';
   document.getElementById('ultimeDesc').value = '';
@@ -15875,6 +15894,8 @@ function loadUltimeForEdit(cle){
   renderUltimeVues();
   document.getElementById('ultimeMes').value = u.mes || 'traversee';
   document.getElementById('ultimeMesCote').value = u.mesCote || 'gauche';
+  document.getElementById('ultimeEffet').value = u.effet || 'rayon';
+  document.getElementById('ultimeCouleur').value = u.couleur || '#7CFF4F';
   document.getElementById('ultimeCle').textContent = cle;
   document.getElementById('ultimeSaveBtn').textContent = "Mettre à jour l'ultime";
   document.getElementById('ultimeCancelBtn').style.display = 'block';
@@ -16004,6 +16025,8 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
     vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
     mes: document.getElementById('ultimeMes').value || 'traversee',
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
+    effet: document.getElementById('ultimeEffet').value || 'rayon',
+    couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
     updatedAt: Date.now() };
   ultimesCol.doc(cle).set(data).then(()=>{
     showToast(editingUltimeId ? 'Ultime mise à jour' : 'Ultime ajoutée');
@@ -19545,6 +19568,151 @@ async function invocationFrappe(){
   secousseCombat();
   await sleep(190);
 }
+/* v545 — LES EFFETS D'ATTAQUE CALCULÉS.
+   Tout est monté à la volée dans un calque posé sur l'écran de combat, et animé par
+   l'API d'animation du navigateur plutôt que par des classes CSS : une trajectoire dépend
+   de la position réelle de la divinité et de chaque carte visée, elle ne peut pas être
+   écrite d'avance dans la feuille de style.
+   Les coordonnées sont prises À L'INSTANT où l'effet part — les cartes se redessinent, un
+   point mémorisé plus tôt tomberait à côté (leçon de la v192). */
+function ultFxCalque(){
+  const hote = document.getElementById('combatFull');
+  if (!hote) return null;
+  let calque = document.getElementById('combatUltimeFx');
+  if (!calque){
+    calque = document.createElement('div');
+    calque.id = 'combatUltimeFx';
+    calque.style.cssText = 'position:absolute; inset:0; z-index:18; pointer-events:none; overflow:hidden;';
+    hote.appendChild(calque);
+  }
+  return calque;
+}
+function ultFxCentre(el, hote){
+  const r = el.getBoundingClientRect(), h = hote.getBoundingClientRect();
+  return { x: r.left - h.left + r.width / 2, y: r.top - h.top + r.height / 2 };
+}
+/* D'où part l'attaque : de la divinité si elle est à l'écran, sinon de la carte du lanceur —
+   une ultime sans image d'invocation doit rester regardable. */
+function ultFxOrigine(acteur, hote){
+  const img = document.querySelector('#combatInvocation.on #invVues img.vue-on');
+  if (img) return ultFxCentre(img, hote);
+  const carte = document.querySelector('[data-fighter="' + acteur.uid + '"] .combat-avatar');
+  if (carte) return ultFxCentre(carte, hote);
+  return { x: hote.clientWidth / 2, y: hote.clientHeight / 2 };
+}
+function ultFxImpact(calque, p, couleur, delai){
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute; left:' + p.x + 'px; top:' + p.y + 'px; width:110px; height:110px;'
+    + ' border-radius:50%; filter:blur(2px);'
+    + ' background:radial-gradient(circle, #fff 0%, ' + couleur + ' 42%, ' + couleur + '00 72%);';
+  calque.appendChild(d);
+  d.animate([
+    { transform:'translate(-50%,-50%) scale(.15)', opacity:0 },
+    { transform:'translate(-50%,-50%) scale(1)', opacity:1, offset:.3 },
+    { transform:'translate(-50%,-50%) scale(1.6)', opacity:0 }
+  ], { duration: 520, delay: delai || 0, easing:'ease-out', fill:'forwards' });
+}
+async function jouerEffetUltime(acteur, type, couleur, vises){
+  const hote = document.getElementById('combatFull');
+  const calque = ultFxCalque();
+  if (!hote || !calque) return;
+  calque.innerHTML = '';
+  const o = ultFxOrigine(acteur, hote);
+  const cibles = (vises || [])
+    .map(uid=> document.querySelector('[data-fighter="' + uid + '"] .combat-avatar'))
+    .filter(Boolean).map(el=> ultFxCentre(el, hote));
+  if (!cibles.length) cibles.push({ x: hote.clientWidth / 2, y: hote.clientHeight * 0.3 });
+  let duree = 700;
+
+  if (type === 'onde'){
+    const rayon = Math.max(hote.clientWidth, hote.clientHeight) * 1.25;
+    for (let i = 0; i < 3; i++){
+      const anneau = document.createElement('div');
+      anneau.style.cssText = 'position:absolute; left:' + o.x + 'px; top:' + o.y + 'px;'
+        + ' width:' + rayon + 'px; height:' + rayon + 'px; border-radius:50%;'
+        + ' border:' + (7 - i * 2) + 'px solid ' + couleur + '; box-shadow:0 0 30px ' + couleur + ';';
+      calque.appendChild(anneau);
+      anneau.animate([
+        { transform:'translate(-50%,-50%) scale(.04)', opacity:.95 },
+        { transform:'translate(-50%,-50%) scale(1)', opacity:0 }
+      ], { duration: 820, delay: i * 130, easing:'cubic-bezier(.15,.75,.3,1)', fill:'forwards' });
+    }
+    cibles.forEach((c, i)=> ultFxImpact(calque, c, couleur, 220 + i * 40));
+    duree = 1060;
+
+  } else if (type === 'colonne'){
+    cibles.forEach((c, i)=>{
+      const col = document.createElement('div');
+      col.style.cssText = 'position:absolute; left:' + c.x + 'px; top:0; width:78px; height:' + (c.y + 20) + 'px;'
+        + ' transform-origin:50% 0; filter:blur(3px);'
+        + ' background:linear-gradient(180deg, ' + couleur + '00, ' + couleur + ' 45%, #fff);';
+      calque.appendChild(col);
+      col.animate([
+        { transform:'translateX(-50%) scaleY(0)', opacity:0 },
+        { transform:'translateX(-50%) scaleY(1)', opacity:1, offset:.35 },
+        { transform:'translateX(-50%) scaleY(1)', opacity:1, offset:.7 },
+        { transform:'translateX(-50%) scaleY(1)', opacity:0 }
+      ], { duration: 780, delay: i * 140, easing:'cubic-bezier(.3,1,.4,1)', fill:'forwards' });
+      ultFxImpact(calque, c, couleur, 240 + i * 140);
+    });
+    duree = 840 + cibles.length * 140;
+
+  } else if (type === 'projectiles'){
+    cibles.forEach((c, i)=>{
+      for (let k = 0; k < 9; k++){
+        const p = document.createElement('div');
+        const taille = 12 + Math.random() * 14;
+        p.style.cssText = 'position:absolute; left:' + o.x + 'px; top:' + o.y + 'px;'
+          + ' width:' + taille + 'px; height:' + taille + 'px; border-radius:50%;'
+          + ' background:radial-gradient(circle, #fff, ' + couleur + ');'
+          + ' box-shadow:0 0 14px ' + couleur + ';';
+        calque.appendChild(p);
+        /* Chaque projectile part en éventail et se resserre sur la cible : un écart au
+           départ, aucun à l'arrivée, sinon la volée ressemble à une seule grosse boule. */
+        const ecartX = (Math.random() - .5) * 160, ecartY = (Math.random() - .5) * 120;
+        p.animate([
+          { transform:'translate(-50%,-50%) scale(.3)', opacity:0 },
+          { transform:'translate(' + (ecartX - 50) + '%,' + (ecartY - 50) + '%) scale(1)', opacity:1, offset:.18 },
+          { transform:'translate(' + (c.x - o.x) + 'px,' + (c.y - o.y) + 'px) translate(-50%,-50%) scale(.6)', opacity:1, offset:.85 },
+          { transform:'translate(' + (c.x - o.x) + 'px,' + (c.y - o.y) + 'px) translate(-50%,-50%) scale(.2)', opacity:0 }
+        ], { duration: 720, delay: i * 90 + k * 45, easing:'cubic-bezier(.4,.1,.6,1)', fill:'forwards' });
+      }
+      ultFxImpact(calque, c, couleur, 420 + i * 90);
+    });
+    duree = 1180 + cibles.length * 90;
+
+  } else {   /* le rayon, par défaut */
+    cibles.forEach((c, i)=>{
+      const dx = c.x - o.x, dy = c.y - o.y;
+      const dist = Math.hypot(dx, dy);
+      const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      const trait = document.createElement('div');
+      trait.style.cssText = 'position:absolute; left:' + o.x + 'px; top:' + o.y + 'px;'
+        + ' width:' + dist + 'px; height:18px; margin-top:-9px; border-radius:9px;'
+        + ' transform-origin:0 50%; filter:blur(1.5px);'
+        + ' background:linear-gradient(90deg, ' + couleur + '00, ' + couleur + ' 35%, #fff);'
+        + ' box-shadow:0 0 20px ' + couleur + ', 0 0 52px ' + couleur + ';';
+      calque.appendChild(trait);
+      const base = 'rotate(' + ang + 'deg) ';
+      trait.animate([
+        { transform: base + 'scaleX(0) scaleY(.3)', opacity:0 },
+        { transform: base + 'scaleX(1) scaleY(1)', opacity:1, offset:.28 },
+        { transform: base + 'scaleX(1) scaleY(1)', opacity:1, offset:.68 },
+        { transform: base + 'scaleX(1) scaleY(.2)', opacity:0 }
+      ], { duration: 760, delay: i * 90, easing:'cubic-bezier(.2,.9,.3,1)', fill:'forwards' });
+      ultFxImpact(calque, c, couleur, 230 + i * 90);
+    });
+    duree = 820 + cibles.length * 90;
+  }
+
+  await sleep(duree);
+  calque.innerHTML = '';
+}
+function ultFxNettoyer(){
+  const calque = document.getElementById('combatUltimeFx');
+  if (calque) calque.innerHTML = '';
+}
+
 async function invocationSortie(mes){
   const inv = document.getElementById('combatInvocation');
   const scene = inv && inv.querySelector('.inv-scene');
@@ -19600,6 +19768,8 @@ async function jouerSceneUltime(acteur){
     /* PHASE 2 — l'entrée en scène de la divinité, selon la mise en scène choisie sur sa
        fiche (v544). Dans les deux cas elle RESTE à l'écran pour la phase 3. */
     const mes = (u && u.mes) || 'traversee';
+    const effetUltime = (u && u.effet && u.effet !== 'aucun') ? u.effet : null;
+    const couleurUltime = (u && u.couleur) || '#7CFF4F';
     let diviniteLa = false;
     if (mes === 'apparition'){
       diviniteLa = await invocationEntree(acteur, u);
@@ -19615,7 +19785,9 @@ async function jouerSceneUltime(acteur){
     for (let i = 0; i < trace.length; i++){
       if (!combatState || combatState.ultimeSkip) return;
       const e = trace[i].etape || {};
-      if (!((e.fx && e.fx.image) || (e.fxSelf && e.fxSelf.image))) continue;
+      /* v545 : avec un effet calculé, CHAQUE étape se joue — même celles qui n'ont aucune
+         image posée à la main, puisque l'effet ne vient plus de la fiche de l'étape. */
+      if (!effetUltime && !((e.fx && e.fx.image) || (e.fxSelf && e.fxSelf.image))) continue;
       const cible = combatState.fighters.find(f=> f.uid === trace[i].cibleUid) || null;
       const vises = m2CiblesFx(acteur, e, cible).map(t=> t.uid);
       combatState.ultimeScene = { acteurUid: acteur.uid, vises };
@@ -19629,16 +19801,23 @@ async function jouerSceneUltime(acteur){
         + ' · fx ' + urlCourte(e.fx && e.fx.image)
         + ' · self ' + urlCourte(e.fxSelf && e.fxSelf.image));
       if (!combatState || combatState.ultimeSkip) return;
-      if (e.fxSelf && e.fxSelf.image){
-        clearStrayFxImages();
-        await withTimeout(playAttackFx(acteur.uid, [acteur.uid], e.fxSelf), 4000);
-        clearStrayFxImages();
-      }
-      if (!combatState || combatState.ultimeSkip) return;
-      if (e.fx && e.fx.image){
-        clearStrayFxImages();
-        await withTimeout(playAttackFx(acteur.uid, vises, e.fx), 4000);
-        clearStrayFxImages();
+      if (effetUltime){
+        /* L'effet calculé REMPLACE les effets d'étape : les deux ensemble se marcheraient
+           dessus, et c'est justement ce réglage à la main qu'on cherche à supprimer. */
+        await withTimeout(jouerEffetUltime(acteur, effetUltime, couleurUltime, vises), 4000);
+        ultFxNettoyer();
+      } else {
+        if (e.fxSelf && e.fxSelf.image){
+          clearStrayFxImages();
+          await withTimeout(playAttackFx(acteur.uid, [acteur.uid], e.fxSelf), 4000);
+          clearStrayFxImages();
+        }
+        if (!combatState || combatState.ultimeSkip) return;
+        if (e.fx && e.fx.image){
+          clearStrayFxImages();
+          await withTimeout(playAttackFx(acteur.uid, vises, e.fx), 4000);
+          clearStrayFxImages();
+        }
       }
     }
     /* v543 : la divinité ne s'efface qu'ICI, une fois toutes les étapes jouées. */
@@ -19651,6 +19830,7 @@ async function jouerSceneUltime(acteur){
     const inc = document.getElementById('combatIncantation');
     if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
     invocationRetirer();
+    ultFxNettoyer();
     if (full) full.classList.remove('ultime-scene');
     if (combatState){
       combatState.ultimeScene = null;
