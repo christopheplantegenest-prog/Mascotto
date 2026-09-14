@@ -1009,6 +1009,48 @@
   transition:opacity .3s ease, transform .3s ease;
 }
 #combatIncantation.replique #incReplique{ opacity:1; transform:translateY(0); }
+/* v541 — PHASE 2 : L'APPARITION DE LA DIVINITÉ. Un calque au-dessus de l'incantation.
+   L'image monte depuis le bas en grandissant, puis flotte sur place ; deux ou trois vues
+   s'alternent par-dessus pour l'animer sans changer de plan. Tout s'efface avant la phase
+   d'attaque : le calque couvre l'arène, il masquerait les combattants et leurs effets. */
+#combatInvocation{
+  position:absolute; inset:0; z-index:16; display:none; pointer-events:none; overflow:hidden;
+  opacity:1; transition:opacity .35s ease;
+}
+#combatInvocation.on{ display:block; }
+#combatInvocation.sortie{ opacity:0; }
+#combatInvocation .inv-fond{
+  position:absolute; inset:0; opacity:0; transition:opacity .45s ease;
+  background:radial-gradient(circle at 50% 44%, rgba(38,20,66,.55), rgba(0,0,0,.9));
+}
+#combatInvocation.fond .inv-fond{ opacity:1; }
+#combatInvocation .inv-scene{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  opacity:0; transform:translateY(26%) scale(.84);
+  transition:transform .62s cubic-bezier(.16,.86,.24,1.02), opacity .45s ease;
+}
+#combatInvocation.montee .inv-scene{ opacity:1; transform:translateY(0) scale(1); }
+#combatInvocation.flotte .inv-scene{ animation:invFlotte 2.6s ease-in-out infinite; }
+@keyframes invFlotte{
+  0%,100%{ transform:translateY(0) scale(1); }
+  50%{ transform:translateY(-2.4%) scale(1.015); }
+}
+#invVues{ position:relative; width:88%; height:72%; }
+#invVues img{
+  position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain;
+  opacity:0; filter:drop-shadow(0 0 28px rgba(170,140,255,.45));
+}
+#invVues img.vue-on{ opacity:1; }
+/* La secousse à l'arrivée : elle porte sur la pile du combat, pas sur l'arène seule, pour
+   que tout l'écran encaisse le choc d'un bloc. */
+@keyframes invSecousse{
+  0%,100%{ transform:translate(0,0); }
+  20%{ transform:translate(-4px,3px); }
+  40%{ transform:translate(4px,-3px); }
+  60%{ transform:translate(-3px,-2px); }
+  80%{ transform:translate(3px,2px); }
+}
+#combatFull.inv-secousse #combatStack{ animation:invSecousse .34s ease-in-out; }
 /* v540 : le bouton passe au niveau de l'écran de combat, et non plus de l'arène — il doit
    rester au-dessus du calque d'incantation, qui couvre toute la surface. */
 #combatUltimeSkipBtn{
@@ -1346,7 +1388,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v540</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v541</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1963,6 +2005,11 @@
       <div id="incReplique"></div>
     </div>
   </div>
+  <!-- v541 — PHASE 2 de la cinématique d'invocation. Vide et masqué hors d'une ultime. -->
+  <div id="combatInvocation">
+    <div class="inv-fond"></div>
+    <div class="inv-scene"><div id="invVues"></div></div>
+  </div>
   <!-- v538/v540 : visible seulement pendant une scène d'ultime (voir .ultime-scene). -->
   <button type="button" id="combatUltimeSkipBtn">⏩ Passer</button>
   <div id="combatEndOverlay" style="display:none; position:absolute; inset:0; background:rgba(0,0,0,.88); align-items:center; justify-content:center; flex-direction:column; z-index:20; text-align:center;">
@@ -2510,6 +2557,13 @@
       <div class="field-label">🎙️ Réplique d'invocation (v540)</div>
       <input type="text" id="ultimeReplique" class="field-input" maxlength="80" placeholder="Hariman, je t'invoque !">
       <p class="meta">Ce que lance le combattant au début de la cinématique, pendant que son portrait apparaît entre les bandes noires. Laissé vide, il dira « &lt;nom de l'ultime&gt;, je t'invoque ! ».</p>
+
+      <div class="field-label">🌅 Vues d'invocation (v541)</div>
+      <p class="meta">La divinité telle qu'elle apparaît en grand pendant la cinématique — une image <b>différente de la vignette</b>, qui est plafonnée à 400 px et devient floue en plein écran. Jusqu'à <b>3 vues</b> : elles s'alternent pour l'animer, façon gif. Aucune vue posée : la vignette de l'ultime sert d'image.</p>
+      <p class="meta"><b>Passe par l'hébergement GitHub</b> pour ces images-là : une fiche ne peut pas dépasser 1 Mo en base, et trois grandes images envoyées depuis le téléphone y tiennent à peine. L'envoi depuis le téléphone reste là pour essayer vite.</p>
+      <div id="ultimeVuesListe"></div>
+      <input type="file" id="ultimeVueFile" accept="image/*" class="field-input" style="margin-top:6px;">
+      <button type="button" class="btn-secondary" id="ultimeVueGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une vue hébergée</button>
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
@@ -14792,6 +14846,7 @@ function ultimePersoVersMoteur(cle, u){
   if (!etapes.length && ULTIMES_ORIGINE[cle]) etapes = ULTIMES_ORIGINE[cle].etapes || [];
   return { nom: u.nom || '(sans nom)', emoji: u.emoji || '🌟', desc: u.desc || '',
            replique: u.replique || '',
+           vues: Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [],
            imageUrl: u.imageUrl || '', imagePath: u.imagePath || null,
            etapes: JSON.parse(JSON.stringify(etapes)) };
 }
@@ -15380,6 +15435,41 @@ let editingUltimeId = null;
 let ultimeImageDataUrl = null;
 let ultimeImagePath = null;
 let ultimeEtapesBrouillon = [];
+/* v541 — LES VUES D'INVOCATION : jusqu'à trois images en grand format, alternées pendant
+   l'apparition. Même forme que l'image de la fiche ({ imageUrl, imagePath }) pour que les
+   deux voies — fichier hébergé ou envoi téléphone — se rangent au même endroit. */
+let ultimeVuesBrouillon = [];
+const ULTIME_VUES_MAX = 3;
+
+function renderUltimeVues(){
+  const wrap = document.getElementById('ultimeVuesListe');
+  if (!wrap) return;
+  if (!ultimeVuesBrouillon.length){
+    wrap.innerHTML = '<p class="meta">Aucune vue : la vignette de l\'ultime servira d\'image.</p>';
+    return;
+  }
+  wrap.innerHTML = ultimeVuesBrouillon.map((v, i)=>
+    '<div class="editor-list-item" style="align-items:center;">'
+    + '<img src="' + (v.imageUrl || '') + '" style="width:54px; height:54px; object-fit:contain; flex:none; background:#111; border-radius:6px;">'
+    + '<div class="name" style="flex:1;">Vue ' + (i + 1)
+    + '<span class="meta" style="display:block; font-size:11px;">' + (v.imagePath ? '📁 ' + v.imagePath : '📱 envoyée depuis le téléphone') + '</span></div>'
+    + '<button class="btn-secondary" data-ult-vue-suppr="' + i + '" style="flex:none;">🗑️</button>'
+    + '</div>').join('');
+  wrap.querySelectorAll('button[data-ult-vue-suppr]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      ultimeVuesBrouillon.splice(parseInt(btn.dataset.ultVueSuppr, 10), 1);
+      renderUltimeVues();
+    });
+  });
+}
+function ajouterVueUltime(vue){
+  if (ultimeVuesBrouillon.length >= ULTIME_VUES_MAX){
+    showToast('Trois vues au maximum : retires-en une avant d\'en ajouter une autre');
+    return;
+  }
+  ultimeVuesBrouillon.push(vue);
+  renderUltimeVues();
+}
 
 function ultimePersoParCle(cle){ return ultimesPerso.find(u=> u.id === cle) || null; }
 
@@ -15638,6 +15728,8 @@ function resetUltimeForm(){
   ultimeImagePath = null;
   ultimeEtapesBrouillon = [];
   ultimeEtapeOuverte = null;
+  ultimeVuesBrouillon = [];
+  renderUltimeVues();
   document.getElementById('ultimeName').value = '';
   document.getElementById('ultimeEmoji').value = '';
   document.getElementById('ultimeDesc').value = '';
@@ -15669,6 +15761,8 @@ function loadUltimeForEdit(cle){
   } else wrapImg.style.display = 'none';
   ultimeEtapesBrouillon = JSON.parse(JSON.stringify(u.etapes || []));
   ultimeEtapeOuverte = null;
+  ultimeVuesBrouillon = Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [];
+  renderUltimeVues();
   document.getElementById('ultimeCle').textContent = cle;
   document.getElementById('ultimeSaveBtn').textContent = "Mettre à jour l'ultime";
   document.getElementById('ultimeCancelBtn').style.display = 'block';
@@ -15726,6 +15820,41 @@ document.getElementById('ultimeImageFile').addEventListener('change', (e)=>{
   };
   reader.readAsDataURL(file);
 });
+/* v541 : une vue d'invocation s'affiche en PLEIN ÉCRAN, donc on garde 900 px et non les
+   400 px de la vignette. C'est lourd en base64 — d'où l'avertissement au-delà de 400 ko et
+   le conseil d'héberger ces images-là sur GitHub. */
+document.getElementById('ultimeVueFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSize = 900;
+      let w = img.width, h = img.height;
+      if (w > maxSize || h > maxSize){
+        if (w > h){ h = Math.round(h * maxSize / w); w = maxSize; }
+        else { w = Math.round(w * maxSize / h); h = maxSize; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const url = canvas.toDataURL('image/png');
+      const ko = Math.round(url.length / 1024);
+      if (ko > 400) showToast('Cette vue pèse ' + ko + ' ko — héberge-la plutôt sur GitHub, la fiche plafonne à 1 Mo');
+      ajouterVueUltime({ imageUrl: url, imagePath: null });
+      document.getElementById('ultimeVueFile').value = '';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('ultimeVueGithubBtn').addEventListener('click', ()=>{
+  openGithubFilePicker(null, (item)=>{
+    ajouterVueUltime({ imageUrl: resolveMediaPath(item.path), imagePath: item.path });
+    showToast('Vue ajoutée : ' + item.path);
+  });
+});
 document.getElementById('ultimeImageGithubBtn').addEventListener('click', ()=>{
   openGithubFilePicker(null, (item)=>{
     ultimeImagePath = item.path;
@@ -15759,6 +15888,7 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
     imageUrl: ultimeImageDataUrl || '',
     imagePath: ultimeImagePath || null,
     etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
+    vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
     updatedAt: Date.now() };
   ultimesCol.doc(cle).set(data).then(()=>{
     showToast(editingUltimeId ? 'Ultime mise à jour' : 'Ultime ajoutée');
@@ -19152,6 +19282,66 @@ async function jouerIncantation(acteur, u){
   await sleep(320);
 }
 
+/* v541 — LOT 3d-1 : LA PHASE 2, L'APPARITION DE LA DIVINITÉ.
+   Une seule image animée, pas un montage de plans : elle monte, encaisse une secousse en
+   arrivant, puis flotte. Les deux ou trois vues s'alternent par-dessus, façon gif — elles
+   sont toutes posées l'une sur l'autre et on ne change que celle qui est visible, pour ne
+   jamais attendre le chargement d'une image au milieu de l'animation.
+   Sans vue posée, la vignette de l'ultime sert d'image ; sans vignette non plus, la phase 2
+   est sautée — mieux vaut pas d'apparition qu'un carré vide en plein écran. */
+function vuesInvocation(u){
+  const vues = (u && Array.isArray(u.vues) ? u.vues : []).map(v=> v && v.imageUrl).filter(Boolean);
+  if (vues.length) return vues;
+  const repli = (u && u.imageUrl) || '';
+  return repli ? [repli] : [];
+}
+function secousseCombat(){
+  const full = document.getElementById('combatFull');
+  if (!full) return;
+  full.classList.remove('inv-secousse');
+  void full.offsetWidth;
+  full.classList.add('inv-secousse');
+  setTimeout(()=> full.classList.remove('inv-secousse'), 420);
+}
+async function jouerInvocation(acteur, u){
+  const inv = document.getElementById('combatInvocation');
+  const hote = document.getElementById('invVues');
+  const vues = vuesInvocation(u);
+  if (!inv || !hote || !vues.length) return;
+  hote.innerHTML = vues.map((url, i)=>
+    '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
+  inv.classList.remove('on','fond','montee','flotte','sortie');
+  inv.classList.add('on');
+  void inv.offsetWidth;   // sans cette lecture, le navigateur ne voit aucun changement d'état
+  inv.classList.add('fond','montee');
+  let rang = 0, minuterie = null;
+  if (vues.length > 1){
+    minuterie = setInterval(()=>{
+      const imgs = hote.querySelectorAll('img');
+      if (!imgs.length) return;
+      imgs[rang % imgs.length].classList.remove('vue-on');
+      rang++;
+      imgs[rang % imgs.length].classList.add('vue-on');
+    }, 160);
+  }
+  const fin = ()=>{
+    if (minuterie) clearInterval(minuterie);
+    inv.classList.add('sortie');
+    setTimeout(()=>{
+      inv.classList.remove('on','fond','montee','flotte','sortie');
+      hote.innerHTML = '';
+    }, 400);
+  };
+  await sleep(660);
+  if (sceneCoupee()){ fin(); return; }
+  secousseCombat();
+  inv.classList.add('flotte');
+  await sleep(1500);
+  fin();
+  if (sceneCoupee()) return;
+  await sleep(400);
+}
+
 /* v538 — LOT 3b : LA PHASE D'ATTAQUE DE L'ULTIME EST UNE SCÈNE.
    Le moteur a déjà tout résolu d'un bloc et laissé sa trace (v537 : quelle étape, quelle
    cible). On la rejoue ici comme une petite cinématique : l'interface de jeu s'efface,
@@ -19181,10 +19371,14 @@ async function jouerSceneUltime(acteur){
   combatState.anim = { actorUid: acteur.uid, kind:'magic' };
   if (full) full.classList.add('ultime-scene');
   try {
+    const u = (M2.ultimeDe && M2.ultimeDe(acteur)) || null;
     /* PHASE 1 — l'incantation. Elle joue pour TOUT LE MONDE, adversaires compris (choix du
        14/09) : c'est aussi ce qui donne du poids à l'ultime qu'on prend dans la figure.
        Elle joue même quand aucune étape n'a d'effet : il y a toujours quelque chose à voir. */
-    await jouerIncantation(acteur, (M2.ultimeDe && M2.ultimeDe(acteur)) || null);
+    await jouerIncantation(acteur, u);
+    if (!combatState) return;
+    /* PHASE 2 — l'apparition de la divinité. */
+    await jouerInvocation(acteur, u);
     if (!combatState) return;
     /* PHASE 3 — les étapes, chacune avec son effet. */
     for (let i = 0; i < trace.length; i++){
@@ -19223,6 +19417,12 @@ async function jouerSceneUltime(acteur){
     sceneUltimeEnCours = false;
     const inc = document.getElementById('combatIncantation');
     if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
+    const inv = document.getElementById('combatInvocation');
+    if (inv){
+      inv.classList.remove('on','fond','montee','flotte','sortie');
+      const hote = document.getElementById('invVues');
+      if (hote) hote.innerHTML = '';
+    }
     if (full) full.classList.remove('ultime-scene');
     if (combatState){
       combatState.ultimeScene = null;
@@ -29466,6 +29666,9 @@ function preloadCombatFx(fighters){
         if (e && e.fx && e.fx.sound) prechargerSonFx(e.fx.sound);
         if (e && e.fxSelf && e.fxSelf.sound) prechargerSonFx(e.fxSelf.sound);
       });
+      /* v541 : et les vues d'invocation, qui s'affichent en plein écran — une vue qui
+         arrive en retard casserait l'alternance au milieu de l'apparition. */
+      ((u && u.vues) || []).forEach(v=>{ if (v && v.imageUrl) urls.add(v.imageUrl); });
     });
   } catch(err){ /* jamais bloquer un combat pour un préchargement */ }
   if (!urls.size) return;
