@@ -1043,6 +1043,9 @@
   transition:transform .66s cubic-bezier(.3,.9,.3,1), opacity .4s ease;
 }
 #combatInvocation.cote .inv-fond{ opacity:.4; }
+/* v544 : pendant la traversée, le voile s'éclaircit au moment où elle se dresse, pour que
+   l'arène et les dégâts restent lisibles pendant la frappe. */
+#combatInvocation.voile-clair .inv-fond{ opacity:.42; }
 #combatInvocation.flotte.cote .inv-scene{ animation:invFlotteCote 2.8s ease-in-out infinite; }
 @keyframes invFlotteCote{
   0%,100%{ transform:translate(-27%, -3%) scale(.56); }
@@ -1401,7 +1404,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v543</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v544</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2577,6 +2580,17 @@
       <div id="ultimeVuesListe"></div>
       <input type="file" id="ultimeVueFile" accept="image/*" class="field-input" style="margin-top:6px;">
       <button type="button" class="btn-secondary" id="ultimeVueGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une vue hébergée</button>
+
+      <div class="field-label">🎬 Mise en scène (v544)</div>
+      <p class="meta">Comment la divinité entre en scène. Chaque scénario est une animation à part : deux ultimes qui partagent le même scénario se ressemblent, d'où l'intérêt de varier.</p>
+      <select id="ultimeMes" class="field-input">
+        <option value="traversee">La traversée — elle entre par un côté, frappe au passage, sort par l'autre</option>
+        <option value="apparition">L'apparition — elle monte au centre, se range sur le côté, puis frappe</option>
+      </select>
+      <select id="ultimeMesCote" class="field-input" style="margin-top:6px;">
+        <option value="gauche">Elle arrive par la gauche</option>
+        <option value="droite">Elle arrive par la droite</option>
+      </select>
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
@@ -14862,6 +14876,7 @@ function ultimePersoVersMoteur(cle, u){
   return { nom: u.nom || '(sans nom)', emoji: u.emoji || '🌟', desc: u.desc || '',
            replique: u.replique || '',
            vues: Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [],
+           mes: u.mes || 'traversee', mesCote: u.mesCote || 'gauche',
            imageUrl: u.imageUrl || '', imagePath: u.imagePath || null,
            etapes: JSON.parse(JSON.stringify(etapes)) };
 }
@@ -15500,6 +15515,8 @@ function ultimeApercuDepuisFormulaire(){
     imagePath: ultimeImagePath || null,
     etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
     vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
+    mes: document.getElementById('ultimeMes').value || 'traversee',
+    mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
   };
 }
 
@@ -15821,6 +15838,8 @@ function resetUltimeForm(){
   ultimeEtapeOuverte = null;
   ultimeVuesBrouillon = [];
   renderUltimeVues();
+  document.getElementById('ultimeMes').value = 'traversee';
+  document.getElementById('ultimeMesCote').value = 'gauche';
   document.getElementById('ultimeName').value = '';
   document.getElementById('ultimeEmoji').value = '';
   document.getElementById('ultimeDesc').value = '';
@@ -15854,6 +15873,8 @@ function loadUltimeForEdit(cle){
   ultimeEtapeOuverte = null;
   ultimeVuesBrouillon = Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [];
   renderUltimeVues();
+  document.getElementById('ultimeMes').value = u.mes || 'traversee';
+  document.getElementById('ultimeMesCote').value = u.mesCote || 'gauche';
   document.getElementById('ultimeCle').textContent = cle;
   document.getElementById('ultimeSaveBtn').textContent = "Mettre à jour l'ultime";
   document.getElementById('ultimeCancelBtn').style.display = 'block';
@@ -15981,6 +16002,8 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
     imagePath: ultimeImagePath || null,
     etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
     vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
+    mes: document.getElementById('ultimeMes').value || 'traversee',
+    mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
     updatedAt: Date.now() };
   ultimesCol.doc(cle).set(data).then(()=>{
     showToast(editingUltimeId ? 'Ultime mise à jour' : 'Ultime ajoutée');
@@ -19404,7 +19427,11 @@ function invocationRetirer(){
   if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
-  if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie');
+  if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair');
+  /* v544 : les styles posés à la main pendant la traversée doivent sauter, sans quoi la
+     prochaine scène repartirait de la dernière position de la précédente. */
+  const scene = inv && inv.querySelector('.inv-scene');
+  if (scene){ scene.style.transition = ''; scene.style.transform = ''; scene.style.opacity = ''; }
   if (hote) hote.innerHTML = '';
 }
 /* Rend VRAI si la divinité est bien à l'écran — c'est ce qui décide si la suite de la scène
@@ -19453,11 +19480,85 @@ async function invocationDeCote(){
   inv.classList.add('flotte');
   await sleep(140);
 }
-async function invocationSortie(){
+/* v544 — LA TRAVERSÉE. Le mouvement est piloté en style direct et non par des classes : une
+   trajectoire enchaîne cinq transformations différentes, une classe par état ferait une
+   feuille de style illisible pour rien. La contrepartie est qu'il faut REMETTRE LES STYLES À
+   ZÉRO au retrait, sinon l'ancienne apparition repartirait de la dernière position.
+   `invocationSens` vaut 1 quand elle arrive par la gauche : tous les décalages horizontaux
+   sont multipliés par lui, ce qui donne le sens inverse sans écrire la scène deux fois. */
+let invocationSens = 1;
+function invocationVues(hote, vues){
+  hote.innerHTML = vues.map((url, i)=>
+    '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
+  if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
+  if (vues.length < 2) return;
+  let rang = 0;
+  invocationTimer = setInterval(()=>{
+    const imgs = hote.querySelectorAll('img');
+    if (!imgs.length) return;
+    imgs[rang % imgs.length].classList.remove('vue-on');
+    rang++;
+    imgs[rang % imgs.length].classList.add('vue-on');
+  }, 160);
+}
+async function invocationTraversee(acteur, u){
   const inv = document.getElementById('combatInvocation');
+  const hote = document.getElementById('invVues');
+  const scene = inv && inv.querySelector('.inv-scene');
+  const vues = vuesInvocation(u);
+  if (!inv || !hote || !scene || !vues.length) return false;
+  invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
+  const s = invocationSens;
+  invocationVues(hote, vues);
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair');
+  inv.classList.add('on');
+  scene.style.transition = 'none';
+  scene.style.opacity = '1';
+  scene.style.transform = 'translate(' + (-128 * s) + '%, 4%) scale(.5)';
+  void inv.offsetWidth;   // sans cette lecture, le point de départ n'est jamais appliqué
+  inv.classList.add('fond');
+  /* 1 — elle traverse et ralentit jusqu'à son poste de tir */
+  scene.style.transition = 'transform 900ms cubic-bezier(.22,.7,.3,1)';
+  scene.style.transform = 'translate(' + (-16 * s) + '%, -7%) scale(.64)';
+  await sleep(940);
+  if (sceneCoupee()){ invocationRetirer(); return false; }
+  /* 2 — elle se dresse vers l'adversaire et le voile s'éclaircit */
+  inv.classList.add('voile-clair');
+  scene.style.transition = 'transform 260ms ease-out';
+  scene.style.transform = 'translate(' + (-16 * s) + '%, -9%) scale(.7) rotate(' + (3 * s) + 'deg)';
+  await sleep(300);
+  return !sceneCoupee();
+}
+/* L'élan puis le coup, joué juste avant les étapes : les effets et les dégâts tombent
+   pendant qu'elle est encore en pleine frappe. */
+async function invocationFrappe(){
+  const inv = document.getElementById('combatInvocation');
+  const scene = inv && inv.querySelector('.inv-scene');
+  if (!inv || !scene || !inv.classList.contains('on')) return;
+  const s = invocationSens;
+  scene.style.transition = 'transform 200ms ease-in';
+  scene.style.transform = 'translate(' + (-27 * s) + '%, -9%) scale(.66) rotate(' + (-5 * s) + 'deg)';
+  await sleep(210);
+  if (sceneCoupee()) return;
+  scene.style.transition = 'transform 130ms cubic-bezier(.2,1.4,.4,1)';
+  scene.style.transform = 'translate(' + (-3 * s) + '%, -9%) scale(.78) rotate(' + (7 * s) + 'deg)';
+  secousseCombat();
+  await sleep(190);
+}
+async function invocationSortie(mes){
+  const inv = document.getElementById('combatInvocation');
+  const scene = inv && inv.querySelector('.inv-scene');
   if (!inv || !inv.classList.contains('on')){ invocationRetirer(); return; }
-  inv.classList.add('sortie');
-  await sleep(420);
+  if (mes === 'traversee' && scene){
+    scene.style.transition = 'transform 640ms cubic-bezier(.6,0,.9,.4), opacity 340ms ease 320ms';
+    scene.style.transform = 'translate(' + (122 * invocationSens) + '%, -14%) scale(.5)';
+    scene.style.opacity = '0';
+    inv.classList.add('sortie');
+    await sleep(680);
+  } else {
+    inv.classList.add('sortie');
+    await sleep(420);
+  }
   invocationRetirer();
 }
 
@@ -19496,11 +19597,19 @@ async function jouerSceneUltime(acteur){
        Elle joue même quand aucune étape n'a d'effet : il y a toujours quelque chose à voir. */
     await jouerIncantation(acteur, u);
     if (!combatState) return;
-    /* PHASE 2 — l'apparition de la divinité. Elle ne repart pas : elle se range sur le côté
-       et assiste à son propre coup (v543). */
-    const diviniteLa = await invocationEntree(acteur, u);
-    if (!combatState) return;
-    if (diviniteLa) await invocationDeCote();
+    /* PHASE 2 — l'entrée en scène de la divinité, selon la mise en scène choisie sur sa
+       fiche (v544). Dans les deux cas elle RESTE à l'écran pour la phase 3. */
+    const mes = (u && u.mes) || 'traversee';
+    let diviniteLa = false;
+    if (mes === 'apparition'){
+      diviniteLa = await invocationEntree(acteur, u);
+      if (!combatState) return;
+      if (diviniteLa) await invocationDeCote();
+    } else {
+      diviniteLa = await invocationTraversee(acteur, u);
+      if (!combatState) return;
+      if (diviniteLa) await invocationFrappe();
+    }
     if (!combatState) return;
     /* PHASE 3 — les étapes, chacune avec son effet. */
     for (let i = 0; i < trace.length; i++){
@@ -19533,7 +19642,7 @@ async function jouerSceneUltime(acteur){
       }
     }
     /* v543 : la divinité ne s'efface qu'ICI, une fois toutes les étapes jouées. */
-    if (combatState && !combatState.ultimeSkip) await invocationSortie();
+    if (combatState && !combatState.ultimeSkip) await invocationSortie(mes);
   } finally {
     /* Quoi qu'il arrive — fin de la suite, bouton « Passer », combat refermé en route —
        l'écran redevient un écran de jeu. Une interface restée masquée bloquerait la partie. */
