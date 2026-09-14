@@ -1388,7 +1388,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v541</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v542</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2567,6 +2567,8 @@
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
+      <button type="button" class="btn-capture" id="ultimeApercuBtn" style="width:100%; margin-top:12px;">▶️ Voir la scène</button>
+      <p class="meta">Joue la cinématique entière — incantation, apparition, étapes — sur deux robots factices, sans passer par un combat. Prend ce qui est à l'écran, même non enregistré. Le bouton « ⏩ Passer » coupe court.</p>
       <p class="meta">Une ultime enchaîne une ou plusieurs étapes, chacune étant une attaque complète du moteur, jouée dans l'ordre de la liste. La première étape décide si le joueur choisit une cible. Une étape ne coûte rien : une ultime est gratuite par nature.</p>
 
       <div class="field-label">Identifiant</div>
@@ -15471,6 +15473,87 @@ function ajouterVueUltime(vue){
   renderUltimeVues();
 }
 
+/* v542 — L'APERÇU DE LA SCÈNE.
+   La fiche est lue DANS LE FORMULAIRE et non en base : on veut voir l'effet d'un réglage
+   avant de l'enregistrer, sinon l'aperçu ne sert à rien pendant le réglage. */
+function ultimeApercuDepuisFormulaire(){
+  lireEtapeOuverte();   // l'étape dépliée n'est reportée dans le brouillon qu'à la lecture
+  return {
+    nom: (document.getElementById('ultimeName').value || '').trim() || 'Aperçu',
+    emoji: (document.getElementById('ultimeEmoji').value || '').trim() || '🌟',
+    desc: (document.getElementById('ultimeDesc').value || '').trim(),
+    replique: (document.getElementById('ultimeReplique').value || '').trim(),
+    imageUrl: ultimeImageDataUrl || '',
+    imagePath: ultimeImagePath || null,
+    etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
+    vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
+  };
+}
+
+/* Le combat factice : un allié, deux adversaires, tous bâtis sur le premier modèle du
+   catalogue. Il n'est jamais joué — on lui vole juste son arène et ses cartes pour avoir
+   de quoi poser les effets, puis on le jette. Trois garde-fous :
+   - `resolving` remis à VRAI tout de suite après le lancement, sinon la boucle de tour
+     (un battement toutes les 150 ms) prendrait la main pendant la scène ;
+   - des PV énormes, pour qu'aucune étape ne tue personne et ne déclenche une fin de combat ;
+   - le tableau des ultimes du moteur est remplacé le temps de l'aperçu, puis remis d'aplomb
+     dans le `finally` — un tableau resté de travers casserait les vrais combats. */
+let apercuUltimeEnCours = false;
+async function apercuSceneUltime(){
+  if (apercuUltimeEnCours) return;
+  if (combatState && !combatState.finished){ showToast('Un combat est déjà en cours'); return; }
+  const u = ultimeApercuDepuisFormulaire();
+  if (!u.etapes.length){ showToast("Ajoute au moins une étape : c'est elle qui porte les effets"); return; }
+  const m = (typeof robotsModeles !== 'undefined' && robotsModeles.length) ? robotsModeles[0] : null;
+  if (!m){ showToast('Il faut au moins un modèle de robot dans le catalogue'); return; }
+  const slot = { modele: m.id, main: [], arme:null, armure:null, accessoire:null, ia:'normal' };
+  const allies  = [ctCombattantDepuisSlot(slot, 'player', 0)].filter(Boolean);
+  const ennemis = [ctCombattantDepuisSlot(slot, 'enemy', 0), ctCombattantDepuisSlot(slot, 'enemy', 0)].filter(Boolean);
+  if (!allies.length || !ennemis.length){ showToast('Ce modèle ne donne pas de combattant utilisable'); return; }
+  apercuUltimeEnCours = true;
+  showToast('Aperçu en préparation…');
+  try {
+    M2.chargerUltimes({ __apercu: ultimePersoVersMoteur('__apercu', u) });
+    await startCombatM2({ allies, ennemis }, DEFAULT_ARENA_BG, { test:true, skipTransition:true });
+    if (!combatState) return;
+    combatState.resolving = true;
+    combatState.apercuUltime = true;
+    combatState.fighters.forEach(f=>{ f.maxHp = 99999; f.hp = 99999; });
+    const acteur = combatState.fighters.find(f=> f.side === 'player');
+    if (!acteur){ showToast('Aperçu impossible : aucun lanceur'); return; }
+    acteur.ultimeNom = u.nom;
+    acteur.ultime = 100;
+    acteur.ultimePrete = true;
+    const cible = combatState.fighters.find(f=> f.side === 'enemy' && f.alive) || null;
+    combatState.hitUids = [];
+    M2.actionDuTour(acteur, 'ultime', cible);
+    await jouerSceneUltime(acteur);
+  } catch(err){
+    showToast('Aperçu interrompu : ' + (err && err.message ? err.message : err));
+    if (typeof journal === 'function') journal('ultime', 'aperçu en échec', String(err && err.stack || err), true);
+  } finally {
+    /* On démonte tout à la main : l'aperçu ne passe pas par l'écran de fin de combat. */
+    clearInterval(combatTickTimer);
+    sceneUltimeEnCours = false;
+    const full = document.getElementById('combatFull');
+    if (full) full.classList.remove('show', 'reveal', 'ultime-scene', 'inv-secousse');
+    const inc = document.getElementById('combatIncantation');
+    if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
+    const inv = document.getElementById('combatInvocation');
+    if (inv){
+      inv.classList.remove('on','fond','montee','flotte','sortie');
+      const hote = document.getElementById('invVues');
+      if (hote) hote.innerHTML = '';
+    }
+    clearStrayFxImages();
+    libererImagesDeCombat();
+    combatState = null;
+    appliquerUltimesPerso();   // remet le vrai tableau d'ultimes en place
+    playMusicForKey('map');
+    apercuUltimeEnCours = false;
+  }
+}
+
 function ultimePersoParCle(cle){ return ultimesPerso.find(u=> u.id === cle) || null; }
 
 function resumeEtapeUltime(e){
@@ -15849,6 +15932,7 @@ document.getElementById('ultimeVueFile').addEventListener('change', (e)=>{
   };
   reader.readAsDataURL(file);
 });
+document.getElementById('ultimeApercuBtn').addEventListener('click', apercuSceneUltime);
 document.getElementById('ultimeVueGithubBtn').addEventListener('click', ()=>{
   openGithubFilePicker(null, (item)=>{
     ajouterVueUltime({ imageUrl: resolveMediaPath(item.path), imagePath: item.path });
