@@ -1288,7 +1288,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v532</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v533</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2536,7 +2536,17 @@
           <option value="arme">⚔️ Arme</option>
           <option value="armure">🛡️ Armure</option>
           <option value="accessoire">💍 Accessoire</option>
+          <option value="ultime">🌟 Ultime</option>
         </select>
+
+        <!-- v533 : visible seulement quand la categorie est « Ultime » -->
+        <div id="itemUltimeWrap" style="display:none;">
+          <div class="field-label">Quelle ultime ?</div>
+          <select id="itemUltimeCle" class="field-input"></select>
+          <div class="field-label">Qui peut la porter ?</div>
+          <select id="itemUltimeRestriction" class="field-input"></select>
+          <p class="meta" style="margin:4px 0 0; font-size:11px;">« Tout le monde » laisse l'ultime libre. Choisis un vice pour la réserver.</p>
+        </div>
 
         <div class="field-label">Effet <span class="meta" style="font-weight:normal;">(seuls les effets de cet emplacement sont proposés)</span></div>
         <select id="itemEffectType" class="field-input">
@@ -12475,6 +12485,7 @@ function loadItemForEdit(id){
     document.getElementById('itemCombatStatusValue').value = cu.statusEffect.value != null ? cu.statusEffect.value : 10;
   }
   document.getElementById('itemEquipCategory').value = it.equipCategory || 'accessoire';
+  remplirChampsUltime(it.ultimeCle, it.ultimeRestriction);   // v533
   rebatirMenuEffetObjet(it.effectType || 'speed_boost');   // v449 : le menu dépend de l'emplacement
   document.getElementById('itemEffectValueLabel').textContent = (document.getElementById('itemEffectType').value === 'speed_boost') ? 'Valeur (%)' : 'Valeur (bonus fixe)';
   document.getElementById('itemEffectValue').value = it.effectValue || 20;
@@ -12528,6 +12539,7 @@ function resetItemForm(){
   document.getElementById('itemCombatStatusDuration').value = 3;
   document.getElementById('itemCombatStatusValue').value = 10;
   document.getElementById('itemEquipCategory').value = 'accessoire';
+  remplirChampsUltime('', '');   // v533
   rebatirMenuEffetObjet('speed_boost');
   document.getElementById('itemEffectValue').value = 20;
   document.getElementById('itemEffectDuration').value = 'permanent';
@@ -12550,6 +12562,8 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
   const description = document.getElementById('itemDescription').value.trim();
   const equippable = type === 'equipement' ? true : document.getElementById('itemEquippable').checked;
   const equipCategory = document.getElementById('itemEquipCategory').value;
+  const ultimeCle = (equipCategory === 'ultime') ? (document.getElementById('itemUltimeCle').value || '') : '';
+  const ultimeRestriction = (equipCategory === 'ultime') ? (document.getElementById('itemUltimeRestriction').value || '') : '';
   const effectType = document.getElementById('itemEffectType').value;
   const effectValue = parseInt(document.getElementById('itemEffectValue').value, 10) || 0;
   const effectDuration = document.getElementById('itemEffectDuration').value;
@@ -12591,7 +12605,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
     };
     if (culture.stages.length < 2){ showToast('Une graine demande au moins deux stades'); return; }
   }
-  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -15771,7 +15785,14 @@ const ULTIMES = {
   paresse: { nom:'Grande torpeur', emoji:'💤', desc:'Une torpeur qui endort tout le camp adverse et vide son cristal.',
     etapes:[ { famille:'ener', type:'statut_camp', statut:'sommeil', chanceStatut:100, duree:1 }, { famille:'ener', type:'mana_camp', mana:25 } ] },
 };
-function ultimeDe(f){ return (f && f.ultimeNom && Object.values(ULTIMES).find(u=> u.nom === f.ultimeNom)) || ULTIMES[f.vice] || ULTIMES.orgueil; }
+function ultimeDe(f){
+  const portee = f && f.ultimeNom && Object.values(ULTIMES).find(u=> u.nom === f.ultimeNom);
+  if (portee) return portee;
+  /* v533 : sans objet d'ultime, le robot garde celle de son vice — sauf si le reglage
+     ULTIME_VICE_PAR_DEFAUT a ete mis a false, auquel cas il n'en a aucune. */
+  if (typeof ULTIME_VICE_PAR_DEFAUT !== 'undefined' && !ULTIME_VICE_PAR_DEFAUT) return null;
+  return ULTIMES[f.vice] || ULTIMES.orgueil;
+}
 /* La jauge monte avec les dégâts subis : pleine quand on a encaissé
    R.chargeUltime % de ses PV max. Une seule annonce au passage à 100. */
 function chargerUltime(f, dmg){
@@ -15781,6 +15802,7 @@ function chargerUltime(f, dmg){
   if (f.ultime >= 100 && !f.ultimePrete){
     f.ultimePrete = true;
     const u = ultimeDe(f);
+    if (!u){ f.ultimePrete = false; f.ultime = 0; return; }   // v533 : ce robot n'a pas d'ultime
     log(`${u.emoji} ${f.nom} : son ultime « ${u.nom} » est prête !`);
     particule(f.uid, 'ultime prête !', 'combat-particle-heal');
   }
@@ -15789,6 +15811,7 @@ function chargerUltime(f, dmg){
    roue, les défenses, les immunités et les couvertures — comme tout coup. */
 function executerUltime(att, cibleChoisie){
   const u = ultimeDe(att);
+  if (!u) return;   // v533 : robot sans ultime equipee
   log(`${att.nom} invoque ${u.nom} (ultime) !`);
   particule(att.uid, u.emoji + ' ' + u.nom, 'combat-particle-heal');
   att.ultime = 0; att.ultimePrete = false;
@@ -15799,7 +15822,7 @@ function executerUltime(att, cibleChoisie){
   });
 }
 /* La première étape qui vise UN adversaire dit si le joueur choisit sa cible. */
-function ultimeViseUnAdversaire(f){ const e = ultimeDe(f).etapes[0]; return !!e && TYPES_CIBLE_UNIQUE.has(e.type); }
+function ultimeViseUnAdversaire(f){ const u = ultimeDe(f); const e = u && u.etapes[0]; return !!e && TYPES_CIBLE_UNIQUE.has(e.type); }
 
 /* ---------- MOTEUR ---------- */
 
@@ -17092,6 +17115,7 @@ function creerCombattant(cfg, side, idx){
   if (cfg.manaInit !== undefined){
     f.mana = Math.max(0, Math.min(f.maxMana, cfg.manaInit));
   }
+  if (cfg.ultimeNom) f.ultimeNom = cfg.ultimeNom;   // v533 : l'ultime de l'objet equipe
   return f;
 }
 /* Démarre un combat SUR l'objet combatState du jeu (déjà créé par l'enveloppe avec ses champs
@@ -18052,6 +18076,7 @@ function m2CfgDepuisRecrue(r){
     main: m2MainDepuisIds(mainDeDepartDeFiche({}, m), combatAttaquesAutorisees),   // v476 : la main du modèle
     equipement: m2EquipementDeRecrue(r), ia: 'normal', ecart: r.ecartStats || null,
     statsBase: statsValides(m.stats) || null,   // v526
+    ultimeNom: ultimeDeLaRecrue(r),            // v533 : null = l'ultime de son vice
     hpInit: Math.max(0, Math.min(st.hp, recruitEffectiveHp(r))),
     manaInit: Math.max(0, Math.min(st.mana, recruitEffectiveMana(r))),   // v525
     sourceId: r.id, modeleId: m.id, ...m2ImagesDepuisModele(m),
@@ -18932,6 +18957,7 @@ function rafraichirEffetObjet(){
   if (!sel) return;
   sel.addEventListener('change', rafraichirEffetObjet);
   document.getElementById('itemEquipCategory').addEventListener('change', ()=>{
+    majAffichageUltime();   // v533
     const v = sel.value;   // on change d'emplacement : une pièce de l'ancien emplacement ne suit pas
     rebatirMenuEffetObjet(effetEquipementDe(v) ? 'speed_boost' : v);
   });
@@ -20738,24 +20764,37 @@ function applyRecruitSheetMode(){
 }
 function currentRecruit(){ return recruits.find(r=>r.id===activeRecruitId); }
 
+/* v533 — LE QUATRIEME EMPLACEMENT : L'ULTIME.
+   Une ultime devient un OBJET qu'on equipe, comme une materia d'invocation. Un robot qui
+   n'en porte pas garde l'ultime de son vice (comportement d'avant), sauf si le reglage
+   ULTIME_VICE_PAR_DEFAUT est mis a false. L'objet peut etre reserve a un vice ou a un
+   modele precis, ou libre pour tout le monde : c'est le champ `ultimeRestriction`. */
 const EQUIP_SLOTS = [
   { id:'arme', label:'Arme', emoji:'⚔️' },
   { id:'armure', label:'Armure', emoji:'🛡️' },
   { id:'accessoire', label:'Accessoire', emoji:'💍' },
+  { id:'ultime', label:'Ultime', emoji:'🌟' },
 ];
+/* Mets ceci a false le jour ou tu auras assez d'objets d'ultime en circulation : les robots
+   sans objet n'auront alors plus d'ultime du tout, et leur jauge ne servira plus a rien. */
+const ULTIME_VICE_PAR_DEFAUT = true;
 /* Renvoie { arme, armure, accessoire } en migrant si besoin l'ancien format à un seul objet (equippedItemId) */
 function recruitEquipSlots(recruit){
-  if (recruit.equippedItemIds) return recruit.equippedItemIds;
+  if (recruit.equippedItemIds){
+    /* Les fiches creees avant la v533 n'ont pas la case `ultime` : on la pose au vol. */
+    if (!('ultime' in recruit.equippedItemIds)) recruit.equippedItemIds.ultime = null;
+    return recruit.equippedItemIds;
+  }
   if (recruit.equippedItemId){
     const it = items.find(i=>i.id===recruit.equippedItemId);
     const cat = (it && it.equipCategory) || 'accessoire';
-    const slots = { arme:null, armure:null, accessoire:null };
+    const slots = { arme:null, armure:null, accessoire:null, ultime:null };
     slots[cat] = recruit.equippedItemId;
     if (recruitsCol) recruitsCol.doc(recruit.id).update({ equippedItemIds: slots, equippedItemId: firebase.firestore.FieldValue.delete() }).catch(()=>{});
     recruit.equippedItemIds = slots;
     return slots;
   }
-  return { arme:null, armure:null, accessoire:null };
+  return { arme:null, armure:null, accessoire:null, ultime:null };
 }
 function recruitEquippedItems(recruit){
   const slots = recruitEquipSlots(recruit);
@@ -20961,6 +21000,48 @@ function raiseAbovePlan(id){
   if (!el) return;
   const plan = parseInt(fiche.style.zIndex, 10);
   el.style.zIndex = plan ? String(plan + 100) : '';
+}
+/* v533 — les deux listes deroulantes de l'objet d'ultime, et l'affichage conditionnel. */
+function remplirChampsUltime(cle, restriction){
+  const selCle = document.getElementById('itemUltimeCle');
+  const selRes = document.getElementById('itemUltimeRestriction');
+  if (!selCle || !selRes) return;
+  selCle.innerHTML = Object.keys(ULTIMES).map(k=>
+    `<option value="${k}">${ULTIMES[k].emoji} ${ULTIMES[k].nom}</option>`).join('');
+  selCle.value = cle || Object.keys(ULTIMES)[0];
+  selRes.innerHTML = '<option value="">Tout le monde</option>' + CLES_VICES.map(v=>
+    `<option value="vice:${v}">${(VICES[v] && VICES[v].nom) || v} seulement</option>`).join('');
+  selRes.value = restriction || '';
+  majAffichageUltime();
+}
+function majAffichageUltime(){
+  const cat = document.getElementById('itemEquipCategory');
+  const wrap = document.getElementById('itemUltimeWrap');
+  if (!cat || !wrap) return;
+  const estUltime = cat.value === 'ultime';
+  wrap.style.display = estUltime ? 'block' : 'none';
+  /* Un objet d'ultime ne porte pas d'effet d'equipement : on cache le choix d'effet. */
+  const effetSel = document.getElementById('itemEffectType');
+  if (effetSel && effetSel.parentElement){
+    const lignes = effetSel.parentElement.querySelectorAll('.field-label');
+    effetSel.style.display = estUltime ? 'none' : '';
+    lignes.forEach(l=>{ if (l.textContent.indexOf('Effet') === 0) l.style.display = estUltime ? 'none' : ''; });
+  }
+}
+/* L'ultime portee par l'objet equipe, si le robot a le droit de la porter. */
+function ultimeDeLaRecrue(r){
+  try {
+    const slots = recruitEquipSlots(r) || {};
+    const it = slots.ultime && items.find(i=> i.id === slots.ultime);
+    if (!it || !it.ultimeCle) return null;
+    const u = ULTIMES[it.ultimeCle];
+    if (!u) return null;
+    if (it.ultimeRestriction && it.ultimeRestriction.indexOf('vice:') === 0){
+      const m = r.robotModeleId ? ctModele(r.robotModeleId) : null;
+      if (!m || m.vice !== it.ultimeRestriction.slice(5)) return null;
+    }
+    return u.nom;
+  } catch(e){ return null; }
 }
 function openBaseEquipChooser(recruit, slotId){
   raiseAbovePlan('baseEquipChooserOverlay');
