@@ -1304,7 +1304,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v538</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v539</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19038,6 +19038,20 @@ function m2CiblesFx(acteur, attaque, cible){
   if (M2.TYPES_CIBLE_UNIQUE.has(attaque.type) || M2.TYPES_CIBLE_ALLIE.has(attaque.type)) return cible ? [cible] : [];
   return [acteur];
 }
+/* v539 — MESURE. Ces relevés ne partent que pendant une scène d'ultime : une ligne par
+   coup normal remplirait les 400 lignes de la boîte noire avant qu'on ait lu quoi que ce
+   soit. Rien ici ne change le comportement du jeu. */
+let sceneUltimeEnCours = false;
+function mesureUltime(message, detail){
+  if (!sceneUltimeEnCours) return;
+  if (typeof journal === 'function') journal('ultime', message, detail || '', true);
+}
+function urlCourte(u){
+  if (!u) return '(vide)';
+  const s = String(u);
+  return s.length > 70 ? s.slice(0, 40) + '…(' + s.length + ' car.)' : s;
+}
+
 /* v538 — LOT 3b : LA PHASE D'ATTAQUE DE L'ULTIME EST UNE SCÈNE.
    Le moteur a déjà tout résolu d'un bloc et laissé sa trace (v537 : quelle étape, quelle
    cible). On la rejoue ici comme une petite cinématique : l'interface de jeu s'efface,
@@ -19050,8 +19064,20 @@ function m2CiblesFx(acteur, attaque, cible){
 async function jouerSceneUltime(acteur){
   const trace = (combatState && combatState.traceUltime) || [];
   const aDesEffets = trace.some(p=> p.etape && ((p.etape.fx && p.etape.fx.image) || (p.etape.fxSelf && p.etape.fxSelf.image)));
+  /* v539 — MESURE : ce que le moteur a laissé dans la trace, avant toute décision. */
+  if (typeof journal === 'function'){
+    journal('ultime', 'scène demandée — ' + trace.length + ' étape(s), effets ' + (aDesEffets ? 'OUI' : 'NON'),
+      trace.map((p, i)=>{
+        const e = p.etape || {};
+        return (i + 1) + ':' + (e.type || '?')
+          + ((e.fx && e.fx.image) ? ' fx✓' : ' fx✗')
+          + ((e.fxSelf && e.fxSelf.image) ? ' self✓' : ' self✗')
+          + ' cible=' + (p.cibleUid || '—');
+      }).join(' | '), true);
+  }
   if (!aDesEffets) return;
   const full = document.getElementById('combatFull');
+  sceneUltimeEnCours = true;
   combatState.ultimeSkip = false;
   combatState.anim = { actorUid: acteur.uid, kind:'magic' };
   if (full) full.classList.add('ultime-scene');
@@ -19065,6 +19091,13 @@ async function jouerSceneUltime(acteur){
       combatState.ultimeScene = { acteurUid: acteur.uid, vises };
       renderCombat();
       await sleep(220);   // le temps que les autres s'effacent avant que l'effet parte
+      /* v539 — MESURE : qui est visé, quelles images, et ces cartes sont-elles bien à
+         l'écran au moment de poser l'effet (l'image se pose sur leurs coordonnées). */
+      const absents = vises.filter(u=> !document.querySelector('[data-fighter="' + u + '"] .combat-avatar'));
+      mesureUltime('étape ' + (i + 1) + ' — ' + (e.type || '?') + ' — visés : ' + (vises.join(', ') || 'aucun'),
+        'cartes absentes : ' + (absents.length ? absents.join(', ') : 'aucune')
+        + ' · fx ' + urlCourte(e.fx && e.fx.image)
+        + ' · self ' + urlCourte(e.fxSelf && e.fxSelf.image));
       if (!combatState || combatState.ultimeSkip) return;
       if (e.fxSelf && e.fxSelf.image){
         clearStrayFxImages();
@@ -19081,6 +19114,8 @@ async function jouerSceneUltime(acteur){
   } finally {
     /* Quoi qu'il arrive — fin de la suite, bouton « Passer », combat refermé en route —
        l'écran redevient un écran de jeu. Une interface restée masquée bloquerait la partie. */
+    mesureUltime('scène terminée', '');
+    sceneUltimeEnCours = false;
     if (full) full.classList.remove('ultime-scene');
     if (combatState){
       combatState.ultimeScene = null;
@@ -29023,7 +29058,11 @@ function fxOverlayContainer(containerEl){
 function spawnFxImage(targetUid, fx, offsetX, offsetY, containerEl){
   const targetEl = document.querySelector(`[data-fighter="${targetUid}"] .combat-avatar`);
   const arena = fxOverlayContainer(containerEl);
-  if (!targetEl || !arena) return null;
+  if (!targetEl || !arena){
+    mesureUltime('❌ image NON posée — ' + (!targetEl ? 'carte du combattant introuvable' : 'arène introuvable'),
+      'uid visé : ' + targetUid);
+    return null;
+  }
   const tRect = targetEl.getBoundingClientRect();
   const arenaRect = arena.getBoundingClientRect();
   const size = fx.sizePx || 100;
@@ -29050,6 +29089,11 @@ function spawnFxImage(targetUid, fx, offsetX, offsetY, containerEl){
   } else {
     arena.appendChild(img);
   }
+  mesureUltime('image posée sur ' + targetUid,
+    'gauche ' + Math.round(cx - size/2 + dx) + ' px · haut ' + Math.round(cy - size/2 + dy) + ' px'
+    + ' · taille ' + size + ' px · arène ' + Math.round(arenaRect.width) + '×' + Math.round(arenaRect.height)
+    + ' · type ' + (fx.type || '?') + (fx.behindTarget ? ' · derrière' : '')
+    + ' · ' + urlCourte(img.getAttribute('src')));
   return img;
 }
 /* Attend que l'image de l'effet soit vraiment arrivée et décodée avant de lancer l'animation dessus.
@@ -29063,7 +29107,9 @@ function waitImageReady(img, maxMs){
   if (img.complete && img.naturalWidth > 0) return Promise.resolve(true);
   return new Promise(resolve=>{
     let done = false;
-    const finish = (ok)=>{ if (!done){ done = true; resolve(ok); } };
+    const finish = (ok)=>{ if (!done){ done = true;
+      if (!ok) mesureUltime('❌ image REFUSÉE à l\'affichage (lien cassé ou trop lente)', urlCourte(img.getAttribute('src')));
+      resolve(ok); } };
     img.addEventListener('load', ()=> finish(true), { once:true });
     img.addEventListener('error', ()=> finish(false), { once:true });
     setTimeout(()=> finish(img.complete && img.naturalWidth > 0), maxMs || 3000);
