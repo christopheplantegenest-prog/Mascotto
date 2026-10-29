@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v552</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v553</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2619,6 +2619,7 @@
       <p class="meta">Comment la divinité entre en scène. Chaque scénario est une animation à part : deux ultimes qui partagent le même scénario se ressemblent, d'où l'intérêt de varier.</p>
       <select id="ultimeMes" class="field-input">
         <option value="particules">L'invocation — un cercle s'allume au sol, des particules se rassemblent pour la former</option>
+        <option value="montee">La montée — un cercle s'allume au sol et elle en sort, révélée de bas en haut</option>
         <option value="traversee">La traversée — elle entre par un côté, frappe au passage, sort par l'autre</option>
         <option value="apparition">L'apparition — elle monte au centre, se range sur le côté, puis frappe</option>
       </select>
@@ -19698,7 +19699,9 @@ function invocationRetirer(){
      prochaine scène repartirait de la dernière position de la précédente. */
   const scene = inv && inv.querySelector('.inv-scene');
   if (scene){ scene.style.transition = ''; scene.style.transform = ''; scene.style.opacity = ''; }
-  if (hote) hote.innerHTML = '';
+  /* v553 : le rognage de la montée doit sauter aussi, sinon la scène suivante resterait
+     coupée au ras du sol. */
+  if (hote){ hote.style.transition = ''; hote.style.clipPath = ''; hote.innerHTML = ''; }
 }
 /* Rend VRAI si la divinité est bien à l'écran — c'est ce qui décide si la suite de la scène
    se joue avec elle ou sans elle. */
@@ -20155,6 +20158,102 @@ function jouerParticulesInvocation(toile, pts, dest, couleur){
     requestAnimationFrame(boucle);
   });
 }
+/* v553 — LA MONTÉE. Même cercle que l'invocation par particules, mais la divinité sort du
+   sol au lieu de se reconstituer : elle est dévoilée de bas en haut par un rognage qui
+   remonte, pendant qu'elle s'élève un peu. Aucune lecture de pixels ici, donc aucune
+   contrainte d'hébergement — c'est le repli naturel si les particules posent problème. */
+function chargerImageSimple(url){
+  return new Promise((resoudre, rejeter)=>{
+    const img = new Image();
+    img.onload = ()=> resoudre(img);
+    img.onerror = ()=> rejeter(new Error('image illisible'));
+    img.src = url;
+    setTimeout(()=> rejeter(new Error('image trop lente')), 5000);
+  });
+}
+/* La même inscription que `object-fit: contain` : on a besoin de savoir où la divinité
+   posera vraiment les pieds pour y placer le cercle, sinon il flotte sous elle. */
+function boiteInvocation(hote, full, img){
+  const rh = full.getBoundingClientRect(), rv = hote.getBoundingClientRect();
+  if (!(rv.width > 8 && rv.height > 8)) return null;
+  const nw = img && img.naturalWidth, nh = img && img.naturalHeight;
+  if (!(nw > 0 && nh > 0)) return null;
+  const ratio = nw / nh;
+  let dw = rv.width, dh = dw / ratio;
+  if (dh > rv.height){ dh = rv.height; dw = dh * ratio; }
+  return { x: rv.left - rh.left + (rv.width - dw) / 2,
+           y: rv.top - rh.top + (rv.height - dh) / 2, w: dw, h: dh };
+}
+function animerCercleSeul(toile, cx, cy, rx, ry, couleur){
+  let arret = false;
+  const t0 = performance.now();
+  const boucle = (maintenant)=>{
+    if (arret) return;
+    const t = maintenant - t0;
+    toile.ctx.clearRect(0, 0, toile.w, toile.h);
+    dessinerCercleInvocation(toile.ctx, cx, cy, rx, ry, Math.min(1, t / 520), couleur, t);
+    requestAnimationFrame(boucle);
+  };
+  requestAnimationFrame(boucle);
+  return ()=>{ arret = true; };
+}
+async function invocationMontee(acteur, u){
+  const inv = document.getElementById('combatInvocation');
+  const hote = document.getElementById('invVues');
+  const scene = inv && inv.querySelector('.inv-scene');
+  const full = document.getElementById('combatFull');
+  const vues = vuesInvocation(u);
+  if (!inv || !hote || !scene || !full || !vues.length) return false;
+  invocationUltime = u;
+  invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
+  invocationVues(hote, vues);
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
+  inv.classList.add('on');
+  const p = placeUltime(u);
+  const s = invocationSens;
+  scene.style.transition = 'none';
+  scene.style.opacity = '1';
+  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + (p.y + 7) + '%) scale(' + p.s + ')';
+  hote.style.clipPath = 'inset(100% 0 0 0)';   // entièrement rognée : rien ne dépasse encore
+  void inv.offsetWidth;
+  inv.classList.add('fond');
+  const couleur = (u && u.couleur) || '#7CFF4F';
+  let stopCercle = null;
+  try {
+    const img = await chargerImageSimple(vues[0]);
+    const dest = boiteInvocation(hote, full, img);
+    if (!dest) throw new Error('cadre non mesurable');
+    mesureUltime('montée — boîte de destination',
+      Math.round(dest.w) + '×' + Math.round(dest.h) + ' à (' + Math.round(dest.x) + ',' + Math.round(dest.y) + ')');
+    const toile = invParticulesCanvas();
+    if (toile){
+      stopCercle = animerCercleSeul(toile, dest.x + dest.w / 2, dest.y + dest.h * 0.95,
+        Math.max(70, dest.w * 0.6), Math.max(70, dest.w * 0.6) * 0.3, couleur);
+    }
+  } catch(err){
+    mesureUltime('❌ montée — cercle impossible', String(err && err.message || err));
+  }
+  await sleep(540);   // le cercle s'allume seul avant qu'elle sorte
+  if (sceneCoupee()){ if (stopCercle) stopCercle(); invParticulesRetirer(); invocationRetirer(); return false; }
+  /* Elle sort : le rognage remonte pendant qu'elle s'élève. Les deux durées sont identiques,
+     sans quoi elle finirait de monter avant d'être entièrement dévoilée. */
+  scene.style.transition = 'transform 1100ms cubic-bezier(.2,.8,.3,1)';
+  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + p.y + '%) scale(' + p.s + ')';
+  hote.style.transition = 'clip-path 1100ms cubic-bezier(.2,.8,.3,1)';
+  hote.style.clipPath = 'inset(0% 0 0 0)';
+  await sleep(1180);
+  if (stopCercle) stopCercle();
+  const toile = document.getElementById('invParticules');
+  if (toile){ toile.style.transition = 'opacity 320ms ease'; toile.style.opacity = '0'; }
+  inv.classList.add('voile-clair');
+  secousseCombat();
+  await sleep(300);
+  invParticulesRetirer();
+  hote.style.transition = '';
+  hote.style.clipPath = '';
+  return !sceneCoupee();
+}
+
 async function invocationParticules(acteur, u){
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
@@ -20279,6 +20378,11 @@ async function jouerSceneUltime(acteur){
   sceneUltimeEnCours = true;
   combatState.ultimeSkip = false;
   combatState.anim = { actorUid: acteur.uid, kind:'magic' };
+  /* v553 : on efface le lanceur dès le début de la scène. Le redessin automatique est
+     suspendu par `combatState.anim`, d'où le redessin explicite juste après. */
+  combatState.ultimeLanceurUid = acteur.uid;
+  combatState.ultimeLanceurCache = true;
+  renderCombat();
   if (full) full.classList.add('ultime-scene');
   try {
     const u = (M2.ultimeDe && M2.ultimeDe(acteur)) || null;
@@ -20313,6 +20417,10 @@ async function jouerSceneUltime(acteur){
       if (diviniteLa) await invocationDeCote();
     } else if (mes === 'particules'){
       diviniteLa = await invocationParticules(acteur, u);
+      if (!combatState) return;
+      if (diviniteLa) await invocationFrappe();
+    } else if (mes === 'montee'){
+      diviniteLa = await invocationMontee(acteur, u);
       if (!combatState) return;
       if (diviniteLa) await invocationFrappe();
     } else {
@@ -20371,6 +20479,10 @@ async function jouerSceneUltime(acteur){
     if (inc) inc.classList.remove('on','bandes','scene','portrait','replique','sortie');
     invocationRetirer();
     ultFxNettoyer();
+    if (combatState){
+      combatState.ultimeLanceurCache = false;
+      combatState.ultimeLanceurUid = null;
+    }
     if (full) full.classList.remove('ultime-scene');
     if (combatState){
       combatState.ultimeScene = null;
@@ -32645,7 +32757,12 @@ function fighterCardHtml(f, idx, arr){
   /* v538 : pendant une scène d'ultime, on ne montre que le lanceur et ce que l'étape en
      cours vise vraiment — tout le reste s'efface le temps de l'étape. */
   const sc = combatState.ultimeScene;
-  const horsScene = !!(sc && f.uid !== sc.acteurUid && (sc.vises || []).indexOf(f.uid) === -1);
+  /* v553 : le LANCEUR s'efface lui aussi pendant toute la scène d'invocation. L'écran est
+     petit ; sans sa carte, la divinité peut prendre la place du centre sans rien masquer.
+     Comme pour les autres, on joue sur l'OPACITÉ et jamais sur `display` : la carte doit
+     garder sa largeur, sinon la rangée se réarrange et les effets tombent à côté. */
+  const horsScene = !!(sc && f.uid !== sc.acteurUid && (sc.vises || []).indexOf(f.uid) === -1)
+    || !!(combatState.ultimeLanceurCache && f.uid === combatState.ultimeLanceurUid);
   const wrapperClasses = ['combat-fighter', anim==='physical'?'combat-anim-lunge':'', isHit?'combat-anim-hit':'',
     f.fleeingOut?'combat-fleeing-out':'', (f.fled && !f.fleeingOut)?'combat-fui':'',
     horsScene?'hors-scene':''].filter(Boolean).join(' ');
