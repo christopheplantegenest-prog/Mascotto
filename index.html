@@ -1062,6 +1062,15 @@
    Le retournement porte sur le conteneur des vues, pas sur la scène : la trajectoire, elle,
    ne doit pas être inversée deux fois. */
 #combatInvocation.inv-miroir #invVues{ transform:scaleX(-1); }
+/* v548 — LE RÉGLAGE AU DOIGT. Le calque d'invocation ne reçoit les touchers QUE pendant le
+   réglage : en combat il doit rester traversant, sinon il avalerait les appuis sur l'arène. */
+#ultimePlaceBar{
+  position:absolute; left:0; right:0; bottom:0; z-index:30; display:none;
+  padding:12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background:rgba(10,10,16,.93); border-top:1px solid rgba(255,255,255,.14);
+}
+#combatFull.ultime-place #ultimePlaceBar{ display:block; }
+#combatFull.ultime-place #combatInvocation{ pointer-events:auto; touch-action:none; }
 /* La secousse à l'arrivée : elle porte sur la pile du combat, pas sur l'arène seule, pour
    que tout l'écran encaisse le choc d'un bloc. */
 @keyframes invSecousse{
@@ -1409,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v547</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v548</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2026,6 +2035,14 @@
       <div id="incReplique"></div>
     </div>
   </div>
+  <!-- v548 — la bande de réglage de la place, visible seulement pendant le réglage au doigt. -->
+  <div id="ultimePlaceBar">
+    <p class="meta" style="margin:0 0 8px;">Fais-la glisser du doigt pour la placer · pince à deux doigts pour la taille</p>
+    <div style="display:flex; gap:8px;">
+      <button type="button" class="btn-secondary" id="ultimePlaceAnnule" style="flex:1;">Annuler</button>
+      <button type="button" class="btn-capture" id="ultimePlaceOk" style="flex:2;">✅ Garder cette place</button>
+    </div>
+  </div>
   <!-- v541 — PHASE 2 de la cinématique d'invocation. Vide et masqué hors d'une ultime. -->
   <div id="combatInvocation">
     <div class="inv-fond"></div>
@@ -2608,6 +2625,9 @@
         <option value="gauche">Elle arrive par la gauche</option>
         <option value="droite">Elle arrive par la droite</option>
       </select>
+
+      <button type="button" class="btn-secondary" id="ultimePlaceBtn" style="width:100%; margin-top:8px;">🎯 Régler sa place et sa taille</button>
+      <p class="meta" id="ultimePlaceInfo">Place par défaut.</p>
 
       <div class="field-label">⚡ Attaque de la divinité (v545)</div>
       <p class="meta">L'effet est <b>calculé</b>, pas dessiné : il part d'où elle est et arrive sur les cartes visées, quel que soit le nombre d'adversaires. Quand un type est choisi, il remplace les effets d'étape personnalisés.</p>
@@ -14919,6 +14939,9 @@ function ultimePersoVersMoteur(cle, u){
            vuesJet: Array.isArray(u.vuesJet) ? JSON.parse(JSON.stringify(u.vuesJet)) : [],
            mes: u.mes || 'traversee', mesCote: u.mesCote || 'gauche',
            effet: u.effet || 'rayon', couleur: u.couleur || '#7CFF4F',
+           posX: (typeof u.posX === 'number') ? u.posX : undefined,
+           posY: (typeof u.posY === 'number') ? u.posY : undefined,
+           echelle: (typeof u.echelle === 'number') ? u.echelle : undefined,
            imageUrl: u.imageUrl || '', imagePath: u.imagePath || null,
            etapes: JSON.parse(JSON.stringify(etapes)) };
 }
@@ -15511,6 +15534,32 @@ let ultimeEtapesBrouillon = [];
    l'apparition. Même forme que l'image de la fiche ({ imageUrl, imagePath }) pour que les
    deux voies — fichier hébergé ou envoi téléphone — se rangent au même endroit. */
 const ULTIME_VUES_MAX = 3;
+/* v548 — LA PLACE DE LA DIVINITÉ, réglée au doigt plutôt que décidée dans le code.
+   `x` et `y` sont des pourcentages de l'écran, `s` une échelle. `x` est compté DU CÔTÉ PAR
+   LEQUEL ELLE ARRIVE : il est multiplié par le sens à l'affichage, pour qu'une arrivée par
+   la droite la range symétriquement sans qu'on ait à tout re-régler. */
+const ULT_PLACE_DEFAUT = { x:-33, y:-6, s:0.5 };
+let ultimePlace = Object.assign({}, ULT_PLACE_DEFAUT);
+let placeReglage = null;   // copie de travail pendant le réglage, en coordonnées écran
+function placeUltime(u){
+  return {
+    x: (u && typeof u.posX === 'number') ? u.posX : ULT_PLACE_DEFAUT.x,
+    y: (u && typeof u.posY === 'number') ? u.posY : ULT_PLACE_DEFAUT.y,
+    s: (u && typeof u.echelle === 'number') ? u.echelle : ULT_PLACE_DEFAUT.s,
+  };
+}
+function majInfoPlace(){
+  const el = document.getElementById('ultimePlaceInfo');
+  if (!el) return;
+  const d = ULT_PLACE_DEFAUT;
+  if (Math.abs(ultimePlace.x - d.x) < 0.5 && Math.abs(ultimePlace.y - d.y) < 0.5
+      && Math.abs(ultimePlace.s - d.s) < 0.01){
+    el.textContent = 'Place par défaut.';
+    return;
+  }
+  el.textContent = 'Place réglée : ' + Math.round(ultimePlace.x) + ' % / '
+    + Math.round(ultimePlace.y) + ' %, taille ' + Math.round(ultimePlace.s * 100) + ' %.';
+}
 /* v546 — QUATRE JEUX D'IMAGES PAR ULTIME, SUR UN SEUL MOTEUR DE LISTE.
    Les vues de FACE (l'apparition), de VOL (la traversée), de FRAPPE (le coup) et les images
    du JET (l'attaque projetée). Quatre listes identiques à gérer : un seul code de rendu,
@@ -15592,6 +15641,7 @@ function ultimeApercuDepuisFormulaire(){
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
     effet: document.getElementById('ultimeEffet').value || 'rayon',
     couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
+    posX: ultimePlace.x, posY: ultimePlace.y, echelle: ultimePlace.s,
     ...jeuxUltimeVersData(),
   };
 }
@@ -15605,6 +15655,126 @@ function ultimeApercuDepuisFormulaire(){
    - le tableau des ultimes du moteur est remplacé le temps de l'aperçu, puis remis d'aplomb
      dans le `finally` — un tableau resté de travers casserait les vrais combats. */
 let apercuUltimeEnCours = false;
+/* v548 — L'ÉCRAN DE RÉGLAGE DE LA PLACE.
+   Il monte exactement la même scène factice que l'aperçu, mais fige la divinité au lieu de
+   la faire jouer : on la voit par-dessus la VRAIE arène, avec les vraies cartes, ce qui est
+   le seul moyen de juger si elle masque quelque chose. */
+function brancherReglagePlace(){
+  const inv = document.getElementById('combatInvocation');
+  const scene = inv && inv.querySelector('.inv-scene');
+  const hote = document.getElementById('combatFull');
+  if (!inv || !scene || !hote) return;
+  let depart = null;
+  const ecart = (t)=> Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const poser = ()=>{
+    scene.style.transition = 'none';
+    scene.style.opacity = '1';
+    scene.style.transform = 'translate(' + placeReglage.x + '%, ' + placeReglage.y
+      + '%) scale(' + placeReglage.s + ')';
+  };
+  inv.ontouchstart = (e)=>{
+    const t = e.touches;
+    depart = { x: placeReglage.x, y: placeReglage.y, s: placeReglage.s,
+               cx: t[0].clientX, cy: t[0].clientY,
+               d: (t.length > 1) ? ecart(t) : 0, n: t.length };
+    e.preventDefault();
+  };
+  inv.ontouchmove = (e)=>{
+    if (!depart) return;
+    const t = e.touches, r = hote.getBoundingClientRect();
+    if (depart.n > 1 && t.length > 1 && depart.d > 0){
+      /* Le pincement ne touche QUE l'échelle : mélanger les deux rendrait le geste
+         imprévisible, on ne saurait plus si on déplace ou si on redimensionne. */
+      placeReglage.s = Math.max(0.12, Math.min(1.8, depart.s * ecart(t) / depart.d));
+    } else {
+      placeReglage.x = depart.x + (t[0].clientX - depart.cx) / r.width * 100;
+      placeReglage.y = depart.y + (t[0].clientY - depart.cy) / r.height * 100;
+    }
+    poser();
+    e.preventDefault();
+  };
+  inv.ontouchend = ()=>{ depart = null; };
+  inv.ontouchcancel = ()=>{ depart = null; };
+  poser();
+}
+function debrancherReglagePlace(){
+  const inv = document.getElementById('combatInvocation');
+  if (!inv) return;
+  inv.ontouchstart = null; inv.ontouchmove = null;
+  inv.ontouchend = null; inv.ontouchcancel = null;
+}
+function attendreReglagePlace(){
+  return new Promise(resoudre=>{
+    const ok = document.getElementById('ultimePlaceOk');
+    const annule = document.getElementById('ultimePlaceAnnule');
+    const fin = (garde)=>{
+      if (ok) ok.onclick = null;
+      if (annule) annule.onclick = null;
+      resoudre(garde);
+    };
+    if (ok) ok.onclick = ()=> fin(true);
+    if (annule) annule.onclick = ()=> fin(false);
+  });
+}
+async function reglerPlaceUltime(){
+  if (apercuUltimeEnCours) return;
+  if (combatState && !combatState.finished){ showToast('Un combat est déjà en cours'); return; }
+  const u = ultimeApercuDepuisFormulaire();
+  const vues = vuesUltime(u, 'frappe');
+  if (!vues.length){ showToast("Pose au moins une image d'invocation avant de régler sa place"); return; }
+  const m = (typeof robotsModeles !== 'undefined' && robotsModeles.length) ? robotsModeles[0] : null;
+  if (!m){ showToast('Il faut au moins un modèle de robot dans le catalogue'); return; }
+  const slot = { modele: m.id, main: [], arme:null, armure:null, accessoire:null, ia:'normal' };
+  const allies  = [ctCombattantDepuisSlot(slot, 'player', 0)].filter(Boolean);
+  const ennemis = [ctCombattantDepuisSlot(slot, 'enemy', 0), ctCombattantDepuisSlot(slot, 'enemy', 0)].filter(Boolean);
+  if (!allies.length || !ennemis.length){ showToast('Ce modèle ne donne pas de combattant utilisable'); return; }
+  apercuUltimeEnCours = true;
+  try {
+    await startCombatM2({ allies, ennemis }, DEFAULT_ARENA_BG, { test:true, skipTransition:true });
+    if (!combatState) return;
+    combatState.resolving = true;
+    combatState.fighters.forEach(f=>{ f.maxHp = 99999; f.hp = 99999; });
+    const full = document.getElementById('combatFull');
+    const inv = document.getElementById('combatInvocation');
+    const hote = document.getElementById('invVues');
+    if (!full || !inv || !hote) return;
+    full.classList.add('ultime-scene', 'ultime-place');
+    invocationUltime = u;
+    invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
+    invocationVues(hote, vues);
+    inv.classList.remove('montee','flotte','cote','sortie','inv-miroir');
+    inv.classList.add('on','fond','voile-clair');
+    if (invocationSens === -1) inv.classList.add('inv-miroir');
+    const base = placeUltime(u);
+    placeReglage = { x: base.x * invocationSens, y: base.y, s: base.s };
+    brancherReglagePlace();
+    const garde = await attendreReglagePlace();
+    if (garde){
+      /* On range la valeur DU CÔTÉ D'ARRIVÉE : réglée à gauche, elle se retrouvera
+         symétriquement à droite si on change le côté, sans nouveau réglage. */
+      ultimePlace = { x: placeReglage.x * invocationSens, y: placeReglage.y, s: placeReglage.s };
+      majInfoPlace();
+      showToast("Place gardée — enregistre l'ultime pour la conserver");
+    }
+  } catch(err){
+    showToast('Réglage impossible : ' + (err && err.message ? err.message : err));
+  } finally {
+    debrancherReglagePlace();
+    placeReglage = null;
+    clearInterval(combatTickTimer);
+    sceneUltimeEnCours = false;
+    const full = document.getElementById('combatFull');
+    if (full) full.classList.remove('show','reveal','ultime-scene','ultime-place','inv-secousse');
+    invocationRetirer();
+    ultFxNettoyer();
+    clearStrayFxImages();
+    libererImagesDeCombat();
+    combatState = null;
+    playMusicForKey('map');
+    apercuUltimeEnCours = false;
+  }
+}
+
 async function apercuSceneUltime(){
   if (apercuUltimeEnCours) return;
   if (combatState && !combatState.finished){ showToast('Un combat est déjà en cours'); return; }
@@ -15913,6 +16083,8 @@ function resetUltimeForm(){
   ultimeEtapesBrouillon = [];
   ultimeEtapeOuverte = null;
   chargerJeuxUltime(null);
+  ultimePlace = Object.assign({}, ULT_PLACE_DEFAUT);
+  majInfoPlace();
   document.getElementById('ultimeMes').value = 'traversee';
   document.getElementById('ultimeMesCote').value = 'gauche';
   document.getElementById('ultimeEffet').value = 'rayon';
@@ -15949,6 +16121,8 @@ function loadUltimeForEdit(cle){
   ultimeEtapesBrouillon = JSON.parse(JSON.stringify(u.etapes || []));
   ultimeEtapeOuverte = null;
   chargerJeuxUltime(u);
+  ultimePlace = placeUltime(u);
+  majInfoPlace();
   document.getElementById('ultimeMes').value = u.mes || 'traversee';
   document.getElementById('ultimeMesCote').value = u.mesCote || 'gauche';
   document.getElementById('ultimeEffet').value = u.effet || 'rayon';
@@ -16052,6 +16226,7 @@ function lireFichierVueUltime(e, nom){
   reader.readAsDataURL(file);
 }
 document.getElementById('ultimeApercuBtn').addEventListener('click', apercuSceneUltime);
+document.getElementById('ultimePlaceBtn').addEventListener('click', reglerPlaceUltime);
 
 document.getElementById('ultimeImageGithubBtn').addEventListener('click', ()=>{
   openGithubFilePicker(null, (item)=>{
@@ -16090,6 +16265,7 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
     effet: document.getElementById('ultimeEffet').value || 'rayon',
     couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
+    posX: ultimePlace.x, posY: ultimePlace.y, echelle: ultimePlace.s,
     updatedAt: Date.now() };
   Object.assign(data, jeuxUltimeVersData());
   ultimesCol.doc(cle).set(data).then(()=>{
@@ -19628,18 +19804,18 @@ async function invocationTraversee(acteur, u){
   void inv.offsetWidth;   // sans cette lecture, le point de départ n'est jamais appliqué
   inv.classList.add('fond');
   /* 1 — elle traverse et ralentit jusqu'à son poste de tir.
-     v547 : -33 % et non -16 %, et une échelle de .50 et non .64. À l'ancienne valeur elle
-     s'arrêtait au tiers de l'écran en occupant plus de la moitié de la largeur : elle
-     masquait l'arène, donc les adversaires et les dégâts. Elle doit tenir dans la moitié
-     du bord par lequel elle est arrivée. */
+     v548 : ce poste n'est plus écrit en dur, il vient de la place réglée au doigt sur la
+     fiche. Tout le reste de la trajectoire — l'élan, le coup — se calcule autour de lui. */
+  const p = placeUltime(u);
   scene.style.transition = 'transform 900ms cubic-bezier(.22,.7,.3,1)';
-  scene.style.transform = 'translate(' + (-33 * s) + '%, -6%) scale(.5)';
+  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + p.y + '%) scale(' + p.s + ')';
   await sleep(940);
   if (sceneCoupee()){ invocationRetirer(); return false; }
   /* 2 — elle se dresse vers l'adversaire et le voile s'éclaircit */
   inv.classList.add('voile-clair');
   scene.style.transition = 'transform 260ms ease-out';
-  scene.style.transform = 'translate(' + (-33 * s) + '%, -8%) scale(.54) rotate(' + (3 * s) + 'deg)';
+  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + (p.y - 2) + '%) scale('
+    + (p.s * 1.08).toFixed(3) + ') rotate(' + (3 * s) + 'deg)';
   await sleep(300);
   return !sceneCoupee();
 }
@@ -19653,14 +19829,17 @@ async function invocationFrappe(){
   /* v546 : elle passe en posture de frappe dès l'élan, et y reste pendant toutes les
      étapes — c'est elle qui porte le coup, pas un effet posé à côté. */
   invocationChangerVues('frappe');
-  /* v547 : l'élan et le coup se jouent SUR PLACE, au bord. Avant, la frappe la ramenait à
-     -3 % en l'agrandissant à .78 — elle finissait au centre de l'écran, par-dessus tout. */
+  /* v548 : l'élan et le coup se jouent autour de la place réglée — un recul de 8 % vers le
+     bord, puis une détente de 4 % vers l'avant. Elle ne revient jamais au centre. */
+  const p = placeUltime(invocationUltime);
   scene.style.transition = 'transform 200ms ease-in';
-  scene.style.transform = 'translate(' + (-41 * s) + '%, -8%) scale(.5) rotate(' + (-5 * s) + 'deg)';
+  scene.style.transform = 'translate(' + ((p.x - 8) * s) + '%, ' + (p.y - 2) + '%) scale('
+    + p.s + ') rotate(' + (-5 * s) + 'deg)';
   await sleep(210);
   if (sceneCoupee()) return;
   scene.style.transition = 'transform 130ms cubic-bezier(.2,1.4,.4,1)';
-  scene.style.transform = 'translate(' + (-29 * s) + '%, -8%) scale(.58) rotate(' + (7 * s) + 'deg)';
+  scene.style.transform = 'translate(' + ((p.x + 4) * s) + '%, ' + (p.y - 2) + '%) scale('
+    + (p.s * 1.16).toFixed(3) + ') rotate(' + (7 * s) + 'deg)';
   secousseCombat();
   await sleep(190);
 }
