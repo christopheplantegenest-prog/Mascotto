@@ -1057,6 +1057,11 @@
   opacity:0; filter:drop-shadow(0 0 28px rgba(170,140,255,.45));
 }
 #invVues img.vue-on{ opacity:1; }
+/* v546 : les vues de vol et de frappe sont dessinées tournées vers la DROITE. Quand elle
+   arrive par la droite, on retourne le jeu d'images au lieu d'exiger une deuxième planche.
+   Le retournement porte sur le conteneur des vues, pas sur la scène : la trajectoire, elle,
+   ne doit pas être inversée deux fois. */
+#combatInvocation.inv-miroir #invVues{ transform:scaleX(-1); }
 /* La secousse à l'arrivée : elle porte sur la pile du combat, pas sur l'arène seule, pour
    que tout l'écran encaisse le choc d'un bloc. */
 @keyframes invSecousse{
@@ -1404,7 +1409,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v545</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v546</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2581,6 +2586,18 @@
       <input type="file" id="ultimeVueFile" accept="image/*" class="field-input" style="margin-top:6px;">
       <button type="button" class="btn-secondary" id="ultimeVueGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une vue hébergée</button>
 
+      <div class="field-label">🕊️ Vues de vol (v546)</div>
+      <p class="meta">Elle, en train de voler, <b>tournée vers la droite</b>. Servent pendant la traversée. Si elle arrive par la gauche, le jeu les retourne tout seul. Vide : les vues de face sont reprises.</p>
+      <div id="ultimeVolListe"></div>
+      <input type="file" id="ultimeVolFile" accept="image/*" class="field-input" style="margin-top:6px;">
+      <button type="button" class="btn-secondary" id="ultimeVolGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une vue de vol hébergée</button>
+
+      <div class="field-label">💥 Vues de frappe (v546)</div>
+      <p class="meta">Elle, en train de lancer son attaque, <b>tournée vers la droite</b>. Servent au moment du coup et pendant toutes les étapes. Vide : les vues de vol sont reprises.</p>
+      <div id="ultimeFrappeListe"></div>
+      <input type="file" id="ultimeFrappeFile" accept="image/*" class="field-input" style="margin-top:6px;">
+      <button type="button" class="btn-secondary" id="ultimeFrappeGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une vue de frappe hébergée</button>
+
       <div class="field-label">🎬 Mise en scène (v544)</div>
       <p class="meta">Comment la divinité entre en scène. Chaque scénario est une animation à part : deux ultimes qui partagent le même scénario se ressemblent, d'où l'intérêt de varier.</p>
       <select id="ultimeMes" class="field-input">
@@ -2595,6 +2612,7 @@
       <div class="field-label">⚡ Attaque de la divinité (v545)</div>
       <p class="meta">L'effet est <b>calculé</b>, pas dessiné : il part d'où elle est et arrive sur les cartes visées, quel que soit le nombre d'adversaires. Quand un type est choisi, il remplace les effets d'étape personnalisés.</p>
       <select id="ultimeEffet" class="field-input">
+        <option value="jet">Le jet — ta propre image projetée d'elle jusqu'à la cible</option>
         <option value="rayon">Le rayon — un trait de lumière tendu jusqu'à la cible</option>
         <option value="onde">L'onde de choc — un anneau qui se propage depuis elle</option>
         <option value="projectiles">La volée — une pluie de projectiles qui convergent</option>
@@ -2605,6 +2623,12 @@
         <input type="color" id="ultimeCouleur" value="#7CFF4F" style="width:64px; height:38px; flex:none; border:none; background:none;">
         <span class="meta" style="flex:1;">La couleur de l'attaque. Prends celle de la divinité — le vert venin pour Hariman.</span>
       </div>
+
+      <div class="field-label">💧 Images du jet (v546)</div>
+      <p class="meta">Pour le type « le jet » : ta propre giclée, dessinée <b>partant du bord gauche vers la droite</b>, que le jeu étire d'elle jusqu'à chaque cible. Jusqu'à 3 images qui s'alternent. Vide : le jet retombe sur le rayon tracé.</p>
+      <div id="ultimeJetListe"></div>
+      <input type="file" id="ultimeJetFile" accept="image/*" class="field-input" style="margin-top:6px;">
+      <button type="button" class="btn-secondary" id="ultimeJetGithubBtn" style="width:100%; margin-top:6px;">📁 Ajouter une image de jet hébergée</button>
 
       <div class="field-label">Étapes</div>
       <div id="ultimeEtapes"></div>
@@ -14890,6 +14914,9 @@ function ultimePersoVersMoteur(cle, u){
   return { nom: u.nom || '(sans nom)', emoji: u.emoji || '🌟', desc: u.desc || '',
            replique: u.replique || '',
            vues: Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [],
+           vuesVol: Array.isArray(u.vuesVol) ? JSON.parse(JSON.stringify(u.vuesVol)) : [],
+           vuesFrappe: Array.isArray(u.vuesFrappe) ? JSON.parse(JSON.stringify(u.vuesFrappe)) : [],
+           vuesJet: Array.isArray(u.vuesJet) ? JSON.parse(JSON.stringify(u.vuesJet)) : [],
            mes: u.mes || 'traversee', mesCote: u.mesCote || 'gauche',
            effet: u.effet || 'rayon', couleur: u.couleur || '#7CFF4F',
            imageUrl: u.imageUrl || '', imagePath: u.imagePath || null,
@@ -15483,37 +15510,69 @@ let ultimeEtapesBrouillon = [];
 /* v541 — LES VUES D'INVOCATION : jusqu'à trois images en grand format, alternées pendant
    l'apparition. Même forme que l'image de la fiche ({ imageUrl, imagePath }) pour que les
    deux voies — fichier hébergé ou envoi téléphone — se rangent au même endroit. */
-let ultimeVuesBrouillon = [];
 const ULTIME_VUES_MAX = 3;
-
-function renderUltimeVues(){
-  const wrap = document.getElementById('ultimeVuesListe');
+/* v546 — QUATRE JEUX D'IMAGES PAR ULTIME, SUR UN SEUL MOTEUR DE LISTE.
+   Les vues de FACE (l'apparition), de VOL (la traversée), de FRAPPE (le coup) et les images
+   du JET (l'attaque projetée). Quatre listes identiques à gérer : un seul code de rendu,
+   d'ajout et de suppression, paramétré par le nom du jeu — quatre copies du même bloc se
+   seraient désynchronisées à la première correction.
+   Les brouillons ne sont JAMAIS réassignés (toujours `.length = 0` puis `push`) : d'autres
+   endroits gardent la référence du tableau. */
+const ULT_JEUX = {
+  face:   { champ:'vues',       liste:'ultimeVuesListe',   fichier:'ultimeVueFile',    github:'ultimeVueGithubBtn',    brouillon:[],
+            vide:"Aucune vue : la vignette de l'ultime servira d'image." },
+  vol:    { champ:'vuesVol',    liste:'ultimeVolListe',    fichier:'ultimeVolFile',    github:'ultimeVolGithubBtn',    brouillon:[],
+            vide:"Aucune vue de vol : les vues de face seront reprises." },
+  frappe: { champ:'vuesFrappe', liste:'ultimeFrappeListe', fichier:'ultimeFrappeFile', github:'ultimeFrappeGithubBtn', brouillon:[],
+            vide:"Aucune vue de frappe : les vues de vol seront reprises." },
+  jet:    { champ:'vuesJet',    liste:'ultimeJetListe',    fichier:'ultimeJetFile',    github:'ultimeJetGithubBtn',    brouillon:[],
+            vide:"Aucune image de jet : l'attaque retombe sur le rayon tracé." },
+};
+function renderUltimeJeu(nom){
+  const jeu = ULT_JEUX[nom];
+  const wrap = jeu && document.getElementById(jeu.liste);
   if (!wrap) return;
-  if (!ultimeVuesBrouillon.length){
-    wrap.innerHTML = '<p class="meta">Aucune vue : la vignette de l\'ultime servira d\'image.</p>';
-    return;
-  }
-  wrap.innerHTML = ultimeVuesBrouillon.map((v, i)=>
+  if (!jeu.brouillon.length){ wrap.innerHTML = '<p class="meta">' + jeu.vide + '</p>'; return; }
+  wrap.innerHTML = jeu.brouillon.map((v, i)=>
     '<div class="editor-list-item" style="align-items:center;">'
     + '<img src="' + (v.imageUrl || '') + '" style="width:54px; height:54px; object-fit:contain; flex:none; background:#111; border-radius:6px;">'
     + '<div class="name" style="flex:1;">Vue ' + (i + 1)
     + '<span class="meta" style="display:block; font-size:11px;">' + (v.imagePath ? '📁 ' + v.imagePath : '📱 envoyée depuis le téléphone') + '</span></div>'
-    + '<button class="btn-secondary" data-ult-vue-suppr="' + i + '" style="flex:none;">🗑️</button>'
+    + '<button class="btn-secondary" data-ult-suppr="' + i + '" style="flex:none;">🗑️</button>'
     + '</div>').join('');
-  wrap.querySelectorAll('button[data-ult-vue-suppr]').forEach(btn=>{
+  wrap.querySelectorAll('button[data-ult-suppr]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      ultimeVuesBrouillon.splice(parseInt(btn.dataset.ultVueSuppr, 10), 1);
-      renderUltimeVues();
+      jeu.brouillon.splice(parseInt(btn.dataset.ultSuppr, 10), 1);
+      renderUltimeJeu(nom);
     });
   });
 }
-function ajouterVueUltime(vue){
-  if (ultimeVuesBrouillon.length >= ULTIME_VUES_MAX){
-    showToast('Trois vues au maximum : retires-en une avant d\'en ajouter une autre');
+function renderUltimeVues(){ Object.keys(ULT_JEUX).forEach(renderUltimeJeu); }
+function ajouterVueJeu(nom, vue){
+  const jeu = ULT_JEUX[nom];
+  if (!jeu) return;
+  if (jeu.brouillon.length >= ULTIME_VUES_MAX){
+    showToast('Trois images au maximum : retires-en une avant d\'en ajouter une autre');
     return;
   }
-  ultimeVuesBrouillon.push(vue);
+  jeu.brouillon.push(vue);
+  renderUltimeJeu(nom);
+}
+function chargerJeuxUltime(u){
+  Object.keys(ULT_JEUX).forEach(nom=>{
+    const jeu = ULT_JEUX[nom];
+    jeu.brouillon.length = 0;
+    const src = u && u[jeu.champ];
+    if (Array.isArray(src)) JSON.parse(JSON.stringify(src)).forEach(v=> jeu.brouillon.push(v));
+  });
   renderUltimeVues();
+}
+function jeuxUltimeVersData(){
+  const d = {};
+  Object.keys(ULT_JEUX).forEach(nom=>{
+    d[ULT_JEUX[nom].champ] = JSON.parse(JSON.stringify(ULT_JEUX[nom].brouillon));
+  });
+  return d;
 }
 
 /* v542 — L'APERÇU DE LA SCÈNE.
@@ -15529,11 +15588,11 @@ function ultimeApercuDepuisFormulaire(){
     imageUrl: ultimeImageDataUrl || '',
     imagePath: ultimeImagePath || null,
     etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
-    vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
     mes: document.getElementById('ultimeMes').value || 'traversee',
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
     effet: document.getElementById('ultimeEffet').value || 'rayon',
     couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
+    ...jeuxUltimeVersData(),
   };
 }
 
@@ -15853,8 +15912,7 @@ function resetUltimeForm(){
   ultimeImagePath = null;
   ultimeEtapesBrouillon = [];
   ultimeEtapeOuverte = null;
-  ultimeVuesBrouillon = [];
-  renderUltimeVues();
+  chargerJeuxUltime(null);
   document.getElementById('ultimeMes').value = 'traversee';
   document.getElementById('ultimeMesCote').value = 'gauche';
   document.getElementById('ultimeEffet').value = 'rayon';
@@ -15890,8 +15948,7 @@ function loadUltimeForEdit(cle){
   } else wrapImg.style.display = 'none';
   ultimeEtapesBrouillon = JSON.parse(JSON.stringify(u.etapes || []));
   ultimeEtapeOuverte = null;
-  ultimeVuesBrouillon = Array.isArray(u.vues) ? JSON.parse(JSON.stringify(u.vues)) : [];
-  renderUltimeVues();
+  chargerJeuxUltime(u);
   document.getElementById('ultimeMes').value = u.mes || 'traversee';
   document.getElementById('ultimeMesCote').value = u.mesCote || 'gauche';
   document.getElementById('ultimeEffet').value = u.effet || 'rayon';
@@ -15956,7 +16013,19 @@ document.getElementById('ultimeImageFile').addEventListener('change', (e)=>{
 /* v541 : une vue d'invocation s'affiche en PLEIN ÉCRAN, donc on garde 900 px et non les
    400 px de la vignette. C'est lourd en base64 — d'où l'avertissement au-delà de 400 ko et
    le conseil d'héberger ces images-là sur GitHub. */
-document.getElementById('ultimeVueFile').addEventListener('change', (e)=>{
+Object.keys(ULT_JEUX).forEach(nom=>{
+  const jeu = ULT_JEUX[nom];
+  const champFichier = document.getElementById(jeu.fichier);
+  const boutonGh = document.getElementById(jeu.github);
+  if (champFichier) champFichier.addEventListener('change', (e)=> lireFichierVueUltime(e, nom));
+  if (boutonGh) boutonGh.addEventListener('click', ()=>{
+    openGithubFilePicker(null, (item)=>{
+      ajouterVueJeu(nom, { imageUrl: resolveMediaPath(item.path), imagePath: item.path });
+      showToast('Image ajoutée : ' + item.path);
+    });
+  });
+});
+function lireFichierVueUltime(e, nom){
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -15974,21 +16043,16 @@ document.getElementById('ultimeVueFile').addEventListener('change', (e)=>{
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       const url = canvas.toDataURL('image/png');
       const ko = Math.round(url.length / 1024);
-      if (ko > 400) showToast('Cette vue pèse ' + ko + ' ko — héberge-la plutôt sur GitHub, la fiche plafonne à 1 Mo');
-      ajouterVueUltime({ imageUrl: url, imagePath: null });
-      document.getElementById('ultimeVueFile').value = '';
+      if (ko > 400) showToast('Cette image pèse ' + ko + ' ko — héberge-la plutôt sur GitHub, la fiche plafonne à 1 Mo');
+      ajouterVueJeu(nom, { imageUrl: url, imagePath: null });
+      e.target.value = '';
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
-});
+}
 document.getElementById('ultimeApercuBtn').addEventListener('click', apercuSceneUltime);
-document.getElementById('ultimeVueGithubBtn').addEventListener('click', ()=>{
-  openGithubFilePicker(null, (item)=>{
-    ajouterVueUltime({ imageUrl: resolveMediaPath(item.path), imagePath: item.path });
-    showToast('Vue ajoutée : ' + item.path);
-  });
-});
+
 document.getElementById('ultimeImageGithubBtn').addEventListener('click', ()=>{
   openGithubFilePicker(null, (item)=>{
     ultimeImagePath = item.path;
@@ -16022,12 +16086,12 @@ document.getElementById('ultimeSaveBtn').addEventListener('click', ()=>{
     imageUrl: ultimeImageDataUrl || '',
     imagePath: ultimeImagePath || null,
     etapes: JSON.parse(JSON.stringify(ultimeEtapesBrouillon || [])),
-    vues: JSON.parse(JSON.stringify(ultimeVuesBrouillon || [])),
     mes: document.getElementById('ultimeMes').value || 'traversee',
     mesCote: document.getElementById('ultimeMesCote').value || 'gauche',
     effet: document.getElementById('ultimeEffet').value || 'rayon',
     couleur: document.getElementById('ultimeCouleur').value || '#7CFF4F',
     updatedAt: Date.now() };
+  Object.assign(data, jeuxUltimeVersData());
   ultimesCol.doc(cle).set(data).then(()=>{
     showToast(editingUltimeId ? 'Ultime mise à jour' : 'Ultime ajoutée');
     resetUltimeForm();
@@ -19450,7 +19514,8 @@ function invocationRetirer(){
   if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
-  if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair');
+  if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
+  invocationUltime = null;
   /* v544 : les styles posés à la main pendant la traversée doivent sauter, sans quoi la
      prochaine scène repartirait de la dernière position de la précédente. */
   const scene = inv && inv.querySelector('.inv-scene');
@@ -19466,7 +19531,8 @@ async function invocationEntree(acteur, u){
   if (!inv || !hote || !vues.length) return false;
   hote.innerHTML = vues.map((url, i)=>
     '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
-  inv.classList.remove('on','fond','montee','flotte','cote','sortie');
+  invocationUltime = u;
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie','inv-miroir');
   inv.classList.add('on');
   void inv.offsetWidth;   // sans cette lecture, le navigateur ne voit aucun changement d'état
   inv.classList.add('fond','montee');
@@ -19510,6 +19576,25 @@ async function invocationDeCote(){
    `invocationSens` vaut 1 quand elle arrive par la gauche : tous les décalages horizontaux
    sont multipliés par lui, ce qui donne le sens inverse sans écrire la scène deux fois. */
 let invocationSens = 1;
+let invocationUltime = null;   // l'ultime en cours, pour changer de jeu de vues en route
+/* v546 — QUEL JEU D'IMAGES POUR QUEL MOMENT, avec repli en cascade : la frappe retombe sur
+   le vol, le vol sur les vues de face, les vues de face sur la vignette. Une ultime qui n'a
+   qu'une image reste donc jouable de bout en bout. */
+function vuesUltime(u, nom){
+  const jeu = ULT_JEUX[nom];
+  const brut = (u && jeu && Array.isArray(u[jeu.champ])) ? u[jeu.champ] : [];
+  const liste = brut.map(v=> v && v.imageUrl).filter(Boolean);
+  if (liste.length) return liste;
+  if (nom === 'frappe') return vuesUltime(u, 'vol');
+  if (nom === 'vol') return vuesInvocation(u);
+  return [];   // le jet n'a pas de repli : sans image, l'attaque reprend le rayon tracé
+}
+function invocationChangerVues(nom){
+  const hote = document.getElementById('invVues');
+  const vues = vuesUltime(invocationUltime, nom);
+  if (!hote || !vues.length) return;
+  invocationVues(hote, vues);
+}
 function invocationVues(hote, vues){
   hote.innerHTML = vues.map((url, i)=>
     '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
@@ -19528,12 +19613,14 @@ async function invocationTraversee(acteur, u){
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
   const scene = inv && inv.querySelector('.inv-scene');
-  const vues = vuesInvocation(u);
+  const vues = vuesUltime(u, 'vol');
   if (!inv || !hote || !scene || !vues.length) return false;
+  invocationUltime = u;
   invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
   const s = invocationSens;
   invocationVues(hote, vues);
-  inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair');
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
+  if (s === -1) inv.classList.add('inv-miroir');
   inv.classList.add('on');
   scene.style.transition = 'none';
   scene.style.opacity = '1';
@@ -19559,6 +19646,9 @@ async function invocationFrappe(){
   const scene = inv && inv.querySelector('.inv-scene');
   if (!inv || !scene || !inv.classList.contains('on')) return;
   const s = invocationSens;
+  /* v546 : elle passe en posture de frappe dès l'élan, et y reste pendant toutes les
+     étapes — c'est elle qui porte le coup, pas un effet posé à côté. */
+  invocationChangerVues('frappe');
   scene.style.transition = 'transform 200ms ease-in';
   scene.style.transform = 'translate(' + (-27 * s) + '%, -9%) scale(.66) rotate(' + (-5 * s) + 'deg)';
   await sleep(210);
@@ -19595,7 +19685,13 @@ function ultFxCentre(el, hote){
    une ultime sans image d'invocation doit rester regardable. */
 function ultFxOrigine(acteur, hote){
   const img = document.querySelector('#combatInvocation.on #invVues img.vue-on');
-  if (img) return ultFxCentre(img, hote);
+  if (img){
+    /* v546 : l'attaque part de SES MAINS, pas du centre de l'image — un décalage vers
+       l'avant, du côté où elle regarde, sinon le jet lui sort du ventre. */
+    const r = img.getBoundingClientRect(), h = hote.getBoundingClientRect();
+    return { x: r.left - h.left + r.width / 2 + r.width * 0.30 * invocationSens,
+             y: r.top - h.top + r.height * 0.40 };
+  }
   const carte = document.querySelector('[data-fighter="' + acteur.uid + '"] .combat-avatar');
   if (carte) return ultFxCentre(carte, hote);
   return { x: hote.clientWidth / 2, y: hote.clientHeight / 2 };
@@ -19612,7 +19708,7 @@ function ultFxImpact(calque, p, couleur, delai){
     { transform:'translate(-50%,-50%) scale(1.6)', opacity:0 }
   ], { duration: 520, delay: delai || 0, easing:'ease-out', fill:'forwards' });
 }
-async function jouerEffetUltime(acteur, type, couleur, vises){
+async function jouerEffetUltime(acteur, type, couleur, vises, jetImgs){
   const hote = document.getElementById('combatFull');
   const calque = ultFxCalque();
   if (!hote || !calque) return;
@@ -19624,7 +19720,43 @@ async function jouerEffetUltime(acteur, type, couleur, vises){
   if (!cibles.length) cibles.push({ x: hote.clientWidth / 2, y: hote.clientHeight * 0.3 });
   let duree = 700;
 
-  if (type === 'onde'){
+  if (type === 'jet' && jetImgs && jetImgs.length){
+    /* L'image du jet est dessinée partant du bord GAUCHE vers la droite : posée à l'origine,
+       pivotée vers la cible et étirée à la bonne longueur, elle relie exactement les deux
+       points — ce qu'une gerbe peinte dans la planche ne saurait pas faire, puisqu'elle
+       pointerait toujours dans la même direction quel que soit l'adversaire visé. */
+    const epais = 132;
+    cibles.forEach((c, i)=>{
+      const dx = c.x - o.x, dy = c.y - o.y;
+      const dist = Math.max(60, Math.hypot(dx, dy));
+      const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      const j = document.createElement('div');
+      j.style.cssText = 'position:absolute; left:' + o.x + 'px; top:' + o.y + 'px;'
+        + ' width:' + dist + 'px; height:' + epais + 'px; margin-top:' + (-epais / 2) + 'px;'
+        + ' transform-origin:0 50%; background-repeat:no-repeat; background-size:100% 100%;'
+        + " background-image:url('" + jetImgs[0] + "');"
+        + ' filter:drop-shadow(0 0 16px ' + couleur + ');';
+      calque.appendChild(j);
+      const base = 'rotate(' + ang + 'deg) ';
+      j.animate([
+        { transform: base + 'scaleX(0) scaleY(.45)', opacity:0 },
+        { transform: base + 'scaleX(1) scaleY(1)', opacity:1, offset:.3 },
+        { transform: base + 'scaleX(1) scaleY(1)', opacity:1, offset:.74 },
+        { transform: base + 'scaleX(1) scaleY(.75)', opacity:0 }
+      ], { duration: 860, delay: i * 90, easing:'cubic-bezier(.2,.9,.3,1)', fill:'forwards' });
+      if (jetImgs.length > 1){
+        let k = 0;
+        const t = setInterval(()=>{
+          k++;
+          j.style.backgroundImage = "url('" + jetImgs[k % jetImgs.length] + "')";
+        }, 90);
+        setTimeout(()=> clearInterval(t), 900 + i * 90);
+      }
+      ultFxImpact(calque, c, couleur, 270 + i * 90);
+    });
+    duree = 940 + cibles.length * 90;
+
+  } else if (type === 'onde'){
     const rayon = Math.max(hote.clientWidth, hote.clientHeight) * 1.25;
     for (let i = 0; i < 3; i++){
       const anneau = document.createElement('div');
@@ -19718,6 +19850,7 @@ async function invocationSortie(mes){
   const scene = inv && inv.querySelector('.inv-scene');
   if (!inv || !inv.classList.contains('on')){ invocationRetirer(); return; }
   if (mes === 'traversee' && scene){
+    invocationChangerVues('vol');   // elle repart comme elle est venue
     scene.style.transition = 'transform 640ms cubic-bezier(.6,0,.9,.4), opacity 340ms ease 320ms';
     scene.style.transform = 'translate(' + (122 * invocationSens) + '%, -14%) scale(.5)';
     scene.style.opacity = '0';
@@ -19770,6 +19903,7 @@ async function jouerSceneUltime(acteur){
     const mes = (u && u.mes) || 'traversee';
     const effetUltime = (u && u.effet && u.effet !== 'aucun') ? u.effet : null;
     const couleurUltime = (u && u.couleur) || '#7CFF4F';
+    const jetUltime = vuesUltime(u, 'jet');
     let diviniteLa = false;
     if (mes === 'apparition'){
       diviniteLa = await invocationEntree(acteur, u);
@@ -19804,7 +19938,7 @@ async function jouerSceneUltime(acteur){
       if (effetUltime){
         /* L'effet calculé REMPLACE les effets d'étape : les deux ensemble se marcheraient
            dessus, et c'est justement ce réglage à la main qu'on cherche à supprimer. */
-        await withTimeout(jouerEffetUltime(acteur, effetUltime, couleurUltime, vises), 4000);
+        await withTimeout(jouerEffetUltime(acteur, effetUltime, couleurUltime, vises, jetUltime), 4000);
         ultFxNettoyer();
       } else {
         if (e.fxSelf && e.fxSelf.image){
@@ -30076,7 +30210,9 @@ function preloadCombatFx(fighters){
       });
       /* v541 : et les vues d'invocation, qui s'affichent en plein écran — une vue qui
          arrive en retard casserait l'alternance au milieu de l'apparition. */
-      ((u && u.vues) || []).forEach(v=>{ if (v && v.imageUrl) urls.add(v.imageUrl); });
+      ['vues','vuesVol','vuesFrappe','vuesJet'].forEach(champ=>{
+        ((u && u[champ]) || []).forEach(v=>{ if (v && v.imageUrl) urls.add(v.imageUrl); });
+      });
     });
   } catch(err){ /* jamais bloquer un combat pour un préchargement */ }
   if (!urls.size) return;
