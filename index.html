@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v549</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v550</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -20177,21 +20177,35 @@ async function invocationParticules(acteur, u){
   void inv.offsetWidth;
   inv.classList.add('fond');
   const couleur = (u && u.couleur) || '#7CFF4F';
+  /* v550 — MESURE. On trace chaque étape du montage : quand l'animation rate à l'écran sans
+     lever d'erreur, c'est l'une de ces valeurs qui le dit (boîte de zéro, toile de zéro,
+     image non lue, aucun point retenu). */
+  mesureUltime('particules — départ', 'vues : ' + vues.length + ' · ' + urlCourte(vues[0]));
   try {
     const img = hote.querySelector('img');
     const rc = img.getBoundingClientRect(), rh = full.getBoundingClientRect();
     const dest = { x: rc.left - rh.left, y: rc.top - rh.top, w: rc.width, h: rc.height };
+    mesureUltime('particules — boîte de destination',
+      Math.round(dest.w) + '×' + Math.round(dest.h) + ' à (' + Math.round(dest.x) + ',' + Math.round(dest.y) + ')'
+      + ' · écran ' + Math.round(rh.width) + '×' + Math.round(rh.height));
     if (!(dest.w > 8 && dest.h > 8)) throw new Error('image non mesurable');
     const toile = invParticulesCanvas();
     if (!toile) throw new Error('toile indisponible');
+    mesureUltime('particules — toile posée',
+      Math.round(toile.w) + '×' + Math.round(toile.h) + ' css · ' + toile.el.width + '×' + toile.el.height + ' pixels'
+      + ' · parent ' + (toile.el.parentNode ? toile.el.parentNode.id || 'sans id' : 'AUCUN'));
     const source = await chargerImagePourPixels(vues[0]);
+    mesureUltime('particules — image lue', source.naturalWidth + '×' + source.naturalHeight);
     const pts = pointsDepuisImage(source, dest.w, dest.h);
+    mesureUltime('particules — ' + pts.length + ' point(s) retenus', pts.length ? ('pavé de ' + pts[0].t + ' px') : 'AUCUN POINT');
     if (!pts.length) throw new Error('aucun point');
     await jouerParticulesInvocation(toile, pts, dest, couleur);
+    mesureUltime('particules — animation terminée', sceneCoupee() ? 'coupée par « Passer »' : 'jouée en entier');
   } catch(err){
     /* Image illisible (hébergement sans en-tête CORS), trop lente, ou mesure impossible :
        on ne renonce pas à la scène, on la montre en fondu. */
-    if (typeof journal === 'function') journal('ultime', 'particules impossibles — fondu simple', String(err && err.message || err));
+    mesureUltime('❌ particules impossibles — fondu simple', String(err && err.message || err));
+    if (typeof journal === 'function') journal('ultime', 'particules impossibles — fondu simple', String(err && err.message || err), true);
   }
   if (sceneCoupee()){ invParticulesRetirer(); invocationRetirer(); return false; }
   /* Le relais : la vraie image apparaît pendant que la toile s'efface. Les particules sont
