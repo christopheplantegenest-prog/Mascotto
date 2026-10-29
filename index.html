@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v553</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v554</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19699,9 +19699,12 @@ function invocationRetirer(){
      prochaine scène repartirait de la dernière position de la précédente. */
   const scene = inv && inv.querySelector('.inv-scene');
   if (scene){ scene.style.transition = ''; scene.style.transform = ''; scene.style.opacity = ''; }
-  /* v553 : le rognage de la montée doit sauter aussi, sinon la scène suivante resterait
-     coupée au ras du sol. */
-  if (hote){ hote.style.transition = ''; hote.style.clipPath = ''; hote.innerHTML = ''; }
+  /* v554 : le masquage et les décalages de la montée doivent sauter aussi, sinon la scène
+     suivante resterait coupée au ras du sol. */
+  if (hote){
+    hote.style.transition = ''; hote.style.clipPath = ''; hote.style.overflow = '';
+    hote.innerHTML = '';
+  }
 }
 /* Rend VRAI si la divinité est bien à l'écran — c'est ce qui décide si la suite de la scène
    se joue avec elle ou sans elle. */
@@ -20211,20 +20214,32 @@ async function invocationMontee(acteur, u){
   inv.classList.add('on');
   const p = placeUltime(u);
   const s = invocationSens;
+  /* v554 : la scène ne bouge PAS. C'est le cadre qui sert de ligne de sol — il masque tout
+     ce qui passe sous lui — et c'est la divinité qui monte au travers, à l'intérieur.
+     Faire monter la scène entière, comme en v553, déplaçait aussi la ligne de masquage :
+     la découpe suivait le corps au lieu de rester au sol, et c'est sa pointe qui sortait la
+     première au lieu de sa tête. */
   scene.style.transition = 'none';
   scene.style.opacity = '1';
-  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + (p.y + 7) + '%) scale(' + p.s + ')';
-  hote.style.clipPath = 'inset(100% 0 0 0)';   // entièrement rognée : rien ne dépasse encore
+  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + p.y + '%) scale(' + p.s + ')';
+  hote.style.overflow = 'hidden';
   void inv.offsetWidth;
   inv.classList.add('fond');
   const couleur = (u && u.couleur) || '#7CFF4F';
   let stopCercle = null;
+  let descente = 112;   // de quoi la cacher entièrement sous la ligne, à défaut de mesure
   try {
     const img = await chargerImageSimple(vues[0]);
     const dest = boiteInvocation(hote, full, img);
     if (!dest) throw new Error('cadre non mesurable');
+    const rv = hote.getBoundingClientRect();
+    /* Le décalage est exprimé en POURCENTAGE DE SA PROPRE HAUTEUR : l'image vit dans un
+       cadre mis à l'échelle, des pixels d'écran n'y voudraient plus rien dire. On y ajoute
+       le vide sous elle quand elle ne remplit pas toute la hauteur du cadre. */
+    descente = 100 + Math.max(0, (rv.height - dest.h) / 2 / dest.h * 100) + 4;
     mesureUltime('montée — boîte de destination',
-      Math.round(dest.w) + '×' + Math.round(dest.h) + ' à (' + Math.round(dest.x) + ',' + Math.round(dest.y) + ')');
+      Math.round(dest.w) + '×' + Math.round(dest.h) + ' à (' + Math.round(dest.x) + ',' + Math.round(dest.y) + ')'
+      + ' · descente ' + Math.round(descente) + ' %');
     const toile = invParticulesCanvas();
     if (toile){
       stopCercle = animerCercleSeul(toile, dest.x + dest.w / 2, dest.y + dest.h * 0.95,
@@ -20233,15 +20248,20 @@ async function invocationMontee(acteur, u){
   } catch(err){
     mesureUltime('❌ montée — cercle impossible', String(err && err.message || err));
   }
+  const vuesImg = ()=> hote.querySelectorAll('img');
+  vuesImg().forEach(im=>{
+    im.style.transition = 'none';
+    im.style.transform = 'translateY(' + descente + '%)';
+  });
+  void inv.offsetWidth;
   await sleep(540);   // le cercle s'allume seul avant qu'elle sorte
   if (sceneCoupee()){ if (stopCercle) stopCercle(); invParticulesRetirer(); invocationRetirer(); return false; }
-  /* Elle sort : le rognage remonte pendant qu'elle s'élève. Les deux durées sont identiques,
-     sans quoi elle finirait de monter avant d'être entièrement dévoilée. */
-  scene.style.transition = 'transform 1100ms cubic-bezier(.2,.8,.3,1)';
-  scene.style.transform = 'translate(' + (p.x * s) + '%, ' + p.y + '%) scale(' + p.s + ')';
-  hote.style.transition = 'clip-path 1100ms cubic-bezier(.2,.8,.3,1)';
-  hote.style.clipPath = 'inset(0% 0 0 0)';
-  await sleep(1180);
+  /* Elle monte au travers du sol : la tête franchit la ligne la première, puis le corps. */
+  vuesImg().forEach(im=>{
+    im.style.transition = 'transform 1250ms cubic-bezier(.22,.75,.3,1)';
+    im.style.transform = 'translateY(0)';
+  });
+  await sleep(1320);
   if (stopCercle) stopCercle();
   const toile = document.getElementById('invParticules');
   if (toile){ toile.style.transition = 'opacity 320ms ease'; toile.style.opacity = '0'; }
@@ -20249,8 +20269,8 @@ async function invocationMontee(acteur, u){
   secousseCombat();
   await sleep(300);
   invParticulesRetirer();
-  hote.style.transition = '';
-  hote.style.clipPath = '';
+  hote.style.overflow = '';
+  vuesImg().forEach(im=>{ im.style.transition = ''; im.style.transform = ''; });
   return !sceneCoupee();
 }
 
