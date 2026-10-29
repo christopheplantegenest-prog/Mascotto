@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v548</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v549</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2618,6 +2618,7 @@
       <div class="field-label">🎬 Mise en scène (v544)</div>
       <p class="meta">Comment la divinité entre en scène. Chaque scénario est une animation à part : deux ultimes qui partagent le même scénario se ressemblent, d'où l'intérêt de varier.</p>
       <select id="ultimeMes" class="field-input">
+        <option value="particules">L'invocation — un cercle s'allume au sol, des particules se rassemblent pour la former</option>
         <option value="traversee">La traversée — elle entre par un côté, frappe au passage, sort par l'autre</option>
         <option value="apparition">L'apparition — elle monte au centre, se range sur le côté, puis frappe</option>
       </select>
@@ -19691,6 +19692,7 @@ function invocationRetirer(){
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
   if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
+  invParticulesRetirer();
   invocationUltime = null;
   /* v544 : les styles posés à la main pendant la traversée doivent sauter, sans quoi la
      prochaine scène repartirait de la dernière position de la précédente. */
@@ -20030,6 +20032,182 @@ function ultFxNettoyer(){
   if (calque) calque.innerHTML = '';
 }
 
+/* v549 — L'INVOCATION PAR PARTICULES.
+   Le principe : on lit les pixels de son image, on en tire quelques milliers de points avec
+   leur couleur, et on les fait converger depuis un cercle au sol vers leur place exacte.
+   À l'arrivée les points pavent l'image, donc elle se reforme d'elle-même — aucune image
+   d'animation à dessiner.
+   Deux pièges traités : la lecture des pixels d'une image hébergée exige `crossOrigin`,
+   faute de quoi le navigateur refuse d'y toucher (toile souillée) ; et le nombre de points
+   est calculé pour viser ~1400, pas fixé, sinon une grande image étoufferait le téléphone. */
+function invParticulesCanvas(){
+  const hote = document.getElementById('combatFull');
+  if (!hote) return null;
+  let c = document.getElementById('invParticules');
+  if (!c){
+    c = document.createElement('canvas');
+    c.id = 'invParticules';
+    c.style.cssText = 'position:absolute; inset:0; z-index:17; pointer-events:none;';
+    hote.appendChild(c);
+  }
+  const r = hote.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  c.width = Math.max(1, Math.round(r.width * dpr));
+  c.height = Math.max(1, Math.round(r.height * dpr));
+  c.style.width = r.width + 'px';
+  c.style.height = r.height + 'px';
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { el: c, ctx, w: r.width, h: r.height };
+}
+function invParticulesRetirer(){
+  const c = document.getElementById('invParticules');
+  if (c && c.parentNode) c.parentNode.removeChild(c);
+}
+function chargerImagePourPixels(url){
+  return new Promise((resoudre, rejeter)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=> resoudre(img);
+    img.onerror = ()=> rejeter(new Error('image illisible'));
+    img.src = url;
+    setTimeout(()=> rejeter(new Error('image trop lente')), 5000);
+  });
+}
+function pointsDepuisImage(img, larg, haut){
+  const L = Math.max(1, Math.round(larg)), H = Math.max(1, Math.round(haut));
+  const pas = Math.max(3, Math.round(Math.sqrt(L * H / 1400)));
+  const off = document.createElement('canvas');
+  off.width = L; off.height = H;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(img, 0, 0, L, H);
+  const d = octx.getImageData(0, 0, L, H).data;
+  const pts = [];
+  for (let y = 0; y < H; y += pas){
+    for (let x = 0; x < L; x += pas){
+      const i = (y * L + x) * 4;
+      if (d[i + 3] < 60) continue;
+      pts.push({ x, y, c: 'rgb(' + d[i] + ',' + d[i+1] + ',' + d[i+2] + ')', t: pas });
+    }
+  }
+  return pts;
+}
+function dessinerCercleInvocation(ctx, cx, cy, rx, ry, p, couleur, t){
+  if (p <= 0) return;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1, ry / rx);
+  ctx.globalAlpha = Math.min(1, p) * 0.95;
+  ctx.strokeStyle = couleur;
+  ctx.shadowColor = couleur;
+  ctx.shadowBlur = 18;
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, rx * p, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(0, 0, rx * p * 0.7, 0, Math.PI * 2); ctx.stroke();
+  const n = 18;
+  for (let i = 0; i < n; i++){
+    const a = t / 820 + i * Math.PI * 2 / n;
+    const r1 = rx * p * 0.76, r2 = rx * p * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+    ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function jouerParticulesInvocation(toile, pts, dest, couleur){
+  return new Promise(resoudre=>{
+    const ctx = toile.ctx;
+    const cx = dest.x + dest.w / 2;
+    const cy = dest.y + dest.h * 0.95;
+    const rx = Math.max(70, dest.w * 0.6), ry = rx * 0.3;
+    pts.forEach(pt=>{
+      const a = Math.random() * Math.PI * 2;
+      const k = 0.45 + Math.random() * 0.85;
+      pt.sx = cx + Math.cos(a) * rx * k;
+      pt.sy = cy + Math.sin(a) * ry * k;
+      /* Les points du bas partent les premiers : elle se forme en montant, comme si elle
+         sortait du cercle plutôt que d'apparaître d'un bloc. */
+      pt.d = 300 + (1 - pt.y / Math.max(1, dest.h)) * 520 + Math.random() * 150;
+      pt.dur = 600 + Math.random() * 420;
+    });
+    const total = 1900;
+    const t0 = performance.now();
+    const boucle = (maintenant)=>{
+      const t = maintenant - t0;
+      ctx.clearRect(0, 0, toile.w, toile.h);
+      dessinerCercleInvocation(ctx, cx, cy, rx, ry, Math.min(1, t / 420), couleur, t);
+      for (let i = 0; i < pts.length; i++){
+        const pt = pts[i];
+        const k = (t - pt.d) / pt.dur;
+        if (k <= 0) continue;
+        const e = (k >= 1) ? 1 : 1 - Math.pow(1 - k, 3);
+        ctx.globalAlpha = (k < 0.18) ? (k / 0.18) : 1;
+        ctx.fillStyle = pt.c;
+        ctx.fillRect(pt.sx + (dest.x + pt.x - pt.sx) * e,
+                     pt.sy + (dest.y + pt.y - pt.sy) * e, pt.t, pt.t);
+      }
+      ctx.globalAlpha = 1;
+      if (t < total && !sceneCoupee()) requestAnimationFrame(boucle);
+      else resoudre();
+    };
+    requestAnimationFrame(boucle);
+  });
+}
+async function invocationParticules(acteur, u){
+  const inv = document.getElementById('combatInvocation');
+  const hote = document.getElementById('invVues');
+  const scene = inv && inv.querySelector('.inv-scene');
+  const full = document.getElementById('combatFull');
+  const vues = vuesInvocation(u);
+  if (!inv || !hote || !scene || !full || !vues.length) return false;
+  invocationUltime = u;
+  invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
+  invocationVues(hote, vues);
+  inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
+  inv.classList.add('on');
+  const p = placeUltime(u);
+  /* Elle est posée à sa place finale mais INVISIBLE : on a besoin de sa boîte à l'écran
+     pour savoir où les particules doivent converger, et une image masquée garde sa place
+     alors qu'une image retirée n'en a aucune. */
+  scene.style.transition = 'none';
+  scene.style.opacity = '0';
+  scene.style.transform = 'translate(' + (p.x * invocationSens) + '%, ' + p.y + '%) scale(' + p.s + ')';
+  void inv.offsetWidth;
+  inv.classList.add('fond');
+  const couleur = (u && u.couleur) || '#7CFF4F';
+  try {
+    const img = hote.querySelector('img');
+    const rc = img.getBoundingClientRect(), rh = full.getBoundingClientRect();
+    const dest = { x: rc.left - rh.left, y: rc.top - rh.top, w: rc.width, h: rc.height };
+    if (!(dest.w > 8 && dest.h > 8)) throw new Error('image non mesurable');
+    const toile = invParticulesCanvas();
+    if (!toile) throw new Error('toile indisponible');
+    const source = await chargerImagePourPixels(vues[0]);
+    const pts = pointsDepuisImage(source, dest.w, dest.h);
+    if (!pts.length) throw new Error('aucun point');
+    await jouerParticulesInvocation(toile, pts, dest, couleur);
+  } catch(err){
+    /* Image illisible (hébergement sans en-tête CORS), trop lente, ou mesure impossible :
+       on ne renonce pas à la scène, on la montre en fondu. */
+    if (typeof journal === 'function') journal('ultime', 'particules impossibles — fondu simple', String(err && err.message || err));
+  }
+  if (sceneCoupee()){ invParticulesRetirer(); invocationRetirer(); return false; }
+  /* Le relais : la vraie image apparaît pendant que la toile s'efface. Les particules sont
+     grossières de près ; l'image, elle, est nette. */
+  scene.style.transition = 'opacity 300ms ease';
+  scene.style.opacity = '1';
+  inv.classList.add('voile-clair');
+  const toile = document.getElementById('invParticules');
+  if (toile){ toile.style.transition = 'opacity 300ms ease'; toile.style.opacity = '0'; }
+  await sleep(330);
+  invParticulesRetirer();
+  secousseCombat();
+  await sleep(220);
+  return !sceneCoupee();
+}
+
 async function invocationSortie(mes){
   const inv = document.getElementById('combatInvocation');
   const scene = inv && inv.querySelector('.inv-scene');
@@ -20094,6 +20272,10 @@ async function jouerSceneUltime(acteur){
       diviniteLa = await invocationEntree(acteur, u);
       if (!combatState) return;
       if (diviniteLa) await invocationDeCote();
+    } else if (mes === 'particules'){
+      diviniteLa = await invocationParticules(acteur, u);
+      if (!combatState) return;
+      if (diviniteLa) await invocationFrappe();
     } else {
       diviniteLa = await invocationTraversee(acteur, u);
       if (!combatState) return;
