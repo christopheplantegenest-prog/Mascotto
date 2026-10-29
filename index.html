@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v555</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v556</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -19690,6 +19690,7 @@ function secousseCombat(){
 let invocationTimer = null;
 function invocationRetirer(){
   if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
+  invocationMinuteriesArret();
   const inv = document.getElementById('combatInvocation');
   const hote = document.getElementById('invVues');
   if (inv) inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
@@ -19779,6 +19780,26 @@ function invocationChangerVues(nom){
   if (!hote || !vues.length) return;
   invocationVues(hote, vues);
 }
+/* v556 — LES VUES COMME UN GESTE. Posées sans minuterie, puis avancées une par une :
+   trois images où les bras se lèvent racontent un mouvement, pas un battement. La dernière
+   reste affichée, c'est elle qui tient jusqu'à l'attaque. */
+let invocationMinuteries = [];
+function invocationMinuteriesArret(){
+  invocationMinuteries.forEach(t=> clearTimeout(t));
+  invocationMinuteries = [];
+}
+function invocationVuesFigees(hote, vues){
+  if (invocationTimer){ clearInterval(invocationTimer); invocationTimer = null; }
+  invocationMinuteriesArret();
+  hote.innerHTML = vues.map((url, i)=>
+    '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
+}
+function invocationMontrerVue(hote, rang){
+  const imgs = hote.querySelectorAll('img');
+  if (!imgs.length) return;
+  const cible = Math.min(rang, imgs.length - 1);
+  imgs.forEach((im, i)=> im.classList.toggle('vue-on', i === cible));
+}
 function invocationVues(hote, vues){
   hote.innerHTML = vues.map((url, i)=>
     '<img src="' + url + '"' + (i === 0 ? ' class="vue-on"' : '') + ' alt="">').join('');
@@ -19835,8 +19856,11 @@ async function invocationFrappe(){
   if (!inv || !scene || !inv.classList.contains('on')) return;
   const s = invocationSens;
   /* v546 : elle passe en posture de frappe dès l'élan, et y reste pendant toutes les
-     étapes — c'est elle qui porte le coup, pas un effet posé à côté. */
-  invocationChangerVues('frappe');
+     étapes — c'est elle qui porte le coup, pas un effet posé à côté.
+     v556 : SEULEMENT si des vues de frappe existent vraiment. Sans elles, le repli
+     repartait sur les vues d'invocation EN BOUCLE, et le geste qu'on venait de jouer se
+     remettait à battre pendant l'attaque. */
+  if ((((invocationUltime && invocationUltime.vuesFrappe) || []).length)) invocationChangerVues('frappe');
   /* v548 : l'élan et le coup se jouent autour de la place réglée — un recul de 8 % vers le
      bord, puis une détente de 4 % vers l'avant. Elle ne revient jamais au centre. */
   const p = placeUltime(invocationUltime);
@@ -20209,7 +20233,7 @@ async function invocationMontee(acteur, u){
   if (!inv || !hote || !scene || !full || !vues.length) return false;
   invocationUltime = u;
   invocationSens = ((u && u.mesCote) === 'droite') ? -1 : 1;
-  invocationVues(hote, vues);
+  invocationVuesFigees(hote, vues);
   inv.classList.remove('on','fond','montee','flotte','cote','sortie','voile-clair','inv-miroir');
   inv.classList.add('on');
   const p = placeUltime(u);
@@ -20267,6 +20291,13 @@ async function invocationMontee(acteur, u){
     im.style.transition = 'transform 1250ms cubic-bezier(.22,.75,.3,1)';
     im.style.transform = 'translateY(0)';
   });
+  /* Le geste s'étale sur la montée : la dernière image tombe AVANT la fin, pour qu'elle
+     finisse de sortir du sol déjà bras levés plutôt que de se figer après coup. */
+  invocationMinuteriesArret();
+  for (let k = 1; k < vues.length; k++){
+    invocationMinuteries.push(setTimeout(()=> invocationMontrerVue(hote, k),
+      Math.round(1250 * (k / vues.length)) + 110));
+  }
   await sleep(1320);
   if (stopCercle) stopCercle();
   const toile = document.getElementById('invParticules');
