@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v569</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v570</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v570 — mémoire : voix « low » (28 Mo), téléchargements écrits en flux dans le cache,
+     chargements l'un après l'autre, modèle Vosk lu par son worker depuis le cache.
      v569 — LA RECONNAISSANCE VOSK dans la page (Kaldi en WebAssembly + modèle français small,
      46 Mo téléchargés une fois) ; celle du navigateur ne sert plus que de secours.
      v568 — LA VOIX PIPER dans la page (prononciateur WebAssembly + ONNX Runtime + voix
@@ -35801,7 +35803,7 @@ const PIPER = {
   prononciateurBase: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/',
   ortJs: 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/ort.min.js',
   ortBase: 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/',
-  voix: 'https://huggingface.co/diffusionstudio/piper-voices/resolve/main/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx',
+  voix: 'https://huggingface.co/diffusionstudio/piper-voices/resolve/main/fr/fr_FR/siwis/low/fr_FR-siwis-low.onnx',   // v570 : la voix « low » (28 Mo) — la « medium » (63 Mo) faisait recharger la page sur 2 Go de mémoire
   cache: 'mascotto-voix',
 };
 const VX = { prete:null, ok:false, session:null, config:null, phonemiseur:null, surPrint:null, audio:null, enCours:null, raison:'' };
@@ -35813,26 +35815,31 @@ function chargerScript(url){
     document.head.appendChild(s);
   });
 }
-/* Télécharge en montrant l'avancement, et garde dans le cache du navigateur. */
-async function fichierEnCache(url, libelle){
+/* Télécharge en montrant l'avancement, en écrivant DIRECTEMENT dans le cache du navigateur
+   (v570 : le fichier n'est plus gardé en mémoire pendant le téléchargement — sur 2 Go de
+   mémoire, c'est ce qui faisait recharger la page). Rend le contenu, ou juste `true` quand on
+   veut seulement que le fichier soit dans le cache (le worker de Vosk ira l'y chercher). */
+async function fichierEnCache(url, libelle, seulementCache){
   let cache = null;
-  try { cache = await caches.open(PIPER.cache); const deja = await cache.match(url); if (deja) return await deja.arrayBuffer(); } catch(e){ cache = null; }
+  try { cache = await caches.open(PIPER.cache); const deja = await cache.match(url); if (deja) return seulementCache ? true : await deja.arrayBuffer(); } catch(e){ cache = null; }
   const res = await fetch(url);
   if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + url);
   const total = +(res.headers.get('Content-Length') || 0);
-  const lecteur = res.body ? res.body.getReader() : null;
-  const morceaux = []; let recu = 0;
-  if (lecteur){
+  if (cache && res.body){
+    const [versCache, versCompteur] = res.body.tee();
+    const mise = cache.put(url, new Response(versCache, { headers:{ 'Content-Type':'application/octet-stream' } }));
+    const lecteur = versCompteur.getReader(); let recu = 0;
     for (;;){
       const { done, value } = await lecteur.read();
       if (done) break;
-      morceaux.push(value); recu += value.length;
+      recu += value.length;
       if (libelle) etat('⬇️ ' + libelle + (total ? ' ' + Math.round(recu * 100 / total) + ' %' : ' ' + Math.round(recu / 1048576) + ' Mo'));
     }
+    await mise;
+    const r = await cache.match(url);
+    if (r) return seulementCache ? true : await r.arrayBuffer();
   }
-  const blob = new Blob(lecteur ? morceaux : [await res.arrayBuffer()]);
-  if (cache){ try { await cache.put(url, new Response(blob, { headers:{ 'Content-Type':'application/octet-stream' } })); } catch(e){} }
-  return await blob.arrayBuffer();
+  return seulementCache ? true : await res.arrayBuffer();
 }
 /* Prépare la voix une seule fois par chargement de page. Rend true si Piper est utilisable. */
 function preparerVoix(){
@@ -35998,10 +36005,10 @@ function preparerEcoute(){
     try {
       if (!window.WebAssembly || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('pas de WebAssembly ou de micro');
       if (typeof Vosk === 'undefined') await chargerScript(VOSK.js);
-      const tar = await fichierEnCache(VOSK.modele, 'reconnaissance française');
+      await preparerVoix();   // v570 : l'un après l'autre, jamais les deux chargements en même temps
+      await fichierEnCache(VOSK.modele, 'reconnaissance française', true);
       etat('🎤 Chargement de la reconnaissance…');
-      const url = URL.createObjectURL(new Blob([tar], { type:'application/gzip' }));
-      EC.modele = await Vosk.createModel(url);
+      EC.modele = await Vosk.createModel(VOSK.modele);   // le worker lit le fichier via le service worker, qui le sert depuis le cache
       try { EC.modele.setLogLevel(-2); } catch(e){}
       etat('');
       EC.ok = true;
@@ -37025,8 +37032,7 @@ async function lancerGuide(){
   afficher(); viderUI();
   garderEcranAllume();
   try { contexteAudio(); } catch(e){}   // v568 : Web Audio doit être créé dans le geste de l'utilisateur (ce tap)
-  preparerVoix();                        // v568 : la voix Piper se prépare pendant les premières questions
-  preparerEcoute();                      // v569 : la reconnaissance Vosk aussi
+  preparerVoix().then(()=> preparerEcoute());   // v568/v569 : la voix, PUIS la reconnaissance (v570 : jamais les deux à la fois)
   try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
   const sauve = sauvegardeLue();
   if (sauve && Object.keys(sauve.journal || {}).some(k=> (sauve.journal[k] || []).length)){

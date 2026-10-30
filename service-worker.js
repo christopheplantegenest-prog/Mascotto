@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v569";
+const CACHE_NAME = "mascotto-v570";
 const ASSETS = [
   "./",
   "./index.html",
@@ -58,5 +58,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(caches.match(req).then((cached) => cached || fetch(req)));
+  /* v570 : caches.match parcourt aussi « mascotto-voix » — le worker de Vosk et Piper y trouvent
+     les modèles que la page y a rangés, sans les garder en mémoire. */
+  event.respondWith(caches.match(req, { ignoreVary: true }).then((cached) => cached || fetch(req)));
 });
