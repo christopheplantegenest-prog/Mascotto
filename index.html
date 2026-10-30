@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v559</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v560</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7458,6 +7458,9 @@ function ficheParIdJouable(id){
 
 function renderAllCreatures(snap){
   majChoixReferencesPartout();
+  /* v560 : les fiches viennent d'arriver — c'est maintenant qu'on peut savoir si le vaisseau
+     du joueur existe encore. */
+  try { if (typeof recalculerVaisseauActif === 'function') recalculerVaisseauActif(); } catch(e){}
   creatures.forEach(c=>{ if (c.marker) map.removeLayer(c.marker); });
   creatures = [];
   snap.forEach((doc)=>{
@@ -8313,8 +8316,9 @@ function renderSheet(){
            Tester le seul `creatureId` d'avant faisait retomber le clic sur « Ensuite »,
            et le dialogue se terminait sans que le combat parte. */
         if (ch.combat && ((Array.isArray(ch.combat.creatureIds) && ch.combat.creatureIds.length) || ch.combat.creatureId)){
-          lancerCombatDepuisDialogue(activeCreature, ch.combat);
-          return;
+          /* v560 : si le combat ne peut pas partir (fiche disparue, sans caractéristiques),
+             on ne reste pas planté là — la réponse suit son cours comme une réponse sans combat. */
+          if (lancerCombatDepuisDialogue(activeCreature, ch.combat)) return;
         }
         if (ch.next === null || ch.next >= activeSteps.length || isNaN(ch.next)){
           fermerDialogue();
@@ -8411,6 +8415,9 @@ function fermerDialogue(){
 }
 
 let retourDialogueCombat = null;
+/* v560 : rend VRAI si le combat est parti, FAUX s'il n'a pas pu — l'appelant doit alors
+   faire continuer le dialogue, sans quoi la fenêtre reste ouverte avec un bouton éteint et
+   le joueur n'a plus rien à toucher (trouvé par le joueur ordinateur, 30/10). */
 function lancerCombatDepuisDialogue(creature, combat){
   const ids = Array.isArray(combat.creatureIds) && combat.creatureIds.length
     ? combat.creatureIds
@@ -8418,11 +8425,17 @@ function lancerCombatDepuisDialogue(creature, combat){
   const adversaires = ids.slice(0, 3)
     .map(id=> (id === '__self__') ? creature : ficheParId(id))
     .filter(Boolean);
-  if (!adversaires.length){ showToast('Adversaire introuvable — la fiche a peut-être été supprimée'); return; }
+  if (!adversaires.length){
+    showToast('Adversaire introuvable — la fiche a peut-être été supprimée');
+    journal('dialogue', 'combat impossible : adversaire introuvable',
+      'fiche « ' + ((creature && creature.name) || (creature && creature.id) || '?') + ' » → identifiant(s) visé(s) : ' + ids.join(', '), true);
+    return false;
+  }
   const sansStats = adversaires.find(a=> !a.combatStats);
   if (sansStats){
     showToast((sansStats.name || 'Ce personnage') + ' n\'a pas de caractéristiques de combat — coche « ⚔️ Ce personnage peut se battre » sur sa fiche');
-    return;
+    journal('dialogue', 'combat impossible : fiche sans caractéristiques', (sansStats.name || sansStats.id || '?'), true);
+    return false;
   }
   retourDialogueCombat = {
     creatureId: creature.id,
@@ -8433,6 +8446,7 @@ function lancerCombatDepuisDialogue(creature, combat){
   document.getElementById('overlay').classList.remove('show');
   document.getElementById('overlay').style.zIndex = '';
   launchZoneCombat(adversaires, null);
+  return true;
 }
 function reprendreDialogueApresCombat(resultat){
   const retour = retourDialogueCombat;
@@ -12079,7 +12093,11 @@ const Robot = (()=>{
     const enCombat = visible('combatFull') && combatState && !combatState.finished;
     if (enCombat && !R._combatVu){
       R._combatVu = true; R.stats.combats++;
-      if (R.attenteRencontre && Date.now() - R.attenteRencontre.depuis < 12000 && !(combatState.test)){
+      /* v560 : un combat lancé par une réplique ou par un point de scène n'est pas une
+         rencontre aléatoire — il ne compte pas dans le taux. */
+      const lanceParDialogue = (typeof retourDialogueCombat !== 'undefined' && retourDialogueCombat)
+        || (typeof combatZoneContext !== 'undefined' && combatZoneContext && combatZoneContext.pt);
+      if (R.attenteRencontre && Date.now() - R.attenteRencontre.depuis < 12000 && !(combatState.test) && !lanceParDialogue){
         const seau = R.rencontres[R.attenteRencontre.rythme === 'presse' ? 'pressees' : 'lentes'];
         seau.vues++;
         R.attenteRencontre = null;
@@ -27235,7 +27253,14 @@ function majBoutonVaisseau(){
   b.title = nomDuVaisseauActif();
 }
 function recalculerVaisseauActif(){
-  const choisi = (typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.vaisseauId) || null;
+  let choisi = (typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.vaisseauId) || null;
+  /* v560 : un vaisseau choisi puis SUPPRIMÉ restait sur la fiche du joueur, et le jeu
+     essayait d'ouvrir le vide. On ne le vérifie qu'une fois les fiches lues — avant, on ne
+     sait pas encore ce qui existe. */
+  if (choisi && typeof latestSnap !== 'undefined' && latestSnap && !ficheParId(choisi)){
+    journal('reprise', 'vaisseau choisi introuvable — retour au vaisseau de départ', choisi, true);
+    choisi = null;
+  }
   shipZoneId = choisi || vaisseauDepartId || null;
   majBoutonVaisseau();
   /* On démarre à bord. C'est le point de départ naturel : on prépare son équipe, puis on
@@ -32862,6 +32887,9 @@ function rollSceneEncounter(){
       if (sceneViewCurrentSceneId !== sceneId || !ov.classList.contains('show')) return;
       if (combatState && !combatState.finished) return;
       if (!m2AlliesDepuisEquipe().cfgs.length) return; // pas d'équipe (à modèle) : pas d'embuscade
+      /* v560 : le joueur a touché un personnage dans la seconde qui suit son entrée — la
+         rencontre partirait DERRIÈRE la fenêtre de dialogue, invisible. On la laisse passer. */
+      if (document.getElementById('overlay').classList.contains('show')) return;
       showToast('⚠️ Une rencontre surgit !');
       launchZoneCombat(chosen, null);
     }, 1000);
