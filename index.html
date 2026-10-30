@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v560</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v562</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3698,7 +3698,8 @@
       <h3 style="margin-top:0;">🎲 Rencontres aléatoires</h3>
       <button class="sheet-x" id="sceneEncounterCloseBtn">✕</button>
     </div>
-    <p class="meta">Vérifié une fois à chaque entrée dans cette scène (en arrivant depuis la carte ou par une sortie).</p>
+    <p class="meta">Vérifié une fois à chaque entrée dans cette scène (en arrivant depuis la carte ou par une sortie). Une scène a des rencontres aléatoires <b>ou</b> un agresseur, jamais les deux.</p>
+    <p class="meta" id="sceneEncBloqueAgresseur" style="display:none; color:var(--danger);"></p>
     <div class="field-label">% de risque de rencontre</div>
     <input type="number" id="sceneEncChance" class="field-input" value="0" min="0" max="100">
     <div class="field-label">Monstres possibles pour une rencontre (jusqu'à 3 tirés au sort)</div>
@@ -11716,9 +11717,16 @@ const Robot = (()=>{
       /* R1 — tous K.O. ⇒ forcément à bord. Le bug d'origine : il s'était retrouvé sur la carte
          avec toute son équipe à terre. On ne compte que si le compte A des combattants. */
       const jouables = combattants().filter(r=> r.robotModeleId && !recruitIsAway(r));
-      if (jouables.length && !jouables.some(r=> recruitEffectiveHp(r) > 0) && (sit === 'carte' || sit === 'zone')){
-        incoherence('Équipe entièrement K.O. hors du vaisseau', 'écran : ' + sit + ' — le jeu aurait dû ramener à l\'infirmerie');
-      }
+      const tousATerreDehors = jouables.length && !jouables.some(r=> recruitEffectiveHp(r) > 0) && (sit === 'carte' || sit === 'zone');
+      /* v561 : après une défaite, la scène revient à l'écran une seconde avant le mot de la fin
+         du vainqueur — c'est voulu. On ne signale que si l'état dure 6 s d'affilée. */
+      if (tousATerreDehors){
+        if (!R.koDehorsDepuis) R.koDehorsDepuis = Date.now();
+        else if (Date.now() - R.koDehorsDepuis > 6000){
+          incoherence('Équipe entièrement K.O. hors du vaisseau', 'écran : ' + sit + ' depuis plus de 6 s — le jeu aurait dû ramener à l\'infirmerie');
+          R.koDehorsDepuis = Date.now();
+        }
+      } else R.koDehorsDepuis = 0;
       /* R2 — un combat fini qui reste à l'écran sans écran de fin. */
       if (sit === 'combat' && combatState && combatState.finished){
         if (!R.combatFiniDepuis) R.combatFiniDepuis = Date.now();
@@ -12132,6 +12140,7 @@ const Robot = (()=>{
     R.rencontres = { lentes:{ scenes:0, attendues:0, vues:0 }, pressees:{ scenes:0, attendues:0, vues:0 } };
     R.zoneEnCours = null; R.signatureEcran = ''; R.memeEcranDepuis = Date.now();
     R.attenteJeuDepuis = 0; R.attenteJeuDite = false; R.attenteJeuSignalee = false;
+    R.koDehorsDepuis = 0;
     /* Le vrai GPS est coupé le temps du jeu : sinon un relevé écraserait la téléportation. */
     R.modeLibreAvant = (typeof freeModeActive !== 'undefined') && freeModeActive;
     try { freeModeActive = true; } catch(e){}
@@ -28022,9 +28031,35 @@ document.getElementById('sceneEncChance').addEventListener('change', (e)=>{
   if (!sc) return;
   sc.encounterChance = Math.max(0, Math.min(100, parseInt(e.target.value,10) || 0));
 });
+/* v562 — une scène a des RENCONTRES ALÉATOIRES ou un AGRESSEUR, jamais les deux (voir en
+   tête du journal : ils se chevauchaient). Les points de toutes les variantes comptent. */
+function agresseursDeLaScene(sc){
+  if (!sc) return [];
+  const tous = (sc.points || []).concat(...((sc.variants || []).map(v=> v.points || [])));
+  return tous.filter(p=> p && p.type === 'pnj' && p.autoTrigger);
+}
+function sceneADesRencontres(sc){
+  return !!sc && (sc.encounterChance || 0) > 0 && (sc.encounterMonsterIds || []).length > 0;
+}
+function nomDuPnjDuPoint(p){
+  try { const f = p && p.linkedPnjId ? ficheParId(p.linkedPnjId) : null; return (f && f.name) || 'un personnage'; } catch(e){ return 'un personnage'; }
+}
 function renderSceneEncounterOverlay(){
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   if (!sc) return;
+  /* Un agresseur dans la pièce : pas de rencontre possible ici, les champs se bloquent. */
+  const agresseurs = agresseursDeLaScene(sc);
+  const bloc = document.getElementById('sceneEncBloqueAgresseur');
+  const chance = document.getElementById('sceneEncChance');
+  if (agresseurs.length){
+    bloc.style.display = 'block';
+    bloc.textContent = '🗡️ Cette scène a un agresseur (' + agresseurs.map(nomDuPnjDuPoint).join(', ') + ') : pas de rencontre aléatoire ici. Décoche « Vient au joueur dès l\'entrée » sur ce personnage pour en activer.';
+    chance.disabled = true;
+    document.getElementById('sceneEncMonstersPick').innerHTML = '';
+    return;
+  }
+  bloc.style.display = 'none';
+  chance.disabled = false;
   document.getElementById('sceneEncChance').value = sc.encounterChance || 0;
   if (!sc.encounterMonsterIds) sc.encounterMonsterIds = [];
   const monsterPool = tousLesMonstres();
@@ -29017,9 +29052,12 @@ function renderSceneDetailTypeSpecific(pt){
       </div>
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">Ne concerne que les PNJ de combat : un boss d'histoire se règle sur « une seule fois », un monstre de garde sur un délai. Un PNJ de dialogue reste toujours là, quoi qu'il arrive.</p>
       <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
-        <input type="checkbox" id="scenePointPnjAuto" ${pt.autoTrigger ? 'checked' : ''} style="width:auto;">
+        <input type="checkbox" id="scenePointPnjAuto" ${pt.autoTrigger ? 'checked' : ''} ${sceneADesRencontres(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId)) ? 'disabled' : ''} style="width:auto;">
         <span style="font-size:13px; color:rgba(255,255,255,.9);">🗡️ Vient au joueur dès l'entrée (agression)</span>
       </label>
+      ${sceneADesRencontres(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId))
+        ? `<p class="meta" style="color:var(--danger); margin-top:4px;">🎲 Cette scène a des rencontres aléatoires (${(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId) || {}).encounterChance} %) : pas d'agresseur ici. Mets le risque de rencontre à 0 pour en poser un.</p>`
+        : ''}
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Son dialogue s'ouvre tout seul quand le joueur entre dans la scène, sans qu'il ait à le toucher. Combine avec un choix « ⚔️ Déclencher un combat » pour une agression complète : deux mots, puis les coups.</p>
       <label style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-left:22px;">
         <input type="checkbox" id="scenePointPnjAggroUneFois" ${pt.agressionUneFois ? 'checked' : ''} style="width:auto;">
