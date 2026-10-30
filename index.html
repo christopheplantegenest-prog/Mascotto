@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v562</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v563</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35590,6 +35590,954 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
   } catch(e){ el.innerHTML = '<p class="meta" style="color:var(--danger);">Arbre impossible : ' + ctrlEchap(e.message) + '</p>'; }
 });
 
+</script>
+<!-- ===================================================================================
+     v563 — LE GUIDE VOCAL DE CRÉATION (cadré en vocal le 30/10)
+     Un MOTEUR générique (parler, écouter, comprendre un choix, « pause », « retour »,
+     « sommaire », « commence par ») et un SCÉNARIO par partie de l'éditeur. Seul le
+     scénario de la fiche PNJ existe pour l'instant ; objets et quêtes viendront comme
+     des scénarios de plus, sans toucher au moteur.
+     Rien en ligne hormis la reconnaissance et la voix du téléphone (celles du clavier) et
+     la liste des images du dépôt, déjà utilisée par « Image hébergée ».
+     Le guide ne fait que REMPLIR les champs que l'on remplirait au doigt, puis appuie sur
+     « Enregistrer » comme on le ferait soi-même : aucune règle d'enregistrement n'est
+     contournée. Une image manquante reçoit une image standard et coche « en travaux ».
+     =================================================================================== -->
+<div class="overlay" id="gvOverlay" style="z-index:6000; align-items:flex-end;">
+  <div class="sheet" style="max-height:80vh; overflow-y:auto; padding-top:14px;">
+    <div class="sheet-top" style="align-items:center;">
+      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+        <h3 style="margin:0; font-size:16px;">🎙️ Guide vocal</h3>
+        <span class="meta" id="gvEtape" style="white-space:nowrap;"></span>
+      </div>
+      <button class="sheet-x" id="gvQuitterBtn" title="Quitter le guide">✕</button>
+    </div>
+    <div id="gvQuestion" style="font-size:17px; font-weight:700; line-height:1.3; margin:10px 0 6px;"></div>
+    <div id="gvEtat" class="meta" style="min-height:16px;"></div>
+    <div id="gvChoix" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+    <div id="gvListeWrap" style="display:none; margin-top:8px;">
+      <input type="text" id="gvListeFiltre" class="field-input" placeholder="Tape une ou deux lettres pour filtrer…" style="margin-bottom:6px;">
+      <div id="gvListe" style="max-height:34vh; overflow-y:auto; display:flex; flex-direction:column; gap:4px;"></div>
+    </div>
+    <div id="gvLibreWrap" style="display:none; gap:6px; margin-top:8px;">
+      <input type="text" id="gvLibre" class="field-input" placeholder="…ou écris ta réponse ici" style="margin:0; flex:1;">
+      <button type="button" class="btn-capture" id="gvLibreOk" style="flex:0 0 auto; padding:10px 14px;">OK</button>
+    </div>
+    <div style="display:flex; gap:6px; margin-top:12px;">
+      <button type="button" class="btn-secondary" id="gvMicroBtn" style="flex:1;">🎤</button>
+      <button type="button" class="btn-secondary" id="gvPauseBtn" style="flex:1;">⏸ Pause</button>
+      <button type="button" class="btn-secondary" id="gvRetourBtn" style="flex:1;">↩ Retour</button>
+      <button type="button" class="btn-secondary" id="gvSommaireBtn" style="flex:1;">☰ Sommaire</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[] };
+window.GV = GV;
+
+/* ---------- Signaux de navigation (lancés depuis une question, rattrapés par le moteur) ---------- */
+class SignalGuide { constructor(type, cible){ this.type = type; this.cible = cible; } }
+const RETOUR = 'retour', SOMMAIRE = 'sommaire', QUITTER = 'quitter';
+
+/* ---------- Petits outils de texte ---------- */
+function norm(s){
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function bigrammes(s){ const out = new Set(); const t = ' ' + s + ' '; for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2)); return out; }
+function ressemblance(a, b){
+  a = norm(a); b = norm(b);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const A = bigrammes(a), B = bigrammes(b);
+  let commun = 0; A.forEach(x=>{ if (B.has(x)) commun++; });
+  return (2 * commun) / (A.size + B.size);
+}
+function majuscule(s){ s = String(s || '').trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+const MOTS_NOMBRES = { zero:0, un:1, une:1, deux:2, trois:3, quatre:4, cinq:5, six:6, sept:7, huit:8, neuf:9, dix:10, onze:11, douze:12, treize:13, quatorze:14, quinze:15, seize:16, 'dix sept':17, 'dix huit':18, 'dix neuf':19, vingt:20, 'vingt et un':21, 'vingt deux':22, 'vingt trois':23, trente:30, quarante:40, cinquante:50, soixante:60, cent:100, mille:1000, midi:12, minuit:0 };
+function parseNombre(s){
+  const n = norm(s);
+  const m = n.match(/(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  const cles = Object.keys(MOTS_NOMBRES).sort((a, b)=> b.length - a.length);
+  for (const k of cles){ if (new RegExp('(^| )' + k + '( |$)').test(n)) return MOTS_NOMBRES[k]; }
+  return null;
+}
+function parseHeure(s){
+  const n = norm(s);
+  let h = null, mn = 0;
+  const m = n.match(/(\d{1,2})\s*(?:h|heure|heures)?\s*(\d{1,2})?/);
+  if (m){ h = parseInt(m[1], 10); if (m[2]) mn = parseInt(m[2], 10); }
+  else {
+    if (/midi/.test(n)) h = 12; else if (/minuit/.test(n)) h = 0;
+    else { const v = parseNombre(n); if (v !== null && v >= 0 && v <= 24) h = v; }
+  }
+  if (h === null) return null;
+  if (/demi/.test(n)) mn = 30; else if (/trois quart/.test(n)) mn = 45; else if (/quart/.test(n)) mn = 15;
+  if (/du soir|de l apres midi|apres midi/.test(n) && h < 12) h += 12;
+  if (h === 24) h = 0;
+  if (h > 23 || mn > 59) return null;
+  return String(h).padStart(2, '0') + ':' + String(mn).padStart(2, '0');
+}
+const JOURS = [['dimanche', 0], ['lundi', 1], ['mardi', 2], ['mercredi', 3], ['jeudi', 4], ['vendredi', 5], ['samedi', 6]];
+function parseJours(s){
+  const n = norm(s); const out = [];
+  if (/week ?end/.test(n)){ out.push(6, 0); }
+  if (/semaine/.test(n) && !/fin/.test(n)){ out.push(1, 2, 3, 4, 5); }
+  JOURS.forEach(([nom, i])=>{ if (n.includes(nom) && out.indexOf(i) === -1) out.push(i); });
+  return out;
+}
+function nomJours(liste){ return liste.map(i=> (JOURS.find(j=> j[1] === i) || ['?'])[0]).join(', '); }
+
+/* ---------- Interface ---------- */
+const $ = (id)=> document.getElementById(id);
+function afficher(){ $('gvOverlay').classList.add('show'); }
+function masquer(){ $('gvOverlay').classList.remove('show'); }
+function etat(t){ $('gvEtat').textContent = t || ''; }
+function viderUI(){
+  $('gvChoix').innerHTML = '';
+  $('gvListeWrap').style.display = 'none'; $('gvListe').innerHTML = ''; $('gvListeFiltre').value = '';
+  $('gvLibreWrap').style.display = 'none'; $('gvLibre').value = '';
+}
+function boutonChoix(label, action, principal){
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = principal ? 'btn-capture' : 'btn-secondary';
+  b.style.cssText = 'flex:1 1 40%; padding:10px 8px; font-size:13px;';
+  b.textContent = label; b.addEventListener('click', action);
+  $('gvChoix').appendChild(b);
+}
+function montrerListe(liste, onPick){
+  const wrap = $('gvListeWrap'), conteneur = $('gvListe'), filtre = $('gvListeFiltre');
+  wrap.style.display = 'block';
+  const dessiner = ()=>{
+    const f = norm(filtre.value);
+    conteneur.innerHTML = '';
+    liste.filter(x=> !f || norm(x.label).includes(f)).slice(0, 60).forEach(x=>{
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn-secondary';
+      b.style.cssText = 'text-align:left; padding:9px 10px; font-size:13px;';
+      b.textContent = (x.emoji ? x.emoji + ' ' : '') + x.label + (x.detail ? '  · ' + x.detail : '');
+      b.addEventListener('click', ()=> onPick(x));
+      conteneur.appendChild(b);
+    });
+    if (!conteneur.children.length) conteneur.innerHTML = '<p class="meta" style="margin:0;">Rien ne correspond.</p>';
+  };
+  filtre.oninput = dessiner;
+  dessiner();
+}
+
+/* ---------- Parler ---------- */
+function parler(texte){
+  $('gvQuestion').textContent = texte;
+  arreterEcoute();
+  return new Promise((resolve)=>{
+    if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
+    try { speechSynthesis.cancel(); } catch(e){}
+    const u = new SpeechSynthesisUtterance(texte);
+    u.lang = 'fr-FR'; u.rate = 1.05;
+    const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
+    if (voix) u.voice = voix;
+    let fini = false;
+    const terminer = ()=>{ if (fini) return; fini = true; clearTimeout(garde); resolve(); };
+    u.onend = terminer; u.onerror = terminer;
+    /* Android ne signale pas toujours la fin : on borne la lecture par la longueur du texte. */
+    const garde = setTimeout(terminer, 1500 + texte.length * 70);
+    etat('🔊 …');
+    try { speechSynthesis.speak(u); } catch(e){ terminer(); }
+  });
+}
+
+/* ---------- Écouter ---------- */
+function Reco(){ return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
+function arreterEcoute(){
+  GV.ecouteVoulue = false;
+  if (GV.reco){ try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; }
+}
+/* Lance une écoute et résout le texte entendu — ou null si rien n'a été compris. */
+function ecouterUneFois(){
+  return new Promise((resolve)=>{
+    const R = Reco();
+    if (!R || GV.sansMicro){ resolve(null); return; }
+    let r;
+    try { r = new R(); } catch(e){ GV.sansMicro = true; resolve(null); return; }
+    GV.reco = r;
+    r.lang = 'fr-FR'; r.interimResults = false; r.maxAlternatives = 3; r.continuous = false;
+    let repondu = false;
+    const fin = (texte)=>{ if (repondu) return; repondu = true; if (GV.reco === r) GV.reco = null; resolve(texte); };
+    r.onresult = (e)=>{
+      const alts = [];
+      for (let i = 0; i < e.results.length; i++){ const res = e.results[i]; for (let j = 0; j < res.length; j++) alts.push(res[j].transcript); }
+      fin(alts.length ? alts : null);
+    };
+    r.onerror = (e)=>{
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){ GV.sansMicro = true; etat('🎤 Micro refusé : réponds avec les boutons.'); }
+      fin(null);
+    };
+    r.onend = ()=> fin(null);
+    try { r.start(); etat('🎤 Je t\'écoute…'); } catch(e){ fin(null); }
+  });
+}
+
+/* ---------- Une question ----------
+   opts : { texte, choix:[{id,label,mots}], liste:[{id,label,emoji,detail}], libre, nombre, heure,
+            speciaux:[{id,mots}] (réponses-clés d'une dictée), confirmerDictee }
+   Rend { id } pour un choix, { item } pour une liste, { texte } pour une dictée, { n } pour un
+   nombre, { h } pour une heure, { special } quand un mot-clé de dictée a été dit. */
+async function demander(opts){
+  const log = GV.journal[GV.courante.id];
+  if (GV.replay < log.length){ return log[GV.replay++]; }
+  const reponse = await demanderEnDirect(opts);
+  log.push(reponse); GV.replay = log.length;
+  return reponse;
+}
+function attendreEntree(){ return new Promise((resolve)=>{ GV.resoudre = resolve; }); }
+function livrer(v){ const r = GV.resoudre; GV.resoudre = null; if (r) r(v); }
+
+async function boucleEcoute(){
+  /* tourne tant qu'une réponse est attendue ; chaque écoute rend au plus une phrase */
+  GV.ecouteVoulue = true;
+  while (GV.ecouteVoulue && GV.resoudre){
+    const alts = await ecouterUneFois();
+    if (!GV.ecouteVoulue || !GV.resoudre) return;
+    if (alts && alts.length){ livrer({ voix: alts }); return; }
+    if (GV.sansMicro){ etat('Réponds avec les boutons ou le clavier.'); return; }
+    await new Promise(r=> setTimeout(r, 250));
+  }
+}
+
+const OUI = ['oui', 'ouais', 'ok', 'd accord', 'exact', 'c est bon', 'garde', 'yes', 'affirmatif', 'voila', 'vas y'];
+const NON = ['non', 'nan', 'pas du tout', 'negatif', 'no', 'faux', 'redis', 'recommence'];
+function estOui(n){ return OUI.some(m=> n === m || n.startsWith(m + ' ') || n.endsWith(' ' + m)); }
+function estNon(n){ return NON.some(m=> n === m || n.startsWith(m + ' ') || n.endsWith(' ' + m)); }
+
+function commandeGlobale(n){
+  if (/^pause$/.test(n) || /mets? (le guide )?en pause/.test(n)) return 'pause';
+  if (/^(retour|reviens|question d avant|precedente?)$/.test(n) || /^retour (en arriere|a la question)/.test(n)) return 'retour';
+  if (/^(sommaire|menu|les etapes|etapes)$/.test(n)) return 'sommaire';
+  if (/^(quitte|quitter|arrete|arrete le guide|ferme le guide|termine le guide)$/.test(n)) return 'quitter';
+  if (/^(repete|repete la question)$/.test(n)) return 'repete';
+  if (/^(liste|la liste|lis la liste|les choix|quels choix)$/.test(n)) return 'liste';
+  return null;
+}
+
+async function demanderEnDirect(opts){
+  GV.enPause = false;
+  let question = opts.texte;
+  const choix = opts.choix || null;
+  const liste = opts.liste || null;
+  for (;;){
+    viderUI();
+    if (choix) choix.forEach(c=> boutonChoix(c.label, ()=> livrer({ tap:{ id:c.id } })));
+    if (liste) montrerListe(liste, (x)=> livrer({ tap:{ item:x } }));
+    if (opts.libre || opts.nombre || opts.heure || liste){
+      $('gvLibreWrap').style.display = 'flex';
+      $('gvLibre').onkeydown = (e)=>{ if (e.key === 'Enter') $('gvLibreOk').click(); };
+      $('gvLibreOk').onclick = ()=>{ const t = $('gvLibre').value.trim(); if (t) livrer({ tape:t }); };
+    }
+    const attente = attendreEntree();   // posée AVANT la lecture : un appui pendant qu'il parle compte
+    await parler(question);
+    if (GV.resoudre) boucleEcoute();
+    const entree = await attente;
+    arreterEcoute();
+    if (entree.signal) throw new SignalGuide(entree.signal, entree.cible);
+    if (entree.tap) return entree.tap;
+
+    const brut = entree.tape ? entree.tape : entree.voix[0];
+    const alts = entree.tape ? [entree.tape] : entree.voix;
+    const n = norm(brut);
+
+    /* --- commandes globales --- */
+    const cmd = entree.tape ? null : commandeGlobale(n);
+    if (cmd === 'pause'){ await faireUnePause(); continue; }
+    if (cmd === 'retour') throw new SignalGuide(RETOUR);
+    if (cmd === 'sommaire') throw new SignalGuide(SOMMAIRE);
+    if (cmd === 'quitter'){ if (await confirmerDirect('Tu veux quitter le guide ? La fiche reste telle quelle à l\'écran.')) throw new SignalGuide(QUITTER); continue; }
+    if (cmd === 'repete') continue;
+    if (cmd === 'liste'){
+      if (liste) await parler(lireListe(liste));
+      else if (choix) await parler('Les choix sont : ' + choix.map(c=> c.label).join(', ') + '.');
+      question = opts.texte; continue;
+    }
+    const cp = n.match(/^(?:ca )?commence par (.+)$/);
+    if (cp && liste){
+      const pref = norm(cp[1]).replace(/ /g, '');
+      const sous = liste.filter(x=> norm(x.label).replace(/ /g, '').startsWith(pref));
+      if (!sous.length){ question = 'Rien ne commence par ' + cp[1] + '. ' + opts.texte; continue; }
+      if (sous.length === 1){ return { item: sous[0] }; }
+      $('gvListeFiltre').value = cp[1];
+      question = lireListe(sous) + ' Lequel ?'; continue;
+    }
+
+    /* --- réponses-clés d'une dictée --- */
+    if (opts.speciaux){
+      const sp = opts.speciaux.find(s=> s.mots.some(m=> n === norm(m) || n.startsWith(norm(m) + ' ') || n.endsWith(' ' + norm(m))));
+      if (sp) return { special: sp.id };
+    }
+
+    /* --- choix fermé --- */
+    if (choix){
+      let meilleur = null, score = 0;
+      for (const alt of alts){
+        const na = norm(alt);
+        for (const c of choix){
+          for (const m of [c.label].concat(c.mots || [])){
+            const nm = norm(m);
+            let s = 0;
+            if (na === nm) s = 1;
+            else if (na.includes(nm) || nm.includes(na)) s = 0.92;
+            else s = ressemblance(na, nm) * 0.9;
+            if (s > score){ score = s; meilleur = c; }
+          }
+        }
+      }
+      if (meilleur && score >= 0.85) return { id: meilleur.id };
+      if (meilleur && score >= 0.6){
+        if (await confirmerDirect('Tu as dit « ' + meilleur.label + ' » ?')) return { id: meilleur.id };
+        question = opts.texte; continue;
+      }
+      question = 'Je n\'ai pas compris. Les choix sont : ' + choix.map(c=> c.label).join(', ') + '.';
+      continue;
+    }
+
+    /* --- liste ouverte (objets, quêtes, personnages…) --- */
+    if (liste){
+      let meilleur = null, score = 0;
+      for (const alt of alts){
+        for (const x of liste){
+          const s = ressemblance(alt, x.label) + (norm(x.label).includes(norm(alt)) ? 0.3 : 0);
+          if (s > score){ score = s; meilleur = x; }
+        }
+      }
+      if (meilleur && score >= 0.9) return { item: meilleur };
+      if (meilleur && score >= 0.45){
+        if (await confirmerDirect('C\'est « ' + meilleur.label + ' » ?')) return { item: meilleur };
+        question = 'Dis le nom autrement, ou dis « commence par » et les premières lettres.'; continue;
+      }
+      question = 'Je ne trouve pas. Dis « liste » pour l\'entendre, ou « commence par » et une lettre.'; continue;
+    }
+
+    /* --- nombre --- */
+    if (opts.nombre){
+      const v = parseNombre(brut);
+      if (v === null){ question = 'Je n\'ai pas entendu de nombre. ' + opts.texte; continue; }
+      return { n: v };
+    }
+    /* --- heure --- */
+    if (opts.heure){
+      let h = null;
+      for (const alt of alts){ h = parseHeure(alt); if (h) break; }
+      if (!h){ question = 'Je n\'ai pas compris l\'heure. Dis par exemple « huit heures » ou « dix-huit heures trente ».'; continue; }
+      return { h };
+    }
+    /* --- dictée libre --- */
+    if (opts.libre){
+      let texte = majuscule(brut);
+      if (entree.tape || opts.confirmerDictee === false) return { texte };
+      const ok = await confirmerDirect('J\'ai noté : « ' + texte + ' ». Je garde ?');
+      if (ok) return { texte };
+      question = 'D\'accord, redis-la.'; continue;
+    }
+    return { texte: brut };
+  }
+}
+
+/* Une confirmation oui/non immédiate, hors journal (elle fait partie de la question en cours). */
+async function confirmerDirect(texte){
+  for (;;){
+    viderUI();
+    boutonChoix('Oui', ()=> livrer({ tap:{ id:'oui' } }), true);
+    boutonChoix('Non', ()=> livrer({ tap:{ id:'non' } }));
+    const attente = attendreEntree();
+    await parler(texte);
+    if (GV.resoudre) boucleEcoute();
+    const e = await attente;
+    arreterEcoute();
+    if (e.signal) throw new SignalGuide(e.signal, e.cible);
+    if (e.tap) return e.tap.id === 'oui';
+    const n = norm(e.tape || e.voix[0]);
+    if (commandeGlobale(n) === 'pause'){ await faireUnePause(); continue; }
+    if (commandeGlobale(n) === 'retour') throw new SignalGuide(RETOUR);
+    if (estOui(n)) return true;
+    if (estNon(n)) return false;
+    texte = 'Oui ou non ?';
+  }
+}
+async function faireUnePause(){
+  GV.enPause = true;
+  arreterEcoute();
+  viderUI();
+  boutonChoix('▶ Reprendre', ()=> livrer({ tap:{ id:'reprendre' } }), true);
+  await parler('Pause. Dis « reprendre » quand tu veux.');
+  for (;;){
+    const attente = attendreEntree();
+    boucleEcoute();
+    const e = await attente;
+    arreterEcoute();
+    if (e.signal){ GV.enPause = false; throw new SignalGuide(e.signal, e.cible); }
+    if (e.tap) break;
+    const n = norm(e.voix ? e.voix[0] : e.tape);
+    if (/reprend|reprise|continue|c est reparti|go|on y va/.test(n)) break;
+  }
+  GV.enPause = false;
+}
+function lireListe(liste){
+  const noms = liste.slice(0, 8).map(x=> x.label);
+  return noms.join(', ') + (liste.length > 8 ? ', et ' + (liste.length - 8) + ' autres. Dis « commence par » et une lettre pour filtrer.' : '.');
+}
+async function dire(texte){ await parler(texte); }
+async function ouiNon(texte){ const r = await demander({ texte, choix:[{ id:'oui', label:'Oui', mots:OUI }, { id:'non', label:'Non', mots:NON }] }); return r.id === 'oui'; }
+async function choisir(texte, choix){ return (await demander({ texte, choix })).id; }
+async function dicter(texte, speciaux){ return demander({ texte, libre:true, speciaux: speciaux || null }); }
+async function dansListe(texte, liste, speciaux){ return demander({ texte, liste, speciaux: speciaux || null }); }
+
+/* ---------- Boutons de la fenêtre ---------- */
+$('gvQuitterBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:QUITTER }); else arreterGuide(); });
+$('gvRetourBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:RETOUR }); });
+$('gvSommaireBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:SOMMAIRE }); });
+$('gvPauseBtn').addEventListener('click', ()=>{ if (GV.resoudre && !GV.enPause) livrer({ voix:['pause'] }); else if (GV.enPause) livrer({ tap:{ id:'reprendre' } }); });
+$('gvMicroBtn').addEventListener('click', ()=>{ if (GV.resoudre && !GV.reco){ GV.sansMicro = false; boucleEcoute(); } });
+
+/* =====================================================================================
+   LES ÉTAPES DE LA FICHE PNJ
+   ===================================================================================== */
+const V = (id)=> document.getElementById(id);
+function typeFiche(){ return V('editInteractionType').value; }
+function recrutableCombat(){ return typeFiche() === 'combat' && V('editCombatRecruitable').checked; }
+function recrutable(){ return recrutableCombat() || !!V('editMetier').value || !!V('editFonction').value; }
+function parle(){ return typeFiche() !== 'combat' || recrutableCombat() || V('editCanFight').checked; }
+function seBat(){ return typeFiche() === 'combat' || V('editCanFight').checked; }
+function changer(id, valeur){ const el = V(id); if (!el) return; if (el.type === 'checkbox') el.checked = !!valeur; else el.value = valeur; el.dispatchEvent(new Event('change')); }
+
+const SVG_STANDARD = (legende)=> 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384"><rect width="256" height="384" rx="24" fill="#2b3a4a"/>'
+  + '<circle cx="128" cy="118" r="58" fill="#6c7f93"/><path d="M30 384c0-92 44-140 98-140s98 48 98 140z" fill="#6c7f93"/>'
+  + '<text x="128" y="148" font-size="88" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-weight="700">?</text>'
+  + '<text x="128" y="362" font-size="26" text-anchor="middle" fill="#ffffff" font-family="sans-serif">' + legende + '</text></svg>');
+
+const ACCUEILS = {
+  joyeux:    ['Salut ! Belle journée, non ?', 'Oh, de la visite ! Entre, entre.', 'Tiens, un nouveau visage, ça me fait plaisir.', 'Hé, bienvenue ! Qu\'est-ce que je peux faire pour toi ?', 'Quelle bonne surprise ! Viens par là.'],
+  grincheux: ['Quoi encore ?', 'Tu veux quelque chose, ou tu passes juste pour m\'embêter ?', 'Fais vite, j\'ai pas que ça à faire.', 'Encore un curieux… bon, parle.', 'Mmh. T\'es qui, toi ?'],
+  timide:    ['Oh… bonjour. Je… je ne t\'avais pas vu.', 'Euh… salut. Tu cherches quelqu\'un ?', 'Pardon, je ne parle pas beaucoup… mais dis-moi.', 'B-bonjour. Tu as besoin d\'aide ?', 'Ah… c\'est moi que tu veux voir ?'],
+  bavard:    ['Ah, te voilà ! Tu tombes bien, j\'ai mille choses à raconter.', 'Oh là là, si tu savais ce qui s\'est passé ce matin !', 'Entre, entre, assieds-toi, on va discuter.', 'Toi, tu as une tête à aimer les histoires. J\'en ai plein.', 'Enfin quelqu\'un à qui parler !'],
+  mefiant:   ['On se connaît ?', 'Qu\'est-ce que tu me veux, exactement ?', 'Reste où tu es. Qui t\'envoie ?', 'Je n\'aime pas trop les inconnus. Parle.', 'Hmm. Tu n\'as pas l\'air d\'être d\'ici.'],
+  mysterieux:['Je t\'attendais.', 'Tout a un prix, même une simple question.', 'Les réponses viennent à ceux qui savent écouter.', 'Tu es venu plus tôt que prévu.', 'Chut. Les murs ont des oreilles.'],
+};
+const ACCUEILS_BOUTIQUE = {
+  joyeux:    ['Bienvenue ! Regarde, j\'ai reçu de belles choses.', 'Entre, entre ! Tout est frais de ce matin.'],
+  grincheux: ['Tu achètes ou tu regardes ? Décide-toi.', 'On ne touche pas si on ne paie pas.'],
+  timide:    ['Euh… bonjour. Prends ton temps, tout est là.', 'Si… si tu veux quelque chose, dis-le-moi.'],
+  bavard:    ['Ah, un client ! Laisse-moi tout te montrer, tout, tout.', 'Celui-là, je l\'ai eu d\'un marin qui… bon, je te raconte plus tard. Regarde.'],
+  mefiant:   ['Les prix sont les prix. Pas de marchandage.', 'Montre ta bourse d\'abord.'],
+  mysterieux:['Ce que tu cherches n\'est peut-être pas en vitrine.', 'Chaque objet ici a une histoire. Choisis bien.'],
+};
+function piocher(banque){ const l = banque[GV.humeur] || banque.joyeux; return l[Math.floor(Math.random() * l.length)]; }
+
+/* ---------- Listes du jeu ---------- */
+const fiches = ()=> (typeof toutesLesFiches === 'function' ? toutesLesFiches() : []);
+function listePersonnages(){ return fiches().filter(f=> (f.interactionType || 'dialogue') !== 'zone').map(f=> ({ id:f.id, label:f.name || '(sans nom)', emoji:f.emoji || '👤' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+function listeZones(){ return fiches().filter(f=> f.interactionType === 'zone' && !ficheEstModeleVaisseau(f) && !ficheEstPiece(f)).map(f=> ({ id:f.id, label:f.name || 'Zone', emoji:'🗺️' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+function listeObjets(){ return (items || []).map(o=> ({ id:o.id, label:o.name || '(sans nom)', emoji:'🎒' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+function listeQuetes(){ return (quests || []).map(q=> ({ id:q.id, label:q.name || '(sans nom)', emoji:'📜' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+function listeMetiers(){ return (metiers || []).map(m=> ({ id:m.id, label:m.name || '(sans nom)', emoji:'🛠️' })); }
+function listeModeles(){ return (robotsModeles || []).map(m=> ({ id:m.id, label:m.nom || '(sans nom)', emoji:'🤖' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+function listeAdversaires(){ return fiches().filter(c=> (c.interactionType === 'combat' || c.canFight) && c.id !== editingId).map(c=> ({ id:c.id, label:c.name || '(sans nom)', emoji:'⚔️' })).sort((a, b)=> a.label.localeCompare(b.label, 'fr')); }
+
+let imagesDepot = null;
+async function listeImagesDepot(){
+  if (imagesDepot) return imagesDepot;
+  try {
+    const res = await fetch('https://api.github.com/repos/' + GITHUB_REPO_OWNER + '/' + GITHUB_REPO_NAME + '/git/trees/main?recursive=1');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    imagesDepot = (j.tree || []).filter(t=> t.type === 'blob' && /\.(png|jpe?g|webp|gif|svg)$/i.test(t.path))
+      .map(t=> ({ id:t.path, label:t.path.split('/').pop().replace(/\.[^.]+$/, ''), detail:t.path.split('/').slice(0, -1).join('/'), emoji:'🖼️' }));
+    return imagesDepot;
+  } catch(e){ return null; }
+}
+
+/* ---------- Instantanés : ce que chaque étape possède, pour pouvoir la rejouer ---------- */
+function instantane(id){
+  const g = (x)=> V(x) ? (V(x).type === 'checkbox' ? V(x).checked : V(x).value) : null;
+  switch (id){
+    case 'qui': return { name:g('editName'), type:g('editInteractionType'), metier:g('editMetier'), fonction:g('editFonction'), canFight:g('editCanFight'), recr:g('editCombatRecruitable'), scope:g('editRecruitScope') };
+    case 'images': return { u:uploadedImageDataUrl, up:uploadedImagePath, b:editBustImageDataUrl, bp:editBustImagePath, br:editBustImageRef, r:editRoomImageDataUrl, rp:editRoomImagePath, rr:editRoomImageRef, d:editBackImageDataUrl, dp:editBackImagePath, dr:editBackImageRef, c:editCombatImageDataUrl, cp:editCombatImagePath, cr:editCombatImageRef, travaux:g('editEnTravaux'), manques:GV.manques.slice() };
+    case 'caractere': return { humeur:GV.humeur };
+    case 'journee': return { lat:pendingLat, lng:pendingLng, zone:pendingAssignedZoneId, reserve:pendingReserve, piece:pendingPieceCommune ? JSON.parse(JSON.stringify(pendingPieceCommune)) : null, tr:JSON.parse(JSON.stringify(editTimeRanges)), jours:Array.from(selectedDays), vq:g('editVisibilityQuest'), vs:g('editVisibilityState'), hide:g('editHideImmediately') };
+    case 'dialogue': return { steps:JSON.parse(JSON.stringify(currentDialogueSteps)), aCreer:GV.aCreer.slice() };
+    case 'combat': return { modele:g('editCombatModele'), cat:g('editCombatCategory'), ia:g('editCombatAiPersonality'), rec:Array.from(selectedCombatRewards) };
+    case 'boutique': return { items:JSON.parse(JSON.stringify(currentShopItems)), phrase:g('editShopPhrase') };
+  }
+  return {};
+}
+function restaurer(id, s){
+  if (!s) return;
+  switch (id){
+    case 'qui':
+      V('editName').value = s.name || ''; changer('editInteractionType', s.type || 'dialogue'); V('editMetier').value = s.metier || ''; V('editFonction').value = s.fonction || '';
+      changer('editCanFight', s.canFight); changer('editCombatRecruitable', s.recr); V('editRecruitScope').value = s.scope || 'perPlayer'; break;
+    case 'images':
+      uploadedImageDataUrl = s.u; uploadedImagePath = s.up;
+      if (s.u){ V('imagePreview').src = s.u; V('imagePreviewWrap').style.display = 'block'; } else { V('imagePreview').removeAttribute('src'); V('imagePreviewWrap').style.display = 'none'; }
+      editBustImageDataUrl = s.b; editBustImagePath = s.bp; editBustImageRef = s.br; renderBustImagePreview();
+      editRoomImageDataUrl = s.r; editRoomImagePath = s.rp; editRoomImageRef = s.rr; renderRoomImagePreview();
+      editBackImageDataUrl = s.d; editBackImagePath = s.dp; editBackImageRef = s.dr; renderBackImagePreview();
+      editCombatImageDataUrl = s.c; editCombatImagePath = s.cp; editCombatImageRef = s.cr; renderCombatImagePreview();
+      V('editEnTravaux').checked = !!s.travaux; GV.manques = s.manques.slice(); break;
+    case 'caractere': GV.humeur = s.humeur || ''; break;
+    case 'journee':
+      pendingLat = s.lat; pendingLng = s.lng; pendingAssignedZoneId = s.zone; pendingReserve = s.reserve; pendingPieceCommune = s.piece;
+      editTimeRanges = JSON.parse(JSON.stringify(s.tr)); renderEditTimeRanges(); setSelectedDays(s.jours);
+      V('editVisibilityQuest').value = s.vq || ''; V('editVisibilityState').value = s.vs || 'not_completed'; V('editVisibilityState').style.display = s.vq ? 'block' : 'none'; V('editHideImmediately').checked = !!s.hide;
+      refreshPosStatusDisplay(); break;
+    case 'dialogue': currentDialogueSteps = JSON.parse(JSON.stringify(s.steps)); GV.aCreer = s.aCreer.slice(); resetDialogueNav(); renderDialogueBuilder(); break;
+    case 'combat': changer('editCombatModele', s.modele || ''); V('editCombatCategory').value = s.cat || 'monstre_commun'; V('editCombatAiPersonality').value = s.ia || 'normal'; selectedCombatRewards = new Set(s.rec); renderCombatRewardsPicker(); break;
+    case 'boutique': currentShopItems = JSON.parse(JSON.stringify(s.items)); renderShopItemsBuilder(); V('editShopPhrase').value = s.phrase || ''; break;
+  }
+}
+
+/* ---------- Étape « Qui » ---------- */
+async function etapeQui(){
+  const depart = await choisir('Nouveau personnage, ou variante d\'un personnage existant ?', [
+    { id:'nouveau', label:'Nouveau', mots:['nouveau', 'nouvelle', 'un nouveau', 'creer', 'neuf'] },
+    { id:'variante', label:'Variante', mots:['variante', 'version', 'existant', 'une variante'] }]);
+  if (depart === 'variante'){
+    const perso = await dansListe('De quel personnage ?', listePersonnages());
+    if (editingId !== perso.item.id || !editingId){ loadForEdit(perso.item.id); showPnjSection('new'); }
+    await new Promise(r=> setTimeout(r, 600));
+    if (typeof poserEmpreinteFiche === 'function') poserEmpreinteFiche();   // les images arrivées entre-temps ne comptent pas comme une modification
+    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
+    GV.variante = true;
+    ['images', 'caractere', 'dialogue', 'combat', 'boutique'].forEach(k=>{ const e = GV.etapes.find(x=> x.id === k); if (e) e.fait = true; });
+    await dire('Nouvelle version de ' + (V('editName').value || 'ce personnage') + '. Il ne reste qu\'à dire où et quand elle apparaît. Dis « sommaire » si tu veux aussi changer autre chose.');
+    return;
+  }
+  if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())){
+    if (!(await ouiNon('Une fiche est ouverte. Je repars d\'une fiche vide ? Ce qui n\'est pas enregistré sera perdu.'))) throw new SignalGuide(QUITTER);
+    resetForm();
+  }
+  showPnjSection('new');
+  const nom = await dicter('Comment s\'appelle-t-il ?');
+  V('editName').value = nom.texte;
+  const type = await choisir('C\'est quoi ? Un habitant qui parle, un marchand, un monstre, un combattant recrutable, ou un concessionnaire ?', [
+    { id:'dialogue', label:'Habitant', mots:['habitant', 'qui parle', 'personnage', 'dialogue', 'un habitant', 'pnj'] },
+    { id:'shop', label:'Marchand', mots:['marchand', 'boutique', 'vendeur', 'commercant', 'magasin', 'marchande'] },
+    { id:'monstre', label:'Monstre', mots:['monstre', 'ennemi', 'un monstre', 'adversaire'] },
+    { id:'recrue', label:'Combattant recrutable', mots:['recrutable', 'combattant', 'recrue', 'robot', 'combattant recrutable'] },
+    { id:'concession', label:'Concessionnaire', mots:['concessionnaire', 'vaisseau', 'vaisseaux', 'concession'] }]);
+  changer('editInteractionType', (type === 'monstre' || type === 'recrue') ? 'combat' : type);
+  changer('editCombatRecruitable', type === 'recrue');
+  V('editRecruitScope').value = 'perPlayer';
+  if (type === 'dialogue'){
+    const lm = listeMetiers();
+    if (lm.length){
+      const m = await dansListe('Il a un métier ? Dis le nom du métier, ou « aucun ».', lm, [{ id:'aucun', mots:['aucun', 'non', 'pas de metier', 'sans metier'] }]);
+      if (m.item){ V('editMetier').value = m.item.id; V('editFonction').value = 'artisanat'; }
+    }
+    if (!V('editMetier').value){
+      const f = await choisir('Il pourra être recruté à bord avec une fonction ? Aucune, artisanat, dojo, bibliothèque, cuisine, ou autre ?', [
+        { id:'', label:'Aucune', mots:['aucune', 'aucun', 'non', 'pas de fonction'] }, { id:'artisanat', label:'Artisanat', mots:['artisanat', 'atelier', 'artisan'] },
+        { id:'dojo', label:'Dojo', mots:['dojo', 'entrainement'] }, { id:'bibliotheque', label:'Bibliothèque', mots:['bibliotheque', 'livres'] },
+        { id:'cuisine', label:'Cuisine', mots:['cuisine', 'cuisinier'] }, { id:'autre', label:'Autre', mots:['autre'] }]);
+      V('editFonction').value = f;
+    }
+    changer('editCanFight', await ouiNon('Il peut se battre en duel ?'));
+  }
+  if (typeof majFicheEnCours === 'function') majFicheEnCours();
+}
+
+/* ---------- Étape « Images » ---------- */
+async function imageStandardOuDepot(nom, legende, poser){
+  if (await ouiNon('L\'image ' + nom + ' : tu l\'as sous la main dans les images hébergées ?')){
+    const li = await listeImagesDepot();
+    if (li && li.length){
+      const r = await dansListe('Dis le nom du fichier, ou « commence par » et ses premières lettres. Dis « standard » pour mettre une image standard.', li, [{ id:'standard', mots:['standard', 'image standard', 'laisse tomber', 'plus tard'] }]);
+      if (r.item){ poser({ path:r.item.id, url:resolveMediaPath(r.item.id) }); await dire('Image posée : ' + r.item.label + '.'); return; }
+    } else await dire('La liste des images n\'est pas accessible pour l\'instant.');
+  }
+  poser({ standard:SVG_STANDARD(legende) });
+  V('editEnTravaux').checked = true;
+  GV.manques.push('image ' + nom + ' (standard, à remplacer)');
+  await dire('Image standard posée, la fiche reste en travaux.');
+}
+async function etapeImages(){
+  await imageStandardOuDepot('principale, en pied', 'image', (r)=>{
+    uploadedImagePath = r.path || null; uploadedImageDataUrl = r.standard || r.url;
+    V('imagePreview').src = uploadedImageDataUrl; V('imagePreviewWrap').style.display = 'block';
+  });
+  if (parle()) await imageStandardOuDepot('de buste, pour les dialogues', 'buste', (r)=>{
+    editBustImagePath = r.path || null; editBustImageDataUrl = r.standard || r.url; editBustImageRef = null; renderBustImagePreview();
+  });
+  if (recrutable()) await imageStandardOuDepot('de sa chambre, à bord', 'chambre', (r)=>{
+    editRoomImagePath = r.path || null; editRoomImageDataUrl = r.standard || r.url; editRoomImageRef = null; renderRoomImagePreview();
+  });
+  if (seBat() && await ouiNon('Les images de dos et de combat sont facultatives. Tu veux en poser une maintenant ?')){
+    const li = await listeImagesDepot();
+    if (li && li.length){
+      const d = await dansListe('L\'image de dos : dis le nom du fichier, ou « aucune ».', li, [{ id:'aucune', mots:['aucune', 'aucun', 'non', 'passe'] }]);
+      if (d.item){ editBackImagePath = d.item.id; editBackImageDataUrl = resolveMediaPath(d.item.id); editBackImageRef = null; renderBackImagePreview(); }
+      const c = await dansListe('L\'image de combat, de face : dis le nom du fichier, ou « aucune ».', li, [{ id:'aucune', mots:['aucune', 'aucun', 'non', 'passe'] }]);
+      if (c.item){ editCombatImagePath = c.item.id; editCombatImageDataUrl = resolveMediaPath(c.item.id); editCombatImageRef = null; renderCombatImagePreview(); }
+    } else await dire('La liste des images n\'est pas accessible, on passe.');
+  }
+}
+
+/* ---------- Étape « Caractère » ---------- */
+async function etapeCaractere(){
+  GV.humeur = await choisir('Son humeur : joyeux, grincheux, timide, bavard, méfiant, ou mystérieux ?', [
+    { id:'joyeux', label:'Joyeux', mots:['joyeux', 'joyeuse', 'content', 'gai', 'sympa'] }, { id:'grincheux', label:'Grincheux', mots:['grincheux', 'grincheuse', 'ronchon', 'rale', 'bougon'] },
+    { id:'timide', label:'Timide', mots:['timide', 'reserve', 'discret'] }, { id:'bavard', label:'Bavard', mots:['bavard', 'bavarde', 'parle beaucoup'] },
+    { id:'mefiant', label:'Méfiant', mots:['mefiant', 'mefiante', 'suspicieux', 'prudent'] }, { id:'mysterieux', label:'Mystérieux', mots:['mysterieux', 'mysterieuse', 'enigmatique', 'etrange'] }]);
+}
+
+/* ---------- Étape « Journée » ---------- */
+async function attendreQue(test, maxMs){
+  const debut = Date.now();
+  while (!test()){ if (Date.now() - debut > maxMs) return false; await new Promise(r=> setTimeout(r, 250)); }
+  return true;
+}
+async function etapeJournee(){
+  pendingLat = null; pendingLng = null; pendingAssignedZoneId = null; pendingReserve = false; pendingPieceCommune = null;
+  const ou = await choisir('Où est-il ? Sur la carte, dans une zone, sur un emplacement, ou en réserve ?', [
+    { id:'carte', label:'Sur la carte', mots:['carte', 'sur la carte', 'dehors', 'point'] }, { id:'zone', label:'Dans une zone', mots:['zone', 'dans une zone', 'exploration'] },
+    { id:'emplacement', label:'Sur un emplacement', mots:['emplacement', 'piece', 'vaisseau', 'rectangle'] }, { id:'reserve', label:'En réserve', mots:['reserve', 'en reserve', 'nulle part', 'aucun lieu'] }]);
+  if (ou === 'reserve'){ V('reserveBtn').click(); }
+  else if (ou === 'zone'){
+    const lz = listeZones();
+    if (!lz.length){ await dire('Aucune zone d\'exploration pour l\'instant : je le mets en réserve.'); V('reserveBtn').click(); }
+    else { const z = await dansListe('Quelle zone ?', lz); pendingAssignedZoneId = z.item.id; pendingPieceCommune = null; pendingLat = null; pendingLng = null; pendingReserve = false; refreshPosStatusDisplay(); }
+  } else if (ou === 'emplacement'){
+    const zones = zonesPourEmplacement().map(z=> ({ id:z.id, label:z.name, emoji:z.emoji }));
+    if (!zones.length){ await dire('Aucune zone pour l\'instant : je le mets en réserve.'); V('reserveBtn').click(); }
+    else {
+      const z = await dansListe('Dans quelle zone ou quel vaisseau ?', zones);
+      let doc = null; try { doc = await zonesCol.doc(z.item.id).get(); } catch(e){}
+      const scenes = (doc && doc.exists ? (doc.data().scenes || []) : []).filter(sc=> sc && sc.id).map(sc=> ({ id:sc.id, label:sc.name || 'scène', emoji:z.item.emoji }));
+      if (!scenes.length){ await dire('Cette zone n\'a aucune scène : je le mets en réserve.'); V('reserveBtn').click(); }
+      else {
+        const sc = scenes.length === 1 ? { item:scenes[0] } : await dansListe('Quelle scène ?', scenes);
+        pendingPieceCommune = { zoneId:z.item.id, sceneId:sc.item.id, nom:z.item.label + ' · ' + sc.item.label };
+        pendingAssignedZoneId = null; pendingLat = null; pendingLng = null; pendingReserve = false; refreshPosStatusDisplay();
+      }
+    }
+  } else {
+    await dire('Pose-le sur la carte avec le viseur, puis appuie sur Valider. Je reprends ensuite.');
+    masquer();
+    V('placeNewBtn').click();
+    await attendreQue(()=> pendingLat !== null || V('placementBar').style.display === 'none', 10 * 60 * 1000);
+    afficher();
+    if (pendingLat === null){ await dire('Pas de point posé : je le mets en réserve, tu pourras le placer plus tard.'); V('reserveBtn').click(); }
+  }
+
+  editTimeRanges = []; renderEditTimeRanges();
+  if (await choisir('Il est là tout le temps, ou à certaines heures ?', [{ id:'tout', label:'Tout le temps', mots:['tout le temps', 'toujours', 'toute la journee', 'tout'] }, { id:'heures', label:'À certaines heures', mots:['certaines heures', 'heures', 'horaires', 'creneau', 'a certaines heures'] }]) === 'heures'){
+    for (;;){
+      const d = await demander({ texte:'À partir de quelle heure ?', heure:true });
+      const f = await demander({ texte:'Jusqu\'à quelle heure ?', heure:true });
+      editTimeRanges.push({ start:d.h, end:f.h }); renderEditTimeRanges();
+      if (!(await ouiNon('De ' + d.h.replace(':', ' heures ') + ' à ' + f.h.replace(':', ' heures ') + '. Un autre créneau ?'))) break;
+    }
+  }
+  setSelectedDays([]);
+  if (await choisir('Tous les jours, ou certains jours ?', [{ id:'tous', label:'Tous les jours', mots:['tous les jours', 'tous', 'chaque jour', 'toute la semaine'] }, { id:'certains', label:'Certains jours', mots:['certains jours', 'certains', 'pas tous'] }]) === 'certains'){
+    for (;;){
+      const r = await demander({ texte:'Lesquels ? Dis-les d\'un coup, par exemple « lundi, mardi et samedi », ou « le week-end ».', libre:true, confirmerDictee:false });
+      const jours = parseJours(r.texte);
+      if (!jours.length){ await dire('Je n\'ai reconnu aucun jour.'); continue; }
+      if (await ouiNon('Donc : ' + nomJours(jours) + '. C\'est bon ?')){ setSelectedDays(jours); break; }
+    }
+  }
+  if (listeQuetes().length && await ouiNon('Il doit apparaître ou disparaître selon une quête ?')){
+    const q = await dansListe('Quelle quête ?', listeQuetes());
+    const etatQ = await choisir('Il est visible tant que la quête n\'est pas terminée, ou une fois la quête terminée ?', [{ id:'not_completed', label:'Tant que pas terminée', mots:['pas terminee', 'tant que', 'avant', 'en cours'] }, { id:'completed', label:'Une fois terminée', mots:['terminee', 'une fois', 'apres', 'finie'] }]);
+    V('editVisibilityQuest').value = q.item.id; V('editVisibilityState').value = etatQ; V('editVisibilityState').style.display = 'block';
+  }
+}
+
+/* ---------- Étape « Dialogue » ---------- */
+function nouvelleReplique(texte){ currentDialogueSteps.push({ text:texte, choices:[], textVariants:[] }); return currentDialogueSteps.length - 1; }
+async function etapeDialogue(){
+  currentDialogueSteps = [{ text:'', choices:[], textVariants:[] }];
+  GV.aCreer = [];
+  const prop = piocher(ACCUEILS);
+  const a = await dicter('Pour l\'accueil, je propose : « ' + prop + ' ». Dis « garde », ou dicte ta phrase.', [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'tres bien', 'd accord'] }]);
+  currentDialogueSteps[0].text = a.special ? prop : a.texte;
+  renderDialogueBuilder();
+  await construireReponses(0, 0);
+  resetDialogueNav(); renderDialogueBuilder();
+  const nbR = currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).length, 0);
+  const effets = currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).filter(c=> c.itemGrant || c.combat || c.questGive || c.questValidate || c.recruit).length, 0);
+  await dire('Dialogue terminé : ' + currentDialogueSteps.length + ' répliques, ' + nbR + ' réponses' + (effets ? ', dont ' + effets + ' avec un effet.' : '.'));
+}
+async function construireReponses(idx, profondeur){
+  for (;;){
+    const extrait = (currentDialogueSteps[idx].text || '').slice(0, 60);
+    const r = await dicter((profondeur ? 'Après « ' + extrait + ' », le' : 'Le') + ' joueur peut répondre quoi ? Dicte sa réponse, ou dis « aucune réponse ».', [{ id:'aucune', mots:['aucune', 'aucune reponse', 'rien', 'pas de reponse', 'fin', 'fin du dialogue', 'termine', 'c est tout'] }]);
+    if (r.special) return;
+    const ch = { id:newChoiceId(), label:r.texte, next:null };
+    currentDialogueSteps[idx].choices.push(ch);
+    renderDialogueBuilder();
+    if (await ouiNon('Cette réponse a quelque chose de spécial ?')) await effetsReponse(ch, idx);
+    const suite = await dicter('Et lui, il répond quoi ? Dicte sa réplique, ou dis « la conversation s\'arrête », ou « retour à l\'accueil ».', [
+      { id:'fin', mots:['la conversation s arrete', 's arrete', 'ca s arrete', 'fin', 'rien', 'terminer', 'au revoir', 'stop'] },
+      { id:'accueil', mots:['retour a l accueil', 'accueil', 'retour au debut', 'debut', 'recommence'] }]);
+    if (suite.special === 'fin') ch.next = null;
+    else if (suite.special === 'accueil') ch.next = 0;
+    else { ch.next = nouvelleReplique(suite.texte); renderDialogueBuilder(); await construireReponses(ch.next, profondeur + 1); }
+    if (!(await ouiNon('Une autre réponse possible pour le joueur' + (profondeur ? ' à cet endroit' : '') + ' ?'))) return;
+  }
+}
+async function effetsReponse(ch, idx){
+  for (;;){
+    const e = await choisir('Quel effet ? Donner un objet, lancer un combat, confier une quête, valider une quête, le recruter, une condition, ou terminé ?', [
+      { id:'objet', label:'🎁 Objet', mots:['objet', 'donner un objet', 'donne', 'cadeau'] }, { id:'combat', label:'⚔️ Combat', mots:['combat', 'lancer un combat', 'se battre', 'bagarre', 'duel'] },
+      { id:'confier', label:'📜 Confier quête', mots:['confier', 'confier une quete', 'donner une quete', 'quete'] }, { id:'valider', label:'✅ Valider quête', mots:['valider', 'valider une quete', 'terminer la quete'] },
+      { id:'recruter', label:'🤝 Recruter', mots:['recruter', 'le recruter', 'recrute', 'recrutement'] }, { id:'condition', label:'🔒 Condition', mots:['condition', 'une condition', 'seulement si'] },
+      { id:'fin', label:'Terminé', mots:['termine', 'c est tout', 'rien', 'fini', 'non'] }]);
+    if (e === 'fin') return;
+    if (e === 'objet'){
+      const lo = listeObjets();
+      if (!lo.length){ await dire('Aucun objet n\'existe encore. Je le note à créer.'); GV.aCreer.push('un objet pour la réponse « ' + ch.label + ' »'); }
+      else { const o = await dansListe('Quel objet ?', lo); ch.itemGrant = { itemId:o.item.id, itemName:o.item.label, quantity:1 }; }
+    } else if (e === 'combat'){
+      const la = listeAdversaires();
+      if (!la.length){ await dire('Aucun combattant n\'existe encore. Je le note à créer.'); GV.aCreer.push('un adversaire pour la réponse « ' + ch.label + ' »'); }
+      else {
+        const ids = [];
+        while (ids.length < 3){
+          const a = await dansListe(ids.length ? 'Un autre adversaire ? Dis son nom, ou « non ».' : 'Quel adversaire ?', la, ids.length ? [{ id:'non', mots:['non', 'aucun', 'c est tout', 'pas d autre'] }] : null);
+          if (!a.item) break;
+          ids.push(a.item.id);
+        }
+        if (ids.length){
+          ch.combat = { creatureIds:ids, attackIds:[], stepWin:null, stepLose:null };
+          const g = await dicter('S\'il gagne, le personnage dit quoi ensuite ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
+          if (!g.special) ch.combat.stepWin = nouvelleReplique(g.texte);
+          const p = await dicter('Et s\'il perd ou s\'enfuit ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
+          if (!p.special) ch.combat.stepLose = nouvelleReplique(p.texte);
+        }
+      }
+    } else if (e === 'confier' || e === 'valider'){
+      const lq = listeQuetes();
+      if (!lq.length){ await dire('Aucune quête n\'existe encore. Je le note à créer.'); GV.aCreer.push('une quête pour la réponse « ' + ch.label + ' »'); }
+      else { const q = await dansListe(e === 'confier' ? 'Quelle quête confier ?' : 'Quelle quête valider ?', lq); if (e === 'confier') ch.questGive = { questId:q.item.id }; else ch.questValidate = { questId:q.item.id }; }
+    } else if (e === 'recruter'){
+      ch.recruit = { metierId:null }; await dire('Cette réponse le recrute.');
+    } else if (e === 'condition'){
+      await ajouterCondition(ch);
+    }
+    renderDialogueBuilder();
+  }
+}
+async function ajouterCondition(ch){
+  const k = await choisir('Quelle condition ? Une réponse déjà donnée, une quête dans tel état, ou un combat gagné ?', [
+    { id:'choice', label:'Réponse déjà donnée', mots:['reponse', 'reponse deja donnee', 'deja dit', 'a dit', 'phrase'] }, { id:'quest', label:'État d\'une quête', mots:['quete', 'etat d une quete', 'mission'] },
+    { id:'combat', label:'Combat gagné', mots:['combat', 'combat gagne', 'gagne', 'battu'] }]);
+  if (k === 'choice'){
+    const connus = choixConnusPartout(ch.id);
+    if (!connus.length){ await dire('Aucune autre réponse n\'existe pour l\'instant.'); return; }
+    const pnjs = []; connus.forEach(o=>{ const id = o.creatureId || '__ici__'; if (!pnjs.some(p=> p.id === id)) pnjs.push({ id, label:o.pnj, emoji:'💬' }); });
+    const qui = pnjs.length === 1 ? { item:pnjs[0] } : await dansListe('Chez qui ? Dis « ce personnage » ou le nom d\'un autre.', pnjs);
+    const reps = connus.filter(o=> (o.creatureId || '__ici__') === qui.item.id).map(o=> ({ id:o.id, label:o.reponse, emoji:o.marque ? '⭐' : '💬', creatureId:o.creatureId }));
+    const r = await dansListe('Quelle réponse ? Dis « liste » pour les entendre.', reps);
+    const sens = await choisir('La réponse apparaît seulement s\'il l\'a dite, ou seulement s\'il ne l\'a PAS dite ?', [{ id:'yes', label:'S\'il l\'a dite', mots:['dite', 's il l a dite', 'oui', 'a dit'] }, { id:'no', label:'S\'il ne l\'a pas dite', mots:['pas dite', 'ne l a pas dite', 'non', 'pas dit'] }]);
+    ch.showIfList = (ch.showIfList || []).concat([{ kind:'choice', choiceId:r.item.id, creatureId:r.item.creatureId, taken:sens }]);
+  } else if (k === 'quest'){
+    const lq = listeQuetes();
+    if (!lq.length){ await dire('Aucune quête n\'existe encore.'); return; }
+    const q = await dansListe('Quelle quête ?', lq);
+    const etatQ = await choisir('La quête est en cours, terminée, jamais commencée, ou pas en cours ?', [
+      { id:'active', label:'En cours', mots:['en cours', 'active', 'commencee'] }, { id:'completed', label:'Terminée', mots:['terminee', 'finie', 'reussie'] },
+      { id:'not_started', label:'Jamais commencée', mots:['jamais commencee', 'jamais', 'pas commencee'] }, { id:'not_active', label:'Pas en cours', mots:['pas en cours', 'inactive'] }]);
+    ch.showIfList = (ch.showIfList || []).concat([{ kind:'quest', questId:q.item.id, state:etatQ }]);
+  } else {
+    const la = [{ id:'', label:'ce personnage', emoji:'🙋' }].concat(listeAdversaires());
+    const a = await dansListe('Un combat gagné contre qui ? Dis « ce personnage » ou un nom.', la);
+    const s = await choisir('La réponse apparaît tant qu\'il ne l\'a pas battu, ou une fois qu\'il l\'a battu ?', [{ id:'not_won', label:'Tant que pas battu', mots:['pas battu', 'tant que', 'pas encore', 'pas gagne'] }, { id:'won', label:'Une fois battu', mots:['battu', 'une fois', 'gagne', 'apres'] }]);
+    ch.showIfList = (ch.showIfList || []).concat([{ kind:'combat', creatureId:a.item.id, state:s }]);
+  }
+  await dire('Condition ajoutée.');
+}
+
+/* ---------- Étape « Combat » ---------- */
+async function etapeCombat(){
+  const lm = listeModeles();
+  if (!lm.length){ await dire('Aucun modèle de robot n\'existe : il ne pourra pas combattre tant que tu n\'en auras pas créé un. Je le note.'); GV.aCreer.push('un modèle de robot'); return; }
+  const m = await dansListe('Quel modèle de robot ?', lm);
+  changer('editCombatModele', m.item.id);
+  if (typeFiche() === 'combat' && !V('editCombatRecruitable').checked){
+    V('editCombatCategory').value = await choisir('C\'est un monstre commun, un mini-boss, ou un boss ?', [{ id:'monstre_commun', label:'Commun', mots:['commun', 'normal', 'monstre commun', 'simple'] }, { id:'mini_boss', label:'Mini-boss', mots:['mini boss', 'mini', 'moyen'] }, { id:'boss', label:'Boss', mots:['boss', 'gros', 'grand boss'] }]);
+    V('editCombatAiPersonality').value = await choisir('Sa personnalité en combat : normal, agressif, défensif, ou chaotique ?', [{ id:'normal', label:'Normal', mots:['normal', 'equilibre'] }, { id:'agressif', label:'Agressif', mots:['agressif', 'fonceur', 'violent'] }, { id:'defensif', label:'Défensif', mots:['defensif', 'prudent'] }, { id:'chaotique', label:'Chaotique', mots:['chaotique', 'aleatoire', 'fou'] }]);
+    const lo = listeObjets();
+    if (lo.length && await ouiNon('Il lâche un objet quand on le bat ?')){
+      for (;;){
+        const o = await dansListe('Quel objet ?', lo);
+        selectedCombatRewards.add(o.item.id); renderCombatRewardsPicker();
+        if (!(await ouiNon('Un autre objet ?'))) break;
+      }
+    }
+  }
+  if (typeof updateCombatPointsIndicator === 'function') updateCombatPointsIndicator();
+}
+
+/* ---------- Étape « Boutique » ---------- */
+async function etapeBoutique(){
+  currentShopItems = []; renderShopItemsBuilder();
+  const prop = piocher(ACCUEILS_BOUTIQUE);
+  const a = await dicter('Phrase d\'accueil du marchand, je propose : « ' + prop + ' ». Dis « garde », ou dicte la tienne.', [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'd accord'] }]);
+  V('editShopPhrase').value = a.special ? prop : a.texte;
+  const lo = listeObjets();
+  if (!lo.length){ await dire('Aucun objet n\'existe encore : la boutique restera vide. Je le note.'); GV.aCreer.push('des objets à vendre'); return; }
+  for (;;){
+    const o = await dansListe('Quel objet en vente ? Dis son nom, ou « c\'est tout ».', lo, [{ id:'fin', mots:['c est tout', 'fini', 'aucun', 'rien', 'termine', 'non'] }]);
+    if (!o.item) break;
+    const p = await demander({ texte:'À quel prix ?', nombre:true });
+    currentShopItems.push({ itemId:o.item.id, price:p.n }); renderShopItemsBuilder();
+    await dire(o.item.label + ' à ' + p.n + ' pièces.');
+  }
+}
+
+/* ---------- Étape « Vérification » ---------- */
+function lieuDefini(){ return pendingLat !== null || !!pendingAssignedZoneId || !!pendingPieceCommune || pendingReserve; }
+function texteResume(){
+  const t = { dialogue:'habitant', shop:'marchand', combat: V('editCombatRecruitable').checked ? 'combattant recrutable' : 'monstre', zone:'zone', concession:'concessionnaire' }[typeFiche()] || typeFiche();
+  const parts = [V('editName').value + ', ' + t];
+  const met = (metiers || []).find(m=> m.id === V('editMetier').value); if (met) parts.push('métier ' + met.name);
+  if (V('editFonction').value) parts.push('fonction ' + V('editFonction').value);
+  if (GV.humeur) parts.push('humeur ' + GV.humeur);
+  parts.push('lieu : ' + V('posStatusText').textContent);
+  parts.push(editTimeRanges.length ? 'horaires ' + editTimeRanges.map(c=> c.start + ' à ' + c.end).join(' et ') : 'à toute heure');
+  parts.push(selectedDays.size ? nomJours(Array.from(selectedDays)) : 'tous les jours');
+  if (parle()) parts.push(currentDialogueSteps.length + ' répliques, ' + currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).length, 0) + ' réponses');
+  if (typeFiche() === 'shop') parts.push(currentShopItems.length + ' objets en vente');
+  if (GV.manques.length) parts.push('à remplacer : ' + GV.manques.join(', '));
+  if (GV.aCreer.length) parts.push('à créer : ' + GV.aCreer.join(', '));
+  return parts.join('. ') + '.';
+}
+async function etapeVerification(){
+  if (!lieuDefini()){ await dire('Il n\'a pas de lieu : on y revient.'); throw new SignalGuide(SOMMAIRE, 'journee'); }
+  const alertes = [];
+  if (recrutable() && parle() && !currentDialogueSteps.some(s=> (s.choices || []).some(c=> c && c.recruit))){
+    alertes.push('aucune réponse ne le recrute : il faudra en ajouter une dans le dialogue');
+    if (recrutableCombat()) V('editEnTravaux').checked = true;   // sinon l'enregistrement est refusé
+  }
+  if (GV.manques.length) alertes.push(GV.manques.length + ' image' + (GV.manques.length > 1 ? 's' : '') + ' standard à remplacer, la fiche reste en travaux');
+  if (GV.aCreer.length) alertes.push('à créer ensuite : ' + GV.aCreer.join(', '));
+  await dire(alertes.length ? 'Vérification : ' + alertes.join('. ') + '.' : 'Vérification : rien ne manque.');
+  if (await ouiNon('Tu veux entendre le résumé ?')) await dire(texteResume());
+  if (!(await ouiNon(V('editEnTravaux').checked ? 'J\'enregistre le brouillon ?' : 'J\'enregistre et je publie ?'))){
+    await dire('D\'accord, je n\'enregistre pas. La fiche reste à l\'écran, tu peux la reprendre à la main ou dire « sommaire ».');
+    throw new SignalGuide(SOMMAIRE);
+  }
+  const avant = editingId;
+  if (!editingId) forcerCreation = true;   // une création reste OUVERTE après l'enregistrement (branche forcerCreation du bouton)
+  V('editSaveBtn').click();
+  const ok = await attendreQue(()=> editingId && editingId !== avant, 25000);
+  if (!ok){ if (!editingId) forcerCreation = false; await dire('L\'enregistrement n\'a pas abouti : regarde le message à l\'écran, corrige, et dis « sommaire » ou réessaie.'); throw new SignalGuide(SOMMAIRE); }
+  await dire('Enregistré.');
+  if (await ouiNon('Il est aussi ailleurs, à un autre moment ? Je crée une version.')){
+    await attendreQue(()=> !!ficheParId(editingId), 8000);
+    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
+    GV.journal.journee = []; GV.journal.verification = [];
+    const ej = GV.etapes.find(x=> x.id === 'journee'); ej.fait = false; ej.avant = null;
+    throw new SignalGuide(SOMMAIRE, 'journee');
+  }
+  await dire('Terminé. Pour un autre personnage, relance le guide.');
+}
+
+GV.etapes = [
+  { id:'qui', titre:'Qui', run:etapeQui, applicable:()=> true },
+  { id:'images', titre:'Images', run:etapeImages, applicable:()=> true },
+  { id:'caractere', titre:'Caractère', run:etapeCaractere, applicable:()=> parle() },
+  { id:'journee', titre:'Journée', run:etapeJournee, applicable:()=> true },
+  { id:'dialogue', titre:'Dialogue', run:etapeDialogue, applicable:()=> parle() && typeFiche() !== 'shop' && typeFiche() !== 'concession' },
+  { id:'combat', titre:'Combat', run:etapeCombat, applicable:()=> seBat() },
+  { id:'boutique', titre:'Boutique', run:etapeBoutique, applicable:()=> typeFiche() === 'shop' },
+  { id:'verification', titre:'Vérification', run:etapeVerification, applicable:()=> true },
+];
+
+/* ---------- Le moteur : enchaîne les étapes, rejoue sur « retour », saute sur « sommaire » ---------- */
+async function moteur(){
+  const E = GV.etapes;
+  let i = 0;
+  const prochaine = ()=> E.findIndex(e=> !e.fait && e.applicable());
+  const precedente = (k)=>{ for (let j = k - 1; j >= 0; j--){ if (E[j].applicable() && GV.journal[E[j].id].length) return j; } return -1; };
+  while (GV.actif){
+    if (i < 0 || i >= E.length) break;
+    const et = E[i];
+    if (!et.applicable() || (et.fait && et.id !== 'verification')){ i = prochaine(); if (i < 0) break; continue; }
+    GV.courante = et; GV.replay = 0;
+    if (et.id === 'verification') GV.journal[et.id] = [];   // on ne rejoue jamais un « oui, enregistre »
+    $('gvEtape').textContent = '· ' + et.titre;
+    if (!et.avant) et.avant = instantane(et.id); else restaurer(et.id, et.avant);
+    try {
+      await et.run();
+      et.fait = true; et.avant = null;
+      i = prochaine(); if (i < 0) break;
+    } catch(sig){
+      if (!(sig instanceof SignalGuide)){ console.error(sig); await dire('Oups, le guide a eu un souci : ' + (sig && sig.message ? sig.message : 'inconnu') + '. Dis « sommaire » pour reprendre.'); GV.journal[et.id] = []; continue; }
+      if (sig.type === QUITTER) break;
+      if (sig.type === RETOUR){
+        const log = GV.journal[et.id];
+        if (log.length){ log.pop(); continue; }   // même étape, rejouée sans la dernière réponse
+        const p = precedente(i);
+        if (p < 0){ await dire('On est au début.'); continue; }
+        GV.journal[E[p].id].pop(); E[p].fait = false; i = p; continue;
+      }
+      if (sig.type === SOMMAIRE){
+        let cible = sig.cible ? E.findIndex(e=> e.id === sig.cible) : -1;
+        if (cible < 0){
+          const choix = E.filter(e=> e.applicable() && e.id !== 'verification').map(e=> ({ id:e.id, label:(e.fait ? '✓ ' : '') + e.titre, mots:[e.titre] }));
+          choix.push({ id:'__continuer__', label:'Continuer', mots:['continuer', 'continue', 'annuler', 'laisse', 'rien'] });
+          const sauve = GV.courante; GV.courante = { id:'__sommaire__' }; GV.journal.__sommaire__ = []; GV.replay = 0;
+          let rep;
+          try { rep = await choisir('Sommaire : ' + E.filter(e=> e.applicable() && e.id !== 'verification').map(e=> e.titre + (e.fait ? ' (fait)' : '')).join(', ') + '. Où veux-tu aller ? Dis « continuer » pour reprendre.', choix); }
+          catch(s2){ if (s2 instanceof SignalGuide && s2.type === QUITTER) break; GV.courante = sauve; continue; }
+          GV.courante = sauve;
+          if (rep === '__continuer__') continue;
+          cible = E.findIndex(e=> e.id === rep);
+        }
+        GV.journal[E[cible].id] = []; E[cible].fait = false; E[cible].avant = null;
+        i = cible; continue;
+      }
+    }
+  }
+  arreterGuide();
+}
+
+function arreterGuide(){
+  GV.actif = false; arreterEcoute();
+  try { speechSynthesis.cancel(); } catch(e){}
+  /* Une question encore en attente reçoit « quitter » : le moteur se termine proprement au lieu
+     de rester suspendu, et ne risque pas d'attraper les réponses d'un guide relancé ensuite. */
+  if (GV.resoudre) livrer({ signal:QUITTER });
+  masquer();
+}
+async function lancerGuide(){
+  if (GV.actif){ afficher(); return; }
+  GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false;
+  GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
+  afficher(); viderUI();
+  if (!Reco()) etat('Pas de reconnaissance vocale ici (Chrome conseillé) : réponds avec les boutons.');
+  try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
+  await parler('Guide vocal. Tu peux dire « pause », « retour » ou « sommaire » à tout moment.');
+  moteur();
+}
+GV.lancer = lancerGuide;
+
+/* Le bouton dans l'éditeur de PNJ, sous « Nouveau PNJ / PNJ existants ». */
+(function(){
+  const nav = document.getElementById('pnjNav');
+  if (!nav) return;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'btn-secondary'; b.id = 'gvLancerBtn';
+  b.style.cssText = 'flex:1 1 100%;';
+  b.textContent = '🎙️ Guide vocal de création';
+  b.addEventListener('click', lancerGuide);
+  nav.appendChild(b);
+})();
+})();
 </script>
 </body>
 </html>
