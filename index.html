@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v557</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v558</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11395,6 +11395,19 @@ function texteBoiteNoire(){
     + (e.d ? ' — ' + e.d : '') + (e.mem ? ' (mém. ' + e.mem + ')' : '')
   ).join('\n');
 }
+/* v558 — LE PARTAGE DU TÉLÉPHONE. En navigation privée le presse-papiers est bloqué et la
+   sélection d'un texte n'ouvre pas toujours le menu « copier ». Le partage système, lui,
+   marche partout : il envoie le texte vers la conversation, un mail ou des notes. */
+function boutonPartagerHtml(){
+  return (navigator.share ? '<button class="btn-secondary" data-partager style="flex:0 0 auto;">📤 Partager</button>' : '');
+}
+function brancherPartage(fond, texteFn){
+  const b = fond.querySelector('[data-partager]');
+  if (!b) return;
+  b.addEventListener('click', ()=>{
+    navigator.share({ title:'Mascotto', text: texteFn() }).catch(()=>{});
+  });
+}
 function ouvrirBoiteNoire(){
   const l = (typeof journalLignes === 'function') ? journalLignes() : [];
   const fond = document.createElement('div');
@@ -11408,6 +11421,7 @@ function ouvrirBoiteNoire(){
       </div>
       <div style="display:flex; gap:6px; margin-bottom:8px;">
         <button class="btn-capture" data-copier style="flex:1;">📋 Copier</button>
+        ${boutonPartagerHtml()}
         <button class="btn-secondary" data-vider style="flex:0 0 auto;">🗑️ Vider</button>
       </div>
       <p class="meta" style="margin:0 0 8px;">La plus récente en haut. Copie ce texte et colle-le dans la conversation : les heures, les durées et les erreurs y sont en clair.</p>
@@ -11428,6 +11442,7 @@ function ouvrirBoiteNoire(){
 
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
   fond.addEventListener('click', (e)=>{ if (e.target === fond) fond.remove(); });
+  brancherPartage(fond, texteBoiteNoire);
   fond.querySelector('[data-copier]').addEventListener('click', (e)=>{
     const txt = texteBoiteNoire();
     const fini = (ok)=>{ e.target.textContent = ok ? '✅ Copié' : '⚠️ Copie bloquée — le texte est sélectionné, copie-le à la main'; };
@@ -11546,7 +11561,7 @@ const Robot = (()=>{
           if (R.actif){
             const t = String(msg == null ? '' : msg);
             R.dernierToast = t; R.toasts.push(t); if (R.toasts.length > 60) R.toasts.shift();
-            if (/échec|refus|permission|non enregistr|non décompt|indisponible|erreur/i.test(t)) incoherence('Message d\'échec à l\'écran', t.slice(0, 160));
+            if (/échec|refus|permission|non enregistr|non décompt|indisponible|erreur|aucun vaisseau/i.test(t)) incoherence('Message d\'échec à l\'écran', t.slice(0, 160));
           }
         } catch(e){}
         return R.toastOrigine.apply(this, arguments);
@@ -11955,8 +11970,38 @@ const Robot = (()=>{
       R.attenteRencontre = { sceneId, rythme: R.rythme, depuis: Date.now() };
     } catch(e){}
   }
+  /* Le jeu lit ses données après l'ouverture : le vaisseau de départ, les fiches, le joueur.
+     Agir avant, c'est taper dans le vide. On attend, sans jamais bloquer plus de 40 s. */
+  function jeuPret(){
+    try {
+      return !!(typeof currentUser !== 'undefined' && currentUser)
+        && !!(typeof shipZoneId !== 'undefined' && shipZoneId)
+        && !!(typeof latestSnap !== 'undefined' && latestSnap);
+    } catch(e){ return false; }
+  }
+  function manqueAuJeu(){
+    const m = [];
+    try { if (!(typeof currentUser !== 'undefined' && currentUser)) m.push('connexion'); } catch(e){}
+    try { if (!(typeof shipZoneId !== 'undefined' && shipZoneId)) m.push('vaisseau de départ'); } catch(e){}
+    try { if (!(typeof latestSnap !== 'undefined' && latestSnap)) m.push('fiches'); } catch(e){}
+    return m.join(', ');
+  }
   async function etapeCarte(){
     if (typeof isGhostTap === 'function' && isGhostTap()) return dort(500);
+    if (!jeuPret()){
+      if (!R.attenteJeuDepuis) R.attenteJeuDepuis = Date.now();
+      const depuis = Date.now() - R.attenteJeuDepuis;
+      if (depuis < 40000){
+        if (!R.attenteJeuDite){ R.attenteJeuDite = true; dire('attente des données du jeu', manqueAuJeu()); }
+        return dort(1000);
+      }
+      if (!R.attenteJeuSignalee){
+        R.attenteJeuSignalee = true;
+        incoherence('Le jeu n\'est pas prêt après 40 s', 'il manque : ' + manqueAuJeu() + ' — un vrai nouveau joueur serait bloqué de la même façon');
+      }
+      return dort(3000);
+    }
+    R.attenteJeuDepuis = 0; R.attenteJeuDite = false;
     /* Équipe affaiblie : retour à bord. */
     if (equipeAffaiblie() || !equipeApte()){
       await dort(alea(600, 1400));
@@ -12018,6 +12063,7 @@ const Robot = (()=>{
     R.incoherences = []; R.gestes = []; R.scenesVues = {}; R.pointsInertes = {}; R.toasts = []; R.dernierToast = '';
     R.rencontres = { lentes:{ scenes:0, attendues:0, vues:0 }, pressees:{ scenes:0, attendues:0, vues:0 } };
     R.zoneEnCours = null; R.signatureEcran = ''; R.memeEcranDepuis = Date.now();
+    R.attenteJeuDepuis = 0; R.attenteJeuDite = false; R.attenteJeuSignalee = false;
     /* Le vrai GPS est coupé le temps du jeu : sinon un relevé écraserait la téléportation. */
     R.modeLibreAvant = (typeof freeModeActive !== 'undefined') && freeModeActive;
     try { freeModeActive = true; } catch(e){}
@@ -12079,6 +12125,7 @@ const Robot = (()=>{
         </div>
         <div style="display:flex; gap:6px; margin-bottom:8px;">
           <button class="btn-capture" data-copier style="flex:1;">📋 Copier</button>
+          ${boutonPartagerHtml()}
         </div>
         <textarea data-texte class="field-input" readonly style="display:none; height:120px; font-size:11px;"></textarea>
         <pre data-liste style="overflow-y:auto; flex:1; font-size:11px; line-height:1.45; white-space:pre-wrap; margin:0;"></pre>
@@ -12086,6 +12133,7 @@ const Robot = (()=>{
     document.body.appendChild(fond);
     fond.querySelector('[data-liste]').textContent = txt;
     fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+    brancherPartage(fond, ()=> txt);
     fond.querySelector('[data-copier]').addEventListener('click', (e)=>{
       const fini = (ok)=>{ e.target.textContent = ok ? '✅ Copié' : '⚠️ Copie bloquée — le texte est sélectionné, copie-le à la main'; };
       const repli = ()=>{
