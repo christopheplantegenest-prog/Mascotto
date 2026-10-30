@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v558</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v559</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11630,6 +11630,32 @@ const Robot = (()=>{
   function nomSceneCourante(){
     try { const sc = sceneViewScenes.find(s=> s.id === sceneViewCurrentSceneId); return (sc && (sc.name || sc.title)) || String(sceneViewCurrentSceneId || '?'); } catch(e){ return '?'; }
   }
+  /* La scène met du temps à s'afficher : lecture de l'image, puis pose des points. Lire la
+     pièce avant, c'est lire une pièce vide. On attend l'image ET au moins un point — ou 6 s,
+     au cas où la pièce n'aurait vraiment aucun point. Rend VRAI si la scène a changé entre
+     temps (la lecture serait alors obsolète). */
+  async function attendreSceneDessinee(){
+    const sceneAttendue = sceneViewCurrentSceneId;
+    const debut = Date.now();
+    while (Date.now() - debut < 6000){
+      if (sceneViewCurrentSceneId !== sceneAttendue) return true;
+      const img = document.querySelector('#sceneViewImgWrap img');
+      const prete = img && img.complete && img.naturalWidth > 0;
+      const points = document.querySelectorAll('#sceneViewImgWrap .scene-point').length;
+      if (prete && points) return false;
+      await dort(120);
+    }
+    return sceneViewCurrentSceneId !== sceneAttendue;
+  }
+  /* Une absence (pas d'issue, pas de bouton) ne se signale que si elle PERSISTE : on la
+     revoit `fois` fois à `pas` ms d'écart. Un écran en train de se redessiner ne compte pas. */
+  async function absencePersistante(test, fois, pas){
+    for (let i = 0; i < fois; i++){
+      if (!test()) return false;
+      await dort(pas);
+    }
+    return test();
+  }
   function pointsDeLaScene(){
     try {
       const scRaw = sceneViewScenes.find(s=> s.id === sceneViewCurrentSceneId);
@@ -11814,8 +11840,18 @@ const Robot = (()=>{
     return dort(2000);
   }
   async function etapeDialogue(){
-    const boutons = Array.from(document.querySelectorAll('#sheetChoices .choice-btn')).filter(b=> !b.disabled);
-    if (!boutons.length){ incoherence('Dialogue sans aucun bouton', (document.getElementById('sheetName') || {}).textContent || ''); return dort(2000); }
+    const lireBoutons = ()=> Array.from(document.querySelectorAll('#sheetChoices .choice-btn')).filter(b=> !b.disabled);
+    let boutons = lireBoutons();
+    if (!boutons.length){
+      /* Après un combat, la fiche reste à l'écran avec son dernier bouton éteint le temps que
+         la scène se redessine derrière. On attend : un dialogue vraiment muet le reste. */
+      if (await absencePersistante(()=> visible('overlay') && !lireBoutons().length, 4, 1500)){
+        incoherence('Dialogue sans aucun bouton', (document.getElementById('sheetName') || {}).textContent || '');
+        return dort(2000);
+      }
+      boutons = lireBoutons();
+      if (!boutons.length) return;
+    }
     const nonFin = boutons.filter(b=> !/^fermer$/i.test(b.textContent.trim()));
     /* Sans combattant à bord, on cherche à recruter : on prend tout ce qui ressemble à un oui. */
     const sansEquipe = !combattants().length;
@@ -11840,6 +11876,7 @@ const Robot = (()=>{
     return cliquerPuisAttendre(document.getElementById('quartersCloseBtn'), 'quitter les quartiers', 800);
   }
   async function etapeVaisseau(){
+    if (await attendreSceneDessinee()) return;
     const pts = pointsDeLaScene();
     const parType = (t)=> pts.filter(p=> p.pt.type === t);
     const debout = combattantsDebout();
@@ -11867,8 +11904,10 @@ const Robot = (()=>{
       if (toucherPoint(s.pt, s.div, 'sortir du vaisseau')) return dort(1500);
     }
     if (besoin && !cible.length && !parType('sortie').length){
-      incoherence('À bord sans issue', 'besoin : ' + besoin + ' — rien pour y répondre dans « ' + nomSceneCourante() + ' » et aucune porte');
-      return dort(3000);
+      const sceneId = sceneViewCurrentSceneId;
+      const vide = ()=> sceneViewCurrentSceneId === sceneId && situation() === 'vaisseau' && !pointsDeLaScene().some(p=> p.pt.type === 'sortie');
+      if (await absencePersistante(vide, 3, 1500)) incoherence('À bord sans issue', 'besoin : ' + besoin + ' — rien pour y répondre dans « ' + nomSceneCourante() + ' » et aucune porte');
+      return dort(1500);
     }
     const cleBord = 'bord/' + sceneViewCurrentSceneId;
     R.scenesVues[cleBord] = R.scenesVues[cleBord] || { essayes:{} };
@@ -11889,6 +11928,7 @@ const Robot = (()=>{
     return dort(2000);
   }
   async function etapeAnnexe(){
+    if (await attendreSceneDessinee()) return;
     const pts = pointsDeLaScene();
     const sorties = pts.filter(p=> p.pt.type === 'sortie_zone' || p.pt.type === 'sortie');
     if (sorties.length){ const s = pioche(sorties); await dort(alea(500, 1200)); if (toucherPoint(s.pt, s.div, 'quitter l\'annexe')) return dort(1000); }
@@ -11910,6 +11950,7 @@ const Robot = (()=>{
       comptabiliserRencontre(sceneId);
     }
     const vue = R.scenesVues[cle];
+    if (await attendreSceneDessinee()) return;   // la scène a changé pendant l'attente
     const pts = pointsDeLaScene();
     const rentrer = equipeAffaiblie() || R.scenesDansZone > 14 + Math.random() * 10;
     const presse = R.rythme === 'presse';
@@ -11946,17 +11987,26 @@ const Robot = (()=>{
       const p = pioche(inconnues.length ? inconnues : portes);
       await dort(attente);
       if (toucherPoint(p.pt, p.div, 'passer une porte' + (presse ? ' (pressé)' : ''))){
-        await dort(presse ? 150 : 800);
+        /* Une porte à clé relit l'inventaire sur le serveur avant de s'ouvrir : on lui laisse
+           jusqu'à 1,5 s, par petits pas, pour ne pas la croire fermée à tort. */
+        const debut = Date.now();
+        while (Date.now() - debut < 1500 && sceneViewCurrentSceneId === sceneId && situation() === 'zone') await dort(100);
         if (sceneViewCurrentSceneId === sceneId && situation() === 'zone'){
           vue.essayes['porte:' + p.pt.id] = true;
           dire('porte restée fermée', '« ' + (p.pt.label || p.pt.id) + ' »' + (R.dernierToast ? ' · ' + R.dernierToast.slice(0, 80) : ''));
-        }
+        } else if (!presse) await dort(600);
       }
       return;
     }
     if (sz.length){ await dort(attente); if (toucherPoint(sz[0].pt, sz[0].div, 'sortir de la zone (cul-de-sac)')) return dort(1200); }
-    incoherence('Scène sans issue praticable', '« ' + nomSceneCourante() + ' » — aucune porte ouvrable ni sortie de zone');
-    return dort(3000);
+    /* Pas d'issue : on ne le dit qu'après l'avoir revu trois fois en 4,5 s, scène inchangée. */
+    const sansIssue = ()=> sceneViewCurrentSceneId === sceneId && situation() === 'zone'
+      && !pointsDeLaScene().some(p=> p.pt.type === 'sortie_zone' || (p.pt.type === 'sortie' && !vue.essayes['porte:' + p.pt.id]));
+    if (await absencePersistante(sansIssue, 3, 1500)){
+      incoherence('Scène sans issue praticable', '« ' + nomSceneCourante() + ' » — aucune porte ouvrable ni sortie de zone');
+      return dort(3000);
+    }
+    return;
   }
   /* La mesure du taux de rencontres : à l'entrée d'une scène, on note ce qui était attendu
      (la chance réglée sur la scène), et on comptera les combats réellement partis. Séparé par
