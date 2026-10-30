@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v567</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v568</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,9 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v568 — LA VOIX PIPER dans la page (prononciateur WebAssembly + ONNX Runtime + voix
+     française siwis, 63 Mo téléchargés une fois) ; la synthèse du navigateur ne sert plus
+     que de secours.
      v567 — retour au lancement de lecture de la v564 (la v565/566 restait muette sur le
      téléphone), les phrases d'un long texte étant mises d'un coup dans la file.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
@@ -35780,18 +35783,174 @@ function montrerListe(liste, onPick){
   dessiner();
 }
 
-/* ---------- Parler ---------- */
+/* ---------- Parler ----------
+   v568 — LA VOIX PIPER, DANS LA PAGE (demandé le 30/10 : la synthèse du téléphone était
+   tombée en panne, et on ne veut dépendre ni du téléphone ni de Chrome).
+   Piper est un moteur de synthèse open source (MIT). Trois pièces, toutes chargées par la
+   page elle-même et gardées en cache :
+     - le prononciateur (espeak-ng compilé en WebAssembly, ~19 Mo) : texte → phonèmes ;
+     - le moteur ONNX Runtime pour le web (~10 Mo) : fait tourner le modèle de voix ;
+     - la voix française « siwis » (~63 Mo), téléchargée UNE fois et rangée dans le cache
+       du navigateur (Cache API, clé « mascotto-voix », que le service worker ne purge pas).
+   Le son produit (PCM 22 kHz) est joué par Web Audio, pas par la synthèse du système.
+   Si l'une des pièces ne se charge pas, on retombe sur la synthèse du navigateur (v567). */
+const PIPER = {
+  prononciateurJs: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.js',
+  prononciateurBase: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/',
+  ortJs: 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/ort.min.js',
+  ortBase: 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/',
+  voix: 'https://huggingface.co/diffusionstudio/piper-voices/resolve/main/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx',
+  cache: 'mascotto-voix',
+};
+const VX = { prete:null, ok:false, session:null, config:null, phonemiseur:null, surPrint:null, audio:null, enCours:null, raison:'' };
+
+function chargerScript(url){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script'); s.src = url; s.async = true;
+    s.onload = ()=> resolve(); s.onerror = ()=> reject(new Error('script ' + url));
+    document.head.appendChild(s);
+  });
+}
+/* Télécharge en montrant l'avancement, et garde dans le cache du navigateur. */
+async function fichierEnCache(url, libelle){
+  let cache = null;
+  try { cache = await caches.open(PIPER.cache); const deja = await cache.match(url); if (deja) return await deja.arrayBuffer(); } catch(e){ cache = null; }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + url);
+  const total = +(res.headers.get('Content-Length') || 0);
+  const lecteur = res.body ? res.body.getReader() : null;
+  const morceaux = []; let recu = 0;
+  if (lecteur){
+    for (;;){
+      const { done, value } = await lecteur.read();
+      if (done) break;
+      morceaux.push(value); recu += value.length;
+      if (libelle) etat('⬇️ ' + libelle + (total ? ' ' + Math.round(recu * 100 / total) + ' %' : ' ' + Math.round(recu / 1048576) + ' Mo'));
+    }
+  }
+  const blob = new Blob(lecteur ? morceaux : [await res.arrayBuffer()]);
+  if (cache){ try { await cache.put(url, new Response(blob, { headers:{ 'Content-Type':'application/octet-stream' } })); } catch(e){} }
+  return await blob.arrayBuffer();
+}
+/* Prépare la voix une seule fois par chargement de page. Rend true si Piper est utilisable. */
+function preparerVoix(){
+  if (VX.prete) return VX.prete;
+  VX.prete = (async ()=>{
+    try {
+      if (!window.WebAssembly || !window.AudioContext && !window.webkitAudioContext) throw new Error('pas de WebAssembly ou de Web Audio');
+      etat('🔊 Préparation de la voix…');
+      if (typeof createPiperPhonemize !== 'function') await chargerScript(PIPER.prononciateurJs);
+      if (typeof ort === 'undefined') await chargerScript(PIPER.ortJs);
+      ort.env.wasm.wasmPaths = PIPER.ortBase;
+      ort.env.wasm.numThreads = 1;   // le multi-thread demande des en-têtes que GitHub Pages n'envoie pas
+      const [configBuf, modele] = await Promise.all([
+        fichierEnCache(PIPER.voix + '.json', 'réglages de la voix'),
+        fichierEnCache(PIPER.voix, 'voix française'),
+      ]);
+      VX.config = JSON.parse(new TextDecoder().decode(configBuf));
+      etat('🔊 Chargement du prononciateur…');
+      VX.phonemiseur = await createPiperPhonemize({
+        print: (d)=>{ if (VX.surPrint) VX.surPrint(d); },
+        printErr: ()=>{},
+        locateFile: (f)=> PIPER.prononciateurBase + f,
+        noExitRuntime: true,
+      });
+      etat('🔊 Chargement du modèle de voix…');
+      VX.session = await ort.InferenceSession.create(modele, { executionProviders:['wasm'] });
+      VX.ok = true;
+      etat('');
+      return true;
+    } catch(e){
+      console.warn('Voix Piper indisponible, retour à la synthèse du navigateur :', e);
+      VX.ok = false; VX.raison = e && e.message ? e.message : String(e);
+      etat('🔊 Voix locale indisponible (' + VX.raison.slice(0, 60) + ') : synthèse du navigateur.');
+      return false;
+    }
+  })();
+  return VX.prete;
+}
+/* Texte → identifiants de phonèmes, via le prononciateur (espeak-ng « fr »). */
+function phonemes(texte){
+  return new Promise((resolve, reject)=>{
+    VX.surPrint = (d)=>{ VX.surPrint = null; try { resolve(JSON.parse(d).phoneme_ids); } catch(e){ reject(e); } };
+    try {
+      VX.phonemiseur.callMain(['-l', 'fr', '--input', JSON.stringify([{ text:String(texte) }]), '--espeak_data', '/espeak-ng-data']);
+    } catch(e){ VX.surPrint = null; reject(e); }
+  });
+}
+/* Phonèmes → son (Float32, fréquence du modèle). */
+async function synthetiser(texte){
+  const ids = await phonemes(texte);
+  if (!ids || !ids.length) return null;
+  const c = VX.config;
+  const feeds = {
+    input: new ort.Tensor('int64', BigInt64Array.from(ids.map(x=> BigInt(x))), [1, ids.length]),
+    input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
+    scales: new ort.Tensor('float32', Float32Array.from([c.inference.noise_scale, c.inference.length_scale, c.inference.noise_w]), [3]),
+  };
+  if (c.speaker_id_map && Object.keys(c.speaker_id_map).length) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([0n]), [1]);
+  const sortie = await VX.session.run(feeds);
+  return sortie.output.data;
+}
+function contexteAudio(){
+  if (!VX.audio){ const AC = window.AudioContext || window.webkitAudioContext; VX.audio = new AC(); }
+  if (VX.audio.state === 'suspended'){ try { VX.audio.resume(); } catch(e){} }
+  return VX.audio;
+}
+function jouerPcm(pcm, jeton){
+  return new Promise((resolve)=>{
+    if (!pcm || !pcm.length || VX.jeton !== jeton){ resolve(); return; }
+    const ctx = contexteAudio();
+    const buf = ctx.createBuffer(1, pcm.length, VX.config.audio.sample_rate);
+    buf.getChannelData(0).set(pcm);
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    VX.enCours = src;
+    let fini = false; const terminer = ()=>{ if (fini) return; fini = true; if (VX.enCours === src) VX.enCours = null; resolve(); };
+    src.onended = terminer;
+    setTimeout(terminer, buf.duration * 1000 + 300);   // au cas où onended ne vient pas
+    try { src.start(); } catch(e){ terminer(); }
+  });
+}
+function couperVoix(){
+  VX.jeton = (VX.jeton || 0) + 1;
+  if (VX.enCours){ try { VX.enCours.stop(); } catch(e){} VX.enCours = null; }
+  try { speechSynthesis.cancel(); } catch(e){}
+}
+/* Lecture par Piper : chaque phrase est synthétisée pendant que la précédente se joue. */
+async function parlerPiper(texte){
+  const jeton = VX.jeton = (VX.jeton || 0) + 1;
+  const phrases = phrasesDeLecture(texte);
+  etat('🔊 …');
+  let prochaine = synthetiser(phrases[0]).catch(()=> null);
+  for (let i = 0; i < phrases.length; i++){
+    const pcm = await prochaine;
+    if (VX.jeton !== jeton) return;
+    prochaine = (i + 1 < phrases.length) ? synthetiser(phrases[i + 1]).catch(()=> null) : null;
+    await jouerPcm(pcm, jeton);
+    if (VX.jeton !== jeton) return;
+  }
+}
+function phrasesDeLecture(texte){
+  texte = String(texte).replace(/\{joueur\}/g, 'pseudo');
+  const phrases = (texte.match(/[^.!?…]+[.!?…]*["»]?\s*/g) || [texte]).map(p=> p.trim()).filter(Boolean);
+  return phrases.length ? phrases : [texte];
+}
+
 function parler(texte){
   $('gvQuestion').textContent = texte;
   arreterEcoute();
-  return new Promise((resolve)=>{
+  return new Promise(async (resolve)=>{
     if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
+    couperVoix();
+    const piper = await preparerVoix();
+    if (piper){
+      try { await parlerPiper(texte); } catch(e){ console.warn('lecture Piper', e); }
+      resolve(); return;
+    }
     if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
     const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
-    /* v567 : même mécanisme qu'en v564 (une lecture lancée tout de suite, bornée par la longueur
-       du texte), mais un long texte est découpé en phrases mises D'UN COUP dans la file du
-       téléphone : Android coupait les lectures longues, il enchaîne sans problème des courtes. */
+    /* v567 : secours — synthèse du navigateur, un long texte découpé en phrases mises d'un coup dans la file. */
     const morceaux = morceauxDeLecture(texte);
     let restants = morceaux.length, fini = false;
     const terminer = ()=>{ if (fini) return; fini = true; clearTimeout(garde); resolve(); };
@@ -36768,7 +36927,7 @@ async function moteur(){
 
 function arreterGuide(){
   GV.actif = false; arreterEcoute();
-  try { speechSynthesis.cancel(); } catch(e){}
+  couperVoix();
   /* Une question encore en attente reçoit « quitter » : le moteur se termine proprement au lieu
      de rester suspendu, et ne risque pas d'attraper les réponses d'un guide relancé ensuite. */
   if (GV.resoudre) livrer({ signal:QUITTER });
@@ -36782,6 +36941,8 @@ async function lancerGuide(){
   GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
   afficher(); viderUI();
   garderEcranAllume();
+  try { contexteAudio(); } catch(e){}   // v568 : Web Audio doit être créé dans le geste de l'utilisateur (ce tap)
+  preparerVoix();                        // v568 : la voix Piper se prépare pendant les premières questions
   if (!Reco()) etat('Pas de reconnaissance vocale ici (Chrome conseillé) : réponds avec les boutons.');
   try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
   const sauve = sauvegardeLue();

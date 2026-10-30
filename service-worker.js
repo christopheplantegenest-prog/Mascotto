@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v567";
+const CACHE_NAME = "mascotto-v568";
 const ASSETS = [
   "./",
   "./index.html",
@@ -28,7 +28,8 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      /* v568 : « mascotto-voix » garde la voix Piper (63 Mo) d'une version à l'autre */
+      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== "mascotto-voix").map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
