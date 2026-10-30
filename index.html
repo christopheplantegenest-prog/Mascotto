@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v565</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v566</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
+     (textApres, déjà dans le moteur) ; le mot « pseudo » dicté devient le marqueur {joueur}.
      Un MOTEUR générique (parler, écouter, comprendre un choix, « pause », « retour »,
      « sommaire », « commence par ») et un SCÉNARIO par partie de l'éditeur. Seul le
      scénario de la fiche PNJ existe pour l'instant ; objets et quêtes viendront comme
@@ -36148,7 +36150,17 @@ const ACCUEILS_BOUTIQUE = {
   mefiant:   ['Les prix sont les prix. Pas de marchandage.', 'Montre ta bourse d\'abord.'],
   mysterieux:['Ce que tu cherches n\'est peut-être pas en vitrine.', 'Chaque objet ici a une histoire. Choisis bien.'],
 };
+const REVOILA = {
+  joyeux:    ['Ah, {joueur}, te revoilà ! Ça me fait plaisir.', 'Tiens, {joueur} ! Quoi de neuf ?', 'Re-bonjour {joueur} ! Toujours en forme ?'],
+  grincheux: ['Encore toi, {joueur} ?', 'Quoi, {joueur}, tu as oublié quelque chose ?', 'Tu reviens souvent, {joueur}. Trop souvent.'],
+  timide:    ['Oh… {joueur}. Tu… tu es revenu.', 'Re-bonjour, {joueur}… c\'est gentil de repasser.', 'Ah, c\'est toi, {joueur}. Ouf.'],
+  bavard:    ['{joueur} ! Reviens, j\'avais pas fini !', 'Ah, {joueur} ! Tu ne devineras jamais ce qui s\'est passé depuis.', 'Te revoilà, {joueur}. Assieds-toi, j\'ai du nouveau.'],
+  mefiant:   ['Toi encore, {joueur}. Qu\'est-ce que tu veux cette fois ?', 'Je t\'ai à l\'œil, {joueur}.', 'Tu reviens, {joueur} ? Je n\'aime pas ça.'],
+  mysterieux:['Je savais que tu reviendrais, {joueur}.', 'Le chemin te ramène toujours ici, {joueur}.', '{joueur}… les choses ont changé depuis ta dernière visite.'],
+};
 function piocher(banque){ const l = banque[GV.humeur] || banque.joyeux; return l[Math.floor(Math.random() * l.length)]; }
+/* v566 : à la voix, le mot « pseudo » seul devient le marqueur {joueur} (« Salut pseudo » → « Salut {joueur} »). */
+function marqueurs(texte){ return String(texte || '').replace(/\b(?:mon |son |ton |le )?pseudo\b/gi, '{joueur}'); }
 
 /* ---------- Listes du jeu ---------- */
 const fiches = ()=> (typeof toutesLesFiches === 'function' ? toutesLesFiches() : []);
@@ -36421,7 +36433,13 @@ async function etapeDialogue(){
   if (!GV.humeur) await etapeCaractere();   // nouvelle version avec son propre dialogue : l'humeur n'a pas été demandée
   const prop = (await demander({ _valeur: piocher(ACCUEILS) })).texte;
   const a = await dicter('Pour l\'accueil, je propose : « ' + prop + ' ». Dis « garde », ou dicte ta phrase.', GARDE);
-  currentDialogueSteps[0].text = a.special ? prop : a.texte;
+  currentDialogueSteps[0].text = a.special ? prop : marqueurs(a.texte);
+  renderDialogueBuilder();
+  /* v566 : ce qu'il dit les fois suivantes — mêmes réponses, autre première phrase */
+  const propR = (await demander({ _valeur: piocher(REVOILA) })).texte;
+  const r = await dicter('La deuxième fois qu\'on lui parle, il dit quoi à la place ? Je propose : « ' + propR.replace(/\{joueur\}/g, 'pseudo') + ' ». Dis « garde », dicte ta phrase, ou « la même » s\'il dit toujours pareil. Le mot « pseudo » sera remplacé par le nom du joueur.',
+    GARDE.concat([{ id:'meme', mots:['la meme', 'meme', 'pareil', 'la meme chose', 'toujours pareil', 'rien', 'non'] }]));
+  currentDialogueSteps[0].textApres = r.special === 'meme' ? '' : (r.special === 'garde' ? propR : marqueurs(r.texte));
   renderDialogueBuilder();
   await construireNiveau(0, 0);
   resetDialogueNav(); renderDialogueBuilder();
@@ -36462,7 +36480,7 @@ async function construireAction(action, idx, profondeur){
   const propP = (await demander({ _valeur: tirer(P.pnj) })).texte;
   const d = await dicter((mode === 'seul' ? 'Qu\'est-ce qu\'il dit en le faisant ? ' : 'Comment il le propose ? ') + 'Je propose : « ' + propP + ' ». Dis « garde », dicte ta phrase, ou « rien de plus » si c\'est déjà dit.',
     GARDE.concat([{ id:'rien', mots:['rien de plus', 'rien', 'deja dit', 'c est deja dit', 'passe', 'non'] }]));
-  if (d.special !== 'rien') ajouterAuTexte(idx, d.special === 'garde' ? propP : d.texte);
+  if (d.special !== 'rien') ajouterAuTexte(idx, d.special === 'garde' ? propP : marqueurs(d.texte));
   let label = P.seul;
   if (mode === 'accepte'){
     const propJ = (await demander({ _valeur: tirer(P.accepte) })).texte;
@@ -36492,7 +36510,7 @@ async function suiteDuPersonnage(ch, idx, profondeur, question){
     { id:'accueil', mots:['retour a l accueil', 'accueil', 'retour au debut', 'debut', 'recommence'] }]);
   if (suite.special === 'fin') ch.next = null;
   else if (suite.special === 'accueil') ch.next = 0;
-  else { ch.next = nouvelleReplique(suite.texte); renderDialogueBuilder(); await construireNiveau(ch.next, profondeur + 1); }
+  else { ch.next = nouvelleReplique(marqueurs(suite.texte)); renderDialogueBuilder(); await construireNiveau(ch.next, profondeur + 1); }
 }
 async function conditionEventuelle(ch){
   const c = await choisir('C\'est pour tout le monde, ou seulement sous condition ?', [
