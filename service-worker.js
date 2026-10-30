@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v575";
+const CACHE_NAME = "mascotto-v576";
 const ASSETS = [
   "./",
   "./index.html",
@@ -28,7 +28,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      /* v568 : « mascotto-voix » garde la voix Piper (63 Mo) d'une version à l'autre */
+      /* v568 : « mascotto-voix » garde la voix Piper d'une version à l'autre */
       Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== "mascotto-voix").map((k) => caches.delete(k)))
     )
   );
@@ -58,7 +58,5 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* v570 : caches.match parcourt aussi « mascotto-voix » — le worker de Vosk et Piper y trouvent
-     les modèles que la page y a rangés, sans les garder en mémoire. */
-  event.respondWith(caches.match(req, { ignoreVary: true }).then((cached) => cached || fetch(req)));
+  event.respondWith(caches.match(req).then((cached) => cached || fetch(req)));
 });
