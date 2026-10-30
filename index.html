@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v577</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v578</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35601,6 +35601,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v578 — écoute continue (beaucoup moins de bips) ; la voix attend 0,9 s après le micro pour
+     ne plus être tronquée (Android garde le son juste après une écoute).
      v577 — l'écoute n'est plus relancée en boucle quand elle échoue tout de suite ; l'erreur de
      Chrome est affichée.
      v576 — VERSION NETTOYÉE : on repart de la v568 (voix Piper dans la page, écoute par le micro
@@ -35946,6 +35948,10 @@ function parler(texte){
   return new Promise(async (resolve)=>{
     if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
     couperVoix();
+    /* v578 : juste après le micro, Android garde le son pour lui un court moment — une voix jouée
+       par la page (Piper) y perdait son début, voire toute la phrase. On attend qu'il le rende. */
+    const depuisMicro = Date.now() - (GV.finEcoute || 0);
+    if (depuisMicro < 900) await new Promise(r=> setTimeout(r, 900 - depuisMicro));
     const piper = await preparerVoix();
     if (piper){
       try { await parlerPiper(texte); } catch(e){ console.warn('lecture Piper', e); }
@@ -35984,7 +35990,7 @@ function morceauxDeLecture(texte){
 function Reco(){ return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
 function arreterEcoute(){
   GV.ecouteVoulue = false;
-  if (GV.reco){ try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; }
+  if (GV.reco){ try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; GV.finEcoute = Date.now(); }
 }
 /* Lance une écoute et résout le texte entendu — ou null si rien n'a été compris. */
 function ecouterUneFois(){
@@ -35994,12 +36000,22 @@ function ecouterUneFois(){
     let r;
     try { r = new R(); } catch(e){ GV.sansMicro = true; resolve(null); return; }
     GV.reco = r;
-    r.lang = 'fr-FR'; r.interimResults = false; r.maxAlternatives = 3; r.continuous = false;
+    /* v578 : écoute CONTINUE — une session reste ouverte tant qu'on ne répond pas, au lieu d'une
+       écoute courte relancée toutes les 3 secondes (Android bipe à chaque démarrage) */
+    r.lang = 'fr-FR'; r.interimResults = false; r.maxAlternatives = 3; r.continuous = true;
     let repondu = false;
-    const fin = (texte)=>{ if (repondu) return; repondu = true; if (GV.reco === r) GV.reco = null; resolve(texte); };
+    const fin = (texte)=>{
+      if (repondu) return; repondu = true;
+      try { r.onend = null; r.onresult = null; r.onerror = null; r.abort(); } catch(e){}
+      if (GV.reco === r) GV.reco = null;
+      GV.finEcoute = Date.now();
+      resolve(texte);
+    };
     r.onresult = (e)=>{
+      const res = e.results[e.results.length - 1];
+      if (!res || !res.isFinal) return;
       const alts = [];
-      for (let i = 0; i < e.results.length; i++){ const res = e.results[i]; for (let j = 0; j < res.length; j++) alts.push(res[j].transcript); }
+      for (let j = 0; j < res.length; j++) alts.push(res[j].transcript);
       fin(alts.length ? alts : null);
     };
     r.onerror = (e)=>{
