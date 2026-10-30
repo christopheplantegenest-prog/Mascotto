@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v556</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v557</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1754,6 +1754,8 @@
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-capture" id="boiteNoireBtn" style="width:100%; margin-bottom:6px;">🧾 Boîte noire</button>
     <p class="meta">Tout ce que le jeu a fait juste avant un plantage : erreurs, temps de chaque étape d'un combat, mémoire, sons, écritures refusées. Le journal survit à un rechargement — après un souci, ouvre-le et copie-le, c'est ce qui permet de comprendre au lieu de deviner.</p>
+    <button class="btn-capture" id="robotJoueurBtn" style="width:100%; margin-bottom:6px;">🤖 Joueur ordinateur</button>
+    <p class="meta">Un robot qui joue à ta place, sur ce téléphone, avec les vrais boutons : il sort du vaisseau, explore, se bat, rentre se soigner, et vérifie après chaque geste que le jeu respecte ses règles. Lance-le de préférence dans une <b>fenêtre de navigation privée</b> (compte neuf, ta partie reste intacte). Il ne touche jamais à l'éditeur. « Arrêter » sur la pastille en haut ouvre son rapport.</p>
     <button class="btn-secondary" id="oublierChoixBtn" style="width:100%; margin-bottom:10px;">🔄 Oublier mes choix de dialogue</button>
     <p class="meta">Remet à zéro, pour toi seulement, tout ce que le jeu retient de tes conversations : réponses à usage unique, premières rencontres, conditions « il a déjà dit… ». Indispensable pour rejouer un dialogue qu'on vient de tester. Ne touche ni aux quêtes, ni aux objets, ni aux recrues.</p>
     <p class="meta" style="margin:0 0 8px;">Touche une catégorie pour l'ouvrir. Une seule reste ouverte à la fois, pour éviter de modifier un réglage par mégarde en faisant défiler.</p>
@@ -4241,6 +4243,11 @@
   </div>
 </div>
 
+<!-- v557 : la pastille du joueur ordinateur, visible pendant qu'il joue, partout. -->
+<div id="robotBadge" style="display:none; position:fixed; top:6px; left:50%; transform:translateX(-50%); z-index:9000; align-items:center; gap:8px; padding:6px 10px; border-radius:20px; background:rgba(10,10,16,.86); color:#fff; font-size:12px; box-shadow:0 2px 10px rgba(0,0,0,.4); pointer-events:auto;">
+  <span id="robotBadgeTexte">🤖</span>
+  <button type="button" id="robotBadgeStop" style="border:none; border-radius:14px; padding:4px 10px; background:#c0392b; color:#fff; font-size:12px;">Arrêter</button>
+</div>
 <div class="overlay" id="sceneDialogueOverlay" style="z-index:4500;">
   <div class="sheet">
     <div class="sheet-top">
@@ -11377,7 +11384,7 @@ document.getElementById('oublierChoixBtn').addEventListener('click', oublierMesC
    Copier est donc le cœur de l'écran — le texte se colle directement dans la conversation,
    ce qui vaut mieux qu'une capture (on y lit les temps exacts et les piles d'appel).
    Le presse-papiers étant souvent bloqué sur téléphone, on sélectionne le texte à défaut. */
-const COULEUR_CAT = { erreur:'#c0392b', lent:'#e67e22', combat:'#2980b9', reprise:'#d35400', son:'#8e44ad', base:'#16a085', appli:'#7f8c8d' };
+const COULEUR_CAT = { erreur:'#c0392b', lent:'#e67e22', combat:'#2980b9', reprise:'#d35400', son:'#8e44ad', base:'#16a085', appli:'#7f8c8d', robot:'#27ae60', ultime:'#f1c40f' };
 function texteBoiteNoire(){
   const l = (typeof journalLignes === 'function') ? journalLignes() : [];
   const entete = 'Mascotto ' + (document.getElementById('appVersionLabel') || {}).textContent
@@ -11449,6 +11456,653 @@ function ouvrirBoiteNoire(){
   });
 }
 document.getElementById('boiteNoireBtn').addEventListener('click', ouvrirBoiteNoire);
+
+/* =====================================================================================
+   v557 — LE JOUEUR ORDINATEUR (lot 1)
+   Un robot qui JOUE au jeu comme un joueur, sur ce téléphone, pour en débusquer les
+   incohérences. Il ne tourne pas en coulisse : il touche les vrais boutons et les vrais
+   points de scène, avec un délai humain entre deux gestes, et tout ce qu'il fait passe par
+   le chemin de ton pouce — affichage, Firestore, sauvegarde, reprise.
+
+   Sa journée en boucle : à bord, il vérifie son équipe (soin, quartiers, recrutement), puis
+   sort ; sur la carte, il choisit une zone et y entre ; dans la zone, il parcourt les scènes
+   en touchant ce qu'il trouve, tantôt lentement, tantôt pressé ; en combat, il choisit
+   attaques, ultime, objets et souffle comme un joueur moyen ; équipe affaiblie, il rentre.
+
+   UNE SEULE TRICHERIE, inévitable : il ne marche pas dans la rue. Pour rejoindre une zone il
+   se téléporte à côté (même chemin que le mode libre) — il ne teste donc pas le GPS.
+
+   INTERDIT D'ÉDITEUR : il ne touche jamais rien dans une fenêtre d'édition, refuse de partir
+   si l'une est ouverte, et se met en pause si l'une s'ouvre pendant qu'il joue.
+
+   APRÈS CHAQUE GESTE il vérifie les règles du jeu (tous K.O. ⇒ forcément à bord, écran
+   bloqué, combat fini mais encore affiché, erreur JavaScript, écriture refusée, solde
+   négatif, gels). Tout va dans la boîte noire (catégorie `robot`) et dans le rapport final.
+   ===================================================================================== */
+const ROBOT_FENETRES_EDITEUR = ['editHubOverlay','editorOverlay','questsEditorOverlay','recipesEditorOverlay',
+  'githubPickerOverlay','robotsModelesOverlay','attacksEditorOverlay','ultimesEditorOverlay','ultEtapeFxOverlay',
+  'itemsEditorOverlay','robotEditorOverlay','musicEditorOverlay','musicTrackEditorOverlay','portraitCropOverlay',
+  'habitantsOverlay','scenePointTypeOverlay','sceneListOverlay','sceneVariantOverlay','sceneEncounterOverlay',
+  'sceneVariantCondOverlay','planningOverlay','importConflictOverlay','mapIconMenuOverlay','pnjChooserOverlay',
+  'recipeItemChooserOverlay','sceneEditorFull'];
+/* Fenêtres du JEU que le robot sait refermer d'une croix quand il tombe dessus sans l'avoir
+   voulu (sac, communicateur, boutique…). Les autres fenêtres de jeu ont leur propre conduite. */
+const ROBOT_FENETRES_A_REFERMER = {
+  inventoryOverlay:'#inventoryCloseBtn', comOverlay:'#comPowerBtn', shopOverlay:'#shopCloseBtn',
+  concessionOverlay:'#concessionCloseBtn', questTrackerOverlay:'#questTrackerCloseBtn', questJournalOverlay:'#questJournalCloseBtn',
+  missionTerminalOverlay:'#missionTerminalOverlay [data-mt-power]', missionWelcomeOverlay:'#missionWelcomeCloseBtn', missionReportOverlay:'#missionReportCloseBtn',
+  explorerRoomOverlay:'#explorerRoomCloseBtn', explorerReportOverlay:'#explorerReportCloseBtn', plansOverlay:'#plansCloseBtn',
+  atelierOverlay:'#atelierCloseBtn', recruitSheetOverlay:'#recruitSheetCloseBtn', nearbyPlayersOverlay:'#nearbyPlayersCloseBtn',
+  optionsOverlay:'#optionsCloseBtn', serreGraineOverlay:'#serreGraineCloseBtn', sceneBigImageOverlay:'#sceneBigImageCloseBtn',
+  blockedListOverlay:'#blockedListCloseBtn', negotiationsListOverlay:'#negoListCloseBtn', codePadOverlay:'#codePadCancel',
+};
+
+const Robot = (()=>{
+  const R = {
+    actif:false, pause:false, debut:0, boucle:null, battement:null,
+    rythme:'lent',            // 'lent' ou 'presse' : change à chaque zone visitée
+    stats:null, incoherences:[], gestes:[],
+    scenesVues:{}, pointsInertes:{}, dernierToast:'', toasts:[],
+    memeEcranDepuis:0, signatureEcran:'', combatFiniDepuis:0,
+    journalOrigine:null, toastOrigine:null, modeLibreAvant:false,
+    rencontres:{ lentes:{ scenes:0, attendues:0, vues:0 }, pressees:{ scenes:0, attendues:0, vues:0 } },
+    zoneEnCours:null, scenesDansZone:0, derniereEntreeScene:0, attenteRencontre:null,
+  };
+  const alea = (a, b)=> a + Math.random() * (b - a);
+  const pioche = (t)=> t[Math.floor(Math.random() * t.length)];
+  const dort = (ms)=> new Promise(r=> setTimeout(r, ms));
+  const visible = (id)=>{ const el = document.getElementById(id); return !!el && el.classList.contains('show'); };
+  const affiche = (el)=>{ if (!el) return false; const s = getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null; };
+  const dire = (m, d)=>{ if (typeof journal === 'function') journal('robot', m, d || '', false); };
+
+  /* ---------- LES INCOHÉRENCES ---------- */
+  function incoherence(titre, detail){
+    const cle = titre + '|' + (detail || '');
+    const deja = R.incoherences.find(i=> i.cle === cle);
+    if (deja){ deja.n++; deja.derniere = heureCourte(); return; }
+    R.incoherences.push({ cle, titre, detail: detail || '', n:1, premiere: heureCourte(), derniere: heureCourte(),
+      contexte: R.gestes.slice(-4).map(g=> g.quoi).join(' → ') });
+    if (typeof journal === 'function') journal('robot', '❌ ' + titre, detail || '', true);
+    majBadge();
+  }
+  function heureCourte(){ const d = new Date(); return d.toTimeString().slice(0, 8); }
+
+  /* ---------- LES CROCHETS : journal, messages à l'écran ---------- */
+  function poserCrochets(){
+    if (!R.journalOrigine && typeof window.journal === 'function'){
+      R.journalOrigine = window.journal;
+      window.journal = function(cat, message, detail, urgent){
+        try {
+          if (R.actif && cat === 'erreur') incoherence('Erreur JavaScript : ' + String(message).slice(0, 120), String(detail || '').slice(0, 200));
+          if (R.actif && cat === 'lent'){ R.stats.gels++; const ms = parseInt(String(message).replace(/.*— (\d+) ms.*/, '$1'), 10); if (ms > R.stats.gelMax) R.stats.gelMax = ms; }
+        } catch(e){}
+        return R.journalOrigine.apply(this, arguments);
+      };
+    }
+    if (!R.toastOrigine && typeof window.showToast === 'function'){
+      R.toastOrigine = window.showToast;
+      window.showToast = function(msg, icone){
+        try {
+          if (R.actif){
+            const t = String(msg == null ? '' : msg);
+            R.dernierToast = t; R.toasts.push(t); if (R.toasts.length > 60) R.toasts.shift();
+            if (/échec|refus|permission|non enregistr|non décompt|indisponible|erreur/i.test(t)) incoherence('Message d\'échec à l\'écran', t.slice(0, 160));
+          }
+        } catch(e){}
+        return R.toastOrigine.apply(this, arguments);
+      };
+    }
+  }
+
+  /* ---------- OÙ EN EST LE JEU ? (lu dans ce qui est à l'écran) ---------- */
+  function fenetreEditeurOuverte(){
+    return ROBOT_FENETRES_EDITEUR.find(id=> visible(id)) || null;
+  }
+  function situation(){
+    if (visible('appConfirmOverlay')) return 'confirmation';
+    if (visible('authOverlay')) return 'connexion';
+    if (visible('pseudoOverlay')) return 'pseudo';
+    if (visible('agencyOverlay')) return 'agence';
+    const fin = document.getElementById('combatEndOverlay');
+    if (visible('combatFull') && fin && getComputedStyle(fin).display !== 'none') return 'combat_fin';
+    if (visible('combatFull')) return 'combat';
+    if (visible('overlay')) return 'dialogue';
+    if (visible('sceneDialogueOverlay')) return 'texte';
+    if (visible('quartersOverlay')) return 'quartiers';
+    if (visible('naissanceOverlay')) return 'naissance';
+    for (const id of Object.keys(ROBOT_FENETRES_A_REFERMER)) if (visible(id)) return 'fenetre:' + id;
+    if (visible('sceneViewFull')){
+      if (typeof aBord === 'function' && aBord()) return (typeof sceneViewAnnexe !== 'undefined' && sceneViewAnnexe) ? 'annexe' : 'vaisseau';
+      return 'zone';
+    }
+    return 'carte';
+  }
+
+  /* ---------- LES GESTES ---------- */
+  function cliquer(el, quoi){
+    if (!el) return false;
+    noter(quoi);
+    el.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true, view:window }));
+    return true;
+  }
+  function noter(quoi){
+    R.gestes.push({ h: heureCourte(), quoi, ou: situation() });
+    if (R.gestes.length > 40) R.gestes.shift();
+    R.stats.gestes++;
+    dire(quoi);
+  }
+  /* Le point de scène se touche comme avec le doigt : un vrai `pointerdown` sur le décor, aux
+     coordonnées d'un pixel qui répond. On cherche ce pixel comme le ferait l'œil — le centre
+     d'abord, puis autour. Un point dont aucun pixel ne répond est signalé : un joueur non
+     plus ne pourrait pas l'ouvrir. */
+  function toucherPoint(pt, div, quoi){
+    const wrap = document.getElementById('sceneViewImgWrap');
+    const r = div.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return false;
+    const essais = [[.5,.5],[.5,.7],[.5,.3],[.35,.5],[.65,.5],[.5,.85],[.3,.3],[.7,.7],[.5,.15]];
+    for (const [fx, fy] of essais){
+      const x = r.left + r.width * fx, y = r.top + r.height * fy;
+      let ok = true;
+      try { ok = isPointHitAt(pt, div, x, y); } catch(e){}
+      if (!ok) continue;
+      noter(quoi);
+      wrap.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true, clientX:x, clientY:y, pointerType:'touch', isPrimary:true }));
+      return true;
+    }
+    incoherence('Point de scène intouchable', (pt.type || '?') + ' « ' + (pt.label || pt.id) + ' » — aucun pixel ne répond au toucher dans « ' + nomSceneCourante() + ' »');
+    return false;
+  }
+  function nomSceneCourante(){
+    try { const sc = sceneViewScenes.find(s=> s.id === sceneViewCurrentSceneId); return (sc && (sc.name || sc.title)) || String(sceneViewCurrentSceneId || '?'); } catch(e){ return '?'; }
+  }
+  function pointsDeLaScene(){
+    try {
+      const scRaw = sceneViewScenes.find(s=> s.id === sceneViewCurrentSceneId);
+      if (!scRaw) return [];
+      const sc = resolveSceneContent(scRaw);
+      const wrap = document.getElementById('sceneViewImgWrap');
+      return (sc.points || []).map(pt=>{
+        const div = wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]');
+        return (div && div.style.display !== 'none' && pt.type !== 'decor') ? { pt, div } : null;
+      }).filter(Boolean);
+    } catch(e){ return []; }
+  }
+
+  /* ---------- LA TÉLÉPORTATION (la seule tricherie) ---------- */
+  function teleporterPres(c){
+    /* Une quinzaine de mètres à côté, jamais pile dessus : un joueur n'est jamais au centimètre. */
+    const dLat = (alea(-12, 12)) / 111320, dLng = (alea(-12, 12)) / (111320 * Math.cos(c.lat * Math.PI / 180));
+    noter('téléportation près de « ' + (c.name || c.id) + ' »');
+    onFreeModeClick({ latlng:{ lat: c.lat + dLat, lng: c.lng + dLng } });
+    try { programmaticMapMove(()=> map.panTo([c.lat + dLat, c.lng + dLng])); } catch(e){}
+  }
+
+  /* ---------- L'ÉQUIPE ---------- */
+  function combattants(){ return (recruits || []).filter(r=> r.recruitType === 'combattant'); }
+  function equipeApte(){ try { return equipeApteAuCombat(); } catch(e){ return false; } }
+  function combattantsDebout(){ return combattants().filter(r=> r.robotModeleId && !recruitIsAway(r) && recruitEffectiveHp(r) > 0); }
+  function equipeAffaiblie(){
+    const dansEquipe = combattants().filter(r=> activeTeamIds.includes(r.id) && r.robotModeleId);
+    if (!dansEquipe.length) return true;
+    const debout = dansEquipe.filter(r=> recruitEffectiveHp(r) > 0);
+    if (!debout.length) return true;
+    const ratio = debout.reduce((s, r)=> s + recruitEffectiveHp(r) / Math.max(1, recruitMaxHpPour(r)), 0) / dansEquipe.length;
+    return ratio < 0.35;
+  }
+  function recruitMaxHpPour(r){
+    try { if (typeof recruitMaxHp === 'function'){ const m = recruitMaxHp(r); if (m > 0) return m; } } catch(e){}
+    return Math.max(1, recruitEffectiveHp(r));
+  }
+
+  /* ---------- LES RÈGLES DU JEU, vérifiées après chaque geste ---------- */
+  function verifierRegles(){
+    const sit = situation();
+    try {
+      /* R1 — tous K.O. ⇒ forcément à bord. Le bug d'origine : il s'était retrouvé sur la carte
+         avec toute son équipe à terre. On ne compte que si le compte A des combattants. */
+      const jouables = combattants().filter(r=> r.robotModeleId && !recruitIsAway(r));
+      if (jouables.length && !jouables.some(r=> recruitEffectiveHp(r) > 0) && (sit === 'carte' || sit === 'zone')){
+        incoherence('Équipe entièrement K.O. hors du vaisseau', 'écran : ' + sit + ' — le jeu aurait dû ramener à l\'infirmerie');
+      }
+      /* R2 — un combat fini qui reste à l'écran sans écran de fin. */
+      if (sit === 'combat' && combatState && combatState.finished){
+        if (!R.combatFiniDepuis) R.combatFiniDepuis = Date.now();
+        else if (Date.now() - R.combatFiniDepuis > 8000) incoherence('Combat terminé mais écran de combat toujours affiché', 'depuis plus de 8 s, sans écran de fin');
+      } else R.combatFiniDepuis = 0;
+      /* R3 — écran de combat sans état de combat. */
+      if ((sit === 'combat' || sit === 'combat_fin') && !combatState) incoherence('Écran de combat affiché sans aucun combat en cours', '');
+      /* R4 — le solde. */
+      if (typeof playerCoins === 'number' && playerCoins < 0) incoherence('Solde négatif', String(playerCoins));
+      /* R5 — PV aberrants. */
+      combattants().forEach(r=>{
+        const hp = recruitEffectiveHp(r), max = recruitMaxHpPour(r);
+        if (!(hp >= 0) || hp > max + 0.5) incoherence('Points de vie aberrants', r.name + ' : ' + hp + ' / ' + max);
+      });
+      /* R6 — écran figé : même signature, rien de tapable, trop longtemps. */
+      const sig = sit + '|' + (sit === 'zone' || sit === 'vaisseau' ? sceneViewCurrentSceneId : '') + '|' + (combatState ? (combatState.pendingActor || '-') : '');
+      if (sig !== R.signatureEcran){ R.signatureEcran = sig; R.memeEcranDepuis = Date.now(); }
+      else if (Date.now() - R.memeEcranDepuis > 45000 && sit !== 'combat'){
+        incoherence('Écran bloqué', sit + ' — rien n\'a changé depuis 45 s' + (R.dernierToast ? ' · dernier message : ' + R.dernierToast.slice(0, 80) : ''));
+        R.memeEcranDepuis = Date.now();
+      }
+    } catch(err){
+      incoherence('Le vérificateur lui-même a planté', String(err && err.message || err));
+    }
+  }
+
+  /* ---------- CE QU'IL FAIT SELON L'ÉCRAN ---------- */
+  async function pas(){
+    if (fenetreEditeurOuverte()){
+      if (!R.pause){ R.pause = true; dire('en pause — une fenêtre d\'édition est ouverte'); majBadge(); }
+      return dort(1500);
+    }
+    if (R.pause){ R.pause = false; dire('reprise'); majBadge(); }
+    const sit = situation();
+    switch (sit){
+      case 'confirmation': return etapeConfirmation();
+      case 'connexion': {
+        /* L'écran de connexion d'un compte neuf : il continue en invité, jamais en Google. */
+        const b = document.getElementById('guestContinueBtn');
+        if (b && affiche(b)) return cliquerPuisAttendre(b, 'continuer en invité', 2500);
+        return dort(1500);
+      }
+      case 'pseudo': return etapePseudo();
+      case 'agence': return etapeAgence();
+      case 'combat_fin': return etapeCombatFin();
+      case 'combat': return etapeCombat();
+      case 'dialogue': return etapeDialogue();
+      case 'texte': return etapeTexte();
+      case 'quartiers': return etapeQuartiers();
+      case 'naissance': return cliquerPuisAttendre(document.getElementById('naissanceOverlay'), 'passer la naissance', 800);
+      case 'vaisseau': return etapeVaisseau();
+      case 'annexe': return etapeAnnexe();
+      case 'zone': return etapeZone();
+      case 'carte': return etapeCarte();
+      default:
+        if (sit.startsWith('fenetre:')){
+          const id = sit.slice(8);
+          const b = document.querySelector(ROBOT_FENETRES_A_REFERMER[id]) || document.querySelector('#' + id + ' .sheet-x');
+          if (b) return cliquerPuisAttendre(b, 'refermer ' + id, 500);
+          incoherence('Fenêtre sans bouton de fermeture', id);
+          return dort(2000);
+        }
+        return dort(1000);
+    }
+  }
+  async function cliquerPuisAttendre(el, quoi, ms){
+    cliquer(el, quoi);
+    await dort(ms == null ? alea(500, 1200) : ms);
+  }
+  async function etapeConfirmation(){
+    const msg = (document.getElementById('appConfirmMessage') || {}).textContent || '';
+    /* On ne fuit pas un combat, on ne vide rien : un robot qui dit oui à tout casserait sa partie. */
+    const refuser = /fuir|vider|renvoyer|supprimer|annuler|abandonner/i.test(msg);
+    const b = document.getElementById(refuser ? 'appConfirmCancelBtn' : 'appConfirmOkBtn');
+    if (refuser && !affiche(b)) return cliquerPuisAttendre(document.getElementById('appConfirmOkBtn'), 'confirmer « ' + msg.slice(0, 40) + ' »');
+    return cliquerPuisAttendre(b, (refuser ? 'refuser' : 'confirmer') + ' « ' + msg.slice(0, 40) + ' »');
+  }
+  async function etapePseudo(){
+    const inp = document.getElementById('pseudoInput');
+    if (inp && !inp.value){ inp.value = 'Robot-' + Math.floor(100 + Math.random() * 900); inp.dispatchEvent(new Event('input', { bubbles:true })); }
+    return cliquerPuisAttendre(document.getElementById('pseudoSaveBtn'), 'choisir un pseudo', 1500);
+  }
+  async function etapeAgence(){
+    const inp = document.getElementById('agencyInput');
+    if (inp && !inp.value){ inp.value = 'Agence robot'; inp.dispatchEvent(new Event('input', { bubbles:true })); }
+    return cliquerPuisAttendre(document.getElementById('agencySaveBtn'), 'nommer l\'agence', 1500);
+  }
+  async function etapeCombatFin(){
+    const titre = (document.getElementById('combatEndTitle') || {}).textContent || '';
+    if (/victoire|gagn/i.test(titre)) R.stats.victoires++; else if (/défaite|perdu|vaincu/i.test(titre)) R.stats.defaites++; else R.stats.autresFins++;
+    await dort(alea(900, 1800));
+    return cliquerPuisAttendre(document.getElementById('combatEndCloseBtn'), 'fermer l\'écran de fin (' + titre + ')', 1200);
+  }
+  async function etapeCombat(){
+    if (!combatState || !combatState.pendingActor) return dort(400);   // pas son tour
+    const panel = document.getElementById('combatActionPanel');
+    if (!panel) return dort(400);
+    /* Ciblage en cours : on tape une carte du bon camp. */
+    if (combatState.pendingAttack){
+      const kind = combatState.pendingAttack.kind;
+      let camp = 'adverse';
+      try { camp = m2CampVise(kind); } catch(e){}
+      const cartes = Array.from(document.querySelectorAll('.combat-fighter[data-fighter]')).filter(el=>{
+        const f = combatState.fighters.find(x=> x.uid === el.dataset.fighter);
+        if (!f) return false;
+        if (camp === 'allie') return f.side === 'player' && (f.alive || /revive|rean/i.test(kind || ''));
+        return f.side === 'enemy' && f.alive;
+      });
+      if (!cartes.length){
+        const retour = document.getElementById('combatTargetBackBtn');
+        if (retour) return cliquerPuisAttendre(retour, 'aucune cible : retour');
+        return dort(600);
+      }
+      await dort(alea(400, 1100));
+      return cliquerPuisAttendre(pioche(cartes), 'viser ' + (camp === 'allie' ? 'un allié' : 'un adversaire'), 900);
+    }
+    if (document.getElementById('m2SouffleOkBtn')) return cliquerPuisAttendre(document.getElementById('m2SouffleOkBtn'), 'confirmer le souffle', 900);
+    const objets = Array.from(panel.querySelectorAll('[data-objet]'));
+    if (objets.length) return cliquerPuisAttendre(pioche(objets), 'choisir un objet', 700);
+    const ultime = document.getElementById('m2UltimeBtn');
+    const attaques = Array.from(panel.querySelectorAll('[data-attaque]:not([data-bloquee])'));
+    const bObjets = document.getElementById('m2ObjetsBtn');
+    const d = Math.random();
+    await dort(alea(600, 1600));
+    if (ultime && d < 0.7){ R.stats.ultimes++; return cliquerPuisAttendre(ultime, 'lancer l\'ultime', 900); }
+    if (bObjets && !bObjets.disabled && d < 0.12) return cliquerPuisAttendre(bObjets, 'ouvrir les objets', 700);
+    if (attaques.length && d < 0.95){ R.stats.attaques++; return cliquerPuisAttendre(pioche(attaques), 'choisir une attaque', 700); }
+    const souffle = document.getElementById('m2SouffleBtn');
+    if (souffle) return cliquerPuisAttendre(souffle, 'passer son tour', 700);
+    if (attaques.length) return cliquerPuisAttendre(pioche(attaques), 'choisir une attaque', 700);
+    /* Son tour, et pourtant rien à faire : c'est une incohérence. */
+    incoherence('Tour du joueur sans aucune action possible', 'ni attaque disponible, ni souffle');
+    return dort(2000);
+  }
+  async function etapeDialogue(){
+    const boutons = Array.from(document.querySelectorAll('#sheetChoices .choice-btn')).filter(b=> !b.disabled);
+    if (!boutons.length){ incoherence('Dialogue sans aucun bouton', (document.getElementById('sheetName') || {}).textContent || ''); return dort(2000); }
+    const nonFin = boutons.filter(b=> !/^fermer$/i.test(b.textContent.trim()));
+    /* Sans combattant à bord, on cherche à recruter : on prend tout ce qui ressemble à un oui. */
+    const sansEquipe = !combattants().length;
+    let choix = pioche((nonFin.length && (sansEquipe || Math.random() < 0.75)) ? nonFin : boutons);
+    if (sansEquipe){ const oui = nonFin.find(b=> /rejoin|viens|accept|oui|recrut|monte|embarque/i.test(b.textContent)); if (oui) choix = oui; }
+    R.stats.repliques++;
+    await dort(alea(700, 1800));
+    return cliquerPuisAttendre(choix, 'répondre « ' + choix.textContent.trim().slice(0, 40) + ' »', 900);
+  }
+  async function etapeTexte(){
+    await dort(alea(600, 1400));
+    return cliquerPuisAttendre(document.getElementById('sceneDialogueCloseBtn2') || document.getElementById('sceneDialogueCloseBtn'), 'fermer le texte', 600);
+  }
+  async function etapeQuartiers(){
+    /* Compléter l'équipe avec les combattants debout qui n'y sont pas. */
+    const boutons = Array.from(document.querySelectorAll('#quartersOverlay [data-qteam]'));
+    const candidat = boutons.find(b=>{
+      const r = (recruits || []).find(x=> x.id === b.dataset.qteam);
+      return r && !activeTeamIds.includes(r.id) && r.robotModeleId && !recruitIsAway(r) && recruitEffectiveHp(r) > 0 && activeTeamIds.length < 3;
+    });
+    if (candidat){ const r = (recruits || []).find(x=> x.id === candidat.dataset.qteam); return cliquerPuisAttendre(candidat, 'ajouter ' + (r ? r.name : '?') + ' à l\'équipe', 1200); }
+    return cliquerPuisAttendre(document.getElementById('quartersCloseBtn'), 'quitter les quartiers', 800);
+  }
+  async function etapeVaisseau(){
+    const pts = pointsDeLaScene();
+    const parType = (t)=> pts.filter(p=> p.pt.type === t);
+    const debout = combattantsDebout();
+    const dansEquipeDebout = debout.filter(r=> activeTeamIds.includes(r.id));
+    let besoin = null;
+    if (!combattants().length) besoin = 'recruter';
+    else if (combattants().some(r=> r.robotModeleId && !recruitIsAway(r) && recruitEffectiveHp(r) <= 0) && !dansEquipeDebout.length) besoin = 'soin';
+    else if (!dansEquipeDebout.length && debout.length) besoin = 'quartiers';
+    else if (equipeAffaiblie() && combattants().some(r=> recruitEffectiveHp(r) < recruitMaxHpPour(r))) besoin = 'soin';
+    else if (dansEquipeDebout.length < Math.min(3, debout.length) && Math.random() < 0.6) besoin = 'quartiers';
+    const cible = besoin === 'soin' ? parType('soin').concat(parType('infirmerie'))
+      : besoin === 'quartiers' ? parType('chambre')
+      : besoin === 'recruter' ? pts.filter(p=> p.pt.type === 'pnj' || p.pt.type === 'emplacement')
+      : [];
+    if (besoin && cible.length){
+      const c = pioche(cible);
+      await dort(alea(600, 1500));
+      if (toucherPoint(c.pt, c.div, (besoin === 'soin' ? 'se soigner' : besoin === 'quartiers' ? 'ouvrir les quartiers' : 'parler à bord') + ' (' + nomSceneCourante() + ')')) return dort(1200);
+    }
+    /* Prêt à sortir (ou rien à faire ici) : la porte de sortie, sinon une autre pièce. */
+    const sorties = parType('sortie_zone');
+    if (!besoin && sorties.length && equipeApte()){
+      const s = pioche(sorties);
+      await dort(alea(500, 1300));
+      if (toucherPoint(s.pt, s.div, 'sortir du vaisseau')) return dort(1500);
+    }
+    if (besoin && !cible.length && !parType('sortie').length){
+      incoherence('À bord sans issue', 'besoin : ' + besoin + ' — rien pour y répondre dans « ' + nomSceneCourante() + ' » et aucune porte');
+      return dort(3000);
+    }
+    const cleBord = 'bord/' + sceneViewCurrentSceneId;
+    R.scenesVues[cleBord] = R.scenesVues[cleBord] || { essayes:{} };
+    const portes = parType('sortie').filter(p=> !R.scenesVues[cleBord].essayes['porte:' + p.pt.id]);
+    if (portes.length){
+      const p = pioche(portes);
+      const avant = sceneViewCurrentSceneId;
+      await dort(alea(500, 1300));
+      if (toucherPoint(p.pt, p.div, 'changer de pièce')){
+        await dort(1000);
+        if (sceneViewCurrentSceneId === avant && situation() === 'vaisseau') R.scenesVues[cleBord].essayes['porte:' + p.pt.id] = true;
+      }
+      return;
+    }
+    if (!equipeApte() && !besoin){
+      incoherence('Équipe inapte sans besoin identifié', 'combattants : ' + combattants().length + ' · debout : ' + debout.length + ' · dans l\'équipe : ' + activeTeamIds.length);
+    }
+    return dort(2000);
+  }
+  async function etapeAnnexe(){
+    const pts = pointsDeLaScene();
+    const sorties = pts.filter(p=> p.pt.type === 'sortie_zone' || p.pt.type === 'sortie');
+    if (sorties.length){ const s = pioche(sorties); await dort(alea(500, 1200)); if (toucherPoint(s.pt, s.div, 'quitter l\'annexe')) return dort(1000); }
+    return dort(1500);
+  }
+  async function etapeZone(){
+    const sceneId = sceneViewCurrentSceneId;
+    const zoneId = (typeof sceneViewCreature !== 'undefined' && sceneViewCreature) ? sceneViewCreature.id : '?';
+    if (R.zoneEnCours !== zoneId){
+      R.zoneEnCours = zoneId; R.scenesDansZone = 0;
+      R.rythme = Math.random() < 0.5 ? 'lent' : 'presse';
+      R.stats.zones++;
+      dire('zone « ' + ((sceneViewCreature && sceneViewCreature.name) || zoneId) + ' » — rythme ' + R.rythme);
+    }
+    const cle = zoneId + '/' + sceneId;
+    if (!R.scenesVues[cle]){
+      R.scenesVues[cle] = { essayes:{} };
+      R.scenesDansZone++; R.stats.scenes++;
+      comptabiliserRencontre(sceneId);
+    }
+    const vue = R.scenesVues[cle];
+    const pts = pointsDeLaScene();
+    const rentrer = equipeAffaiblie() || R.scenesDansZone > 14 + Math.random() * 10;
+    const presse = R.rythme === 'presse';
+    const attente = presse ? alea(250, 700) : alea(1800, 4500);
+    /* Pressé : il ne fait que passer les portes. Lent : il fouille d'abord. */
+    const aFouiller = presse ? [] : pts.filter(p=> ['objet','coffre','recolte','dialogue','action','image','pnj','bac'].includes(p.pt.type) && !vue.essayes[p.pt.id]);
+    if (rentrer){
+      const sz = pts.filter(p=> p.pt.type === 'sortie_zone');
+      if (sz.length){ await dort(attente); if (toucherPoint(sz[0].pt, sz[0].div, 'sortir de la zone (' + (equipeAffaiblie() ? 'équipe affaiblie' : 'assez vu') + ')')) return dort(1200); }
+    }
+    if (aFouiller.length){
+      const c = pioche(aFouiller);
+      vue.essayes[c.pt.id] = true;
+      await dort(attente);
+      const etatAvant = situation() + '|' + sceneViewCurrentSceneId + '|' + R.toasts.length;
+      if (toucherPoint(c.pt, c.div, 'toucher ' + c.pt.type + ' « ' + (c.pt.label || c.pt.id) + ' »')){
+        R.stats.pointsTouches++;
+        await dort(900);
+        const etatApres = situation() + '|' + sceneViewCurrentSceneId + '|' + R.toasts.length;
+        if (etatAvant === etatApres){
+          R.pointsInertes[cle + '/' + c.pt.id] = true;
+          R.stats.pointsSansEffet++;
+          dire('point sans effet visible', c.pt.type + ' « ' + (c.pt.label || c.pt.id) + ' » dans « ' + nomSceneCourante() + ' »');
+        }
+      }
+      return;
+    }
+    /* Une porte qui a refusé de s'ouvrir (clé, code, horaire) n'est plus retentée ici. */
+    const portes = pts.filter(p=> p.pt.type === 'sortie' && !vue.essayes['porte:' + p.pt.id]);
+    const sz = pts.filter(p=> p.pt.type === 'sortie_zone');
+    if (portes.length){
+      /* De préférence une pièce jamais vue. */
+      const inconnues = portes.filter(p=> !R.scenesVues[zoneId + '/' + p.pt.targetSceneId]);
+      const p = pioche(inconnues.length ? inconnues : portes);
+      await dort(attente);
+      if (toucherPoint(p.pt, p.div, 'passer une porte' + (presse ? ' (pressé)' : ''))){
+        await dort(presse ? 150 : 800);
+        if (sceneViewCurrentSceneId === sceneId && situation() === 'zone'){
+          vue.essayes['porte:' + p.pt.id] = true;
+          dire('porte restée fermée', '« ' + (p.pt.label || p.pt.id) + ' »' + (R.dernierToast ? ' · ' + R.dernierToast.slice(0, 80) : ''));
+        }
+      }
+      return;
+    }
+    if (sz.length){ await dort(attente); if (toucherPoint(sz[0].pt, sz[0].div, 'sortir de la zone (cul-de-sac)')) return dort(1200); }
+    incoherence('Scène sans issue praticable', '« ' + nomSceneCourante() + ' » — aucune porte ouvrable ni sortie de zone');
+    return dort(3000);
+  }
+  /* La mesure du taux de rencontres : à l'entrée d'une scène, on note ce qui était attendu
+     (la chance réglée sur la scène), et on comptera les combats réellement partis. Séparé par
+     rythme : c'est l'écart entre « lent » et « pressé » qui révèle l'esquive. */
+  function comptabiliserRencontre(sceneId){
+    try {
+      const sc = sceneViewScenes.find(s=> s.id === sceneId);
+      if (!sc || !(sc.encounterChance > 0) || !(sc.encounterMonsterIds || []).length) return;
+      const seau = R.rencontres[R.rythme === 'presse' ? 'pressees' : 'lentes'];
+      seau.scenes++; seau.attendues += sc.encounterChance / 100;
+      R.attenteRencontre = { sceneId, rythme: R.rythme, depuis: Date.now() };
+    } catch(e){}
+  }
+  async function etapeCarte(){
+    if (typeof isGhostTap === 'function' && isGhostTap()) return dort(500);
+    /* Équipe affaiblie : retour à bord. */
+    if (equipeAffaiblie() || !equipeApte()){
+      await dort(alea(600, 1400));
+      return cliquerPuisAttendre(document.getElementById('baseBtn'), 'rentrer au vaisseau', 1500);
+    }
+    const zones = (creatures || []).filter(c=> c.interactionType === 'zone' && !c._closed && typeof c.lat === 'number');
+    if (!zones.length){
+      incoherence('Aucune zone à explorer sur la carte', 'rien à faire dehors — il rentre');
+      await dort(1500);
+      return cliquerPuisAttendre(document.getElementById('baseBtn'), 'rentrer au vaisseau (rien dehors)', 1500);
+    }
+    /* Une zone qu'il n'a pas encore vue de préférence, sinon n'importe laquelle. */
+    const jamais = zones.filter(z=> !Object.keys(R.scenesVues).some(k=> k.startsWith(z.id + '/')));
+    const z = pioche(jamais.length ? jamais : zones);
+    if (!z._dist || z._dist > 30){ teleporterPres(z); await dort(alea(800, 1500)); }
+    if (!z.marker){ incoherence('Zone sans marqueur sur la carte', z.name || z.id); return dort(2000); }
+    noter('entrer dans « ' + (z.name || z.id) + ' »');
+    z.marker.fire('click');
+    await dort(1800);
+    if (situation() === 'carte') dire('l\'entrée n\'a rien ouvert', (z.name || z.id) + (R.dernierToast ? ' · message : ' + R.dernierToast : ''));
+  }
+
+  /* ---------- LES COMBATS QUI PARTENT : pour le taux de rencontres ---------- */
+  function surveillerCombats(){
+    const enCombat = visible('combatFull') && combatState && !combatState.finished;
+    if (enCombat && !R._combatVu){
+      R._combatVu = true; R.stats.combats++;
+      if (R.attenteRencontre && Date.now() - R.attenteRencontre.depuis < 12000 && !(combatState.test)){
+        const seau = R.rencontres[R.attenteRencontre.rythme === 'presse' ? 'pressees' : 'lentes'];
+        seau.vues++;
+        R.attenteRencontre = null;
+      }
+    }
+    if (!enCombat) R._combatVu = false;
+  }
+
+  /* ---------- LE BADGE FLOTTANT ---------- */
+  function majBadge(){
+    const b = document.getElementById('robotBadge');
+    if (!b) return;
+    b.style.display = R.actif ? 'flex' : 'none';
+    const t = document.getElementById('robotBadgeTexte');
+    if (t) t.textContent = (R.pause ? '⏸️ ' : '🤖 ') + duree() + ' · ' + R.incoherences.length + ' ❌';
+  }
+  function duree(){
+    const s = Math.round((Date.now() - R.debut) / 1000);
+    return Math.floor(s / 60) + ' min ' + String(s % 60).padStart(2, '0') + ' s';
+  }
+
+  /* ---------- DÉMARRER, ARRÊTER ---------- */
+  function demarrer(){
+    if (R.actif) return;
+    const ed = fenetreEditeurOuverte();
+    if (ed && ed !== 'editHubOverlay'){ showToast('Ferme d\'abord la fenêtre d\'édition (' + ed + ')'); return; }
+    document.getElementById('editHubOverlay').classList.remove('show');
+    poserCrochets();
+    R.actif = true; R.pause = false; R.debut = Date.now();
+    R.stats = { gestes:0, combats:0, victoires:0, defaites:0, autresFins:0, attaques:0, ultimes:0, repliques:0, zones:0, scenes:0, pointsTouches:0, pointsSansEffet:0, gels:0, gelMax:0 };
+    R.incoherences = []; R.gestes = []; R.scenesVues = {}; R.pointsInertes = {}; R.toasts = []; R.dernierToast = '';
+    R.rencontres = { lentes:{ scenes:0, attendues:0, vues:0 }, pressees:{ scenes:0, attendues:0, vues:0 } };
+    R.zoneEnCours = null; R.signatureEcran = ''; R.memeEcranDepuis = Date.now();
+    /* Le vrai GPS est coupé le temps du jeu : sinon un relevé écraserait la téléportation. */
+    R.modeLibreAvant = (typeof freeModeActive !== 'undefined') && freeModeActive;
+    try { freeModeActive = true; } catch(e){}
+    dire('— début —', 'compte ' + ((typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid.slice(0, 6) : '?') + ' · ' + (document.getElementById('appVersionLabel') || {}).textContent);
+    majBadge();
+    R.battement = setInterval(()=>{ if (!R.actif) return; surveillerCombats(); verifierRegles(); majBadge(); }, 1000);
+    (async ()=>{
+      while (R.actif){
+        try { await pas(); } catch(err){ incoherence('Le robot a trébuché', String(err && err.stack || err).slice(0, 300)); await dort(1500); }
+        if (R.actif) verifierRegles();
+      }
+    })();
+  }
+  function arreter(){
+    if (!R.actif) return;
+    R.actif = false;
+    clearInterval(R.battement);
+    try { freeModeActive = R.modeLibreAvant; } catch(e){}
+    dire('— fin —', duree());
+    majBadge();
+    ouvrirRapport();
+  }
+
+  /* ---------- LE RAPPORT ---------- */
+  function texteRapport(){
+    const s = R.stats || {};
+    const taux = (x)=> x.scenes ? (x.vues + ' rencontre(s) pour ' + x.attendues.toFixed(1) + ' attendue(s) sur ' + x.scenes + ' scène(s)') : 'aucune scène à rencontre';
+    const lignes = [];
+    lignes.push('Mascotto ' + ((document.getElementById('appVersionLabel') || {}).textContent) + ' — rapport du joueur ordinateur');
+    lignes.push('Durée ' + duree() + ' · ' + s.gestes + ' geste(s)');
+    lignes.push('Combats ' + s.combats + ' (victoires ' + s.victoires + ', défaites ' + s.defaites + (s.autresFins ? ', autres ' + s.autresFins : '') + ') · attaques ' + s.attaques + ' · ultimes ' + s.ultimes);
+    lignes.push('Zones ' + s.zones + ' · scènes ' + s.scenes + ' · points touchés ' + s.pointsTouches + ' (sans effet visible : ' + s.pointsSansEffet + ') · répliques ' + s.repliques);
+    lignes.push('Rencontres — lent : ' + taux(R.rencontres.lentes) + ' · pressé : ' + taux(R.rencontres.pressees));
+    lignes.push('Gels de plus de 200 ms : ' + s.gels + (s.gelMax ? ' (le pire : ' + s.gelMax + ' ms)' : ''));
+    lignes.push('');
+    if (!R.incoherences.length) lignes.push('✅ Aucune incohérence relevée.');
+    else {
+      lignes.push('❌ ' + R.incoherences.length + ' incohérence(s) :');
+      R.incoherences.forEach((i, k)=>{
+        lignes.push((k + 1) + '. ' + i.titre + (i.n > 1 ? ' (×' + i.n + ')' : '') + ' — ' + i.premiere + (i.n > 1 ? ' → ' + i.derniere : ''));
+        if (i.detail) lignes.push('   ' + i.detail);
+        if (i.contexte) lignes.push('   juste avant : ' + i.contexte);
+      });
+    }
+    lignes.push('');
+    lignes.push('Derniers gestes : ' + R.gestes.slice(-12).map(g=> g.h + ' ' + g.quoi).join(' | '));
+    return lignes.join('\n');
+  }
+  function ouvrirRapport(){
+    const txt = texteRapport();
+    const fond = document.createElement('div');
+    fond.className = 'overlay show';
+    fond.style.zIndex = '4720';
+    fond.innerHTML = `
+      <div class="sheet" style="max-height:88vh; display:flex; flex-direction:column;">
+        <div class="sheet-top">
+          <h3 style="margin-top:0;">🤖 Rapport du joueur ordinateur</h3>
+          <button class="sheet-x" data-fermer>✕</button>
+        </div>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button class="btn-capture" data-copier style="flex:1;">📋 Copier</button>
+        </div>
+        <textarea data-texte class="field-input" readonly style="display:none; height:120px; font-size:11px;"></textarea>
+        <pre data-liste style="overflow-y:auto; flex:1; font-size:11px; line-height:1.45; white-space:pre-wrap; margin:0;"></pre>
+      </div>`;
+    document.body.appendChild(fond);
+    fond.querySelector('[data-liste]').textContent = txt;
+    fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+    fond.querySelector('[data-copier]').addEventListener('click', (e)=>{
+      const fini = (ok)=>{ e.target.textContent = ok ? '✅ Copié' : '⚠️ Copie bloquée — le texte est sélectionné, copie-le à la main'; };
+      const repli = ()=>{
+        const zone = fond.querySelector('[data-texte]');
+        zone.style.display = 'block'; zone.value = txt; zone.removeAttribute('readonly'); zone.focus(); zone.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch(err){}
+        zone.setAttribute('readonly', 'readonly'); fini(ok);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(()=> fini(true), repli); else repli();
+    });
+  }
+
+  return { demarrer, arreter, actif: ()=> R.actif, rapport: ouvrirRapport, etat: R };
+})();
+document.getElementById('robotJoueurBtn').addEventListener('click', ()=> Robot.demarrer());
+document.getElementById('robotBadgeStop').addEventListener('click', ()=> Robot.arreter());
+
 
 /* ---------- Lecture de la boîte noire : fin ---------- */
 document.getElementById('hubBrouillonsBtn').addEventListener('click', ouvrirBrouillons);
