@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v564</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v565</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35596,6 +35596,10 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      v564 — reprise automatique après une coupure (journal des réponses en localStorage, rejoué
      en silence), ponctuation dictée ou devinée, « ajoute » pour allonger une phrase, écran
      maintenu allumé (Wake Lock), mains libres avant tout.
+     v565 — le dialogue se construit À PARTIR DE L'ACTION (objet, combat, quête, recrutement,
+     ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
+     une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
+     longues lectures sont découpées en phrases pour ne plus être coupées.
      Un MOTEUR générique (parler, écouter, comprendre un choix, « pause », « retour »,
      « sommaire », « commence par ») et un SCÉNARIO par partie de l'éditeur. Seul le
      scénario de la fiche PNJ existe pour l'instant ; objets et quêtes viendront comme
@@ -35637,7 +35641,7 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 <script>
 (function(){
 'use strict';
-const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null };
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, lecture:0, dialogueNeuf:false, autos:new Set() };
 const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
 
 /* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
@@ -35646,7 +35650,7 @@ function sauver(extra){
   try {
     const fait = {}; GV.etapes.forEach(e=>{ fait[e.id] = !!e.fait; });
     const d = Object.assign({ v:1, quand:Date.now(), journal:GV.journal, fait, courante:GV.courante ? GV.courante.id : null,
-      nom:(V('editName') || {}).value || '', phase:GV.phase, editingId:editingId || null, lat:pendingLat, lng:pendingLng }, extra || {});
+      nom:(V('editName') || {}).value || '', phase:GV.phase, dialogueNeuf:!!GV.dialogueNeuf, editingId:editingId || null, lat:pendingLat, lng:pendingLng }, extra || {});
     localStorage.setItem(CLE_SAUVEGARDE, JSON.stringify(d));
   } catch(e){}
 }
@@ -35780,16 +35784,40 @@ function parler(texte){
     if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
     if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
-    const u = new SpeechSynthesisUtterance(texte);
-    u.lang = 'fr-FR'; u.rate = 1.05;
     const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
+    etat('🔊 …');
+    /* v565 : Android coupe les longues lectures (résumé, bilan) — on lit phrase par phrase,
+       en file : chaque morceau est court, et la file n'est jamais interrompue entre deux. */
+    const jeton = ++GV.lecture;
+    (async ()=>{
+      for (const m of morceauxDeLecture(texte)){
+        if (GV.lecture !== jeton || !GV.actif) break;
+        await lireUnMorceau(m, voix);
+      }
+      resolve();
+    })();
+  });
+}
+function morceauxDeLecture(texte){
+  const phrases = String(texte).match(/[^.!?…]+[.!?…]*["»]?\s*/g) || [String(texte)];
+  const out = []; let cur = '';
+  phrases.forEach(p=>{ if (cur && (cur + p).length > 170){ out.push(cur.trim()); cur = p; } else cur += p; });
+  if (cur.trim()) out.push(cur.trim());
+  return out.length ? out : [String(texte)];
+}
+function lireUnMorceau(m, voix){
+  return new Promise((resolve)=>{
+    const u = new SpeechSynthesisUtterance(m);
+    u.lang = 'fr-FR'; u.rate = 1.05;
     if (voix) u.voice = voix;
-    let fini = false;
+    let fini = false, garde = null;
     const terminer = ()=>{ if (fini) return; fini = true; clearTimeout(garde); resolve(); };
     u.onend = terminer; u.onerror = terminer;
-    /* Android ne signale pas toujours la fin : on borne la lecture par la longueur du texte. */
-    const garde = setTimeout(terminer, 1500 + texte.length * 70);
-    etat('🔊 …');
+    /* Android ne signale pas toujours la fin : on borne par la longueur du texte, et tant que
+       le téléphone dit qu'il parle encore, on prolonge (jusqu'au double, pas plus). */
+    const debut = Date.now(), prevu = 1500 + m.length * 75;
+    const verifier = ()=>{ try { if (speechSynthesis.speaking && Date.now() - debut < prevu * 2){ garde = setTimeout(verifier, 250); return; } } catch(e){} terminer(); };
+    garde = setTimeout(verifier, prevu);
     try { speechSynthesis.speak(u); } catch(e){ terminer(); }
   });
 }
@@ -36153,7 +36181,7 @@ function instantane(id){
     case 'images': return { u:uploadedImageDataUrl, up:uploadedImagePath, b:editBustImageDataUrl, bp:editBustImagePath, br:editBustImageRef, r:editRoomImageDataUrl, rp:editRoomImagePath, rr:editRoomImageRef, d:editBackImageDataUrl, dp:editBackImagePath, dr:editBackImageRef, c:editCombatImageDataUrl, cp:editCombatImagePath, cr:editCombatImageRef, travaux:g('editEnTravaux'), manques:GV.manques.slice() };
     case 'caractere': return { humeur:GV.humeur };
     case 'journee': return { lat:pendingLat, lng:pendingLng, zone:pendingAssignedZoneId, reserve:pendingReserve, piece:pendingPieceCommune ? JSON.parse(JSON.stringify(pendingPieceCommune)) : null, tr:JSON.parse(JSON.stringify(editTimeRanges)), jours:Array.from(selectedDays), vq:g('editVisibilityQuest'), vs:g('editVisibilityState'), hide:g('editHideImmediately') };
-    case 'dialogue': return { steps:JSON.parse(JSON.stringify(currentDialogueSteps)), aCreer:GV.aCreer.slice() };
+    case 'dialogue': return { steps:JSON.parse(JSON.stringify(currentDialogueSteps)), aCreer:GV.aCreer.slice(), humeur:GV.humeur, autos:Array.from(GV.autos) };
     case 'combat': return { modele:g('editCombatModele'), cat:g('editCombatCategory'), ia:g('editCombatAiPersonality'), rec:Array.from(selectedCombatRewards) };
     case 'boutique': return { items:JSON.parse(JSON.stringify(currentShopItems)), phrase:g('editShopPhrase') };
   }
@@ -36179,7 +36207,7 @@ function restaurer(id, s){
       editTimeRanges = JSON.parse(JSON.stringify(s.tr)); renderEditTimeRanges(); setSelectedDays(s.jours);
       V('editVisibilityQuest').value = s.vq || ''; V('editVisibilityState').value = s.vs || 'not_completed'; V('editVisibilityState').style.display = s.vq ? 'block' : 'none'; V('editHideImmediately').checked = !!s.hide;
       refreshPosStatusDisplay(); break;
-    case 'dialogue': currentDialogueSteps = JSON.parse(JSON.stringify(s.steps)); GV.aCreer = s.aCreer.slice(); resetDialogueNav(); renderDialogueBuilder(); break;
+    case 'dialogue': currentDialogueSteps = JSON.parse(JSON.stringify(s.steps)); GV.aCreer = s.aCreer.slice(); GV.humeur = s.humeur || ''; GV.autos = new Set(s.autos || []); resetDialogueNav(); renderDialogueBuilder(); break;
     case 'combat': changer('editCombatModele', s.modele || ''); V('editCombatCategory').value = s.cat || 'monstre_commun'; V('editCombatAiPersonality').value = s.ia || 'normal'; selectedCombatRewards = new Set(s.rec); renderCombatRewardsPicker(); break;
     case 'boutique': currentShopItems = JSON.parse(JSON.stringify(s.items)); renderShopItemsBuilder(); V('editShopPhrase').value = s.phrase || ''; break;
   }
@@ -36196,10 +36224,13 @@ async function etapeQui(){
     if (editingId !== perso.item.id || !editingId){ loadForEdit(perso.item.id); showPnjSection('new'); }
     await new Promise(r=> setTimeout(r, 600));
     if (typeof poserEmpreinteFiche === 'function') poserEmpreinteFiche();   // les images arrivées entre-temps ne comptent pas comme une modification
-    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
-    GV.variante = true;
+    /* v565 : la version peut avoir son propre dialogue (avant, il était recopié sans le dire) */
+    const neuf = await dialogueDeLaVersion('Nouvelle version de ' + (V('editName').value || 'ce personnage') + '. ');
+    await creerNouvelleVersion({ images:true, dialogues:!neuf, combat:true, boutique:true });
+    GV.variante = true; GV.dialogueNeuf = neuf;
     ['images', 'caractere', 'dialogue', 'combat', 'boutique'].forEach(k=>{ const e = GV.etapes.find(x=> x.id === k); if (e) e.fait = true; });
-    await dire('Nouvelle version de ' + (V('editName').value || 'ce personnage') + '. Il ne reste qu\'à dire où et quand elle apparaît. Dis « sommaire » si tu veux aussi changer autre chose.');
+    if (neuf){ const ed = GV.etapes.find(x=> x.id === 'dialogue'); ed.fait = false; GV.humeur = ''; }
+    await dire(neuf ? 'D\'accord : d\'abord où et quand elle apparaît, puis son dialogue.' : 'Il ne reste qu\'à dire où et quand elle apparaît. Dis « sommaire » si tu veux aussi changer autre chose.');
     return;
   }
   showPnjSection('new');
@@ -36347,80 +36378,181 @@ async function etapeJournee(){
   }
 }
 
-/* ---------- Étape « Dialogue » ---------- */
+/* ---------- Étape « Dialogue » (v565 : on part de ce que le personnage FAIT) ----------
+   Cadré en vocal le 30/10. Avant, on dictait des répliques puis on se demandait si chacune
+   déclenchait quelque chose, en descendant branche par branche sans repère. Maintenant on
+   choisit d'abord l'ACTION (donner un objet, lancer un combat, confier ou valider une quête,
+   recruter, ou simplement discuter), et le guide demande les phrases qui y mènent, en en
+   proposant. Le moteur du jeu ne change pas : une action reste portée par une réponse du
+   joueur ; quand le personnage agit de lui-même, le guide crée seul la réponse (« Merci ! »)
+   qui la porte. La profondeur reste possible (« il continue »), et le guide dit à chaque
+   question où l'on est dans l'arbre. */
 function nouvelleReplique(texte){ currentDialogueSteps.push({ text:texte, choices:[], textVariants:[] }); return currentDialogueSteps.length - 1; }
+const GARDE = [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'tres bien', 'd accord', 'c est bon'] }];
+const PHRASES_ACTION = {
+  objet:    { nom:'donner un objet', pnj:['Tiens, prends ça, ça pourra te servir.', 'J\'ai quelque chose pour toi. Garde-le précieusement.', 'Tiens, c\'est pour toi. Ne me demande pas d\'où ça vient.'],
+              seul:'Merci !', accepte:['Merci, je le prends.', 'Oh, merci beaucoup !'] },
+  combat:   { nom:'lancer un combat', pnj:['Tu te crois fort ? Montre-moi.', 'On règle ça tout de suite. En garde !', 'Voyons un peu ce que tu vaux.'],
+              seul:'Défends-toi !', accepte:['Allons-y !', 'Quand tu veux.'], refus:['Pas aujourd\'hui.', 'Je n\'ai pas le temps pour ça.'] },
+  confier:  { nom:'confier une quête', pnj:['J\'aurais un service à te demander.', 'Tu tombes bien, j\'ai besoin d\'aide.', 'Si tu as un peu de temps, j\'ai une mission pour toi.'],
+              seul:'Compte sur moi.', accepte:['D\'accord, je m\'en occupe.', 'Je t\'écoute, dis-moi tout.'], refus:['Une autre fois, peut-être.', 'Désolé, je ne peux pas.'] },
+  valider:  { nom:'valider une quête', pnj:['Alors, tu as fait ce que je t\'ai demandé ?', 'Tu as du nouveau pour moi ?'],
+              seul:'Voilà, c\'est fait.', accepte:['Oui, c\'est réglé.', 'Mission accomplie.'] },
+  recruter: { nom:'le recruter', pnj:['Dis… je pourrais venir avec toi ?', 'J\'en ai assez d\'ici. Emmène-moi.', 'Si tu as une place à bord, je suis partant.'],
+              seul:'Bienvenue à bord !', accepte:['Bienvenue dans l\'équipe !', 'Avec plaisir, monte à bord.'], refus:['Pas de place pour l\'instant.', 'Je voyage seul, désolé.'] },
+};
+const ACTIONS_DIALOGUE = [
+  { id:'objet', label:'🎁 Objet', mots:['objet', 'donner un objet', 'il donne un objet', 'donne', 'cadeau', 'un objet'] },
+  { id:'combat', label:'⚔️ Combat', mots:['combat', 'lancer un combat', 'se battre', 'bagarre', 'duel', 'un combat'] },
+  { id:'confier', label:'📜 Confier quête', mots:['confier', 'confier une quete', 'confie une quete', 'donner une quete', 'une quete'] },
+  { id:'valider', label:'✅ Valider quête', mots:['valider', 'valider une quete', 'valide une quete', 'terminer la quete'] },
+  { id:'recruter', label:'🤝 Recruter', mots:['recruter', 'le recruter', 'recrute', 'recrutement', 'se fait recruter'] },
+  { id:'discuter', label:'💬 Discuter', mots:['discuter', 'on discute', 'discussion', 'parler', 'juste parler', 'une question'] },
+  { id:'fin', label:'Rien de plus', mots:['rien', 'rien de plus', 'c est tout', 'termine', 'fini', 'non', 'stop', 'la conversation s arrete'] },
+];
+function tirer(liste){ return liste[Math.floor(Math.random() * liste.length)]; }
+function extraitDe(idx){ const t = (currentDialogueSteps[idx].text || '').trim(); return t.length > 50 ? t.slice(0, 50).replace(/\s+\S*$/, '') + '…' : t; }
+function ajouterAuTexte(idx, phrase){ const s = currentDialogueSteps[idx]; s.text = ((s.text || '').trim() + ' ' + phrase).trim(); }
+function dialoguePossible(){ return parle() && typeFiche() !== 'shop' && typeFiche() !== 'concession'; }
+
 async function etapeDialogue(){
   currentDialogueSteps = [{ text:'', choices:[], textVariants:[] }];
-  GV.aCreer = [];
+  GV.aCreer = []; GV.autos = new Set();
+  if (!GV.humeur) await etapeCaractere();   // nouvelle version avec son propre dialogue : l'humeur n'a pas été demandée
   const prop = (await demander({ _valeur: piocher(ACCUEILS) })).texte;
-  const a = await dicter('Pour l\'accueil, je propose : « ' + prop + ' ». Dis « garde », ou dicte ta phrase.', [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'tres bien', 'd accord'] }]);
+  const a = await dicter('Pour l\'accueil, je propose : « ' + prop + ' ». Dis « garde », ou dicte ta phrase.', GARDE);
   currentDialogueSteps[0].text = a.special ? prop : a.texte;
   renderDialogueBuilder();
-  await construireReponses(0, 0);
+  await construireNiveau(0, 0);
   resetDialogueNav(); renderDialogueBuilder();
-  const nbR = currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).length, 0);
-  const effets = currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).filter(c=> c.itemGrant || c.combat || c.questGive || c.questValidate || c.recruit).length, 0);
-  await dire('Dialogue terminé : ' + currentDialogueSteps.length + ' répliques, ' + nbR + ' réponses' + (effets ? ', dont ' + effets + ' avec un effet.' : '.'));
+  await dire('Dialogue terminé. ' + bilanDialogue());
 }
-async function construireReponses(idx, profondeur){
+/* Un niveau de l'arbre : on y enchaîne des actions jusqu'à « rien de plus ». */
+async function construireNiveau(idx, profondeur){
   for (;;){
-    const extrait = (currentDialogueSteps[idx].text || '').slice(0, 60);
-    const r = await dicter((profondeur ? 'Après « ' + extrait + ' », le' : 'Le') + ' joueur peut répondre quoi ? Dicte sa réponse, ou dis « aucune réponse ».', [{ id:'aucune', mots:['aucune', 'aucune reponse', 'rien', 'pas de reponse', 'fin', 'fin du dialogue', 'termine', 'c est tout'] }]);
-    if (r.special) return;
-    const ch = { id:newChoiceId(), label:r.texte, next:null };
-    currentDialogueSteps[idx].choices.push(ch);
+    const deja = currentDialogueSteps[idx].choices.length;
+    const ou = profondeur ? 'Après « ' + extraitDe(idx) + ' », ' : 'À l\'accueil, ';
+    const q = deja
+      ? ou + 'autre chose ? Objet, combat, confier ou valider une quête, recruter, discuter, ou rien de plus ?'
+      : ou + 'qu\'est-ce qui se passe ? Il donne un objet, lance un combat, confie une quête, valide une quête, se fait recruter, ou on discute ? Dis « rien » s\'il ne se passe rien.';
+    const action = await choisir(q, ACTIONS_DIALOGUE);
+    if (action === 'fin') return;
+    if (action === 'discuter') await construireDiscussion(idx, profondeur);
+    else await construireAction(action, idx, profondeur);
     renderDialogueBuilder();
-    if (await ouiNon('Cette réponse a quelque chose de spécial ?')) await effetsReponse(ch, idx);
-    const suite = await dicter('Et lui, il répond quoi ? Dicte sa réplique, ou dis « la conversation s\'arrête », ou « retour à l\'accueil ».', [
-      { id:'fin', mots:['la conversation s arrete', 's arrete', 'ca s arrete', 'fin', 'rien', 'terminer', 'au revoir', 'stop'] },
-      { id:'accueil', mots:['retour a l accueil', 'accueil', 'retour au debut', 'debut', 'recommence'] }]);
-    if (suite.special === 'fin') ch.next = null;
-    else if (suite.special === 'accueil') ch.next = 0;
-    else { ch.next = nouvelleReplique(suite.texte); renderDialogueBuilder(); await construireReponses(ch.next, profondeur + 1); }
-    if (!(await ouiNon('Une autre réponse possible pour le joueur' + (profondeur ? ' à cet endroit' : '') + ' ?'))) return;
   }
 }
-async function effetsReponse(ch, idx){
-  for (;;){
-    const e = await choisir('Quel effet ? Donner un objet, lancer un combat, confier une quête, valider une quête, le recruter, une condition, ou terminé ?', [
-      { id:'objet', label:'🎁 Objet', mots:['objet', 'donner un objet', 'donne', 'cadeau'] }, { id:'combat', label:'⚔️ Combat', mots:['combat', 'lancer un combat', 'se battre', 'bagarre', 'duel'] },
-      { id:'confier', label:'📜 Confier quête', mots:['confier', 'confier une quete', 'donner une quete', 'quete'] }, { id:'valider', label:'✅ Valider quête', mots:['valider', 'valider une quete', 'terminer la quete'] },
-      { id:'recruter', label:'🤝 Recruter', mots:['recruter', 'le recruter', 'recrute', 'recrutement'] }, { id:'condition', label:'🔒 Condition', mots:['condition', 'une condition', 'seulement si'] },
-      { id:'fin', label:'Terminé', mots:['termine', 'c est tout', 'rien', 'fini', 'non'] }]);
-    if (e === 'fin') return;
-    if (e === 'objet'){
-      const lo = listeObjets();
-      if (!lo.length){ await dire('Aucun objet n\'existe encore. Je le note à créer.'); GV.aCreer.push('un objet pour la réponse « ' + ch.label + ' »'); }
-      else { const o = await dansListe('Quel objet ?', lo); ch.itemGrant = { itemId:o.item.id, itemName:o.item.label, quantity:1 }; }
-    } else if (e === 'combat'){
-      const la = listeAdversaires();
-      if (!la.length){ await dire('Aucun combattant n\'existe encore. Je le note à créer.'); GV.aCreer.push('un adversaire pour la réponse « ' + ch.label + ' »'); }
-      else {
-        const ids = [];
-        while (ids.length < 3){
-          const a = await dansListe(ids.length ? 'Un autre adversaire ? Dis son nom, ou « non ».' : 'Quel adversaire ?', la, ids.length ? [{ id:'non', mots:['non', 'aucun', 'c est tout', 'pas d autre'] }] : null);
-          if (!a.item) break;
-          ids.push(a.item.id);
-        }
-        if (ids.length){
-          ch.combat = { creatureIds:ids, attackIds:[], stepWin:null, stepLose:null };
-          const g = await dicter('S\'il gagne, le personnage dit quoi ensuite ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
-          if (!g.special) ch.combat.stepWin = nouvelleReplique(g.texte);
-          const p = await dicter('Et s\'il perd ou s\'enfuit ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
-          if (!p.special) ch.combat.stepLose = nouvelleReplique(p.texte);
-        }
-      }
-    } else if (e === 'confier' || e === 'valider'){
-      const lq = listeQuetes();
-      if (!lq.length){ await dire('Aucune quête n\'existe encore. Je le note à créer.'); GV.aCreer.push('une quête pour la réponse « ' + ch.label + ' »'); }
-      else { const q = await dansListe(e === 'confier' ? 'Quelle quête confier ?' : 'Quelle quête valider ?', lq); if (e === 'confier') ch.questGive = { questId:q.item.id }; else ch.questValidate = { questId:q.item.id }; }
-    } else if (e === 'recruter'){
-      ch.recruit = { metierId:null }; await dire('Cette réponse le recrute.');
-    } else if (e === 'condition'){
-      await ajouterCondition(ch);
+/* Simple discussion : le joueur dit quelque chose, le personnage répond, et on continue plus bas. */
+async function construireDiscussion(idx, profondeur){
+  const j = await dicter('Le joueur dit quoi ?');
+  const ch = { id:newChoiceId(), label:j.texte, next:null };
+  currentDialogueSteps[idx].choices.push(ch); renderDialogueBuilder();
+  await conditionEventuelle(ch);
+  await suiteDuPersonnage(ch, idx, profondeur, 'Et lui, il répond quoi ? Dicte sa réplique, ou dis « la conversation s\'arrête », ou « retour à l\'accueil ».');
+}
+/* Une action : qui la déclenche, les phrases qui y mènent, puis l'action elle-même. */
+async function construireAction(action, idx, profondeur){
+  const P = PHRASES_ACTION[action];
+  const autoDeja = currentDialogueSteps[idx].choices.some(c=> GV.autos.has(c.id));
+  let mode = 'accepte';
+  if (autoDeja) await dire('Il fait déjà quelque chose de lui-même à cet endroit : pour celle-ci, le joueur devra l\'accepter.');
+  else mode = await choisir('Il le fait de lui-même, ou le joueur doit accepter ?', [
+    { id:'seul', label:'De lui-même', mots:['de lui meme', 'lui meme', 'tout seul', 'seul', 'il le fait', 'directement', 'd office'] },
+    { id:'accepte', label:'Le joueur accepte', mots:['accepte', 'le joueur accepte', 'le joueur', 'il doit accepter', 'accepter', 'le joueur choisit'] }]);
+  const propP = (await demander({ _valeur: tirer(P.pnj) })).texte;
+  const d = await dicter((mode === 'seul' ? 'Qu\'est-ce qu\'il dit en le faisant ? ' : 'Comment il le propose ? ') + 'Je propose : « ' + propP + ' ». Dis « garde », dicte ta phrase, ou « rien de plus » si c\'est déjà dit.',
+    GARDE.concat([{ id:'rien', mots:['rien de plus', 'rien', 'deja dit', 'c est deja dit', 'passe', 'non'] }]));
+  if (d.special !== 'rien') ajouterAuTexte(idx, d.special === 'garde' ? propP : d.texte);
+  let label = P.seul;
+  if (mode === 'accepte'){
+    const propJ = (await demander({ _valeur: tirer(P.accepte) })).texte;
+    const j = await dicter('Et le joueur, il dit quoi pour accepter ? Je propose : « ' + propJ + ' ». Dis « garde », ou dicte.', GARDE);
+    label = j.special ? propJ : j.texte;
+  }
+  const ch = { id:newChoiceId(), label, next:null };
+  currentDialogueSteps[idx].choices.push(ch);
+  if (mode === 'seul') GV.autos.add(ch.id);
+  renderDialogueBuilder();
+  await poserEffet(action, ch, idx, profondeur);
+  await conditionEventuelle(ch);
+  if (mode === 'accepte' && P.refus && await ouiNon('Le joueur peut aussi refuser ?')){
+    const propR = (await demander({ _valeur: tirer(P.refus) })).texte;
+    const r = await dicter('Il dit quoi pour refuser ? Je propose : « ' + propR + ' ». Dis « garde », ou dicte.', GARDE);
+    currentDialogueSteps[idx].choices.push({ id:newChoiceId(), label: r.special ? propR : r.texte, next:null });
+    renderDialogueBuilder();
+  }
+  if (action === 'combat' && ch.combat) return;   // la suite d'un combat, c'est « s'il gagne » / « s'il perd », déjà demandés
+  await suiteDuPersonnage(ch, idx, profondeur, 'Et après ça, il dit quoi ? Dicte, ou dis « la conversation s\'arrête », ou « retour à l\'accueil ».');
+}
+/* Ce que fait le personnage après une réponse : fin, retour à l'accueil, ou une nouvelle réplique
+   — et dans ce cas on descend d'un niveau. */
+async function suiteDuPersonnage(ch, idx, profondeur, question){
+  const suite = await dicter(question, [
+    { id:'fin', mots:['la conversation s arrete', 's arrete', 'ca s arrete', 'fin', 'rien', 'terminer', 'au revoir', 'stop', 'c est tout'] },
+    { id:'accueil', mots:['retour a l accueil', 'accueil', 'retour au debut', 'debut', 'recommence'] }]);
+  if (suite.special === 'fin') ch.next = null;
+  else if (suite.special === 'accueil') ch.next = 0;
+  else { ch.next = nouvelleReplique(suite.texte); renderDialogueBuilder(); await construireNiveau(ch.next, profondeur + 1); }
+}
+async function conditionEventuelle(ch){
+  const c = await choisir('C\'est pour tout le monde, ou seulement sous condition ?', [
+    { id:'tous', label:'Tout le monde', mots:['tout le monde', 'tous', 'toujours', 'pour tous', 'pour tout le monde', 'non'] },
+    { id:'cond', label:'Sous condition', mots:['condition', 'sous condition', 'seulement si', 'ca depend', 'une condition'] }]);
+  if (c === 'cond') await ajouterCondition(ch);
+}
+async function poserEffet(action, ch, idx, profondeur){
+  if (action === 'objet'){
+    const lo = listeObjets();
+    if (!lo.length){ await dire('Aucun objet n\'existe encore. Je le note à créer.'); GV.aCreer.push('un objet pour la réponse « ' + ch.label + ' »'); }
+    else { const o = await dansListe('Quel objet ?', lo); ch.itemGrant = { itemId:o.item.id, itemName:o.item.label, quantity:1 }; }
+  } else if (action === 'combat'){
+    const la = listeAdversaires();
+    if (!la.length){ await dire('Aucun combattant n\'existe encore. Je le note à créer.'); GV.aCreer.push('un adversaire pour la réponse « ' + ch.label + ' »'); return; }
+    const ids = [];
+    while (ids.length < 3){
+      const a = await dansListe(ids.length ? 'Un autre adversaire ? Dis son nom, ou « non ».' : 'Quel adversaire ?', la, ids.length ? [{ id:'non', mots:['non', 'aucun', 'c est tout', 'pas d autre'] }] : null);
+      if (!a.item) break;
+      ids.push(a.item.id);
     }
-    renderDialogueBuilder();
+    if (!ids.length) return;
+    ch.combat = { creatureIds:ids, attackIds:[], stepWin:null, stepLose:null };
+    const g = await dicter('Si le joueur gagne, le personnage dit quoi ensuite ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
+    if (!g.special){ ch.combat.stepWin = nouvelleReplique(g.texte); renderDialogueBuilder(); await construireNiveau(ch.combat.stepWin, profondeur + 1); }
+    const p = await dicter('Et s\'il perd ou s\'enfuit ? Dicte, ou dis « rien ».', [{ id:'rien', mots:['rien', 'aucune', 'non', 'la conversation s arrete'] }]);
+    if (!p.special){ ch.combat.stepLose = nouvelleReplique(p.texte); renderDialogueBuilder(); await construireNiveau(ch.combat.stepLose, profondeur + 1); }
+  } else if (action === 'confier' || action === 'valider'){
+    const lq = listeQuetes();
+    if (!lq.length){ await dire('Aucune quête n\'existe encore. Je le note à créer.'); GV.aCreer.push('une quête pour la réponse « ' + ch.label + ' »'); }
+    else { const q = await dansListe(action === 'confier' ? 'Quelle quête confier ?' : 'Quelle quête valider ?', lq); if (action === 'confier') ch.questGive = { questId:q.item.id }; else ch.questValidate = { questId:q.item.id }; }
+  } else if (action === 'recruter'){
+    ch.recruit = { metierId:null }; await dire('Cette réponse le recrute.');
   }
+  renderDialogueBuilder();
+}
+/* Ce que le personnage fait, en français, pour le bilan et le résumé. */
+function nomQuete(id){ const q = (quests || []).find(x=> x.id === id); return q && q.name ? q.name : 'une quête'; }
+function nomObjetGV(g){ if (g.itemName) return g.itemName; const o = (items || []).find(x=> x.id === g.itemId); return o && o.name ? o.name : 'un objet'; }
+function joindreFr(l){ return l.length <= 1 ? l.join('') : l.slice(0, -1).join(', ') + ' et ' + l[l.length - 1]; }
+function faitsDuDialogue(){
+  const faits = []; let discussions = 0;
+  currentDialogueSteps.forEach(s=> (s.choices || []).forEach(c=>{
+    if (!c) return;
+    if (c.itemGrant) faits.push('lui donne ' + nomObjetGV(c.itemGrant));
+    else if (c.combat) faits.push('le provoque en combat');
+    else if (c.questGive) faits.push('lui confie la quête ' + nomQuete(c.questGive.questId));
+    else if (c.questValidate) faits.push('valide la quête ' + nomQuete(c.questValidate.questId));
+    else if (c.recruit) faits.push('peut rejoindre l\'équipage');
+    else discussions++;
+  }));
+  return { faits, discussions };
+}
+function bilanDialogue(){
+  const { faits, discussions } = faitsDuDialogue();
+  const parts = [];
+  if (faits.length) parts.push('Il ' + joindreFr(faits) + '.');
+  if (discussions) parts.push(discussions === 1 ? 'Et une chose dont on peut discuter.' : 'Et ' + discussions + ' choses dont on peut discuter.');
+  if (!parts.length) parts.push('Il dit juste bonjour.');
+  return parts.join(' ');
 }
 async function ajouterCondition(ch){
   const k = await choisir('Quelle condition ? Une réponse déjà donnée, une quête dans tel état, ou un combat gagné ?', [
@@ -36456,7 +36588,7 @@ async function ajouterCondition(ch){
 async function etapeCombat(){
   const lm = listeModeles();
   if (!lm.length){ await dire('Aucun modèle de robot n\'existe : il ne pourra pas combattre tant que tu n\'en auras pas créé un. Je le note.'); GV.aCreer.push('un modèle de robot'); return; }
-  const m = await dansListe('Quel modèle de robot ?', lm);
+  const m = await dansListe('Pour se battre, il lui faut un corps de robot, avec ses images et ses attaques. Quel modèle de robot ?', lm);
   changer('editCombatModele', m.item.id);
   if (typeFiche() === 'combat' && !V('editCombatRecruitable').checked){
     V('editCombatCategory').value = await choisir('C\'est un monstre commun, un mini-boss, ou un boss ?', [{ id:'monstre_commun', label:'Commun', mots:['commun', 'normal', 'monstre commun', 'simple'] }, { id:'mini_boss', label:'Mini-boss', mots:['mini boss', 'mini', 'moyen'] }, { id:'boss', label:'Boss', mots:['boss', 'gros', 'grand boss'] }]);
@@ -36492,28 +36624,44 @@ async function etapeBoutique(){
 
 /* ---------- Étape « Vérification » ---------- */
 function lieuDefini(){ return pendingLat !== null || !!pendingAssignedZoneId || !!pendingPieceCommune || pendingReserve; }
+function heureParlee(h){ const [hh, mm] = String(h || '').split(':'); return parseInt(hh || '0', 10) + ' heures' + (mm && mm !== '00' ? ' ' + parseInt(mm, 10) : ''); }
+/* v565 : le résumé raconte ce que le JOUEUR va vivre, au lieu de lister les réglages. */
 function texteResume(){
-  const t = { dialogue:'habitant', shop:'marchand', combat: V('editCombatRecruitable').checked ? 'combattant recrutable' : 'monstre', zone:'zone', concession:'concessionnaire' }[typeFiche()] || typeFiche();
-  const parts = [V('editName').value + ', ' + t];
-  const met = (metiers || []).find(m=> m.id === V('editMetier').value); if (met) parts.push('métier ' + met.name);
-  if (V('editFonction').value) parts.push('fonction ' + V('editFonction').value);
-  if (GV.humeur) parts.push('humeur ' + GV.humeur);
-  parts.push('lieu : ' + V('posStatusText').textContent);
-  parts.push(editTimeRanges.length ? 'horaires ' + editTimeRanges.map(c=> c.start + ' à ' + c.end).join(' et ') : 'à toute heure');
-  parts.push(selectedDays.size ? nomJours(Array.from(selectedDays)) : 'tous les jours');
-  if (parle()) parts.push(currentDialogueSteps.length + ' répliques, ' + currentDialogueSteps.reduce((n, s)=> n + (s.choices || []).length, 0) + ' réponses');
-  if (typeFiche() === 'shop') parts.push(currentShopItems.length + ' objets en vente');
-  if (GV.manques.length) parts.push('à remplacer : ' + GV.manques.join(', '));
-  if (GV.aCreer.length) parts.push('à créer : ' + GV.aCreer.join(', '));
-  return parts.join('. ') + '.';
+  const nom = V('editName').value || 'ce personnage';
+  const t = { dialogue:'un habitant', shop:'un marchand', combat: V('editCombatRecruitable').checked ? 'un combattant recrutable' : 'un monstre', zone:'une zone', concession:'un concessionnaire' }[typeFiche()] || typeFiche();
+  let lieu;
+  if (pendingPieceCommune) lieu = 'dans ' + pendingPieceCommune.nom;
+  else if (pendingAssignedZoneId){ const z = ficheParId(pendingAssignedZoneId); lieu = 'dans la zone ' + (z && z.name ? z.name : ''); }
+  else if (pendingLat !== null) lieu = 'sur la carte';
+  else lieu = 'nulle part pour l\'instant, il est en réserve';
+  const quand = (editTimeRanges.length ? editTimeRanges.map(c=> 'de ' + heureParlee(c.start) + ' à ' + heureParlee(c.end)).join(' et ') : 'à toute heure') + (selectedDays.size ? ', le ' + nomJours(Array.from(selectedDays)) : '');
+  const parts = ['Le joueur croise ' + nom + ', ' + t + ', ' + lieu + ', ' + quand + '.'];
+  const met = (metiers || []).find(m=> m.id === V('editMetier').value);
+  if (met) parts.push(nom + ' est ' + met.name + ', et peut rejoindre le vaisseau.');
+  else if (V('editFonction').value) parts.push('Il peut rejoindre le vaisseau, fonction ' + V('editFonction').value + '.');
+  if (dialoguePossible()) parts.push(bilanDialogue());
+  if (typeFiche() === 'combat' && !V('editCombatRecruitable').checked) parts.push('Il se bat contre le joueur' + (selectedCombatRewards.size ? ', et lâche ' + selectedCombatRewards.size + ' objet' + (selectedCombatRewards.size > 1 ? 's' : '') + ' quand il perd.' : '.'));
+  if (typeFiche() === 'shop') parts.push('Il vend ' + currentShopItems.length + ' objet' + (currentShopItems.length > 1 ? 's' : '') + '.');
+  if (GV.manques.length) parts.push('À remplacer : ' + GV.manques.join(', ') + '.');
+  if (GV.aCreer.length) parts.push('À créer : ' + GV.aCreer.join(', ') + '.');
+  return parts.join(' ');
+}
+/* v565 : une version peut garder le dialogue de la fiche ou en avoir un à elle. */
+async function dialogueDeLaVersion(prefixe){
+  if (!dialoguePossible()) return false;
+  return (await choisir((prefixe || '') + 'Elle garde le même dialogue, ou tu lui en fais un nouveau ?', [
+    { id:'meme', label:'Le même', mots:['meme', 'le meme', 'garde', 'le meme dialogue', 'pareil', 'identique'] },
+    { id:'nouveau', label:'Un nouveau', mots:['nouveau', 'un nouveau', 'autre', 'un autre', 'different', 'change'] }])) === 'nouveau';
 }
 async function questionVersion(){
   if (await ouiNon('Il est aussi ailleurs, à un autre moment ? Je crée une version.')){
+    const neuf = await dialogueDeLaVersion('');
     await attendreQue(()=> !!ficheParId(editingId), 8000);
-    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
-    GV.phase = 'version';
+    await creerNouvelleVersion({ images:true, dialogues:!neuf, combat:true, boutique:true });
+    GV.phase = 'version'; GV.dialogueNeuf = neuf;
     GV.journal.journee = []; GV.journal.verification = [];
     const ej = GV.etapes.find(x=> x.id === 'journee'); ej.fait = false; ej.avant = null;
+    if (neuf){ const ed = GV.etapes.find(x=> x.id === 'dialogue'); ed.fait = false; ed.avant = null; GV.journal.dialogue = []; GV.humeur = ''; }
     sauver();
     throw new SignalGuide(SOMMAIRE, 'journee');
   }
@@ -36618,7 +36766,7 @@ function arreterGuide(){
 }
 async function lancerGuide(){
   if (GV.actif){ afficher(); return; }
-  GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false; GV.muet = false;
+  GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false; GV.muet = false; GV.dialogueNeuf = false; GV.autos = new Set();
   GV.phase = 'creation'; GV.repriseLat = null; GV.repriseLng = null;
   GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
   afficher(); viderUI();
@@ -36667,14 +36815,15 @@ async function reprendre(sauve){
     if (typeof poserEmpreinteFiche === 'function') poserEmpreinteFiche();
     GV.etapes.forEach(e=>{ if (e.id !== 'journee' && e.id !== 'verification') e.fait = true; });
     if (sauve.phase === 'version'){
-      GV.phase = 'version';
-      await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
+      GV.phase = 'version'; GV.dialogueNeuf = !!sauve.dialogueNeuf;
+      await creerNouvelleVersion({ images:true, dialogues:!GV.dialogueNeuf, combat:true, boutique:true });
+      if (GV.dialogueNeuf){ GV.etapes.find(e=> e.id === 'dialogue').fait = false; GV.journal.dialogue = (sauve.journal && sauve.journal.dialogue) || []; GV.humeur = ''; }
     } else {
       GV.phase = 'enregistre';
       GV.etapes.find(e=> e.id === 'journee').fait = true;
     }
     GV.journal.journee = (sauve.phase === 'version') ? (sauve.journal.journee || []) : [];
-    GV.muet = !!GV.journal.journee.length;
+    GV.muet = !!(GV.journal.journee.length || (GV.dialogueNeuf && GV.journal.dialogue.length));
     moteur(); return;
   }
   if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())) resetForm();
