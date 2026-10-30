@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v566</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v567</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v567 — retour au lancement de lecture de la v564 (la v565/566 restait muette sur le
+     téléphone), les phrases d'un long texte étant mises d'un coup dans la file.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres, déjà dans le moteur) ; le mot « pseudo » dicté devient le marqueur {joueur}.
      Un MOTEUR générique (parler, écouter, comprendre un choix, « pause », « retour »,
@@ -35643,7 +35645,7 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 <script>
 (function(){
 'use strict';
-const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, lecture:0, dialogueNeuf:false, autos:new Set() };
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set() };
 const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
 
 /* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
@@ -35787,41 +35789,32 @@ function parler(texte){
     if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
     const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
+    /* v567 : même mécanisme qu'en v564 (une lecture lancée tout de suite, bornée par la longueur
+       du texte), mais un long texte est découpé en phrases mises D'UN COUP dans la file du
+       téléphone : Android coupait les lectures longues, il enchaîne sans problème des courtes. */
+    const morceaux = morceauxDeLecture(texte);
+    let restants = morceaux.length, fini = false;
+    const terminer = ()=>{ if (fini) return; fini = true; clearTimeout(garde); resolve(); };
+    const unDeMoins = ()=>{ restants--; if (restants <= 0) terminer(); };
+    const garde = setTimeout(terminer, 1500 + texte.length * 90);
     etat('🔊 …');
-    /* v565 : Android coupe les longues lectures (résumé, bilan) — on lit phrase par phrase,
-       en file : chaque morceau est court, et la file n'est jamais interrompue entre deux. */
-    const jeton = ++GV.lecture;
-    (async ()=>{
-      for (const m of morceauxDeLecture(texte)){
-        if (GV.lecture !== jeton || !GV.actif) break;
-        await lireUnMorceau(m, voix);
-      }
-      resolve();
-    })();
+    morceaux.forEach((m)=>{
+      const u = new SpeechSynthesisUtterance(m);
+      u.lang = 'fr-FR'; u.rate = 1.05;
+      if (voix) u.voice = voix;
+      u.onend = unDeMoins; u.onerror = unDeMoins;
+      try { speechSynthesis.speak(u); } catch(e){ unDeMoins(); }
+    });
   });
 }
 function morceauxDeLecture(texte){
-  const phrases = String(texte).match(/[^.!?…]+[.!?…]*["»]?\s*/g) || [String(texte)];
+  texte = String(texte);
+  if (texte.length <= 170) return [texte];
+  const phrases = texte.match(/[^.!?…]+[.!?…]*["»]?\s*/g) || [texte];
   const out = []; let cur = '';
   phrases.forEach(p=>{ if (cur && (cur + p).length > 170){ out.push(cur.trim()); cur = p; } else cur += p; });
   if (cur.trim()) out.push(cur.trim());
-  return out.length ? out : [String(texte)];
-}
-function lireUnMorceau(m, voix){
-  return new Promise((resolve)=>{
-    const u = new SpeechSynthesisUtterance(m);
-    u.lang = 'fr-FR'; u.rate = 1.05;
-    if (voix) u.voice = voix;
-    let fini = false, garde = null;
-    const terminer = ()=>{ if (fini) return; fini = true; clearTimeout(garde); resolve(); };
-    u.onend = terminer; u.onerror = terminer;
-    /* Android ne signale pas toujours la fin : on borne par la longueur du texte, et tant que
-       le téléphone dit qu'il parle encore, on prolonge (jusqu'au double, pas plus). */
-    const debut = Date.now(), prevu = 1500 + m.length * 75;
-    const verifier = ()=>{ try { if (speechSynthesis.speaking && Date.now() - debut < prevu * 2){ garde = setTimeout(verifier, 250); return; } } catch(e){} terminer(); };
-    garde = setTimeout(verifier, prevu);
-    try { speechSynthesis.speak(u); } catch(e){ terminer(); }
-  });
+  return out.length ? out : [texte];
 }
 
 /* ---------- Écouter ---------- */
