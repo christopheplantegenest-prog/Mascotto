@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v578</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v579</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35601,6 +35601,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v579 — JOURNAL DE DIAGNOSTIC (bouton 📋) : chaque événement du micro, de la voix, du son
+     et de la page est daté et conservé à travers les rechargements. Rien d'autre ne change.
      v578 — écoute continue (beaucoup moins de bips) ; la voix attend 0,9 s après le micro pour
      ne plus être tronquée (Android garde le son juste après une écoute).
      v577 — l'écoute n'est plus relancée en boucle quand elle échoue tout de suite ; l'erreur de
@@ -35625,7 +35627,17 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
         <h3 style="margin:0; font-size:16px;">🎙️ Guide vocal</h3>
         <span class="meta" id="gvEtape" style="white-space:nowrap;"></span>
       </div>
+      <button class="sheet-x" id="gvJournalBtn" title="Journal de diagnostic" style="margin-right:6px;">📋</button>
       <button class="sheet-x" id="gvQuitterBtn" title="Quitter le guide">✕</button>
+    </div>
+    <div id="gvJournalWrap" style="display:none; margin:8px 0;">
+      <p class="meta" style="margin:0 0 4px;">Journal de diagnostic (v579) — copie-le et envoie-le dans la conversation.</p>
+      <textarea id="gvJournalTexte" readonly style="width:100%; height:28vh; font-family:monospace; font-size:11px; box-sizing:border-box;"></textarea>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <button type="button" class="btn-capture" id="gvJournalCopier" style="flex:1;">Copier</button>
+        <button type="button" class="btn-secondary" id="gvJournalEffacer" style="flex:1;">Effacer</button>
+        <button type="button" class="btn-secondary" id="gvJournalFermer" style="flex:1;">Fermer</button>
+      </div>
     </div>
     <div id="gvQuestion" style="font-size:17px; font-weight:700; line-height:1.3; margin:10px 0 6px;"></div>
     <div id="gvEtat" class="meta" style="min-height:16px;"></div>
@@ -35651,6 +35663,40 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 'use strict';
 const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set() };
 const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
+
+/* ======================================================================================
+   v579 — JOURNAL DE DIAGNOSTIC (demandé le 31/10 après une soirée de corrections à l'aveugle).
+   Chaque événement du micro, de la voix, du son et de la page est noté avec l'heure, à la
+   centième de seconde, depuis le chargement de la page. Le journal est écrit dans le
+   localStorage au fil de l'eau : un rechargement de la page ne l'efface pas, il y laisse une
+   ligne « PAGE chargée ». Bouton 📋 dans le guide pour le lire, le copier, l'effacer.
+   AUCUN comportement n'est changé par cette version : on observe, on ne corrige pas.
+   ====================================================================================== */
+const JOURNAL = { lignes:[], t0:Date.now(), minuteur:null, max:900 };
+function journal(ev, detail){
+  const t = ((Date.now() - JOURNAL.t0) / 1000).toFixed(2).padStart(7, ' ');
+  let d = '';
+  if (detail !== undefined){ try { d = ' ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)); } catch(e){ d = ' ' + String(detail); } }
+  JOURNAL.lignes.push(t + ' ' + ev + d);
+  if (JOURNAL.lignes.length > JOURNAL.max) JOURNAL.lignes.splice(0, JOURNAL.lignes.length - JOURNAL.max);
+  if (!JOURNAL.minuteur) JOURNAL.minuteur = setTimeout(journalEcrire, 300);
+}
+function journalEcrire(){
+  JOURNAL.minuteur = null;
+  try { localStorage.setItem('mascotto_guide_journal', JSON.stringify(JOURNAL.lignes)); } catch(e){}
+}
+function journalTexte(){ return JOURNAL.lignes.join('\n'); }
+(function journalInit(){
+  try { const anc = JSON.parse(localStorage.getItem('mascotto_guide_journal') || '[]'); if (Array.isArray(anc)) JOURNAL.lignes = anc.slice(-JOURNAL.max); } catch(e){}
+  let nav = '?'; try { const n = performance.getEntriesByType('navigation')[0]; if (n) nav = n.type; } catch(e){}
+  JOURNAL.lignes.push('===== PAGE chargée ' + new Date().toISOString() + ' | ' + (document.getElementById('appVersionLabel') || {}).textContent + ' | navigation=' + nav + ' | mémoire=' + (navigator.deviceMemory || '?') + 'Go | ' + navigator.userAgent.slice(0, 80));
+  journalEcrire();
+  document.addEventListener('visibilitychange', ()=> journal('PAGE visibilité', document.visibilityState));
+  window.addEventListener('pagehide', ()=>{ journal('PAGE déchargée (pagehide)'); journalEcrire(); });
+  window.addEventListener('freeze', ()=>{ journal('PAGE gelée (freeze)'); journalEcrire(); });
+  window.addEventListener('error', (e)=> journal('ERREUR JS', String(e.message || e).slice(0, 160)));
+  window.addEventListener('unhandledrejection', (e)=> journal('ERREUR promesse', String(e.reason && e.reason.message || e.reason).slice(0, 160)));
+})();
 
 /* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
 function sauver(extra){
@@ -35844,6 +35890,7 @@ function preparerVoix(){
   VX.prete = (async ()=>{
     try {
       if (!window.WebAssembly || !window.AudioContext && !window.webkitAudioContext) throw new Error('pas de WebAssembly ou de Web Audio');
+      journal('PIPER préparation');
       etat('🔊 Préparation de la voix…');
       if (typeof createPiperPhonemize !== 'function') await chargerScript(PIPER.prononciateurJs);
       if (typeof ort === 'undefined') await chargerScript(PIPER.ortJs);
@@ -35864,9 +35911,11 @@ function preparerVoix(){
       etat('🔊 Chargement du modèle de voix…');
       VX.session = await ort.InferenceSession.create(modele, { executionProviders:['wasm'] });
       VX.ok = true;
+      journal('PIPER prêt');
       etat('');
       return true;
     } catch(e){
+      journal('PIPER ÉCHEC', String(e && e.message || e));
       console.warn('Voix Piper indisponible, retour à la synthèse du navigateur :', e);
       VX.ok = false; VX.raison = e && e.message ? e.message : String(e);
       etat('🔊 Voix locale indisponible (' + VX.raison.slice(0, 60) + ') : synthèse du navigateur.');
@@ -35899,41 +35948,50 @@ async function synthetiser(texte){
   return sortie.output.data;
 }
 function contexteAudio(){
-  if (!VX.audio){ const AC = window.AudioContext || window.webkitAudioContext; VX.audio = new AC(); }
-  if (VX.audio.state === 'suspended'){ try { VX.audio.resume(); } catch(e){} }
+  if (!VX.audio){
+    const AC = window.AudioContext || window.webkitAudioContext; VX.audio = new AC();
+    journal('AUDIO contexte créé', { etat:VX.audio.state, hz:VX.audio.sampleRate });
+    VX.audio.onstatechange = ()=> journal('AUDIO contexte état', VX.audio.state);
+  }
+  if (VX.audio.state === 'suspended'){ journal('AUDIO resume() demandé'); try { VX.audio.resume(); } catch(e){} }
   return VX.audio;
 }
-function jouerPcm(pcm, jeton){
+function jouerPcm(pcm, jeton, n){
   return new Promise((resolve)=>{
-    if (!pcm || !pcm.length || VX.jeton !== jeton){ resolve(); return; }
+    if (!pcm || !pcm.length || VX.jeton !== jeton){ journal('VOIX lecture sautée', { n, vide:!pcm || !pcm.length, jeton, actuel:VX.jeton }); resolve(); return; }
     const ctx = contexteAudio();
     const buf = ctx.createBuffer(1, pcm.length, VX.config.audio.sample_rate);
     buf.getChannelData(0).set(pcm);
     const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
     VX.enCours = src;
-    let fini = false; const terminer = ()=>{ if (fini) return; fini = true; if (VX.enCours === src) VX.enCours = null; resolve(); };
-    src.onended = terminer;
-    setTimeout(terminer, buf.duration * 1000 + 300);   // au cas où onended ne vient pas
-    try { src.start(); } catch(e){ terminer(); }
+    const tDebut = Date.now(); const prevu = Math.round(buf.duration * 1000);
+    let fini = false;
+    const terminer = (pourquoi)=>{ if (fini) return; fini = true; journal('VOIX lecture fin', { n, pourquoi, ms:Date.now() - tDebut, prevu, ctx:ctx.state }); if (VX.enCours === src) VX.enCours = null; resolve(); };
+    src.onended = ()=> terminer('onended');
+    setTimeout(()=> terminer('délai de garde'), buf.duration * 1000 + 300);   // au cas où onended ne vient pas
+    journal('VOIX lecture début', { n, prevu, ctx:ctx.state, hz:VX.config.audio.sample_rate });
+    try { src.start(); } catch(e){ journal('VOIX start() ERREUR', String(e && e.message || e)); terminer('erreur start'); }
   });
 }
 function couperVoix(){
   VX.jeton = (VX.jeton || 0) + 1;
-  if (VX.enCours){ try { VX.enCours.stop(); } catch(e){} VX.enCours = null; }
+  if (VX.enCours){ journal('VOIX COUPÉE en pleine lecture', { jeton:VX.jeton }); try { VX.enCours.stop(); } catch(e){} VX.enCours = null; }
   try { speechSynthesis.cancel(); } catch(e){}
 }
 /* Lecture par Piper : chaque phrase est synthétisée pendant que la précédente se joue. */
 async function parlerPiper(texte){
   const jeton = VX.jeton = (VX.jeton || 0) + 1;
   const phrases = phrasesDeLecture(texte);
+  journal('VOIX piper', { phrases:phrases.length, jeton });
   etat('🔊 …');
-  let prochaine = synthetiser(phrases[0]).catch(()=> null);
+  const synthJ = (ph, n)=>{ const t = Date.now(); return synthetiser(ph).then(pcm=>{ journal('VOIX synthèse ok', { n, ms:Date.now() - t, echantillons:pcm ? pcm.length : 0 }); return pcm; }).catch(e=>{ journal('VOIX synthèse ERREUR', { n, err:String(e && e.message || e) }); return null; }); };
+  let prochaine = synthJ(phrases[0], 1);
   for (let i = 0; i < phrases.length; i++){
     const pcm = await prochaine;
-    if (VX.jeton !== jeton) return;
-    prochaine = (i + 1 < phrases.length) ? synthetiser(phrases[i + 1]).catch(()=> null) : null;
-    await jouerPcm(pcm, jeton);
-    if (VX.jeton !== jeton) return;
+    if (VX.jeton !== jeton){ journal('VOIX abandonnée avant lecture', { n:i + 1, jeton, actuel:VX.jeton }); return; }
+    prochaine = (i + 1 < phrases.length) ? synthJ(phrases[i + 1], i + 2) : null;
+    await jouerPcm(pcm, jeton, i + 1);
+    if (VX.jeton !== jeton){ journal('VOIX abandonnée après lecture', { n:i + 1, jeton, actuel:VX.jeton }); return; }
   }
 }
 function phrasesDeLecture(texte){
@@ -35944,20 +36002,24 @@ function phrasesDeLecture(texte){
 
 function parler(texte){
   $('gvQuestion').textContent = texte;
+  journal('VOIX demandée', { car:String(texte).length, texte:String(texte).slice(0, 70) });
   arreterEcoute();
-  return new Promise(async (resolve)=>{
-    if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
+  return new Promise(async (resolveBrut)=>{
+    const tDebut = Date.now();
+    const resolve = ()=>{ journal('VOIX terminée', { ms:Date.now() - tDebut }); resolveBrut(); };
+    if (GV.muet){ journal('VOIX muette (rejeu)'); resolve(); return; }   // rejeu silencieux d'une reprise
     couperVoix();
     /* v578 : juste après le micro, Android garde le son pour lui un court moment — une voix jouée
        par la page (Piper) y perdait son début, voire toute la phrase. On attend qu'il le rende. */
     const depuisMicro = Date.now() - (GV.finEcoute || 0);
-    if (depuisMicro < 900) await new Promise(r=> setTimeout(r, 900 - depuisMicro));
+    if (depuisMicro < 900){ journal('VOIX attend le micro', { ms:900 - depuisMicro }); await new Promise(r=> setTimeout(r, 900 - depuisMicro)); }
     const piper = await preparerVoix();
+    journal('VOIX moteur', piper ? 'piper' : 'navigateur');
     if (piper){
-      try { await parlerPiper(texte); } catch(e){ console.warn('lecture Piper', e); }
+      try { await parlerPiper(texte); } catch(e){ journal('VOIX ERREUR piper', String(e && e.message || e)); console.warn('lecture Piper', e); }
       resolve(); return;
     }
-    if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
+    if (GV.sansVoix || !('speechSynthesis' in window)){ journal('VOIX aucune'); setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
     const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
     /* v567 : secours — synthèse du navigateur, un long texte découpé en phrases mises d'un coup dans la file. */
@@ -35971,8 +36033,9 @@ function parler(texte){
       const u = new SpeechSynthesisUtterance(m);
       u.lang = 'fr-FR'; u.rate = 1.05;
       if (voix) u.voice = voix;
-      u.onend = unDeMoins; u.onerror = unDeMoins;
-      try { speechSynthesis.speak(u); } catch(e){ unDeMoins(); }
+      u.onstart = ()=> journal('VOIX navigateur début', m.slice(0, 40));
+      u.onend = ()=>{ journal('VOIX navigateur fin'); unDeMoins(); }; u.onerror = (e)=>{ journal('VOIX navigateur erreur', e.error); unDeMoins(); };
+      try { speechSynthesis.speak(u); } catch(e){ journal('VOIX navigateur speak() a échoué'); unDeMoins(); }
     });
   });
 }
@@ -35990,22 +36053,31 @@ function morceauxDeLecture(texte){
 function Reco(){ return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
 function arreterEcoute(){
   GV.ecouteVoulue = false;
-  if (GV.reco){ try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; GV.finEcoute = Date.now(); }
+  if (GV.reco){ journal('MICRO abort (arrêt demandé par le guide)'); try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; GV.finEcoute = Date.now(); }
 }
 /* Lance une écoute et résout le texte entendu — ou null si rien n'a été compris. */
 function ecouterUneFois(){
   return new Promise((resolve)=>{
     const R = Reco();
-    if (!R || GV.sansMicro){ resolve(null); return; }
+    if (!R || GV.sansMicro){ journal('MICRO indisponible', { api:!!R, sansMicro:GV.sansMicro }); resolve(null); return; }
     let r;
-    try { r = new R(); } catch(e){ GV.sansMicro = true; resolve(null); return; }
+    try { r = new R(); } catch(e){ journal('MICRO création ERREUR', String(e)); GV.sansMicro = true; resolve(null); return; }
     GV.reco = r;
+    const tMicro = Date.now();
+    r.onstart = ()=> journal('MICRO onstart');
+    r.onaudiostart = ()=> journal('MICRO onaudiostart (capture ouverte)');
+    r.onsoundstart = ()=> journal('MICRO onsoundstart');
+    r.onspeechstart = ()=> journal('MICRO onspeechstart (parole détectée)');
+    r.onspeechend = ()=> journal('MICRO onspeechend');
+    r.onsoundend = ()=> journal('MICRO onsoundend');
+    r.onaudioend = ()=> journal('MICRO onaudioend (capture fermée)');
     /* v578 : écoute CONTINUE — une session reste ouverte tant qu'on ne répond pas, au lieu d'une
        écoute courte relancée toutes les 3 secondes (Android bipe à chaque démarrage) */
     r.lang = 'fr-FR'; r.interimResults = false; r.maxAlternatives = 3; r.continuous = true;
     let repondu = false;
-    const fin = (texte)=>{
+    const fin = (texte, pourquoi)=>{
       if (repondu) return; repondu = true;
+      journal('MICRO fin', { pourquoi, ms:Date.now() - tMicro, texte:texte ? texte[0] : null });
       try { r.onend = null; r.onresult = null; r.onerror = null; r.abort(); } catch(e){}
       if (GV.reco === r) GV.reco = null;
       GV.finEcoute = Date.now();
@@ -36013,18 +36085,21 @@ function ecouterUneFois(){
     };
     r.onresult = (e)=>{
       const res = e.results[e.results.length - 1];
+      journal('MICRO onresult', { nb:e.results.length, final:!!(res && res.isFinal), texte:res && res[0] ? res[0].transcript : '' });
       if (!res || !res.isFinal) return;
       const alts = [];
       for (let j = 0; j < res.length; j++) alts.push(res[j].transcript);
-      fin(alts.length ? alts : null);
+      fin(alts.length ? alts : null, 'résultat');
     };
     r.onerror = (e)=>{
+      journal('MICRO onerror', e.error || 'inconnue');
       GV.derniereErreurMicro = e.error || 'inconnue';   // v577 : gardée pour l'afficher si ça boucle
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){ GV.sansMicro = true; etat('🎤 Micro refusé : réponds avec les boutons.'); }
-      fin(null);
+      fin(null, 'erreur ' + (e.error || '?'));
     };
-    r.onend = ()=> fin(null);
-    try { r.start(); etat('🎤 Je t\'écoute…'); } catch(e){ fin(null); }
+    r.onend = ()=> fin(null, 'onend (Chrome a arrêté tout seul)');
+    journal('MICRO start()');
+    try { r.start(); etat('🎤 Je t\'écoute…'); } catch(e){ journal('MICRO start() ERREUR', String(e)); fin(null, 'start() a échoué'); }
   });
 }
 
@@ -36044,14 +36119,15 @@ async function demander(opts){
   return reponse;
 }
 function attendreEntree(){ return new Promise((resolve)=>{ GV.resoudre = resolve; }); }
-function livrer(v){ const r = GV.resoudre; GV.resoudre = null; if (r) r(v); }
+function livrer(v){ journal('RÉPONSE', v && v.tap ? { tap:v.tap.id || (v.tap.item && v.tap.item.label) } : v && v.voix ? { voix:v.voix[0] } : v && v.tape ? { tape:v.tape } : v && v.signal ? { signal:v.signal } : v); const r = GV.resoudre; GV.resoudre = null; if (r) r(v); }
 
 async function boucleEcoute(){
   /* tourne tant qu'une réponse est attendue ; chaque écoute rend au plus une phrase */
   GV.ecouteVoulue = true;
-  let echecs = 0;
+  let echecs = 0, tour = 0;
   while (GV.ecouteVoulue && GV.resoudre){
     const debut = Date.now();
+    journal('BOUCLE écoute', { tour:++tour });
     GV.derniereErreurMicro = '';
     const alts = await ecouterUneFois();
     if (!GV.ecouteVoulue || !GV.resoudre) return;
@@ -36060,7 +36136,7 @@ async function boucleEcoute(){
     /* v577 : une écoute qui meurt tout de suite ne doit pas être relancée en boucle (bips sans
        fin). Au troisième échec immédiat on s'arrête et on affiche l'erreur de Chrome. */
     if (Date.now() - debut < 1500){
-      if (++echecs >= 3){ GV.ecouteVoulue = false; etat('🎤 Le micro ne répond pas (erreur : ' + (GV.derniereErreurMicro || 'aucune') + '). Appuie sur 🎤 pour réessayer.'); return; }
+      if (++echecs >= 3){ journal('BOUCLE arrêtée (3 échecs immédiats)'); GV.ecouteVoulue = false; etat('🎤 Le micro ne répond pas (erreur : ' + (GV.derniereErreurMicro || 'aucune') + '). Appuie sur 🎤 pour réessayer.'); return; }
       await new Promise(r=> setTimeout(r, 1000));
       continue;
     }
@@ -36099,6 +36175,7 @@ async function demanderEnDirect(opts){
       $('gvLibreOk').onclick = ()=>{ const t = $('gvLibre').value.trim(); if (t) livrer({ tape:t }); };
     }
     const attente = attendreEntree();   // posée AVANT la lecture : un appui pendant qu'il parle compte
+    journal('QUESTION', { etape:GV.courante && GV.courante.id, type:choix ? 'choix' : liste ? 'liste' : opts.libre ? 'dictée' : opts.nombre ? 'nombre' : opts.heure ? 'heure' : '?' });
     await parler(question);
     if (GV.resoudre) boucleEcoute();
     const entree = await attente;
@@ -36295,6 +36372,22 @@ async function dicter(texte, speciaux, ponct){ return demander({ texte, libre:tr
 async function dansListe(texte, liste, speciaux){ return demander({ texte, liste, speciaux: speciaux || null }); }
 
 /* ---------- Boutons de la fenêtre ---------- */
+$('gvJournalBtn').addEventListener('click', ()=>{
+  const w = $('gvJournalWrap'); const ouvert = w.style.display !== 'none';
+  if (ouvert){ w.style.display = 'none'; return; }
+  journalEcrire(); $('gvJournalTexte').value = journalTexte(); w.style.display = 'block';
+  journal('JOURNAL ouvert');
+});
+$('gvJournalFermer').addEventListener('click', ()=>{ $('gvJournalWrap').style.display = 'none'; });
+$('gvJournalEffacer').addEventListener('click', ()=>{ JOURNAL.lignes = []; journal('JOURNAL effacé'); journalEcrire(); $('gvJournalTexte').value = journalTexte(); });
+$('gvJournalCopier').addEventListener('click', async ()=>{
+  const t = journalTexte();
+  let ok = false;
+  try { await navigator.clipboard.writeText(t); ok = true; } catch(e){}
+  if (!ok){ try { const ta = $('gvJournalTexte'); ta.removeAttribute('readonly'); ta.focus(); ta.select(); ok = document.execCommand('copy'); ta.setAttribute('readonly', ''); } catch(e){} }
+  $('gvJournalCopier').textContent = ok ? 'Copié ✓' : 'Sélectionne le texte et copie-le';
+  setTimeout(()=>{ $('gvJournalCopier').textContent = 'Copier'; }, 2500);
+});
 $('gvQuitterBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:QUITTER }); else arreterGuide(); });
 $('gvRetourBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:RETOUR }); });
 $('gvSommaireBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:SOMMAIRE }); });
@@ -36959,6 +37052,7 @@ async function moteur(){
 }
 
 function arreterGuide(){
+  journal('GUIDE arrêté'); journalEcrire();
   GV.actif = false; arreterEcoute();
   couperVoix();
   /* Une question encore en attente reçoit « quitter » : le moteur se termine proprement au lieu
@@ -36968,6 +37062,7 @@ function arreterGuide(){
   masquer();
 }
 async function lancerGuide(){
+  journal('GUIDE lancé', { dejaActif:GV.actif });
   if (GV.actif){ afficher(); return; }
   GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false; GV.muet = false; GV.dialogueNeuf = false; GV.autos = new Set();
   GV.phase = 'creation'; GV.repriseLat = null; GV.repriseLng = null;
