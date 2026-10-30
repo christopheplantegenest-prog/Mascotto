@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v568</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v569</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v569 — LA RECONNAISSANCE VOSK dans la page (Kaldi en WebAssembly + modèle français small,
+     46 Mo téléchargés une fois) ; celle du navigateur ne sert plus que de secours.
      v568 — LA VOIX PIPER dans la page (prononciateur WebAssembly + ONNX Runtime + voix
      française siwis, 63 Mo téléchargés une fois) ; la synthèse du navigateur ne sert plus
      que de secours.
@@ -35976,14 +35978,95 @@ function morceauxDeLecture(texte){
   return out.length ? out : [texte];
 }
 
-/* ---------- Écouter ---------- */
+/* ---------- Écouter ----------
+   v569 — LA RECONNAISSANCE VOSK, DANS LA PAGE (demandé le 30/10 : celle de Chrome obligeait à
+   répéter cinq ou six fois). Vosk (Kaldi compilé en WebAssembly, licence Apache) tourne dans
+   un Web Worker ; le modèle français « small » (~46 Mo) est téléchargé une fois depuis le site
+   de démonstration de vosk-browser (GitHub Pages, donc accessible depuis une autre page) et
+   rangé dans le cache « mascotto-voix ». Le micro est ouvert UNE fois pour toute la session du
+   guide ; entre deux questions on cesse simplement de lui transmettre le son.
+   Si Vosk ne se charge pas, on retombe sur la reconnaissance du navigateur. */
+const VOSK = {
+  js: 'https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js',
+  modele: 'https://ccoreilly.github.io/vosk-browser/models/vosk-model-small-fr-pguyot-0.3.tar.gz',
+};
+const EC = { prete:null, ok:false, modele:null, reco:null, flux:null, source:null, noeud:null, actif:false, jeton:0, surResultat:null, raison:'' };
+
+function preparerEcoute(){
+  if (EC.prete) return EC.prete;
+  EC.prete = (async ()=>{
+    try {
+      if (!window.WebAssembly || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('pas de WebAssembly ou de micro');
+      if (typeof Vosk === 'undefined') await chargerScript(VOSK.js);
+      const tar = await fichierEnCache(VOSK.modele, 'reconnaissance française');
+      etat('🎤 Chargement de la reconnaissance…');
+      const url = URL.createObjectURL(new Blob([tar], { type:'application/gzip' }));
+      EC.modele = await Vosk.createModel(url);
+      try { EC.modele.setLogLevel(-2); } catch(e){}
+      etat('');
+      EC.ok = true;
+      return true;
+    } catch(e){
+      console.warn('Reconnaissance Vosk indisponible, retour à celle du navigateur :', e);
+      EC.ok = false; EC.raison = e && e.message ? e.message : String(e);
+      etat('🎤 Reconnaissance locale indisponible (' + EC.raison.slice(0, 60) + ') : celle du navigateur.');
+      return false;
+    }
+  })();
+  return EC.prete;
+}
+/* Ouvre le micro (une fois) et branche le flux sur le reconnaisseur. */
+async function ouvrirMicro(){
+  if (EC.reco) return true;
+  const ctx = contexteAudio();
+  EC.flux = await navigator.mediaDevices.getUserMedia({ video:false, audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+  EC.reco = new EC.modele.KaldiRecognizer(ctx.sampleRate);
+  EC.reco.on('result', (m)=>{ if (EC.actif && EC.surResultat) EC.surResultat((m.result && m.result.text) || ''); });
+  EC.reco.on('partialresult', (m)=>{ const p = m.result && m.result.partial; if (EC.actif && p) etat('🎤 ' + p); });
+  EC.source = ctx.createMediaStreamSource(EC.flux);
+  EC.noeud = ctx.createScriptProcessor(4096, 1, 1);
+  EC.noeud.onaudioprocess = (ev)=>{ if (EC.actif){ try { EC.reco.acceptWaveform(ev.inputBuffer); } catch(e){} } };
+  EC.source.connect(EC.noeud);
+  EC.noeud.connect(ctx.destination);   // sans sortie, Chrome n'appelle pas onaudioprocess (le nœud ne produit aucun son)
+  return true;
+}
+function fermerMicro(){
+  EC.actif = false; EC.surResultat = null;
+  try { if (EC.noeud){ EC.noeud.disconnect(); EC.noeud.onaudioprocess = null; } } catch(e){}
+  try { if (EC.source) EC.source.disconnect(); } catch(e){}
+  try { if (EC.flux) EC.flux.getTracks().forEach(t=> t.stop()); } catch(e){}
+  try { if (EC.reco) EC.reco.remove(); } catch(e){}
+  EC.noeud = null; EC.source = null; EC.flux = null; EC.reco = null;
+}
+
 function Reco(){ return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
 function arreterEcoute(){
   GV.ecouteVoulue = false;
+  if (EC.actif){ EC.actif = false; EC.surResultat = null; EC.jeton++; try { EC.reco.retrieveFinalResult(); } catch(e){} }
   if (GV.reco){ try { GV.reco.onend = null; GV.reco.abort(); } catch(e){} GV.reco = null; }
 }
 /* Lance une écoute et résout le texte entendu — ou null si rien n'a été compris. */
-function ecouterUneFois(){
+async function ecouterUneFois(){
+  if (GV.sansMicro) return null;
+  const vosk = await preparerEcoute();
+  if (vosk) return ecouterVosk();
+  return ecouterNavigateur();
+}
+function ecouterVosk(){
+  return new Promise(async (resolve)=>{
+    try { await ouvrirMicro(); }
+    catch(e){ GV.sansMicro = true; etat('🎤 Micro refusé : réponds avec les boutons.'); resolve(null); return; }
+    const jeton = ++EC.jeton;
+    let repondu = false;
+    const fin = (texte)=>{ if (repondu) return; repondu = true; clearTimeout(garde); if (EC.jeton === jeton){ EC.actif = false; EC.surResultat = null; } resolve(texte); };
+    EC.surResultat = (texte)=>{ const t = String(texte || '').trim(); if (t) fin([t]); else fin(null); };
+    /* au bout d'un moment sans rien, on rend la main à la boucle (qui relance aussitôt) */
+    const garde = setTimeout(()=> fin(null), 20000);
+    EC.actif = true;
+    etat('🎤 Je t\'écoute…');
+  });
+}
+function ecouterNavigateur(){
   return new Promise((resolve)=>{
     const R = Reco();
     if (!R || GV.sansMicro){ resolve(null); return; }
@@ -36927,7 +37010,7 @@ async function moteur(){
 
 function arreterGuide(){
   GV.actif = false; arreterEcoute();
-  couperVoix();
+  couperVoix(); fermerMicro();
   /* Une question encore en attente reçoit « quitter » : le moteur se termine proprement au lieu
      de rester suspendu, et ne risque pas d'attraper les réponses d'un guide relancé ensuite. */
   if (GV.resoudre) livrer({ signal:QUITTER });
@@ -36943,7 +37026,7 @@ async function lancerGuide(){
   garderEcranAllume();
   try { contexteAudio(); } catch(e){}   // v568 : Web Audio doit être créé dans le geste de l'utilisateur (ce tap)
   preparerVoix();                        // v568 : la voix Piper se prépare pendant les premières questions
-  if (!Reco()) etat('Pas de reconnaissance vocale ici (Chrome conseillé) : réponds avec les boutons.');
+  preparerEcoute();                      // v569 : la reconnaissance Vosk aussi
   try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
   const sauve = sauvegardeLue();
   if (sauve && Object.keys(sauve.journal || {}).some(k=> (sauve.journal[k] || []).length)){
