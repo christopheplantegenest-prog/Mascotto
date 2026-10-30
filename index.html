@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v574</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v575</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v575 — bouton 🔊 : « voix dans la page » (Piper) ou « voix du téléphone » (moteur Android, ex.
+     SherpaTTS) — en voix du téléphone la page ne charge plus rien, donc plus de rechargements.
      v574 — le clavier est fermé pendant que le guide parle (Sayboard lâche le micro, le son revient),
      rouvert ensuite ; la reprise du contexte audio est attendue avant de jouer.
      v573 — mode clavier vocal : le champ reste affiché et en focus entre les questions (sinon
@@ -35651,6 +35653,7 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
       <button type="button" class="btn-capture" id="gvLibreOk" style="flex:0 0 auto; padding:10px 14px;">OK</button>
     </div>
     <div style="display:flex; gap:6px; margin-top:12px;">
+      <button type="button" class="btn-secondary" id="gvVoixBtn" style="flex:1;" title="Voix : page ou téléphone">🔊</button>
       <button type="button" class="btn-secondary" id="gvMicroBtn" style="flex:1;">🎤</button>
       <button type="button" class="btn-secondary" id="gvPauseBtn" style="flex:1;">⏸ Pause</button>
       <button type="button" class="btn-secondary" id="gvRetourBtn" style="flex:1;">↩ Retour</button>
@@ -35661,7 +35664,7 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 <script>
 (function(){
 'use strict';
-const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set(), modeEcoute:'clavier' };
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set(), modeEcoute:'clavier', modeVoix:'page' };
 const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
 
 /* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
@@ -35995,14 +35998,18 @@ function parler(texte){
       resolveOrigine();
     };
     couperVoix();
-    const piper = await preparerVoix();
+    /* v575 : « voix du téléphone » (moteur Android, ex. SherpaTTS) = rien à charger dans la page */
+    const piper = GV.modeVoix === 'page' ? await preparerVoix() : false;
     if (piper){
       try { await parlerPiper(texte); } catch(e){ console.warn('lecture Piper', e); }
       resolve(); return;
     }
     if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
-    const voix = (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || (speechSynthesis.getVoices() || []).find(v=> /^fr/i.test(v.lang));
+    const toutes = speechSynthesis.getVoices() || [];
+    /* v575 : une voix Piper installée sur le téléphone (SherpaTTS) passe en premier ; sinon une voix
+       française quelconque ; sinon on laisse le moteur préféré d'Android choisir (lang = fr-FR) */
+    const voix = toutes.find(v=> /sherpa|piper|siwis|upmc|tom/i.test(v.name) && /^fr/i.test(v.lang)) || toutes.find(v=> /^fr/i.test(v.lang) && /google|fr-fr/i.test(v.name + v.lang)) || toutes.find(v=> /^fr/i.test(v.lang));
     /* v567 : secours — synthèse du navigateur, un long texte découpé en phrases mises d'un coup dans la file. */
     const morceaux = morceauxDeLecture(texte);
     let restants = morceaux.length, fini = false;
@@ -36420,6 +36427,15 @@ $('gvRetourBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signa
 $('gvSommaireBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:SOMMAIRE }); });
 $('gvPauseBtn').addEventListener('click', ()=>{ if (GV.resoudre && !GV.enPause) livrer({ voix:['pause'] }); else if (GV.enPause) livrer({ tap:{ id:'reprendre' } }); });
 /* v571 : le bouton bascule entre « clavier vocal » (⌨️, par défaut) et « micro du navigateur » (🎤) */
+/* v575 : le bouton 🔊 bascule entre « voix dans la page » (Piper, 28 Mo en mémoire) et « voix du téléphone » (moteur Android) */
+function majBoutonVoix(){ $('gvVoixBtn').textContent = GV.modeVoix === 'page' ? '🔊 Page' : '🔊 Tél.'; $('gvVoixBtn').title = GV.modeVoix === 'page' ? 'Voix Piper dans la page — appuie pour utiliser la voix du téléphone' : 'Voix du téléphone — appuie pour utiliser la voix Piper dans la page'; }
+$('gvVoixBtn').addEventListener('click', ()=>{
+  GV.modeVoix = GV.modeVoix === 'page' ? 'telephone' : 'page';
+  try { localStorage.setItem('mascotto_guide_voix', GV.modeVoix); } catch(e){}
+  majBoutonVoix(); couperVoix();
+  if (GV.modeVoix === 'page') preparerVoix();
+  etat(GV.modeVoix === 'page' ? '🔊 Voix dans la page.' : '🔊 Voix du téléphone (moteur réglé dans Android → Synthèse vocale).');
+});
 function majBoutonMicro(){ $('gvMicroBtn').textContent = GV.modeEcoute === 'clavier' ? '⌨️' : '🎤'; $('gvMicroBtn').title = GV.modeEcoute === 'clavier' ? 'Clavier vocal — appuie pour passer au micro du navigateur' : 'Micro du navigateur — appuie pour passer au clavier vocal'; }
 $('gvMicroBtn').addEventListener('click', ()=>{
   GV.modeEcoute = GV.modeEcoute === 'clavier' ? 'navigateur' : 'clavier';
@@ -37101,10 +37117,11 @@ async function lancerGuide(){
   GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
   afficher(); viderUI();
   try { GV.modeEcoute = localStorage.getItem('mascotto_guide_ecoute') || 'clavier'; } catch(e){ GV.modeEcoute = 'clavier'; }
-  majBoutonMicro();
+  try { GV.modeVoix = localStorage.getItem('mascotto_guide_voix') || 'page'; } catch(e){ GV.modeVoix = 'page'; }
+  majBoutonMicro(); majBoutonVoix();
   garderEcranAllume();
   try { contexteAudio(); } catch(e){}   // v568 : Web Audio doit être créé dans le geste de l'utilisateur (ce tap)
-  preparerVoix().then(()=> preparerEcoute());   // v568/v569 : la voix, PUIS la reconnaissance (v570 : jamais les deux à la fois)
+  if (GV.modeVoix === 'page') preparerVoix();   // v568 : la voix Piper se prépare pendant les premières questions (v575 : seulement en « voix dans la page »)
   try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
   const sauve = sauvegardeLue();
   if (sauve && Object.keys(sauve.journal || {}).some(k=> (sauve.journal[k] || []).length)){
