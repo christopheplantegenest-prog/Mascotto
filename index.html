@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v570</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v571</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,9 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v571 — ÉCOUTE PAR CLAVIER VOCAL (appli Android type Sayboard) : Vosk retiré de l'onglet, le
+     champ texte est montré à chaque question, prend le focus et se valide seul ; ce qu'il reçoit
+     est traité comme de la parole. Le bouton ⌨️/🎤 rebascule sur le micro du navigateur.
      v570 — mémoire : voix « low » (28 Mo), téléchargements écrits en flux dans le cache,
      chargements l'un après l'autre, modèle Vosk lu par son worker depuis le cache.
      v569 — LA RECONNAISSANCE VOSK dans la page (Kaldi en WebAssembly + modèle français small,
@@ -35652,7 +35655,7 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 <script>
 (function(){
 'use strict';
-const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set() };
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null, dialogueNeuf:false, autos:new Set(), modeEcoute:'clavier' };
 const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
 
 /* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
@@ -35758,7 +35761,23 @@ function etat(t){ $('gvEtat').textContent = t || ''; }
 function viderUI(){
   $('gvChoix').innerHTML = '';
   $('gvListeWrap').style.display = 'none'; $('gvListe').innerHTML = ''; $('gvListeFiltre').value = '';
-  $('gvLibreWrap').style.display = 'none'; $('gvLibre').value = '';
+  $('gvLibreWrap').style.display = 'none'; $('gvLibre').value = ''; clearTimeout($('gvLibre')._minuteur);
+}
+/* v571 — LE CHAMP TEXTE, PENSÉ POUR UN CLAVIER VOCAL : il est montré à CHAQUE question, prend le
+   focus pour que le clavier vocal y tape, et se valide tout seul 1,5 s après la dernière lettre
+   reçue. Ce qui arrive ainsi est traité comme de la PAROLE (commandes, ponctuation dictée,
+   « garde »…) ; seul le bouton OK (ou Entrée) livre le texte tel quel, comme une frappe. */
+function montrerChamp(valeur, surDictee){
+  const champ = $('gvLibre');
+  $('gvLibreWrap').style.display = 'flex';
+  champ.value = valeur || '';
+  champ.onkeydown = (e)=>{ if (e.key === 'Enter'){ e.preventDefault(); $('gvLibreOk').click(); } };
+  $('gvLibreOk').onclick = ()=>{ clearTimeout(champ._minuteur); const t = champ.value.trim(); if (t) livrer({ tape:t }); };
+  champ.oninput = ()=>{
+    clearTimeout(champ._minuteur);
+    champ._minuteur = setTimeout(()=>{ const t = champ.value.trim(); if (t && GV.resoudre) (surDictee || ((x)=> livrer({ voix:[x] })))(t); }, 1500);
+  };
+  if (GV.modeEcoute === 'clavier'){ try { champ.focus({ preventScroll:true }); } catch(e){} }
 }
 function boutonChoix(label, action, principal){
   const b = document.createElement('button');
@@ -35994,12 +36013,14 @@ function morceauxDeLecture(texte){
    guide ; entre deux questions on cesse simplement de lui transmettre le son.
    Si Vosk ne se charge pas, on retombe sur la reconnaissance du navigateur. */
 const VOSK = {
+  enPage: false,   // v571 : DÉSACTIVÉ — charger le modèle dans l'onglet faisait tomber la page sur 2 Go de mémoire ; on dicte avec un clavier vocal (appli Android), hors de Chrome
   js: 'https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js',
   modele: 'https://ccoreilly.github.io/vosk-browser/models/vosk-model-small-fr-pguyot-0.3.tar.gz',
 };
 const EC = { prete:null, ok:false, modele:null, reco:null, flux:null, source:null, noeud:null, actif:false, jeton:0, surResultat:null, raison:'' };
 
 function preparerEcoute(){
+  if (!VOSK.enPage) return Promise.resolve(false);
   if (EC.prete) return EC.prete;
   EC.prete = (async ()=>{
     try {
@@ -36116,6 +36137,8 @@ function attendreEntree(){ return new Promise((resolve)=>{ GV.resoudre = resolve
 function livrer(v){ const r = GV.resoudre; GV.resoudre = null; if (r) r(v); }
 
 async function boucleEcoute(){
+  /* v571 : en mode « clavier vocal », le navigateur n'écoute pas (deux applis ne partagent pas le micro) */
+  if (GV.modeEcoute === 'clavier'){ etat('⌨️ Dicte dans le champ avec ton clavier vocal.'); return; }
   /* tourne tant qu'une réponse est attendue ; chaque écoute rend au plus une phrase */
   GV.ecouteVoulue = true;
   while (GV.ecouteVoulue && GV.resoudre){
@@ -36151,11 +36174,7 @@ async function demanderEnDirect(opts){
     viderUI();
     if (choix) choix.forEach(c=> boutonChoix(c.label, ()=> livrer({ tap:{ id:c.id } })));
     if (liste) montrerListe(liste, (x)=> livrer({ tap:{ item:x } }));
-    if (opts.libre || opts.nombre || opts.heure || liste){
-      $('gvLibreWrap').style.display = 'flex';
-      $('gvLibre').onkeydown = (e)=>{ if (e.key === 'Enter') $('gvLibreOk').click(); };
-      $('gvLibreOk').onclick = ()=>{ const t = $('gvLibre').value.trim(); if (t) livrer({ tape:t }); };
-    }
+    montrerChamp('');   // v571 : à chaque question, pour le clavier vocal
     const attente = attendreEntree();   // posée AVANT la lecture : un appui pendant qu'il parle compte
     await parler(question);
     if (GV.resoudre) boucleEcoute();
@@ -36279,6 +36298,7 @@ async function confirmerDirect(texte){
     viderUI();
     boutonChoix('Oui', ()=> livrer({ tap:{ id:'oui' } }), true);
     boutonChoix('Non', ()=> livrer({ tap:{ id:'non' } }));
+    montrerChamp('');
     const attente = attendreEntree();
     await parler(texte);
     if (GV.resoudre) boucleEcoute();
@@ -36302,10 +36322,9 @@ async function confirmerDictee(texte){
     boutonChoix('✓ Garde', ()=> livrer({ tap:{ id:'garde' } }), true);
     boutonChoix('＋ Ajoute', ()=> livrer({ tap:{ id:'ajoute' } }));
     boutonChoix('↻ Redis', ()=> livrer({ tap:{ id:'redis' } }));
-    $('gvLibreWrap').style.display = 'flex';
-    $('gvLibre').value = texte;
-    $('gvLibre').onkeydown = (e)=>{ if (e.key === 'Enter') $('gvLibreOk').click(); };
-    $('gvLibreOk').onclick = ()=>{ const t = $('gvLibre').value.trim(); if (t) livrer({ tape:t }); };
+    /* le champ contient la phrase ; ce que le clavier vocal AJOUTE derrière est la commande
+       (« garde », « ajoute », « redis ») ; une phrase retouchée à la main est livrée telle quelle */
+    montrerChamp(texte, (t)=>{ if (t.startsWith(texte)){ const suite = t.slice(texte.length).trim(); if (suite) livrer({ voix:[suite] }); } else livrer({ tape:t }); });
     const attente = attendreEntree();
     await parler(q);
     if (GV.resoudre) boucleEcoute();
@@ -36329,6 +36348,7 @@ async function faireUnePause(){
   arreterEcoute();
   viderUI();
   boutonChoix('▶ Reprendre', ()=> livrer({ tap:{ id:'reprendre' } }), true);
+  montrerChamp('');
   await parler('Pause. Dis « reprendre » quand tu veux.');
   for (;;){
     const attente = attendreEntree();
@@ -36338,7 +36358,7 @@ async function faireUnePause(){
     if (e.signal){ GV.enPause = false; throw new SignalGuide(e.signal, e.cible); }
     if (e.tap) break;
     const n = norm(e.voix ? e.voix[0] : e.tape);
-    if (/reprend|reprise|continue|c est reparti|go|on y va/.test(n)) break;
+    if (/reprend|reprise|continue|c est reparti|go|on y va|ok|oui/.test(n)) break;
   }
   GV.enPause = false;
 }
@@ -36357,7 +36377,15 @@ $('gvQuitterBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ sign
 $('gvRetourBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:RETOUR }); });
 $('gvSommaireBtn').addEventListener('click', ()=>{ if (GV.resoudre) livrer({ signal:SOMMAIRE }); });
 $('gvPauseBtn').addEventListener('click', ()=>{ if (GV.resoudre && !GV.enPause) livrer({ voix:['pause'] }); else if (GV.enPause) livrer({ tap:{ id:'reprendre' } }); });
-$('gvMicroBtn').addEventListener('click', ()=>{ if (GV.resoudre && !GV.reco){ GV.sansMicro = false; boucleEcoute(); } });
+/* v571 : le bouton bascule entre « clavier vocal » (⌨️, par défaut) et « micro du navigateur » (🎤) */
+function majBoutonMicro(){ $('gvMicroBtn').textContent = GV.modeEcoute === 'clavier' ? '⌨️' : '🎤'; $('gvMicroBtn').title = GV.modeEcoute === 'clavier' ? 'Clavier vocal — appuie pour passer au micro du navigateur' : 'Micro du navigateur — appuie pour passer au clavier vocal'; }
+$('gvMicroBtn').addEventListener('click', ()=>{
+  GV.modeEcoute = GV.modeEcoute === 'clavier' ? 'navigateur' : 'clavier';
+  try { localStorage.setItem('mascotto_guide_ecoute', GV.modeEcoute); } catch(e){}
+  majBoutonMicro();
+  if (GV.modeEcoute === 'navigateur'){ if (GV.resoudre && !GV.reco){ GV.sansMicro = false; boucleEcoute(); } }
+  else { arreterEcoute(); if (GV.resoudre){ etat('⌨️ Dicte dans le champ avec ton clavier vocal.'); try { $('gvLibre').focus({ preventScroll:true }); } catch(e){} } }
+});
 
 /* =====================================================================================
    LES ÉTAPES DE LA FICHE PNJ
@@ -37030,6 +37058,8 @@ async function lancerGuide(){
   GV.phase = 'creation'; GV.repriseLat = null; GV.repriseLng = null;
   GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
   afficher(); viderUI();
+  try { GV.modeEcoute = localStorage.getItem('mascotto_guide_ecoute') || 'clavier'; } catch(e){ GV.modeEcoute = 'clavier'; }
+  majBoutonMicro();
   garderEcranAllume();
   try { contexteAudio(); } catch(e){}   // v568 : Web Audio doit être créé dans le geste de l'utilisateur (ce tap)
   preparerVoix().then(()=> preparerEcoute());   // v568/v569 : la voix, PUIS la reconnaissance (v570 : jamais les deux à la fois)
