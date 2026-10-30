@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v576</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v577</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35601,6 +35601,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v577 — l'écoute n'est plus relancée en boucle quand elle échoue tout de suite ; l'erreur de
+     Chrome est affichée.
      v576 — VERSION NETTOYÉE : on repart de la v568 (voix Piper dans la page, écoute par le micro
      de Chrome). Les essais v569 à v575 (Vosk dans la page, clavier vocal, bouton de voix,
      moteur du téléphone) sont RETIRÉS : ils faisaient tomber la page ou ne marchaient pas.
@@ -36001,6 +36003,7 @@ function ecouterUneFois(){
       fin(alts.length ? alts : null);
     };
     r.onerror = (e)=>{
+      GV.derniereErreurMicro = e.error || 'inconnue';   // v577 : gardée pour l'afficher si ça boucle
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){ GV.sansMicro = true; etat('🎤 Micro refusé : réponds avec les boutons.'); }
       fin(null);
     };
@@ -36030,11 +36033,22 @@ function livrer(v){ const r = GV.resoudre; GV.resoudre = null; if (r) r(v); }
 async function boucleEcoute(){
   /* tourne tant qu'une réponse est attendue ; chaque écoute rend au plus une phrase */
   GV.ecouteVoulue = true;
+  let echecs = 0;
   while (GV.ecouteVoulue && GV.resoudre){
+    const debut = Date.now();
+    GV.derniereErreurMicro = '';
     const alts = await ecouterUneFois();
     if (!GV.ecouteVoulue || !GV.resoudre) return;
     if (alts && alts.length){ livrer({ voix: alts }); return; }
-    if (GV.sansMicro){ etat('Réponds avec les boutons ou le clavier.'); return; }
+    if (GV.sansMicro){ etat('Réponds avec les boutons ou le clavier.' + (GV.derniereErreurMicro ? ' (erreur : ' + GV.derniereErreurMicro + ')' : '')); return; }
+    /* v577 : une écoute qui meurt tout de suite ne doit pas être relancée en boucle (bips sans
+       fin). Au troisième échec immédiat on s'arrête et on affiche l'erreur de Chrome. */
+    if (Date.now() - debut < 1500){
+      if (++echecs >= 3){ GV.ecouteVoulue = false; etat('🎤 Le micro ne répond pas (erreur : ' + (GV.derniereErreurMicro || 'aucune') + '). Appuie sur 🎤 pour réessayer.'); return; }
+      await new Promise(r=> setTimeout(r, 1000));
+      continue;
+    }
+    echecs = 0;
     await new Promise(r=> setTimeout(r, 250));
   }
 }
