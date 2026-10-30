@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v563</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v564</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35593,6 +35593,9 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 </script>
 <!-- ===================================================================================
      v563 — LE GUIDE VOCAL DE CRÉATION (cadré en vocal le 30/10)
+     v564 — reprise automatique après une coupure (journal des réponses en localStorage, rejoué
+     en silence), ponctuation dictée ou devinée, « ajoute » pour allonger une phrase, écran
+     maintenu allumé (Wake Lock), mains libres avant tout.
      Un MOTEUR générique (parler, écouter, comprendre un choix, « pause », « retour »,
      « sommaire », « commence par ») et un SCÉNARIO par partie de l'éditeur. Seul le
      scénario de la fiche PNJ existe pour l'instant ; objets et quêtes viendront comme
@@ -35634,7 +35637,48 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
 <script>
 (function(){
 'use strict';
-const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[] };
+const GV = { actif:false, enPause:false, ecouteVoulue:false, sansMicro:false, sansVoix:false, muet:false, reco:null, resoudre:null, journal:{}, replay:0, courante:null, variante:false, manques:[], humeur:'', aCreer:[], phase:'creation', repriseLat:null, repriseLng:null, verrou:null };
+const CLE_SAUVEGARDE = 'mascotto_guide_vocal';
+
+/* ---------- v564 : la sauvegarde continue, pour reprendre après un appel ou un rechargement ---------- */
+function sauver(extra){
+  if (!GV.actif || !GV.courante || String(GV.courante.id).startsWith('__')) return;
+  try {
+    const fait = {}; GV.etapes.forEach(e=>{ fait[e.id] = !!e.fait; });
+    const d = Object.assign({ v:1, quand:Date.now(), journal:GV.journal, fait, courante:GV.courante ? GV.courante.id : null,
+      nom:(V('editName') || {}).value || '', phase:GV.phase, editingId:editingId || null, lat:pendingLat, lng:pendingLng }, extra || {});
+    localStorage.setItem(CLE_SAUVEGARDE, JSON.stringify(d));
+  } catch(e){}
+}
+function sauvegardeLue(){
+  try { const d = JSON.parse(localStorage.getItem(CLE_SAUVEGARDE) || 'null'); if (d && d.v === 1 && Date.now() - d.quand < 48 * 3600 * 1000) return d; } catch(e){}
+  return null;
+}
+function effacerSauvegarde(){ try { localStorage.removeItem(CLE_SAUVEGARDE); } catch(e){} }
+
+/* L'écran éteint coupe le micro de Chrome : on demande au téléphone de rester allumé. */
+async function garderEcranAllume(){
+  try { if (navigator.wakeLock && !GV.verrou){ GV.verrou = await navigator.wakeLock.request('screen'); GV.verrou.addEventListener('release', ()=>{ GV.verrou = null; }); } } catch(e){ GV.verrou = null; }
+}
+document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState === 'visible' && GV.actif) garderEcranAllume(); });
+function lacherEcran(){ try { if (GV.verrou) GV.verrou.release(); } catch(e){} GV.verrou = null; }
+
+/* ---------- v564 : ponctuation ---------- */
+function ponctuer(texte){
+  let t = String(texte || '').trim();
+  t = t.replace(/\s*points? de suspension\s*/gi, '… ').replace(/\s*point d[’' ]?interrogation\s*/gi, ' ? ').replace(/\s*point d[’' ]?exclamation\s*/gi, ' ! ')
+       .replace(/\s*virgule\s*/gi, ', ').replace(/\s*deux points\s*/gi, ' : ').replace(/\s*\bpoint\s*$/i, '.').replace(/\s+/g, ' ').trim();
+  t = t.replace(/\s+([,.])/g, '$1').replace(/([?!:])(\S)/g, '$1 $2').replace(/\.\s*$/, '.');
+  if (!/[.?!…]$/.test(t)){
+    const n = norm(t);
+    const question = /^(est ce que|qui |que |quoi|ou |quand |comment|pourquoi|combien|quel|quelle|quels|quelles|lequel|laquelle|c est qui|c est quoi|y a t il|as tu|es tu|avez vous|peux tu|veux tu|sais tu|connais tu|(tu|vous|t) (as|es|veux|sais|connais|peux|vas|aurais|pourrais|voudrais|habites|travailles|habitez|travaillez|avez|voulez|pouvez|savez|connaissez))/.test(n)
+      || / (ou pas|ou quoi|n est ce pas|ou bien)$/.test(n);
+    t += question ? ' ?' : '.';
+  }
+  /* majuscules après un point ou un point d'interrogation */
+  t = t.replace(/([.?!…])\s+([a-zà-ÿ])/g, (m, p, c)=> p + ' ' + c.toUpperCase());
+  return majuscule(t);
+}
 window.GV = GV;
 
 /* ---------- Signaux de navigation (lancés depuis une question, rattrapés par le moteur) ---------- */
@@ -35733,6 +35777,7 @@ function parler(texte){
   $('gvQuestion').textContent = texte;
   arreterEcoute();
   return new Promise((resolve)=>{
+    if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
     if (GV.sansVoix || !('speechSynthesis' in window)){ setTimeout(resolve, 150); return; }
     try { speechSynthesis.cancel(); } catch(e){}
     const u = new SpeechSynthesisUtterance(texte);
@@ -35788,8 +35833,11 @@ function ecouterUneFois(){
 async function demander(opts){
   const log = GV.journal[GV.courante.id];
   if (GV.replay < log.length){ return log[GV.replay++]; }
+  if (opts._valeur !== undefined){ const r = { texte:opts._valeur }; log.push(r); GV.replay = log.length; sauver(); return r; }   // une valeur tirée au sort, mémorisée pour le rejeu
+  if (GV.muet){ GV.muet = false; await parler('On reprend ici.'); }   // fin du rejeu : la voix revient
   const reponse = await demanderEnDirect(opts);
   log.push(reponse); GV.replay = log.length;
+  sauver();
   return reponse;
 }
 function attendreEntree(){ return new Promise((resolve)=>{ GV.resoudre = resolve; }); }
@@ -35933,10 +35981,20 @@ async function demanderEnDirect(opts){
     }
     /* --- dictée libre --- */
     if (opts.libre){
-      let texte = majuscule(brut);
-      if (entree.tape || opts.confirmerDictee === false) return { texte };
-      const ok = await confirmerDirect('J\'ai noté : « ' + texte + ' ». Je garde ?');
-      if (ok) return { texte };
+      if (opts._brut) return { texte: entree.tape ? entree.tape : brut };
+      let texte = opts.ponctuer ? ponctuer(brut) : majuscule(brut);
+      if (entree.tape) return { texte: opts.ponctuer ? ponctuer(brut) : majuscule(brut) };
+      if (opts.confirmerDictee === false) return { texte };
+      for (;;){
+        const verdict = await confirmerDictee(texte);
+        if (verdict.tape){ texte = opts.ponctuer ? ponctuer(verdict.tape) : majuscule(verdict.tape); return { texte }; }
+        if (verdict.id === 'garde') return { texte };
+        if (verdict.id === 'redis') break;
+        /* « ajoute » : on écoute la suite et on la colle à la phrase */
+        const suite = await demanderEnDirect({ texte:'Je t\'écoute pour la suite.', libre:true, confirmerDictee:false, ponctuer:false, _brut:true });
+        const sansFin = texte.replace(/\s*[.?!…]+\s*$/, '');
+        texte = opts.ponctuer ? ponctuer(sansFin + ' ' + suite.texte) : (sansFin + ' ' + suite.texte);
+      }
       question = 'D\'accord, redis-la.'; continue;
     }
     return { texte: brut };
@@ -35964,6 +36022,36 @@ async function confirmerDirect(texte){
     texte = 'Oui ou non ?';
   }
 }
+/* v564 — « Je garde, ou j'ajoute ? » : garde / ajoute / redis, et le texte est éditable au clavier. */
+async function confirmerDictee(texte){
+  let q = 'J\'ai noté : « ' + texte + ' ». Je garde, ou j\'ajoute ?';
+  for (;;){
+    viderUI();
+    boutonChoix('✓ Garde', ()=> livrer({ tap:{ id:'garde' } }), true);
+    boutonChoix('＋ Ajoute', ()=> livrer({ tap:{ id:'ajoute' } }));
+    boutonChoix('↻ Redis', ()=> livrer({ tap:{ id:'redis' } }));
+    $('gvLibreWrap').style.display = 'flex';
+    $('gvLibre').value = texte;
+    $('gvLibre').onkeydown = (e)=>{ if (e.key === 'Enter') $('gvLibreOk').click(); };
+    $('gvLibreOk').onclick = ()=>{ const t = $('gvLibre').value.trim(); if (t) livrer({ tape:t }); };
+    const attente = attendreEntree();
+    await parler(q);
+    if (GV.resoudre) boucleEcoute();
+    const e = await attente;
+    arreterEcoute();
+    if (e.signal) throw new SignalGuide(e.signal, e.cible);
+    if (e.tap) return e.tap;
+    if (e.tape) return { tape:e.tape };
+    const n = norm(e.voix[0]);
+    const cmd = commandeGlobale(n);
+    if (cmd === 'pause'){ await faireUnePause(); continue; }
+    if (cmd === 'retour') throw new SignalGuide(RETOUR);
+    if (/^(ajoute|j ajoute|rajoute|continue|la suite|et aussi|complete|allonge)/.test(n)) return { id:'ajoute' };
+    if (/^(redis|non|recommence|efface|annule|refais)/.test(n) || estNon(n)) return { id:'redis' };
+    if (estOui(n) || /^(garde|je garde|c est bon|parfait|valide|ok)/.test(n)) return { id:'garde' };
+    q = 'Dis « garde », « ajoute » ou « redis ».';
+  }
+}
 async function faireUnePause(){
   GV.enPause = true;
   arreterEcoute();
@@ -35989,7 +36077,7 @@ function lireListe(liste){
 async function dire(texte){ await parler(texte); }
 async function ouiNon(texte){ const r = await demander({ texte, choix:[{ id:'oui', label:'Oui', mots:OUI }, { id:'non', label:'Non', mots:NON }] }); return r.id === 'oui'; }
 async function choisir(texte, choix){ return (await demander({ texte, choix })).id; }
-async function dicter(texte, speciaux){ return demander({ texte, libre:true, speciaux: speciaux || null }); }
+async function dicter(texte, speciaux, ponct){ return demander({ texte, libre:true, speciaux: speciaux || null, ponctuer: ponct !== false }); }
 async function dansListe(texte, liste, speciaux){ return demander({ texte, liste, speciaux: speciaux || null }); }
 
 /* ---------- Boutons de la fenêtre ---------- */
@@ -36104,6 +36192,7 @@ async function etapeQui(){
     { id:'variante', label:'Variante', mots:['variante', 'version', 'existant', 'une variante'] }]);
   if (depart === 'variante'){
     const perso = await dansListe('De quel personnage ?', listePersonnages());
+    await attendreQue(()=> !!ficheParId(perso.item.id), 8000);
     if (editingId !== perso.item.id || !editingId){ loadForEdit(perso.item.id); showPnjSection('new'); }
     await new Promise(r=> setTimeout(r, 600));
     if (typeof poserEmpreinteFiche === 'function') poserEmpreinteFiche();   // les images arrivées entre-temps ne comptent pas comme une modification
@@ -36113,12 +36202,8 @@ async function etapeQui(){
     await dire('Nouvelle version de ' + (V('editName').value || 'ce personnage') + '. Il ne reste qu\'à dire où et quand elle apparaît. Dis « sommaire » si tu veux aussi changer autre chose.');
     return;
   }
-  if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())){
-    if (!(await ouiNon('Une fiche est ouverte. Je repars d\'une fiche vide ? Ce qui n\'est pas enregistré sera perdu.'))) throw new SignalGuide(QUITTER);
-    resetForm();
-  }
   showPnjSection('new');
-  const nom = await dicter('Comment s\'appelle-t-il ?');
+  const nom = await dicter('Comment s\'appelle-t-il ?', null, false);
   V('editName').value = nom.texte;
   const type = await choisir('C\'est quoi ? Un habitant qui parle, un marchand, un monstre, un combattant recrutable, ou un concessionnaire ?', [
     { id:'dialogue', label:'Habitant', mots:['habitant', 'qui parle', 'personnage', 'dialogue', 'un habitant', 'pnj'] },
@@ -36222,11 +36307,18 @@ async function etapeJournee(){
       }
     }
   } else {
+    if (GV.repriseLat !== null && GV.repriseLat !== undefined){
+      /* reprise après coupure : le point déjà posé est repris tel quel */
+      pendingLat = GV.repriseLat; pendingLng = GV.repriseLng; GV.repriseLat = null; GV.repriseLng = null;
+      pendingAssignedZoneId = null; pendingPieceCommune = null; pendingReserve = false; refreshPosStatusDisplay();
+    } else {
     await dire('Pose-le sur la carte avec le viseur, puis appuie sur Valider. Je reprends ensuite.');
     masquer();
     V('placeNewBtn').click();
     await attendreQue(()=> pendingLat !== null || V('placementBar').style.display === 'none', 10 * 60 * 1000);
     afficher();
+    sauver();
+    }
     if (pendingLat === null){ await dire('Pas de point posé : je le mets en réserve, tu pourras le placer plus tard.'); V('reserveBtn').click(); }
   }
 
@@ -36260,7 +36352,7 @@ function nouvelleReplique(texte){ currentDialogueSteps.push({ text:texte, choice
 async function etapeDialogue(){
   currentDialogueSteps = [{ text:'', choices:[], textVariants:[] }];
   GV.aCreer = [];
-  const prop = piocher(ACCUEILS);
+  const prop = (await demander({ _valeur: piocher(ACCUEILS) })).texte;
   const a = await dicter('Pour l\'accueil, je propose : « ' + prop + ' ». Dis « garde », ou dicte ta phrase.', [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'tres bien', 'd accord'] }]);
   currentDialogueSteps[0].text = a.special ? prop : a.texte;
   renderDialogueBuilder();
@@ -36384,7 +36476,7 @@ async function etapeCombat(){
 /* ---------- Étape « Boutique » ---------- */
 async function etapeBoutique(){
   currentShopItems = []; renderShopItemsBuilder();
-  const prop = piocher(ACCUEILS_BOUTIQUE);
+  const prop = (await demander({ _valeur: piocher(ACCUEILS_BOUTIQUE) })).texte;
   const a = await dicter('Phrase d\'accueil du marchand, je propose : « ' + prop + ' ». Dis « garde », ou dicte la tienne.', [{ id:'garde', mots:['garde', 'je garde', 'ok', 'oui', 'parfait', 'd accord'] }]);
   V('editShopPhrase').value = a.special ? prop : a.texte;
   const lo = listeObjets();
@@ -36415,7 +36507,21 @@ function texteResume(){
   if (GV.aCreer.length) parts.push('à créer : ' + GV.aCreer.join(', '));
   return parts.join('. ') + '.';
 }
+async function questionVersion(){
+  if (await ouiNon('Il est aussi ailleurs, à un autre moment ? Je crée une version.')){
+    await attendreQue(()=> !!ficheParId(editingId), 8000);
+    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
+    GV.phase = 'version';
+    GV.journal.journee = []; GV.journal.verification = [];
+    const ej = GV.etapes.find(x=> x.id === 'journee'); ej.fait = false; ej.avant = null;
+    sauver();
+    throw new SignalGuide(SOMMAIRE, 'journee');
+  }
+  effacerSauvegarde();
+  await dire('Terminé. Pour un autre personnage, relance le guide.');
+}
 async function etapeVerification(){
+  if (GV.phase === 'enregistre' && editingId){ await questionVersion(); return; }   // reprise juste après un enregistrement
   if (!lieuDefini()){ await dire('Il n\'a pas de lieu : on y revient.'); throw new SignalGuide(SOMMAIRE, 'journee'); }
   const alertes = [];
   if (recrutable() && parle() && !currentDialogueSteps.some(s=> (s.choices || []).some(c=> c && c.recruit))){
@@ -36435,15 +36541,9 @@ async function etapeVerification(){
   V('editSaveBtn').click();
   const ok = await attendreQue(()=> editingId && editingId !== avant, 25000);
   if (!ok){ if (!editingId) forcerCreation = false; await dire('L\'enregistrement n\'a pas abouti : regarde le message à l\'écran, corrige, et dis « sommaire » ou réessaie.'); throw new SignalGuide(SOMMAIRE); }
+  GV.phase = 'enregistre'; sauver();
   await dire('Enregistré.');
-  if (await ouiNon('Il est aussi ailleurs, à un autre moment ? Je crée une version.')){
-    await attendreQue(()=> !!ficheParId(editingId), 8000);
-    await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
-    GV.journal.journee = []; GV.journal.verification = [];
-    const ej = GV.etapes.find(x=> x.id === 'journee'); ej.fait = false; ej.avant = null;
-    throw new SignalGuide(SOMMAIRE, 'journee');
-  }
-  await dire('Terminé. Pour un autre personnage, relance le guide.');
+  await questionVersion();
 }
 
 GV.etapes = [
@@ -36474,6 +36574,7 @@ async function moteur(){
     try {
       await et.run();
       et.fait = true; et.avant = null;
+      sauver();
       i = prochaine(); if (i < 0) break;
     } catch(sig){
       if (!(sig instanceof SignalGuide)){ console.error(sig); await dire('Oups, le guide a eu un souci : ' + (sig && sig.message ? sig.message : 'inconnu') + '. Dis « sommaire » pour reprendre.'); GV.journal[et.id] = []; continue; }
@@ -36512,16 +36613,78 @@ function arreterGuide(){
   /* Une question encore en attente reçoit « quitter » : le moteur se termine proprement au lieu
      de rester suspendu, et ne risque pas d'attraper les réponses d'un guide relancé ensuite. */
   if (GV.resoudre) livrer({ signal:QUITTER });
+  lacherEcran();
   masquer();
 }
 async function lancerGuide(){
   if (GV.actif){ afficher(); return; }
-  GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false;
+  GV.actif = true; GV.variante = false; GV.humeur = ''; GV.manques = []; GV.aCreer = []; GV.enPause = false; GV.sansMicro = false; GV.muet = false;
+  GV.phase = 'creation'; GV.repriseLat = null; GV.repriseLng = null;
   GV.journal = {}; GV.etapes.forEach(e=>{ e.fait = false; e.avant = null; GV.journal[e.id] = []; });
   afficher(); viderUI();
+  garderEcranAllume();
   if (!Reco()) etat('Pas de reconnaissance vocale ici (Chrome conseillé) : réponds avec les boutons.');
   try { if ('speechSynthesis' in window) speechSynthesis.getVoices(); } catch(e){}
+  const sauve = sauvegardeLue();
+  if (sauve && Object.keys(sauve.journal || {}).some(k=> (sauve.journal[k] || []).length)){
+    GV.courante = { id:'__reprise__' }; GV.journal.__reprise__ = []; GV.replay = 0;
+    let oui = false;
+    try { oui = await ouiNon('Reprendre ' + (sauve.nom ? 'le personnage ' + sauve.nom : 'la création en cours') + ' là où on en était ?'); }
+    catch(e){ if (e instanceof SignalGuide && e.type === QUITTER){ arreterGuide(); return; } }
+    delete GV.journal.__reprise__;
+    if (oui){ await reprendre(sauve); return; }
+    effacerSauvegarde();
+  }
+  /* Une fiche ouverte ou modifiée serait écrasée par la création : on prévient UNE fois, ici,
+     hors journal (une question posée dans l'étape serait reposée à chaque « retour »). */
+  if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())){
+    GV.courante = { id:'__fiche__' }; GV.journal.__fiche__ = []; GV.replay = 0;
+    let ok = false;
+    try { ok = await confirmerDirect('Une fiche est ouverte. Je repars d\'une fiche vide ? Ce qui n\'est pas enregistré sera perdu.'); }
+    catch(e){ ok = false; }
+    delete GV.journal.__fiche__;
+    if (!ok){ arreterGuide(); return; }
+    resetForm();
+  }
   await parler('Guide vocal. Tu peux dire « pause », « retour » ou « sommaire » à tout moment.');
+  moteur();
+}
+/* La reprise : on remet le journal des réponses, puis le moteur rejoue chaque étape en silence
+   (les réponses sont rendues sans question) jusqu'à la première question sans réponse. */
+async function reprendre(sauve){
+  GV.journal = {}; GV.etapes.forEach(e=>{ GV.journal[e.id] = (sauve.journal && sauve.journal[e.id]) || []; e.fait = false; e.avant = null; });
+  GV.journal.verification = [];
+  GV.repriseLat = (sauve.lat !== undefined) ? sauve.lat : null; GV.repriseLng = (sauve.lng !== undefined) ? sauve.lng : null;
+  if ((sauve.phase === 'enregistre' || sauve.phase === 'version') && sauve.editingId){
+    /* la fiche existe déjà en base : on la rouvre au lieu de la refaire */
+    await parler('La fiche a déjà été enregistrée, je la rouvre.');
+    await attendreQue(()=> !!ficheParId(sauve.editingId), 8000);
+    await new Promise(r=> setTimeout(r, 1000));
+    if (!ficheParId(sauve.editingId)){ await parler('Je ne retrouve pas cette fiche. On repart de zéro.'); effacerSauvegarde(); GV.journal = {}; GV.etapes.forEach(e=>{ GV.journal[e.id] = []; }); moteur(); return; }
+    if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())) resetForm();
+    loadForEdit(sauve.editingId); showPnjSection('new');
+    await new Promise(r=> setTimeout(r, 600));
+    if (typeof poserEmpreinteFiche === 'function') poserEmpreinteFiche();
+    GV.etapes.forEach(e=>{ if (e.id !== 'journee' && e.id !== 'verification') e.fait = true; });
+    if (sauve.phase === 'version'){
+      GV.phase = 'version';
+      await creerNouvelleVersion({ images:true, dialogues:true, combat:true, boutique:true });
+    } else {
+      GV.phase = 'enregistre';
+      GV.etapes.find(e=> e.id === 'journee').fait = true;
+    }
+    GV.journal.journee = (sauve.phase === 'version') ? (sauve.journal.journee || []) : [];
+    GV.muet = !!GV.journal.journee.length;
+    moteur(); return;
+  }
+  if (editingId || (typeof ficheEstModifiee === 'function' && ficheEstModifiee())) resetForm();
+  showPnjSection('new');
+  await parler('Je remets tout en place, un instant.');
+  /* les listes du jeu (métiers, objets, fiches) doivent être arrivées avant de rejouer, sinon
+     une question sautée décalerait toutes les réponses suivantes */
+  await attendreQue(()=> typeof latestSnap !== 'undefined' && !!latestSnap, 8000);
+  await new Promise(r=> setTimeout(r, 1500));
+  GV.muet = true;
   moteur();
 }
 GV.lancer = lancerGuide;
