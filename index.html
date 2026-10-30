@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v571</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v574</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,6 +35600,12 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      ou simple discussion), le guide propose les phrases ; il dit où l'on est dans l'arbre ;
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur ; les
      longues lectures sont découpées en phrases pour ne plus être coupées.
+     v574 — le clavier est fermé pendant que le guide parle (Sayboard lâche le micro, le son revient),
+     rouvert ensuite ; la reprise du contexte audio est attendue avant de jouer.
+     v573 — mode clavier vocal : le champ reste affiché et en focus entre les questions (sinon
+     Sayboard s'arrêtait à chaque fois) ; ce qui est tapé pendant que le guide parle est ignoré.
+     v572 — le micro de Chrome n'est plus relancé en boucle quand il échoue (bips, voix coupée) :
+     trois échecs immédiats → bascule automatique sur le clavier vocal.
      v571 — ÉCOUTE PAR CLAVIER VOCAL (appli Android type Sayboard) : Vosk retiré de l'onglet, le
      champ texte est montré à chaque question, prend le focus et se valide seul ; ce qu'il reçoit
      est traité comme de la parole. Le bouton ⌨️/🎤 rebascule sur le micro du navigateur.
@@ -35761,7 +35767,10 @@ function etat(t){ $('gvEtat').textContent = t || ''; }
 function viderUI(){
   $('gvChoix').innerHTML = '';
   $('gvListeWrap').style.display = 'none'; $('gvListe').innerHTML = ''; $('gvListeFiltre').value = '';
-  $('gvLibreWrap').style.display = 'none'; $('gvLibre').value = ''; clearTimeout($('gvLibre')._minuteur);
+  /* v573 : en mode clavier vocal, le champ n'est jamais caché — le cacher lui fait perdre le
+     focus, ce qui ferme le clavier et arrête l'écoute de Sayboard à chaque question */
+  if (GV.modeEcoute !== 'clavier') $('gvLibreWrap').style.display = 'none';
+  $('gvLibre').value = ''; clearTimeout($('gvLibre')._minuteur);
 }
 /* v571 — LE CHAMP TEXTE, PENSÉ POUR UN CLAVIER VOCAL : il est montré à CHAQUE question, prend le
    focus pour que le clavier vocal y tape, et se valide tout seul 1,5 s après la dernière lettre
@@ -35775,9 +35784,11 @@ function montrerChamp(valeur, surDictee){
   $('gvLibreOk').onclick = ()=>{ clearTimeout(champ._minuteur); const t = champ.value.trim(); if (t) livrer({ tape:t }); };
   champ.oninput = ()=>{
     clearTimeout(champ._minuteur);
+    /* pendant que le guide parle, le clavier vocal entendrait sa voix : on jette ce qui arrive */
+    if (GV.parleEnCours){ champ.value = valeur || ''; return; }
     champ._minuteur = setTimeout(()=>{ const t = champ.value.trim(); if (t && GV.resoudre) (surDictee || ((x)=> livrer({ voix:[x] })))(t); }, 1500);
   };
-  if (GV.modeEcoute === 'clavier'){ try { champ.focus({ preventScroll:true }); } catch(e){} }
+  if (GV.modeEcoute === 'clavier' && document.activeElement !== champ){ try { champ.focus({ preventScroll:true }); } catch(e){} }
 }
 function boutonChoix(label, action, principal){
   const b = document.createElement('button');
@@ -35926,9 +35937,11 @@ function contexteAudio(){
   return VX.audio;
 }
 function jouerPcm(pcm, jeton){
-  return new Promise((resolve)=>{
+  return new Promise(async (resolve)=>{
     if (!pcm || !pcm.length || VX.jeton !== jeton){ resolve(); return; }
     const ctx = contexteAudio();
+    try { if (ctx.state !== 'running') await ctx.resume(); } catch(e){}   // v574 : on attend vraiment la reprise du son
+    if (VX.jeton !== jeton){ resolve(); return; }
     const buf = ctx.createBuffer(1, pcm.length, VX.config.audio.sample_rate);
     buf.getChannelData(0).set(pcm);
     const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
@@ -35969,6 +35982,18 @@ function parler(texte){
   arreterEcoute();
   return new Promise(async (resolve)=>{
     if (GV.muet){ resolve(); return; }   // rejeu silencieux d'une reprise
+    GV.parleEnCours = true;
+    /* v574 : en mode clavier vocal, on FERME le clavier le temps de parler — un clavier vocal qui
+       écoute garde le micro, et Android coupe alors le son de Chrome. Fermé, Sayboard lâche le
+       micro, la voix passe ; rouvert à la fin, il se remet à écouter tout seul. */
+    const clavierVocal = GV.modeEcoute === 'clavier';
+    if (clavierVocal){ try { $('gvLibre').blur(); } catch(e){} }
+    const resolveOrigine = resolve;
+    resolve = ()=>{
+      GV.parleEnCours = false;
+      if (clavierVocal && GV.actif){ $('gvLibre').value = ''; try { $('gvLibre').focus({ preventScroll:true }); } catch(e){} }
+      resolveOrigine();
+    };
     couperVoix();
     const piper = await preparerVoix();
     if (piper){
@@ -36141,11 +36166,28 @@ async function boucleEcoute(){
   if (GV.modeEcoute === 'clavier'){ etat('⌨️ Dicte dans le champ avec ton clavier vocal.'); return; }
   /* tourne tant qu'une réponse est attendue ; chaque écoute rend au plus une phrase */
   GV.ecouteVoulue = true;
+  let echecs = 0;
   while (GV.ecouteVoulue && GV.resoudre){
+    const debut = Date.now();
     const alts = await ecouterUneFois();
     if (!GV.ecouteVoulue || !GV.resoudre) return;
     if (alts && alts.length){ livrer({ voix: alts }); return; }
     if (GV.sansMicro){ etat('Réponds avec les boutons ou le clavier.'); return; }
+    /* v572 : une écoute qui meurt tout de suite (micro pris par une autre appli, reconnaissance
+       en panne) ne doit pas être relancée en boucle — ça bipe sans arrêt et coupe la voix.
+       Au troisième échec immédiat, on passe au clavier vocal. */
+    if (Date.now() - debut < 1500){
+      echecs++;
+      if (echecs >= 3){
+        GV.modeEcoute = 'clavier'; try { localStorage.setItem('mascotto_guide_ecoute', 'clavier'); } catch(e){}
+        majBoutonMicro(); etat('🎤 Le micro de Chrome ne répond pas : passe au clavier vocal (⌨️).');
+        try { $('gvLibre').focus({ preventScroll:true }); } catch(e){}
+        return;
+      }
+      await new Promise(r=> setTimeout(r, 2000));
+      continue;
+    }
+    echecs = 0;
     await new Promise(r=> setTimeout(r, 250));
   }
 }
