@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v584</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v585</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8239,7 +8239,9 @@ function resolveStepText(step, creatureId){
   for (const v of variants){
     if (v.kind === 'choice'){
       if (!v.choiceId) continue;
-      const taken = !!playerUsedChoices[choiceUsedKey(creatureId, v.choiceId)];
+      /* v585 : une variante peut viser un choix fait chez un AUTRE personnage (v.creatureId),
+         comme le vérificateur le lisait déjà ; sans ça elle cherchait toujours dans cette fiche. */
+      const taken = !!playerUsedChoices[choiceUsedKey(v.creatureId || creatureId, v.choiceId)];
       if (v.taken === 'no'){ if (!taken) return resoudreMarqueurs(v.text); }
       else if (taken) return resoudreMarqueurs(v.text);
       continue;
@@ -33999,6 +34001,7 @@ function renderCombat(){
    Les images ne sont jamais importées : elles se posent à la main sur les fiches ensuite. */
 
 let scenarioImportChoixPourTous = null; // mémorise « faire pareil pour tous »
+let importIgnores = new Set();          // v585 : identifiants des fiches « existant conservé » pendant un import
 
 function importConflitDemande(typeLabel, nom){
   return new Promise((resolve)=>{
@@ -34035,6 +34038,7 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal){
     const choix = await importConflitDemande(typeLabel, nom);
     if (choix === 'ignorer'){
       journal.push('⏭️ ' + typeLabel + ' « ' + nom + ' » : existant conservé');
+      importIgnores.add(snap.docs[0].id);   // v585 : la deuxième passe ne doit pas y toucher non plus
       return snap.docs[0].id;
     }
     if (choix === 'ecraser'){
@@ -34074,6 +34078,7 @@ function importListeQtes(liste, table, journal, contexte){
 async function importerScenario(sc){
   const journal = [];
   scenarioImportChoixPourTous = null;
+  importIgnores = new Set();
   const cles = { objets:{}, recettes:{}, attaques:{}, quetes:{}, missions:{}, pnj:{}, zones:{} };
   /* On indexe chaque élément par sa clé ET par son nom : le fichier peut donc écrire
      « ferraille-saine » ou « Ferraille saine », les deux marchent. */
@@ -34442,6 +34447,85 @@ async function importerScenario(sc){
     }
     await creatureCol.doc(id).set({ assignedZoneId: zoneId, updatedAt: Date.now() }, { merge:true });
     journal.push('📍 « ' + p.name + ' » rattaché à la zone « ' + p.zone + ' »');
+  }
+
+  /* --- 9. (v585) Deuxième passe sur les PNJ : ce qui ne peut se résoudre qu'une fois TOUTES
+     les fiches créées, parce que ça renvoie à d'autres fiches ou à des zones déjà en jeu.
+       - `groupe` : les versions d'un même personnage. La première fiche du groupe est l'originale
+         (dupeGroup vide), les suivantes portent son identifiant — exactement ce que fait l'éditeur
+         quand on « ajoute une version ».
+       - `emplacement: { zone, scene }` : la version se montre sur un rectangle 🧍 de cette scène
+         (pieceCommune), la zone et la scène étant désignées par leur NOM ou leur clé.
+       - dans les dialogues, `showIfList[].pnj` et `textVariants[].pnj` : la condition vise un choix
+         (ou un combat) chez un autre personnage, désigné par sa clé ou son nom → creatureId.
+         Le moteur mémorise un choix PAR FICHE : la clé doit viser la version où le choix se fait. */
+  const toutesFiches = toutesLesFiches();
+  const resoudrePnj = (ref, ctx)=>{
+    if (!ref) return null;
+    if (cles.pnj[ref]) return cles.pnj[ref];
+    const f = toutesFiches.find(x=> x.id === ref) || toutesFiches.find(x=> x.name === ref);
+    if (f) return f.id;
+    journal.push('⚠️ ' + ctx + ' : personnage introuvable « ' + ref + ' »');
+    return null;
+  };
+  const premierDuGroupe = {};
+  const scenesParZone = {};
+  for (const p of (sc.pnj||[])){
+    if (p.dialogueSeul) continue;
+    const id = cles.pnj[p.cle || p.name];
+    if (!id || importIgnores.has(id)) continue;
+    const maj = {};
+    const ctx = 'PNJ « ' + p.name + ' »';
+    if (p.groupe){
+      if (!premierDuGroupe[p.groupe]) premierDuGroupe[p.groupe] = id;
+      else maj.dupeGroup = premierDuGroupe[p.groupe];
+    }
+    if (p.emplacement && (p.emplacement.zone || p.emplacement.scene)){
+      const zoneId = cles.zones[p.emplacement.zone] || (toutesFiches.find(x=> (x.interactionType || '') === 'zone' && (x.name === p.emplacement.zone || x.id === p.emplacement.zone)) || {}).id;
+      if (!zoneId) journal.push('⚠️ ' + ctx + ' : zone d\'emplacement introuvable « ' + p.emplacement.zone + ' »');
+      else {
+        if (!scenesParZone[zoneId]){
+          try { const d = await zonesCol.doc(zoneId).get(); scenesParZone[zoneId] = d.exists ? (d.data().scenes || []) : []; }
+          catch(e){ scenesParZone[zoneId] = []; }
+        }
+        const voulu = String(p.emplacement.scene || '').trim().toLowerCase();
+        const scene = scenesParZone[zoneId].find(s=> s && s.id && String(s.name || '').trim().toLowerCase() === voulu);
+        if (!scene) journal.push('⚠️ ' + ctx + ' : scène « ' + p.emplacement.scene + ' » introuvable dans la zone');
+        else {
+          const nomZone = (toutesFiches.find(x=> x.id === zoneId) || {}).name || p.emplacement.zone;
+          maj.pieceCommune = { zoneId, sceneId: scene.id, nom: nomZone + ' · ' + (scene.name || 'scène') };
+          maj.assignedZoneId = null; maj.lat = null; maj.lng = null;   // comme le bouton 🧍 de l'éditeur
+          const places = (scene.points || []).filter(pt=> pt && pt.type === 'emplacement').length;
+          if (!places) journal.push('⚠️ ' + ctx + ' : la scène « ' + scene.name + ' » n\'a AUCUN rectangle 🧍 — pose-en un, sinon la version ne s\'affichera pas');
+        }
+      }
+    }
+    let dialogueTouche = false;
+    (p.dialogueSteps || []).forEach(st=>{
+      (st.choices || []).forEach(ch=>{
+        (ch.showIfList || []).forEach(cond=>{
+          if (!cond || !cond.pnj) return;
+          const cid = resoudrePnj(cond.pnj, ctx + ' · condition « ' + (ch.label || '') + ' »');
+          if (cid) cond.creatureId = cid;
+          delete cond.pnj; dialogueTouche = true;
+        });
+      });
+      (st.textVariants || []).forEach(v=>{
+        if (!v || !v.pnj) return;
+        const cid = resoudrePnj(v.pnj, ctx + ' · variante de texte');
+        if (cid) v.creatureId = cid;
+        delete v.pnj; dialogueTouche = true;
+      });
+    });
+    if (dialogueTouche) maj.dialogueSteps = p.dialogueSteps;
+    if (Object.keys(maj).length){
+      await creatureCol.doc(id).set({ ...maj, updatedAt: Date.now() }, { merge:true });
+      const quoi = [];
+      if (maj.dupeGroup) quoi.push('version du groupe « ' + p.groupe + ' »');
+      if (maj.pieceCommune) quoi.push('emplacement ' + maj.pieceCommune.nom);
+      if (maj.dialogueSteps) quoi.push('conditions croisées résolues');
+      journal.push('🔗 « ' + p.name + ' » : ' + quoi.join(', '));
+    }
   }
 
   journal.push('— Les images ne sont pas importées : ajoute-les sur chaque fiche.');
