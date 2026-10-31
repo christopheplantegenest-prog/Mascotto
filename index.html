@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v585</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v586</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -34002,6 +34002,8 @@ function renderCombat(){
 
 let scenarioImportChoixPourTous = null; // mémorise « faire pareil pour tous »
 let importIgnores = new Set();          // v585 : identifiants des fiches « existant conservé » pendant un import
+let importCrees = new Set();            // v586 : identifiants des fiches CRÉÉES par l'import en cours
+let importEnCours = false;              // v586 : un seul import à la fois
 
 function importConflitDemande(typeLabel, nom){
   return new Promise((resolve)=>{
@@ -34031,10 +34033,17 @@ function importConflitDemande(typeLabel, nom){
 /* Écrit un document, en demandant quoi faire si un homonyme existe.
    Renvoie TOUJOURS un identifiant utilisable : même en cas de « garder l'existant »,
    c'est celui de l'existant, pour que les renvois du scénario pointent sur quelque chose. */
-async function importEcrireDoc(col, nom, data, typeLabel, journal){
+async function importEcrireDoc(col, nom, data, typeLabel, journal, forcerAjout){
   if (!col) throw new Error('Firebase indisponible');
-  const snap = await col.where('name','==',nom).limit(1).get();
-  if (!snap.empty){
+  /* v585 : `forcerAjout` — une VERSION d'un personnage créé par ce même fichier porte le même nom
+     que lui : ce n'est pas un conflit, on l'ajoute sans poser la question. */
+  const snap = forcerAjout ? { empty:true } : await col.where('name','==',nom).limit(1).get();
+  /* v586 : si l'homonyme trouvé est une fiche que CET import vient lui-même de créer (une autre
+     version du même personnage), ce n'est pas un conflit : on ajoute sans poser de question.
+     Le 31/10, la question sortait quand même sur la 2e Nina (cause non reproduite) — ce filet
+     ne dépend plus de rien d'autre que de ce que l'import a écrit lui-même. */
+  const homonymeDeLImport = !snap.empty && snap.docs.every(d=> importCrees.has(d.id));
+  if (!snap.empty && !homonymeDeLImport){
     const choix = await importConflitDemande(typeLabel, nom);
     if (choix === 'ignorer'){
       journal.push('⏭️ ' + typeLabel + ' « ' + nom + ' » : existant conservé');
@@ -34053,7 +34062,8 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal){
     }
   }
   const ref = await col.add({ ...data, createdAt: Date.now(), updatedAt: Date.now() });
-  journal.push('✅ ' + typeLabel + ' « ' + nom + ' » ajouté');
+  importCrees.add(ref.id);
+  journal.push('✅ ' + typeLabel + ' « ' + nom + ' » ajouté' + (homonymeDeLImport ? ' (autre version)' : ''));
   return ref.id;
 }
 
@@ -34079,6 +34089,9 @@ async function importerScenario(sc){
   const journal = [];
   scenarioImportChoixPourTous = null;
   importIgnores = new Set();
+  importCrees = new Set();
+  /* v586 : la première ligne dit quel code a fait l'import — pour ne plus jamais diagnostiquer à l'aveugle. */
+  journal.push('ℹ️ Import fait par ' + ((document.getElementById('appVersionLabel') || {}).textContent || '?') + ' · ' + (sc.pnj||[]).length + ' fiche(s) de personnage dans le fichier');
   const cles = { objets:{}, recettes:{}, attaques:{}, quetes:{}, missions:{}, pnj:{}, zones:{} };
   /* On indexe chaque élément par sa clé ET par son nom : le fichier peut donc écrire
      « ferraille-saine » ou « Ferraille saine », les deux marchent. */
@@ -34323,7 +34336,10 @@ async function importerScenario(sc){
       }
       journal.push('⚠️ PNJ « ' + p.name + ' » attendu en jeu mais introuvable : fiche créée');
     }
-    noter(cles.pnj, p, await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal));
+    /* v585 : deuxième version d'un personnage de CE fichier (même nom, même `groupe`) → pas de
+       question « existe déjà », elle est ajoutée telle quelle ; la passe 9 la rattache au groupe. */
+    const versionDuFichier = !!p.groupe && (sc.pnj||[]).some(q=> q !== p && q.name === p.name && q.groupe === p.groupe && cles.pnj[q.cle || q.name]);
+    noter(cles.pnj, p, await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal, versionDuFichier));
   }
 
   /* --- 7. Zones d'exploration ---
@@ -34599,8 +34615,14 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
   const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones']
     .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + k) : null).filter(Boolean).join(' · ');
   if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
+  if (importEnCours){ showToast('Un import est déjà en cours'); return; }
   const ok = await appConfirm('Importer « ' + (sc.titre || f.name) + ' » ?\n\n' + compte);
   if (!ok) return;
+  if (importEnCours){ showToast('Un import est déjà en cours'); return; }
+  /* v586 : bouton bloqué pendant l'import — un deuxième lancement créerait des homonymes. */
+  importEnCours = true;
+  const bouton = document.getElementById('scenarioImportBtn');
+  bouton.disabled = true;
   rapport.textContent = 'Import en cours…';
   try {
     const journal = await importerScenario(sc);
@@ -34608,6 +34630,9 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
     showToast('Import terminé');
   } catch(err){
     rapport.innerHTML += '<div style="color:#e66;">Interrompu : ' + err.message + '</div>';
+  } finally {
+    importEnCours = false;
+    bouton.disabled = false;
   }
 });
 
