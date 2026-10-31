@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v587</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v588</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11263,15 +11263,14 @@ document.getElementById('editCancelBtn').addEventListener('click', async ()=>{
 /* L'écran des brouillons : tout ce qui n'est pas publié, au même endroit, avec de quoi
    publier d'un geste. Sans cette vue, une fiche laissée « en travaux » resterait invisible
    aux joueurs sans que personne s'en aperçoive. */
-/* v587 — LE GUIDE « À FINIR ». L'écran des brouillons devient une liste de ce qui reste à faire
-   pour chaque personnage en travaux, version par version, avec de quoi le faire :
-     - ce que le jeu peut VÉRIFIER tout seul se coche tout seul (image, buste, rectangle 🧍 dans la
-       scène de l'emplacement, porte à code) — rien à déclarer ;
-     - ce qu'il ne peut pas deviner vient du fichier d'import (`aFaire`) et se coche à la main ;
-     - chaque ligne a son geste : « Y aller » ouvre le bon écran de l'éditeur, « 📋 Prompt » copie
-       un prompt d'image complet, « Reprendre » recopie l'image d'une autre version du personnage.
-   Demandé le 31/10 : « un système assisté pour faire, étape par étape, la partie que je suis
-   obligé de faire moi-même ». */
+/* v587 — LE GUIDE « À FINIR ». v588 — VRAIMENT GUIDÉ (retour du 31/10 : « ça me met sur la fiche
+   mais je ne sais pas ce que je dois faire ; je voudrais être mis pile à l'endroit, avec une
+   explication, et ne pas refaire tout le chemin à chaque fois »).
+   Chaque chose à faire a trois parties : ce qui manque, à quoi ça sert, et LE geste — un bouton
+   qui le fait depuis le guide (choisir une image, poser le code, placer le personnage) ou qui
+   ouvre l'éditeur pile au bon endroit (la bonne scène, le rectangle neuf déjà sélectionné, la
+   bonne porte), avec un bandeau d'explication et « Enregistrer et revenir au guide ».
+   Et le guide se ROUVRE tout seul quand on referme l'écran où il nous a envoyé. */
 const GUIDE_CHATGPT = `Tu vas m'aider à dessiner les personnages de mon jeu mobile Mascotto. Garde ces règles pour toute la conversation.
 
 STYLE
@@ -11340,10 +11339,119 @@ function aImagePrincipale(f){ return !!(f && (f.imageUrl || f.imagePath)); }
 function aImageBuste(f){ return !!(f && (f.bustImageRef || f.bustImagePath)); }
 function texteCreneaux(f){
   const tr = (f.timeRanges || []).filter(t=> t && t.start && t.end);
-  return tr.length ? tr.map(t=> t.start + '–' + t.end).join(', ') : 'toute la journée';
+  return tr.length ? tr.map(t=> 'de ' + t.start.replace(':00','h').replace(':','h') + ' à ' + t.end.replace(':00','h').replace(':','h')).join(', ') : 'toute la journée';
+}
+
+/* ---------- Le retour au guide : les fenêtres « s'empilent » ----------
+   Quand le guide envoie dans un éditeur, on le note ; dès que l'éditeur se referme (par la
+   croix, par « Enregistrer », peu importe le chemin), le guide se rouvre là où on l'avait
+   laissé. Un bandeau dans l'éditeur rappelle ce qu'on est venu y faire. */
+let guideRetourAttendu = false;
+function bandeauGuide(texte, opts){
+  fermerBandeauGuide();
+  opts = opts || {};
+  const b = document.createElement('div');
+  b.id = 'bandeauGuide';
+  b.style.cssText = 'position:fixed; left:8px; right:8px; top:calc(env(safe-area-inset-top) + 58px); z-index:4550; background:#14532d; color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.45);';
+  b.innerHTML = `<div style="display:flex; align-items:center; gap:6px;"><b style="flex:1 1 auto;">🧰 Guide</b><button type="button" data-reduire style="background:none; border:none; color:#fff; font-size:16px;">▾</button></div>
+    <div data-corps><div style="margin:4px 0 8px; line-height:1.35;">${texte}</div>
+    <button type="button" data-revenir style="width:100%; padding:8px; border-radius:8px; border:none; background:#fff; color:#14532d; font-weight:700;">${opts.scene ? '💾 Enregistrer et revenir au guide' : '↩ Revenir au guide'}</button></div>`;
+  document.body.appendChild(b);
+  b.querySelector('[data-reduire]').addEventListener('click', (e)=>{
+    const c = b.querySelector('[data-corps]');
+    const cache = c.style.display === 'none';
+    c.style.display = cache ? 'block' : 'none';
+    e.currentTarget.textContent = cache ? '▾' : '▸';
+  });
+  b.querySelector('[data-revenir]').addEventListener('click', async ()=>{
+    if (opts.scene){
+      const ok = await enregistrerSceneCourante(true);
+      if (!ok) return;
+    } else {
+      if (typeof ficheEstModifiee === 'function' && ficheEstModifiee()){
+        if (!(await appConfirm('Tu n\'as pas enregistré cette fiche. Revenir quand même au guide ? (tes changements restent ouverts dans l\'éditeur)'))) return;
+      }
+    }
+    fermerBandeauGuide();
+    guideRetourAttendu = false;
+    ouvrirBrouillons();
+  });
+  guideRetourAttendu = true;
+}
+function fermerBandeauGuide(){ const b = document.getElementById('bandeauGuide'); if (b) b.remove(); }
+(function surveillerRetourGuide(){
+  const ecrans = ['sceneEditorFull', 'editorOverlay'].map(id=> document.getElementById(id)).filter(Boolean);
+  const ouvert = ()=> ecrans.some(el=> el.classList.contains('show'));
+  let attente = null;
+  const obs = new MutationObserver(()=>{
+    if (!guideRetourAttendu || ouvert()) return;
+    clearTimeout(attente);
+    /* petit délai : un saut scène → fiche ferme l'un juste avant d'ouvrir l'autre */
+    attente = setTimeout(()=>{
+      if (!guideRetourAttendu || ouvert()) return;
+      guideRetourAttendu = false;
+      fermerBandeauGuide();
+      ouvrirBrouillons();
+    }, 350);
+  });
+  ecrans.forEach(el=> obs.observe(el, { attributes:true, attributeFilter:['class'] }));
+})();
+
+/* Ouvre l'éditeur de scène sur UNE scène, et lance `action` une fois la zone chargée. */
+let actionApresChargementScene = null;
+function ouvrirSceneGuidee(zoneId, sceneId, texte, action){
+  document.getElementById('editHubOverlay').classList.remove('show');
+  actionApresChargementScene = action || null;
+  openSceneEditor(zoneId);
+  retourSceneVoulue = sceneId;   // lu à la fin du chargement : on atterrit sur la bonne scène
+  bandeauGuide(texte, { scene:true });
+}
+
+/* Choisir une image depuis le téléphone, sans passer par l'éditeur. */
+function choisirFichierImage(){
+  return new Promise((resolve)=>{
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', ()=>{
+      const file = inp.files && inp.files[0];
+      inp.remove();
+      if (!file){ resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload = (ev)=>{ const img = new Image(); img.onload = ()=> resolve(img); img.onerror = ()=> resolve(null); img.src = ev.target.result; };
+      reader.onerror = ()=> resolve(null);
+      reader.readAsDataURL(file);
+    });
+    inp.click();
+  });
+}
+async function poserImageDepuisGuide(id, quoi){
+  const img = await choisirFichierImage();
+  if (!img) return false;
+  if (quoi === 'buste'){
+    /* même traitement que le champ « buste » de l'éditeur : 600 px, PNG, rangé à part */
+    const maxSize = 600;
+    let w = img.width, h = img.height;
+    if (w > maxSize || h > maxSize){ if (w > h){ h = Math.round(h * maxSize / w); w = maxSize; } else { w = Math.round(w * maxSize / h); h = maxSize; } }
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    const ref = await externalizeSceneImage(c.toDataURL('image/png'));
+    if (!ref){ showToast('Échec : image de buste non enregistrée'); return false; }
+    await creatureCol.doc(id).set({ bustImageRef: ref, bustImagePath: null, updatedAt: Date.now() }, { merge:true });
+  } else {
+    /* même traitement que le champ « image » de l'éditeur : 900 px, sous le plafond Firestore */
+    const url = encoderImageSousLimite(img, 900, true);
+    if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return false; }
+    await creatureCol.doc(id).set({ imageUrl: url, imagePath: null, updatedAt: Date.now() }, { merge:true });
+  }
+  showToast(quoi === 'buste' ? 'Buste posé ✅' : 'Image posée ✅');
+  return true;
 }
 
 async function ouvrirBrouillons(){
+  fermerBandeauGuide();
+  guideRetourAttendu = false;
   const enTravaux = toutesLesFiches().filter(f=> f.enTravaux && (f.interactionType || 'dialogue') !== 'zone');
   const zonesEnTravaux = toutesLesFiches().filter(f=> f.enTravaux && (f.interactionType || 'dialogue') === 'zone');
   const fond = document.createElement('div');
@@ -11360,11 +11468,14 @@ async function ouvrirBrouillons(){
         <span style="font-size:13px;">👁️ Voir mes brouillons en jeu (sur ce téléphone seulement)</span>
       </label>
       <button class="btn-secondary" data-guide style="width:100%; margin-bottom:4px;">📋 Copier le guide pour ChatGPT</button>
-      <p class="meta" style="margin:0 0 10px;">À coller une fois au début d'une conversation neuve dans ChatGPT, avant les prompts d'images.</p>
+      <p class="meta" style="margin:0 0 10px;">À coller une fois au début d'une conversation neuve dans ChatGPT, avant de lui envoyer les prompts d'images.</p>
       <div data-liste><p class="meta">Vérification en cours…</p></div>
       ${(enTravaux.length + zonesEnTravaux.length) ? '<button class="btn-capture" data-tout style="width:100%; margin-top:12px;">Tout publier</button>' : ''}
     </div>`;
   document.body.appendChild(fond);
+  /* On mémorise la position dans la liste : revenir au guide, c'est revenir au même endroit. */
+  const feuille = fond.querySelector('.sheet');
+  feuille.addEventListener('scroll', ()=>{ ouvrirBrouillons.defilement = feuille.scrollTop; });
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-guide]').addEventListener('click', (e)=> copierAvecRepli(GUIDE_CHATGPT, e.currentTarget));
   fond.querySelector('[data-voir]').addEventListener('change', (e)=>{
@@ -11372,15 +11483,17 @@ async function ouvrirBrouillons(){
     showToast(e.target.checked ? 'Tes brouillons sont visibles ici' : 'Tu vois le jeu comme un joueur');
     redessinerCarte();
   });
-  const rouvrir = ()=>{ fond.remove(); ouvrirBrouillons(); };
+  const rouvrir = ()=>{ fond.remove(); setTimeout(ouvrirBrouillons, 350); };
 
   /* Les scènes vivent dans exploration_zones, pas sur les fiches : on lit une fois chaque zone
-     dont on a besoin (emplacements, portes à code des tâches du fichier). */
+     dont on a besoin (emplacements, portes à code, récompense). */
   const toutes = toutesLesFiches();
-  const zoneParNom = (ref)=> toutes.find(x=> (x.interactionType || '') === 'zone' && (x.id === ref || x.name === ref));
+  const zoneParNom = (ref)=> ref ? toutes.find(x=> (x.interactionType || '') === 'zone' && (x.id === ref || x.name === ref)) : null;
+  const memeNom = (a, b)=> String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   const zonesVoulues = new Set();
   enTravaux.forEach(f=>{
     if (f.pieceCommune && f.pieceCommune.zoneId) zonesVoulues.add(f.pieceCommune.zoneId);
+    const zp = f.emplacementPrevu && zoneParNom(f.emplacementPrevu.zone); if (zp) zonesVoulues.add(zp.id);
     (f.aFaire || []).forEach(t=>{ const z = t && t.verif && zoneParNom(t.verif.zone); if (z) zonesVoulues.add(z.id); });
   });
   const scenesDe = {};
@@ -11389,59 +11502,97 @@ async function ouvrirBrouillons(){
     catch(e){ scenesDe[zid] = null; }
   }
   if (!document.body.contains(fond)) return;
+  const sceneParNom = (zid, nom)=> (scenesDe[zid] || []).find(s=> s && memeNom(s.name, nom)) || null;
 
-  const ligne = (ok, texte, gestes, conseille)=> `
-    <div style="display:flex; gap:6px; align-items:flex-start; margin:6px 0;">
-      <div style="flex:0 0 auto; width:20px;">${ok ? '✅' : (conseille ? '◻️' : '⬜')}</div>
-      <div style="flex:1 1 auto; font-size:13px;${ok ? ' opacity:.6;' : ''}">${texte}${gestes && !ok ? '<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">' + gestes + '</div>' : ''}</div>
-    </div>`;
-  const bouton = (attrs, libelle)=> `<button type="button" class="btn-secondary" ${attrs} style="flex:0 0 auto; padding:4px 8px; font-size:12px;">${libelle}</button>`;
   const esc = (t)=> String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const bouton = (attrs, libelle, fort)=> `<button type="button" class="${fort ? 'btn-capture' : 'btn-secondary'}" ${attrs} style="flex:0 0 auto; padding:6px 10px; font-size:12px;">${libelle}</button>`;
+  /* Une tâche : titre, à quoi ça sert, quoi faire, et les boutons. Faite → une ligne grisée. */
+  const tache = (ok, titre, pourquoi, quoiFaire, gestes, conseille)=> ok
+    ? `<div style="display:flex; gap:6px; margin:6px 0; opacity:.55; font-size:13px;"><div>✅</div><div>${titre}</div></div>`
+    : `<div style="margin:8px 0; padding:8px; border-radius:8px; background:rgba(128,128,128,.12);">
+        <div style="font-weight:600; font-size:13px;">${conseille ? '◻️' : '⬜'} ${titre}${conseille ? ' <span class="meta" style="font-weight:400;">(conseillé)</span>' : ''}</div>
+        ${pourquoi ? '<div class="meta" style="font-size:12px; margin-top:3px;">' + pourquoi + '</div>' : ''}
+        ${quoiFaire ? '<div style="font-size:12px; margin-top:5px; line-height:1.4;">' + quoiFaire + '</div>' : ''}
+        ${gestes ? '<div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">' + gestes + '</div>' : ''}
+      </div>`;
 
-  /* Une ligne par CHOSE À FAIRE, dans l'ordre où il vaut mieux les faire. */
   const controles = (f, versions)=>{
     const out = []; let manque = 0;
+    const nom = esc(f.name || 'ce personnage');
+    /* 1. Image en pied */
     const autreAvecImage = versions.find(v=> v.id !== f.id && aImagePrincipale(v));
     const okImg = aImagePrincipale(f);
     if (!okImg) manque++;
-    out.push(ligne(okImg, '🖼️ Image du personnage (en pied, fond transparent)',
-      bouton('data-prompt-img="' + f.id + '"', '📋 Prompt') + bouton('data-fiche="' + f.id + '"', 'Y aller') +
-      (autreAvecImage ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecImage.id + '"', '↪ Reprendre celle de l\'autre version') : '')));
+    out.push(tache(okImg, '🖼️ Image de ' + nom + ' en pied',
+      'C\'est elle qu\'on voit debout dans la scène et sur la carte. Il faut un PNG à fond transparent, de la tête aux pieds.',
+      autreAvecImage
+        ? 'L\'autre version de ' + nom + ' a déjà son image : appuie sur <b>↪ Reprendre</b>, c\'est tout.'
+        : '1. <b>📋 Prompt</b>, puis colle-le dans ChatGPT (après le guide ChatGPT).<br>2. Enregistre l\'image qu\'il te donne sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b> et prends-la dans ta galerie.',
+      (autreAvecImage ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecImage.id + '" data-quoi="image"', '↪ Reprendre celle de l\'autre version', true) : '')
+      + bouton('data-prompt-img="' + f.id + '"', '📋 Prompt') + bouton('data-poser-img="' + f.id + '"', '📷 Choisir l\'image', !autreAvecImage)
+      + bouton('data-hebergee-img="' + f.id + '"', '📁 Image hébergée')));
+    /* 2. Buste */
     const autreAvecBuste = versions.find(v=> v.id !== f.id && aImageBuste(v));
-    out.push(ligne(aImageBuste(f), '👤 Buste pour les dialogues <span class="meta">(conseillé)</span>',
-      bouton('data-prompt-buste="' + f.id + '"', '📋 Prompt') + bouton('data-fiche="' + f.id + '"', 'Y aller') +
-      (autreAvecBuste ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecBuste.id + '"', '↪ Reprendre celui de l\'autre version') : ''), true));
+    const okBuste = aImageBuste(f);
+    out.push(tache(okBuste, '👤 Buste de ' + nom,
+      'C\'est le portrait affiché en grand pendant que ' + nom + ' parle.',
+      autreAvecBuste
+        ? 'L\'autre version a déjà son buste : <b>↪ Reprendre</b>.'
+        : (okImg ? '1. Dans ChatGPT, <b>joins l\'image en pied</b> de ' + nom + '.<br>2. <b>📋 Prompt</b> et colle-le avec l\'image.<br>3. <b>📷 Choisir le buste</b>.' : 'Fais d\'abord l\'image en pied : le buste se dessine à partir d\'elle.'),
+      (autreAvecBuste ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecBuste.id + '" data-quoi="buste"', '↪ Reprendre celui de l\'autre version', true) : '')
+      + (okImg || autreAvecBuste ? bouton('data-prompt-buste="' + f.id + '"', '📋 Prompt') + bouton('data-poser-buste="' + f.id + '"', '📷 Choisir le buste', !autreAvecBuste) : ''), true));
+    /* 3. Où il se tient */
     const pc = f.pieceCommune;
+    const quand = esc(texteCreneaux(f));
     if (pc && pc.sceneId){
       const scenes = scenesDe[pc.zoneId];
       const sc = scenes ? scenes.find(s=> s && s.id === pc.sceneId) : null;
+      const nomScene = esc(sc ? sc.name : pc.nom);
       const places = sc ? (sc.points || []).filter(p=> p && p.type === 'emplacement').length : 0;
       const ok = places > 0;
       if (!ok) manque++;
-      out.push(ligne(ok, '🧍 Rectangle d\'emplacement dans « ' + esc(sc ? sc.name : pc.nom) + ' »' + (ok ? '' : ' <span class="meta">— pose un point « 🧍 Emplacement de PNJ » sur l\'endroit où il se tient</span>'),
-        bouton('data-scene="' + pc.zoneId + '|' + pc.sceneId + '"', 'Y aller')));
+      out.push(tache(ok, '🧍 Rectangle où ' + nom + ' se tient, dans « ' + nomScene + ' »',
+        nom + ' est dans « ' + nomScene + ' » ' + quand + (f.fonction ? ' (' + esc(f.fonction) + ')' : '') + '. Le jeu le dessine debout dans un rectangle 🧍 : ses pieds se calent en bas du rectangle et la hauteur du rectangle donne sa taille à l\'écran. Un même rectangle sert à tous ceux qui passent dans cette pièce à des heures différentes.',
+        '1. <b>🧍 Poser le rectangle</b> : la scène s\'ouvre avec un rectangle neuf déjà sélectionné.<br>2. Fais-le glisser là où ' + nom + ' doit se tenir, les pieds au sol.<br>3. Ajuste sa hauteur à la taille d\'une personne dans ce décor.<br>4. <b>💾 Enregistrer et revenir au guide</b> (bandeau vert en haut).',
+        bouton('data-rectangle="' + pc.zoneId + '|' + pc.sceneId + '|' + f.id + '"', '🧍 Poser le rectangle', true)));
     } else if (!(f.lat != null && f.lng != null) && !f.assignedZoneId){
       manque++;
-      out.push(ligne(false, '📍 Aucun lieu : ce personnage n\'apparaît nulle part', bouton('data-fiche="' + f.id + '"', 'Y aller')));
+      const prevu = f.emplacementPrevu;
+      const zp = prevu ? zoneParNom(prevu.zone) : null;
+      const sp = zp ? sceneParNom(zp.id, prevu.scene) : null;
+      out.push(tache(false, '📍 ' + nom + ' n\'est placé nulle part',
+        'Sans lieu, ' + nom + ' n\'apparaît jamais dans le jeu.',
+        sp ? 'Il était prévu dans « ' + esc(sp.name) + ' » (' + esc(zp.name) + ') ' + quand + ' : appuie sur le bouton, c\'est fait en un geste.'
+           : 'Appuie sur <b>📍 Choisir la scène</b>, puis choisis la zone et la pièce où ' + nom + ' se tient ' + quand + '.',
+        sp ? bouton('data-placer="' + f.id + '|' + zp.id + '|' + sp.id + '"', '📍 Placer dans « ' + esc(sp.name) + ' »', true)
+           : bouton('data-choisir-scene="' + f.id + '"', '📍 Choisir la scène', true)));
     }
+    /* 4. Les tâches du fichier d'import */
     (f.aFaire || []).forEach((t, i)=>{
       if (!t || !t.texte) return;
+      const v = t.verif || {};
+      const z = zoneParNom(v.zone);
       let ok = (f.aFaireFait || []).includes(i);
-      let gestes = '';
-      const v = t.verif;
-      if (v && v.type === 'code'){
-        const z = zoneParNom(v.zone);
-        const scenes = z ? scenesDe[z.id] : null;
-        ok = !!(scenes && scenes.some(s=> (!v.scene || String(s.name || '').toLowerCase() === String(v.scene).toLowerCase())
-          && (s.points || []).some(p=> p && p.lockType === 'code' && String(p.lockCode || '') === String(v.code))));
-        if (z) gestes = bouton('data-zone="' + z.id + '"', 'Y aller');
+      let pourquoi = t.pourquoi ? esc(t.pourquoi) : '', quoiFaire = t.comment ? esc(t.comment) : '', gestes = '';
+      if (v.type === 'code' && z){
+        const scenes = scenesDe[z.id] || [];
+        const vers = v.vers ? sceneParNom(z.id, v.vers) : null;
+        const dans = v.scene ? sceneParNom(z.id, v.scene) : null;
+        ok = scenes.some(s=> (!dans || s.id === dans.id) && (s.points || []).some(p=> p && p.lockType === 'code' && String(p.lockCode || '') === String(v.code) && (!vers || p.targetSceneId === vers.id)));
+        if (!quoiFaire) quoiFaire = 'Appuie sur <b>🔐 Mettre le code ' + esc(v.code) + '</b> : le guide trouve la sortie' + (dans ? ' de « ' + esc(dans.name) + ' »' : '') + (vers ? ' qui mène à « ' + esc(vers.name) + ' »' : '') + ' et la verrouille avec ce code. Tu confirmes avant.';
+        gestes = bouton('data-code="' + f.id + '|' + i + '"', '🔐 Mettre le code ' + esc(v.code), true);
+      } else if (v.type === 'objet' && z){
+        const sc = sceneParNom(z.id, v.scene);
+        if (sc && (sc.points || []).some(p=> p && ((p.type === 'objet' && p.itemId) || (p.type === 'coffre' && (p.loot || []).some(l=> l && l.itemId))))) ok = true;
+        if (!quoiFaire) quoiFaire = '1. <b>📦 Ouvrir « ' + esc(sc ? sc.name : v.scene) + ' »</b>.<br>2. <b>➕ Ajouter un point</b> → <b>🎒 Objet</b> (ramassé une fois) ou <b>📦 Coffre</b>.<br>3. Choisis l\'objet récompense dans la fiche du point, et pose le point sur un élément du décor.<br>4. <b>💾 Enregistrer et revenir au guide</b>.';
+        if (sc) gestes = bouton('data-ouvrir-scene="' + z.id + '|' + sc.id + '|' + f.id + '|' + i + '"', '📦 Ouvrir « ' + esc(sc.name) + ' »', true);
+        gestes += bouton('data-coche="' + f.id + '|' + i + '"', '✔ C\'est fait');
       } else {
-        const z = v && v.zone ? zoneParNom(v.zone) : null;
-        if (z) gestes = bouton('data-zone="' + z.id + '"', 'Y aller');
+        if (z) gestes = bouton('data-zone="' + z.id + '"', 'Ouvrir la zone');
         gestes += bouton('data-coche="' + f.id + '|' + i + '"', '✔ C\'est fait');
       }
       if (!ok) manque++;
-      out.push(ligne(ok, '🔧 ' + esc(t.texte), gestes));
+      out.push(tache(ok, '🔧 ' + esc(t.texte), pourquoi, quoiFaire, gestes));
     });
     return { html: out.join(''), manque };
   };
@@ -11460,14 +11611,15 @@ async function ouvrirBrouillons(){
       const blocs = versions.map((f, i)=>{
         const c = controles(f, versions);
         total += c.manque;
+        const ou = f.pieceCommune ? esc(f.pieceCommune.nom) : (f.emplacementPrevu ? esc(f.emplacementPrevu.scene) + ' (prévu)' : '');
         return `<div style="border-top:1px solid rgba(128,128,128,.25); padding-top:6px; margin-top:6px;">
-          <div style="font-size:12px; font-weight:600;">${versions.length > 1 ? 'Version ' + (i + 1) + ' · ' : ''}${esc(texteCreneaux(f))}${f.pieceCommune ? ' · ' + esc(f.pieceCommune.nom) : ''}</div>
+          <div style="font-size:12px; font-weight:700;">${versions.length > 1 ? 'Version ' + (i + 1) + ' · ' : ''}${esc(texteCreneaux(f))}${ou ? ' · ' + ou : ''}</div>
           ${c.html}
-          <div style="display:flex; justify-content:flex-end;">${bouton('data-publier="' + f.id + '"', 'Publier cette version')}</div>
+          <div style="display:flex; justify-content:flex-end; gap:5px;">${bouton('data-fiche="' + f.id + '"', '✏️ Ouvrir la fiche')}${bouton('data-publier="' + f.id + '"', 'Publier cette version')}</div>
         </div>`;
       }).join('');
-      html += `<div class="card" style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
-        <div style="font-weight:700;">${esc(f0.emoji || '👤')} ${esc(f0.name || '(sans nom)')} <span class="meta" style="font-weight:400;">— ${total ? total + ' chose(s) à faire' : 'prêt à publier'}</span></div>
+      html += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
+        <div style="font-weight:700;">${esc(f0.emoji || '👤')} ${esc(f0.name || '(sans nom)')} <span class="meta" style="font-weight:400;">— ${total ? total + ' chose(s) à faire' : '✅ prêt à publier'}</span></div>
         ${blocs}
       </div>`;
     });
@@ -11475,38 +11627,110 @@ async function ouvrirBrouillons(){
       html += `<div class="editor-list-item" style="align-items:center;"><div class="name">🗺️ ${esc(z.name || '(zone)')}<div class="meta" style="font-size:11px;">zone en travaux</div></div>${bouton('data-publier="' + z.id + '"', 'Publier')}</div>`;
     });
     liste.innerHTML = html;
+    if (ouvrirBrouillons.defilement) feuille.scrollTop = ouvrirBrouillons.defilement;
   }
 
   /* --- Les gestes --- */
-  const allerFiche = (id)=>{ fond.remove(); ctrlOuvrirCible('pnj', id); };
-  liste.querySelectorAll('[data-fiche]').forEach(b=> b.addEventListener('click', ()=> allerFiche(b.dataset.fiche)));
-  liste.querySelectorAll('[data-zone]').forEach(b=> b.addEventListener('click', ()=>{ fond.remove(); ctrlOuvrirCible('zone', b.dataset.zone); }));
-  liste.querySelectorAll('[data-scene]').forEach(b=> b.addEventListener('click', ()=>{
-    const [zid, sid] = b.dataset.scene.split('|');
-    fond.remove();
-    document.getElementById('editHubOverlay').classList.remove('show');
-    openSceneEditor(zid);
-    retourSceneVoulue = sid;   // lu à la fin du chargement de la zone : on atterrit sur la bonne scène
+  const sur = (sel, fn)=> liste.querySelectorAll(sel).forEach(b=> b.addEventListener('click', async ()=>{
+    b.disabled = true;
+    try { await fn(b); } catch(err){ showToast('Échec : ' + (err && err.message ? err.message : err)); }
+    b.disabled = false;
   }));
-  liste.querySelectorAll('[data-prompt-img]').forEach(b=> b.addEventListener('click', ()=> copierAvecRepli(promptImagePnj(ficheParId(b.dataset.promptImg) || {}), b)));
-  liste.querySelectorAll('[data-prompt-buste]').forEach(b=> b.addEventListener('click', ()=> copierAvecRepli(promptBustePnj(ficheParId(b.dataset.promptBuste) || {}), b)));
-  liste.querySelectorAll('[data-reprendre]').forEach(b=> b.addEventListener('click', async ()=>{
+  sur('[data-fiche]', (b)=>{
+    const f = ficheParId(b.dataset.fiche);
+    fond.remove(); ctrlOuvrirCible('pnj', b.dataset.fiche);
+    bandeauGuide('Tu es dans la fiche de <b>' + esc(f && f.name) + '</b>. Fais tes changements, appuie sur <b>Enregistrer</b> en bas de la fiche, puis reviens au guide.');
+  });
+  sur('[data-zone]', (b)=>{ fond.remove(); ctrlOuvrirCible('zone', b.dataset.zone); bandeauGuide('Tu es dans la zone. Quand tu as fini, enregistre et reviens au guide.', { scene:true }); });
+  sur('[data-prompt-img]', (b)=> copierAvecRepli(promptImagePnj(ficheParId(b.dataset.promptImg) || {}), b));
+  sur('[data-prompt-buste]', (b)=> copierAvecRepli(promptBustePnj(ficheParId(b.dataset.promptBuste) || {}), b));
+  sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
+  sur('[data-poser-buste]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserBuste, 'buste')) rouvrir(); });
+  sur('[data-hebergee-img]', (b)=>{
+    const id = b.dataset.hebergeeImg;
+    fond.remove();
+    openGithubFilePicker(null, async (item)=>{
+      await creatureCol.doc(id).set({ imagePath: item.path, imageUrl: '', updatedAt: Date.now() }, { merge:true });
+      showToast('Image posée ✅'); setTimeout(ouvrirBrouillons, 350);
+    });
+  });
+  sur('[data-reprendre]', async (b)=>{
     const src = ficheParId(b.dataset.source);
     if (!src) return;
+    const champs = b.dataset.quoi === 'buste' ? ['bustImageRef','bustImagePath'] : ['imageUrl','imagePath','mapIconScale','mapIconRotation'];
     const maj = {};
-    ['imageUrl','imagePath','bustImageRef','bustImagePath','mapIconScale','mapIconRotation'].forEach(k=>{ if (src[k] !== undefined && src[k] !== null && src[k] !== '') maj[k] = src[k]; });
-    b.disabled = true;
-    try { await creatureCol.doc(b.dataset.reprendre).set({ ...maj, updatedAt: Date.now() }, { merge:true }); showToast('Images reprises de l\'autre version'); setTimeout(rouvrir, 400); }
-    catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
-  }));
-  liste.querySelectorAll('[data-coche]').forEach(b=> b.addEventListener('click', async ()=>{
+    champs.forEach(k=>{ if (src[k] !== undefined) maj[k] = src[k]; });
+    await creatureCol.doc(b.dataset.reprendre).set({ ...maj, updatedAt: Date.now() }, { merge:true });
+    showToast('Repris de l\'autre version ✅'); rouvrir();
+  });
+  sur('[data-rectangle]', (b)=>{
+    const [zid, sid, fid] = b.dataset.rectangle.split('|');
+    const f = ficheParId(fid);
+    fond.remove();
+    ouvrirSceneGuidee(zid, sid,
+      'Un rectangle 🧍 neuf vient d\'être posé au milieu de la scène, il est sélectionné. <b>Fais-le glisser</b> là où <b>' + esc(f && f.name) + '</b> se tient, les pieds au sol, et ajuste sa hauteur à la taille d\'une personne. Puis appuie ci-dessous.',
+      ()=> addNewScenePoint('emplacement'));
+  });
+  sur('[data-placer]', async (b)=>{
+    const [fid, zid, sid] = b.dataset.placer.split('|');
+    const nomZone = (ficheParId(zid) || {}).name || '';
+    const sc = (scenesDe[zid] || []).find(s=> s.id === sid);
+    await creatureCol.doc(fid).set({ pieceCommune: { zoneId: zid, sceneId: sid, nom: nomZone + ' · ' + ((sc && sc.name) || 'scène') }, assignedZoneId: null, lat: null, lng: null, updatedAt: Date.now() }, { merge:true });
+    showToast('Placé ✅'); rouvrir();
+  });
+  sur('[data-choisir-scene]', (b)=>{
+    const fid = b.dataset.choisirScene;
+    fond.remove();
+    ouvrirChooser(zonesPourEmplacement(), async (zoneId, z)=>{
+      const doc = await zonesCol.doc(zoneId).get();
+      const scenes = ((doc.exists && doc.data().scenes) || []).filter(sc=> sc && sc.id).map(sc=> ({ id: sc.id, zoneId, name: sc.name || 'scène', imageUrl: sc.imageUrl || '', emoji: z.emoji }));
+      if (!scenes.length){ showToast('Cette zone n\'a aucune scène'); setTimeout(ouvrirBrouillons, 300); return; }
+      setTimeout(()=> ouvrirChooser(scenes, async (sceneId, c)=>{
+        await creatureCol.doc(fid).set({ pieceCommune: { zoneId, sceneId, nom: z.name + ' · ' + c.name }, assignedZoneId: null, lat: null, lng: null, updatedAt: Date.now() }, { merge:true });
+        showToast('Placé ✅'); setTimeout(ouvrirBrouillons, 350);
+      }), 0);
+    });
+  });
+  sur('[data-code]', async (b)=>{
+    const [fid, i] = b.dataset.code.split('|');
+    const t = ((ficheParId(fid) || {}).aFaire || [])[parseInt(i, 10)] || {};
+    const v = t.verif || {};
+    const z = zoneParNom(v.zone);
+    if (!z) throw new Error('zone « ' + v.zone + ' » introuvable');
+    const d = await zonesCol.doc(z.id).get();
+    const scenes = (d.exists && d.data().scenes) || [];
+    const vers = v.vers ? scenes.find(s=> memeNom(s.name, v.vers)) : null;
+    const dans = v.scene ? scenes.find(s=> memeNom(s.name, v.scene)) : null;
+    const candidates = [];
+    scenes.forEach(s=>{ if (dans && s.id !== dans.id) return; (s.points || []).forEach(p=>{ if (p && p.type === 'sortie' && (!vers || p.targetSceneId === vers.id)) candidates.push({ s, p }); }); });
+    if (candidates.length !== 1){
+      /* Rien de sûr à modifier tout seul : on ouvre la scène et on explique le geste. */
+      fond.remove();
+      const cible = dans || (candidates[0] && candidates[0].s) || scenes[0];
+      ouvrirSceneGuidee(z.id, cible && cible.id,
+        (candidates.length ? 'Plusieurs sorties possibles' : 'Je n\'ai pas trouvé la sortie') + (vers ? ' vers « ' + esc(vers.name) + ' »' : '') + '. <b>Touche la sortie</b> qui y mène, puis dans sa fiche : <b>Verrouillage → Code numérique</b>, tape <b>' + esc(v.code) + '</b>. Puis appuie ci-dessous.');
+      return;
+    }
+    const { s, p } = candidates[0];
+    if (!(await appConfirm('Verrouiller la sortie de « ' + (s.name || 'scène') + ' »' + (vers ? ' qui mène à « ' + vers.name + ' »' : '') + ' avec le code ' + v.code + ' ?'))) return;
+    p.lockType = 'code'; p.lockCode = String(v.code);
+    /* On réécrit les scènes telles qu'on vient de les lire (images comprises) : seul ce point change. */
+    await zonesCol.doc(z.id).set({ scenes, updatedAt: Date.now() }, { merge:true });
+    oublierScenesDeZone(z.id);
+    showToast('Code ' + v.code + ' posé ✅'); rouvrir();
+  });
+  sur('[data-ouvrir-scene]', (b)=>{
+    const [zid, sid] = b.dataset.ouvrirScene.split('|');
+    fond.remove();
+    ouvrirSceneGuidee(zid, sid, '<b>➕ Ajouter un point</b> → <b>🎒 Objet</b> (ou <b>📦 Coffre</b>), choisis l\'objet récompense dans la fiche du point, place-le sur un élément du décor. Puis appuie ci-dessous.');
+  });
+  sur('[data-coche]', async (b)=>{
     const [id, i] = b.dataset.coche.split('|');
     const f = ficheParId(id);
     const fait = new Set((f && f.aFaireFait) || []); fait.add(parseInt(i, 10));
-    b.disabled = true;
-    try { await creatureCol.doc(id).set({ aFaireFait: Array.from(fait) }, { merge:true }); setTimeout(rouvrir, 400); }
-    catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
-  }));
+    await creatureCol.doc(id).set({ aFaireFait: Array.from(fait) }, { merge:true });
+    rouvrir();
+  });
 
   /* On relit la fiche SUR LE SERVEUR avant et après. Avant, parce que l'instantané local peut
      dater ; après, parce qu'une publication qui n'a pas pris doit le dire au lieu de laisser
@@ -11532,13 +11756,7 @@ async function ouvrirBrouillons(){
       poserEmpreinteFiche();
     }
   };
-  liste.querySelectorAll('[data-publier]').forEach(b=>{
-    b.addEventListener('click', async ()=>{
-      b.disabled = true;
-      try { await publier(b.dataset.publier); showToast('Publié'); rouvrir(); }
-      catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
-    });
-  });
+  sur('[data-publier]', async (b)=>{ await publier(b.dataset.publier); showToast('Publié'); rouvrir(); });
   const tout = fond.querySelector('[data-tout]');
   const toutesEnTravaux = enTravaux.concat(zonesEnTravaux);
   if (tout) tout.addEventListener('click', async ()=>{
@@ -12843,7 +13061,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      tâches « à finir » apportées par l'import disparaîtraient au premier enregistrement. */
   const ficheAvant = editingId ? ficheParId(editingId) : null;
   if (ficheAvant){
-    ['apparence','aFaire'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
+    ['apparence','aFaire','emplacementPrevu'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
   }
   if (!(await controlerChevauchements(data, enCreation ? null : editingId))) return;
   const op = enCreation ? creatureCol.add({ ...data, createdAt: Date.now() }) : creatureCol.doc(editingId).set(data);
@@ -29710,6 +29928,13 @@ function openSceneEditor(creatureId){
        croire à une modification dès l'ouverture — c'est exactement le piège de la v431 sur les
        fiches, qu'on ne refait pas. */
     poserEmpreinteZone();
+    /* v588 : une action demandée par le guide « À finir » (poser un rectangle neuf…) se fait ICI,
+       après l'empreinte : la zone apparaît alors modifiée, et la croix proposera d'enregistrer. */
+    if (actionApresChargementScene){
+      const a = actionApresChargementScene;
+      actionApresChargementScene = null;
+      try { a(); } catch(e){ console.warn('action du guide', e); }
+    }
     // Mesure séparée du temps de chargement, TOUJOURS à froid (ignore le cache local ET celui de
     // Firestore) pour donner un chiffre honnête et comparable à chaque fois, même en rouvrant l'éditeur
     // juste après avoir déjà consulté ces mêmes images.
@@ -34479,6 +34704,9 @@ async function importerScenario(sc){
          que le jeu ne peut pas deviner ({texte, verif?:{type:'code', zone, scene?, code}}). */
       apparence: p.apparence || '',
       aFaire: Array.isArray(p.aFaire) ? p.aFaire.filter(t=> t && t.texte) : [],
+      /* v588 : la scène prévue reste écrite sur la fiche — si la deuxième passe n'a pas pu la
+         poser, le guide la propose en un geste au lieu de la faire chercher. */
+      emplacementPrevu: (p.emplacement && (p.emplacement.zone || p.emplacement.scene)) ? { zone: p.emplacement.zone || '', scene: p.emplacement.scene || '' } : null,
       canFight: !!p.canFight,
       enTravaux: !!p.enTravaux,
       imageUrl:'', imagePath:null,
