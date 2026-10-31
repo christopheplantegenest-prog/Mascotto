@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v579</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v580</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35601,6 +35601,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v580 — d'après le journal : numéros de phonèmes pris dans la table du modèle (fin des phrases
+     jetées sur les nasales), phrases longues coupées aux virgules, attente après micro réduite.
      v579 — JOURNAL DE DIAGNOSTIC (bouton 📋) : chaque événement du micro, de la voix, du son
      et de la page est daté et conservé à travers les rechargements. Rien d'autre ne change.
      v578 — écoute continue (beaucoup moins de bips) ; la voix attend 0,9 s après le micro pour
@@ -35924,10 +35926,32 @@ function preparerVoix(){
   })();
   return VX.prete;
 }
-/* Texte → identifiants de phonèmes, via le prononciateur (espeak-ng « fr »). */
+/* Texte → identifiants de phonèmes, via le prononciateur (espeak-ng « fr »).
+   v580 : les numéros viennent de la TABLE DU MODÈLE (phoneme_id_map de son .json), plus de celle
+   du prononciateur — le journal du 31/10 a montré que la voix « low » ne connaît que 130 sons et
+   que le prononciateur en numérotait 141 pour la nasale : toute phrase avec un « on », « an »,
+   « in » était jetée. Un son absent de la table est noté dans le journal et ignoré. */
+function idsDepuisPhonemes(phs){
+  const map = VX.config && VX.config.phoneme_id_map;
+  if (!map) return null;
+  const ids = []; const inconnus = [];
+  const pousser = (ch)=>{ const v = map[ch]; if (v && v.length) ids.push(v[0]); else inconnus.push(ch); };
+  pousser('^'); pousser('_');
+  phs.forEach(ph=>{ pousser(ph); pousser('_'); });
+  pousser('$');
+  if (inconnus.length) journal('VOIX phonèmes inconnus du modèle', inconnus.join(' '));
+  return ids;
+}
 function phonemes(texte){
   return new Promise((resolve, reject)=>{
-    VX.surPrint = (d)=>{ VX.surPrint = null; try { resolve(JSON.parse(d).phoneme_ids); } catch(e){ reject(e); } };
+    VX.surPrint = (d)=>{
+      VX.surPrint = null;
+      try {
+        const j = JSON.parse(d);
+        const ids = Array.isArray(j.phonemes) ? idsDepuisPhonemes(j.phonemes) : null;
+        resolve(ids && ids.length ? ids : j.phoneme_ids);
+      } catch(e){ reject(e); }
+    };
     try {
       VX.phonemiseur.callMain(['-l', 'fr', '--input', JSON.stringify([{ text:String(texte) }]), '--espeak_data', '/espeak-ng-data']);
     } catch(e){ VX.surPrint = null; reject(e); }
@@ -35997,7 +36021,14 @@ async function parlerPiper(texte){
 function phrasesDeLecture(texte){
   texte = String(texte).replace(/\{joueur\}/g, 'pseudo');
   const phrases = (texte.match(/[^.!?…]+[.!?…]*["»]?\s*/g) || [texte]).map(p=> p.trim()).filter(Boolean);
-  return phrases.length ? phrases : [texte];
+  /* v580 : fabriquer une phrase prend 3 à 14 s sur le téléphone — une phrase longue est coupée
+     aux virgules pour que le début parte vite, la suite se fabriquant pendant qu'il parle */
+  const out = [];
+  phrases.forEach(ph=>{
+    if (ph.length <= 60){ out.push(ph); return; }
+    ph.split(/(?<=[,;:])\s+/).forEach(m=>{ m = m.trim(); if (m) out.push(m); });
+  });
+  return out.length ? out : [texte];
 }
 
 function parler(texte){
@@ -36012,7 +36043,7 @@ function parler(texte){
     /* v578 : juste après le micro, Android garde le son pour lui un court moment — une voix jouée
        par la page (Piper) y perdait son début, voire toute la phrase. On attend qu'il le rende. */
     const depuisMicro = Date.now() - (GV.finEcoute || 0);
-    if (depuisMicro < 900){ journal('VOIX attend le micro', { ms:900 - depuisMicro }); await new Promise(r=> setTimeout(r, 900 - depuisMicro)); }
+    if (depuisMicro < 250){ journal('VOIX attend le micro', { ms:250 - depuisMicro }); await new Promise(r=> setTimeout(r, 250 - depuisMicro)); }   // v580 : 0,9 s → 0,25 s, le journal n'a montré aucune coupure
     const piper = await preparerVoix();
     journal('VOIX moteur', piper ? 'piper' : 'navigateur');
     if (piper){
