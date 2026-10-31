@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v586</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v587</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1749,7 +1749,7 @@
       <button class="btn-capture" id="hubMusicBtn" style="flex:1 1 45%;">🎵 Musiques</button>
       <button class="btn-capture" id="hubRobotsBtn" style="flex:1 1 45%;">🎨 Apparences</button>
     </div>
-    <button class="btn-secondary" id="hubBrouillonsBtn" style="width:100%; margin-bottom:10px;">🚧 Fiches en travaux</button>
+    <button class="btn-secondary" id="hubBrouillonsBtn" style="width:100%; margin-bottom:10px;">🧰 À finir · fiches en travaux</button>
 
     <div class="field-label" style="margin-top:14px;">Outils de test</div>
     <button class="btn-capture" id="boiteNoireBtn" style="width:100%; margin-bottom:6px;">🧾 Boîte noire</button>
@@ -11263,43 +11263,250 @@ document.getElementById('editCancelBtn').addEventListener('click', async ()=>{
 /* L'écran des brouillons : tout ce qui n'est pas publié, au même endroit, avec de quoi
    publier d'un geste. Sans cette vue, une fiche laissée « en travaux » resterait invisible
    aux joueurs sans que personne s'en aperçoive. */
-function ouvrirBrouillons(){
-  const enTravaux = toutesLesFiches().filter(f=> f.enTravaux);
+/* v587 — LE GUIDE « À FINIR ». L'écran des brouillons devient une liste de ce qui reste à faire
+   pour chaque personnage en travaux, version par version, avec de quoi le faire :
+     - ce que le jeu peut VÉRIFIER tout seul se coche tout seul (image, buste, rectangle 🧍 dans la
+       scène de l'emplacement, porte à code) — rien à déclarer ;
+     - ce qu'il ne peut pas deviner vient du fichier d'import (`aFaire`) et se coche à la main ;
+     - chaque ligne a son geste : « Y aller » ouvre le bon écran de l'éditeur, « 📋 Prompt » copie
+       un prompt d'image complet, « Reprendre » recopie l'image d'une autre version du personnage.
+   Demandé le 31/10 : « un système assisté pour faire, étape par étape, la partie que je suis
+   obligé de faire moi-même ». */
+const GUIDE_CHATGPT = `Tu vas m'aider à dessiner les personnages de mon jeu mobile Mascotto. Garde ces règles pour toute la conversation.
+
+STYLE
+- Anime / manga, traits fins et nets, ombrage cel, beaucoup de détails (sangles, badges, poches, lacets).
+- Univers futuriste : il y a TOUJOURS du blanc dans les vêtements, mais le blanc n'est jamais la couleur dominante.
+- Environ la moitié du personnage en couleur franchement saturée, et une grande masse sombre (vêtement ou cheveux) pour qu'il reste lisible en petit.
+- Les cheveux font le personnage : coupe originale, couleur forte, bien visible même en tout petit.
+- Le personnage regarde le joueur (le spectateur).
+
+FORMAT
+- Une seule image par demande.
+- Toujours un PNG à fond TRANSPARENT : aucun décor, aucun sol, aucune ombre portée, aucun cadre.
+- Aucun texte, aucune lettre, aucun logo écrit.
+
+QUAND JE JOINS UNE IMAGE D'UN PERSONNAGE
+- C'est la référence : tu ne changes RIEN à son sexe, son âge, sa carrure, sa coiffure, la couleur de ses cheveux, sa peau, sa tenue ni le style de dessin.
+- Tu ne réinterprètes pas le personnage, tu le redessines tel quel dans le cadrage demandé.
+
+Réponds seulement « Compris » ; je t'envoie ensuite les demandes une par une.`;
+
+function promptImagePnj(f){
+  const qui = (f.name || 'le personnage') + (f.fonction ? ', ' + f.fonction : '');
+  return `Dessine ce personnage en pied, seul, sur fond TRANSPARENT (PNG).
+
+Personnage : ${qui}.
+${f.apparence ? 'Apparence : ' + f.apparence : 'Apparence : invente une apparence qui colle à son rôle.'}
+
+Cadrage : debout, de la tête aux pieds, tout le corps dans l'image sans rien de coupé, de face, le regard tourné vers le spectateur.
+Style : anime / manga, traits fins et nets, ombrage cel, beaucoup de détails.
+Couleurs : environ la moitié du personnage en couleur franchement saturée, une grande masse sombre, et du blanc dans la tenue sans qu'il domine.
+Interdits : aucun décor, aucun sol, aucune ombre portée, aucun cadre, aucun texte ni aucune lettre.`;
+}
+function promptBustePnj(f){
+  return `Avec l'image jointe (${f.name || 'le personnage'}), dessine son portrait en BUSTE sur fond TRANSPARENT (PNG).
+
+Cadrage : la tête et le haut du torse jusqu'à mi-poitrine, de face, le regard tourné vers le spectateur, la coiffure entièrement dans l'image.
+Ne change RIEN au personnage : ni le sexe, ni l'âge, ni la carrure, ni la coiffure, ni la couleur des cheveux, ni la peau, ni la tenue, ni le style de dessin. C'est le même personnage, seulement cadré plus près.
+Interdits : aucun décor, aucune ombre portée, aucun cadre, aucun texte ni aucune lettre.`;
+}
+
+/* Copie dans le presse-papiers ; sur téléphone il est souvent refusé : on montre alors le texte
+   tout sélectionné, il ne reste qu'à appuyer sur « Copier ». */
+function copierAvecRepli(txt, bouton){
+  const libelle = bouton ? bouton.textContent : '';
+  const fini = ()=>{ if (bouton){ bouton.textContent = '✅ Copié'; setTimeout(()=>{ bouton.textContent = libelle; }, 1800); } };
+  const repli = ()=>{
+    const fond = document.createElement('div');
+    fond.className = 'overlay show';
+    fond.style.zIndex = '4900';
+    fond.innerHTML = `<div class="sheet"><div class="sheet-top"><h3 style="margin-top:0;">📋 Texte à copier</h3><button class="sheet-x" data-fermer>✕</button></div>
+      <p class="meta">Appuie longuement dans le cadre puis « Tout sélectionner » et « Copier ».</p>
+      <textarea style="width:100%; height:50vh; font-size:12px;"></textarea></div>`;
+    document.body.appendChild(fond);
+    const zone = fond.querySelector('textarea');
+    zone.value = txt; zone.focus(); zone.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch(e){}
+    if (ok) fini();
+    fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(fini, repli);
+  else repli();
+}
+
+function aImagePrincipale(f){ return !!(f && (f.imageUrl || f.imagePath)); }
+function aImageBuste(f){ return !!(f && (f.bustImageRef || f.bustImagePath)); }
+function texteCreneaux(f){
+  const tr = (f.timeRanges || []).filter(t=> t && t.start && t.end);
+  return tr.length ? tr.map(t=> t.start + '–' + t.end).join(', ') : 'toute la journée';
+}
+
+async function ouvrirBrouillons(){
+  const enTravaux = toutesLesFiches().filter(f=> f.enTravaux && (f.interactionType || 'dialogue') !== 'zone');
+  const zonesEnTravaux = toutesLesFiches().filter(f=> f.enTravaux && (f.interactionType || 'dialogue') === 'zone');
   const fond = document.createElement('div');
   fond.className = 'overlay show';
   fond.style.zIndex = '4700';
   fond.innerHTML = `
-    <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet" style="max-height:88vh; overflow-y:auto;">
       <div class="sheet-top">
-        <h3 style="margin-top:0;">🚧 Fiches en travaux (${enTravaux.length})</h3>
+        <h3 style="margin-top:0;">🧰 À finir — fiches en travaux (${enTravaux.length + zonesEnTravaux.length})</h3>
         <button class="sheet-x" data-fermer>✕</button>
       </div>
-      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <input type="checkbox" data-voir ${voirLesBrouillons() ? 'checked' : ''} style="width:auto;">
         <span style="font-size:13px;">👁️ Voir mes brouillons en jeu (sur ce téléphone seulement)</span>
       </label>
-      <div data-liste></div>
-      ${enTravaux.length ? '<button class="btn-capture" data-tout style="width:100%; margin-top:12px;">Tout publier</button>' : ''}
+      <button class="btn-secondary" data-guide style="width:100%; margin-bottom:4px;">📋 Copier le guide pour ChatGPT</button>
+      <p class="meta" style="margin:0 0 10px;">À coller une fois au début d'une conversation neuve dans ChatGPT, avant les prompts d'images.</p>
+      <div data-liste><p class="meta">Vérification en cours…</p></div>
+      ${(enTravaux.length + zonesEnTravaux.length) ? '<button class="btn-capture" data-tout style="width:100%; margin-top:12px;">Tout publier</button>' : ''}
     </div>`;
   document.body.appendChild(fond);
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  fond.querySelector('[data-guide]').addEventListener('click', (e)=> copierAvecRepli(GUIDE_CHATGPT, e.currentTarget));
   fond.querySelector('[data-voir]').addEventListener('change', (e)=>{
     reglerVoirBrouillons(e.target.checked);
     showToast(e.target.checked ? 'Tes brouillons sont visibles ici' : 'Tu vois le jeu comme un joueur');
     redessinerCarte();
   });
+  const rouvrir = ()=>{ fond.remove(); ouvrirBrouillons(); };
 
+  /* Les scènes vivent dans exploration_zones, pas sur les fiches : on lit une fois chaque zone
+     dont on a besoin (emplacements, portes à code des tâches du fichier). */
+  const toutes = toutesLesFiches();
+  const zoneParNom = (ref)=> toutes.find(x=> (x.interactionType || '') === 'zone' && (x.id === ref || x.name === ref));
+  const zonesVoulues = new Set();
+  enTravaux.forEach(f=>{
+    if (f.pieceCommune && f.pieceCommune.zoneId) zonesVoulues.add(f.pieceCommune.zoneId);
+    (f.aFaire || []).forEach(t=>{ const z = t && t.verif && zoneParNom(t.verif.zone); if (z) zonesVoulues.add(z.id); });
+  });
+  const scenesDe = {};
+  for (const zid of zonesVoulues){
+    try { const d = await zonesCol.doc(zid).get(); scenesDe[zid] = d.exists ? (d.data().scenes || []) : []; }
+    catch(e){ scenesDe[zid] = null; }
+  }
+  if (!document.body.contains(fond)) return;
+
+  const ligne = (ok, texte, gestes, conseille)=> `
+    <div style="display:flex; gap:6px; align-items:flex-start; margin:6px 0;">
+      <div style="flex:0 0 auto; width:20px;">${ok ? '✅' : (conseille ? '◻️' : '⬜')}</div>
+      <div style="flex:1 1 auto; font-size:13px;${ok ? ' opacity:.6;' : ''}">${texte}${gestes && !ok ? '<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">' + gestes + '</div>' : ''}</div>
+    </div>`;
+  const bouton = (attrs, libelle)=> `<button type="button" class="btn-secondary" ${attrs} style="flex:0 0 auto; padding:4px 8px; font-size:12px;">${libelle}</button>`;
+  const esc = (t)=> String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+
+  /* Une ligne par CHOSE À FAIRE, dans l'ordre où il vaut mieux les faire. */
+  const controles = (f, versions)=>{
+    const out = []; let manque = 0;
+    const autreAvecImage = versions.find(v=> v.id !== f.id && aImagePrincipale(v));
+    const okImg = aImagePrincipale(f);
+    if (!okImg) manque++;
+    out.push(ligne(okImg, '🖼️ Image du personnage (en pied, fond transparent)',
+      bouton('data-prompt-img="' + f.id + '"', '📋 Prompt') + bouton('data-fiche="' + f.id + '"', 'Y aller') +
+      (autreAvecImage ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecImage.id + '"', '↪ Reprendre celle de l\'autre version') : '')));
+    const autreAvecBuste = versions.find(v=> v.id !== f.id && aImageBuste(v));
+    out.push(ligne(aImageBuste(f), '👤 Buste pour les dialogues <span class="meta">(conseillé)</span>',
+      bouton('data-prompt-buste="' + f.id + '"', '📋 Prompt') + bouton('data-fiche="' + f.id + '"', 'Y aller') +
+      (autreAvecBuste ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecBuste.id + '"', '↪ Reprendre celui de l\'autre version') : ''), true));
+    const pc = f.pieceCommune;
+    if (pc && pc.sceneId){
+      const scenes = scenesDe[pc.zoneId];
+      const sc = scenes ? scenes.find(s=> s && s.id === pc.sceneId) : null;
+      const places = sc ? (sc.points || []).filter(p=> p && p.type === 'emplacement').length : 0;
+      const ok = places > 0;
+      if (!ok) manque++;
+      out.push(ligne(ok, '🧍 Rectangle d\'emplacement dans « ' + esc(sc ? sc.name : pc.nom) + ' »' + (ok ? '' : ' <span class="meta">— pose un point « 🧍 Emplacement de PNJ » sur l\'endroit où il se tient</span>'),
+        bouton('data-scene="' + pc.zoneId + '|' + pc.sceneId + '"', 'Y aller')));
+    } else if (!(f.lat != null && f.lng != null) && !f.assignedZoneId){
+      manque++;
+      out.push(ligne(false, '📍 Aucun lieu : ce personnage n\'apparaît nulle part', bouton('data-fiche="' + f.id + '"', 'Y aller')));
+    }
+    (f.aFaire || []).forEach((t, i)=>{
+      if (!t || !t.texte) return;
+      let ok = (f.aFaireFait || []).includes(i);
+      let gestes = '';
+      const v = t.verif;
+      if (v && v.type === 'code'){
+        const z = zoneParNom(v.zone);
+        const scenes = z ? scenesDe[z.id] : null;
+        ok = !!(scenes && scenes.some(s=> (!v.scene || String(s.name || '').toLowerCase() === String(v.scene).toLowerCase())
+          && (s.points || []).some(p=> p && p.lockType === 'code' && String(p.lockCode || '') === String(v.code))));
+        if (z) gestes = bouton('data-zone="' + z.id + '"', 'Y aller');
+      } else {
+        const z = v && v.zone ? zoneParNom(v.zone) : null;
+        if (z) gestes = bouton('data-zone="' + z.id + '"', 'Y aller');
+        gestes += bouton('data-coche="' + f.id + '|' + i + '"', '✔ C\'est fait');
+      }
+      if (!ok) manque++;
+      out.push(ligne(ok, '🔧 ' + esc(t.texte), gestes));
+    });
+    return { html: out.join(''), manque };
+  };
+
+  /* Regroupement par personnage (les versions d'un même personnage ensemble). */
+  const groupes = new Map();
+  enTravaux.forEach(f=>{ const g = groupeDeFiche(f); if (!groupes.has(g)) groupes.set(g, []); groupes.get(g).push(f); });
   const liste = fond.querySelector('[data-liste]');
-  if (!enTravaux.length){
+  if (!enTravaux.length && !zonesEnTravaux.length){
     liste.innerHTML = '<p class="meta">Aucune fiche en travaux : tout ce que tu as enregistré est publié.</p>';
   } else {
-    liste.innerHTML = enTravaux.map(f=>`
-      <div class="editor-list-item" style="align-items:center;">
-        <div class="thumb">${f.imageUrl ? `<img src="${f.imageUrl}" style="width:100%; height:100%; object-fit:cover; object-position:top center;">` : '🚧'}</div>
-        <div class="name">${f.name || '(sans nom)'}<div class="meta" style="font-size:11px;">${f.versionPubliee ? 'les joueurs voient la version publiée' : 'jamais publiée — invisible pour eux'}</div></div>
-        <button type="button" class="btn-secondary" data-publier="${f.id}" style="flex:0 0 auto; padding:6px 10px;">Publier</button>
-      </div>`).join('');
+    let html = '';
+    groupes.forEach((versions)=>{
+      const f0 = versions[0];
+      let total = 0;
+      const blocs = versions.map((f, i)=>{
+        const c = controles(f, versions);
+        total += c.manque;
+        return `<div style="border-top:1px solid rgba(128,128,128,.25); padding-top:6px; margin-top:6px;">
+          <div style="font-size:12px; font-weight:600;">${versions.length > 1 ? 'Version ' + (i + 1) + ' · ' : ''}${esc(texteCreneaux(f))}${f.pieceCommune ? ' · ' + esc(f.pieceCommune.nom) : ''}</div>
+          ${c.html}
+          <div style="display:flex; justify-content:flex-end;">${bouton('data-publier="' + f.id + '"', 'Publier cette version')}</div>
+        </div>`;
+      }).join('');
+      html += `<div class="card" style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
+        <div style="font-weight:700;">${esc(f0.emoji || '👤')} ${esc(f0.name || '(sans nom)')} <span class="meta" style="font-weight:400;">— ${total ? total + ' chose(s) à faire' : 'prêt à publier'}</span></div>
+        ${blocs}
+      </div>`;
+    });
+    zonesEnTravaux.forEach(z=>{
+      html += `<div class="editor-list-item" style="align-items:center;"><div class="name">🗺️ ${esc(z.name || '(zone)')}<div class="meta" style="font-size:11px;">zone en travaux</div></div>${bouton('data-publier="' + z.id + '"', 'Publier')}</div>`;
+    });
+    liste.innerHTML = html;
   }
+
+  /* --- Les gestes --- */
+  const allerFiche = (id)=>{ fond.remove(); ctrlOuvrirCible('pnj', id); };
+  liste.querySelectorAll('[data-fiche]').forEach(b=> b.addEventListener('click', ()=> allerFiche(b.dataset.fiche)));
+  liste.querySelectorAll('[data-zone]').forEach(b=> b.addEventListener('click', ()=>{ fond.remove(); ctrlOuvrirCible('zone', b.dataset.zone); }));
+  liste.querySelectorAll('[data-scene]').forEach(b=> b.addEventListener('click', ()=>{
+    const [zid, sid] = b.dataset.scene.split('|');
+    fond.remove();
+    document.getElementById('editHubOverlay').classList.remove('show');
+    openSceneEditor(zid);
+    retourSceneVoulue = sid;   // lu à la fin du chargement de la zone : on atterrit sur la bonne scène
+  }));
+  liste.querySelectorAll('[data-prompt-img]').forEach(b=> b.addEventListener('click', ()=> copierAvecRepli(promptImagePnj(ficheParId(b.dataset.promptImg) || {}), b)));
+  liste.querySelectorAll('[data-prompt-buste]').forEach(b=> b.addEventListener('click', ()=> copierAvecRepli(promptBustePnj(ficheParId(b.dataset.promptBuste) || {}), b)));
+  liste.querySelectorAll('[data-reprendre]').forEach(b=> b.addEventListener('click', async ()=>{
+    const src = ficheParId(b.dataset.source);
+    if (!src) return;
+    const maj = {};
+    ['imageUrl','imagePath','bustImageRef','bustImagePath','mapIconScale','mapIconRotation'].forEach(k=>{ if (src[k] !== undefined && src[k] !== null && src[k] !== '') maj[k] = src[k]; });
+    b.disabled = true;
+    try { await creatureCol.doc(b.dataset.reprendre).set({ ...maj, updatedAt: Date.now() }, { merge:true }); showToast('Images reprises de l\'autre version'); setTimeout(rouvrir, 400); }
+    catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
+  }));
+  liste.querySelectorAll('[data-coche]').forEach(b=> b.addEventListener('click', async ()=>{
+    const [id, i] = b.dataset.coche.split('|');
+    const f = ficheParId(id);
+    const fait = new Set((f && f.aFaireFait) || []); fait.add(parseInt(i, 10));
+    b.disabled = true;
+    try { await creatureCol.doc(id).set({ aFaireFait: Array.from(fait) }, { merge:true }); setTimeout(rouvrir, 400); }
+    catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
+  }));
 
   /* On relit la fiche SUR LE SERVEUR avant et après. Avant, parce que l'instantané local peut
      dater ; après, parce qu'une publication qui n'a pas pris doit le dire au lieu de laisser
@@ -11328,17 +11535,18 @@ function ouvrirBrouillons(){
   liste.querySelectorAll('[data-publier]').forEach(b=>{
     b.addEventListener('click', async ()=>{
       b.disabled = true;
-      try { await publier(b.dataset.publier); showToast('Publié'); fond.remove(); ouvrirBrouillons(); }
+      try { await publier(b.dataset.publier); showToast('Publié'); rouvrir(); }
       catch(err){ showToast('Échec : ' + err.message); b.disabled = false; }
     });
   });
   const tout = fond.querySelector('[data-tout]');
+  const toutesEnTravaux = enTravaux.concat(zonesEnTravaux);
   if (tout) tout.addEventListener('click', async ()=>{
-    if (!(await appConfirm('Publier les ' + enTravaux.length + ' fiches en travaux ?'))) return;
+    if (!(await appConfirm('Publier les ' + toutesEnTravaux.length + ' fiches en travaux ?'))) return;
     try {
-      for (const f of enTravaux) await publier(f.id);
+      for (const f of toutesEnTravaux) await publier(f.id);
       showToast('Tout est publié');
-      fond.remove(); ouvrirBrouillons();
+      rouvrir();
     } catch(err){ showToast('Échec : ' + err.message); }
   });
 }
@@ -12631,6 +12839,12 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   /* v443 : une nouvelle version part d'une fiche chargée mais doit devenir un document NEUF. */
   const enCreation = (!editingId || forcerCreation);
   /* v501 : à deux endroits à la fois, ou trop de monde dans la pièce → on prévient, on ne bloque pas. */
+  /* v587 : l'éditeur réécrit la fiche EN ENTIER (set sans merge) — sans ça, l'apparence et les
+     tâches « à finir » apportées par l'import disparaîtraient au premier enregistrement. */
+  const ficheAvant = editingId ? ficheParId(editingId) : null;
+  if (ficheAvant){
+    ['apparence','aFaire'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
+  }
   if (!(await controlerChevauchements(data, enCreation ? null : editingId))) return;
   const op = enCreation ? creatureCol.add({ ...data, createdAt: Date.now() }) : creatureCol.doc(editingId).set(data);
   op.then((ref)=>{
@@ -34261,6 +34475,10 @@ async function importerScenario(sc){
          pas publiée depuis l'éditeur (« voir mes brouillons » pour la tester). Sans versionPubliee,
          `ficheJouable` la cache — c'est exactement le comportement d'un brouillon créé à la main. */
       fonction: p.fonction || '',
+      /* v587 : pour le guide « À finir » — l'apparence nourrit le prompt d'image, `aFaire` liste ce
+         que le jeu ne peut pas deviner ({texte, verif?:{type:'code', zone, scene?, code}}). */
+      apparence: p.apparence || '',
+      aFaire: Array.isArray(p.aFaire) ? p.aFaire.filter(t=> t && t.texte) : [],
       canFight: !!p.canFight,
       enTravaux: !!p.enTravaux,
       imageUrl:'', imagePath:null,
