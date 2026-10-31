@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v582</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v584</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1784,6 +1784,12 @@
       <input type="file" id="scenarioImportFile" accept="application/json,.json" class="field-input" style="margin-bottom:8px;">
       <button type="button" class="btn-capture" id="scenarioImportBtn" style="width:100%; height:42px;">📥 Importer le fichier choisi</button>
       <div id="scenarioImportReport" style="margin-top:8px; font-size:12px; line-height:1.5;"></div>
+    </div>
+    <button type="button" class="btn-secondary tt-cat" data-ttcat="export" style="width:100%; margin-bottom:6px; text-align:left;">📤 Exporter mes fiches</button>
+    <div class="tt-panel" id="ttPanel-export" style="display:none; padding:0 0 10px;">
+      <p class="meta" style="margin:0 0 6px;">Fabrique un fichier .json avec tout ce qui est dans la base : personnages et leurs versions, dialogues et conditions, horaires, zones avec leurs scènes et leurs points (portes, codes, objets), objets, quêtes, métiers, modèles de robots. Les images ne sont PAS incluses. Rien n'est modifié dans la base : c'est une simple lecture. Le fichier arrive dans tes Téléchargements.</p>
+      <button type="button" class="btn-capture" id="exportFichesBtn" style="width:100%; height:42px;">📤 Exporter</button>
+      <div id="exportFichesReport" class="meta" style="margin-top:8px;"></div>
     </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="controle" style="width:100%; margin-bottom:6px; text-align:left;">🔎 Contrôle du scénario</button>
     <div class="tt-panel" id="ttPanel-controle" style="display:none; padding:0 0 10px;">
@@ -34219,8 +34225,26 @@ async function importerScenario(sc){
       stealEasyItemId: p.combatStats.volFacile ? importResoudre(cles.objets, p.combatStats.volFacile, items, journal, 'Vol sur ' + p.name) : null,
       stealHardItemId: p.combatStats.volDifficile ? importResoudre(cles.objets, p.combatStats.volDifficile, items, journal, 'Vol sur ' + p.name) : null,
     } : null;
+    /* v583 : le modèle de robot est donné par son NOM dans le fichier (combatStats.robotModele),
+       résolu ici contre les modèles du jeu ; introuvable → ⚠️ et champ vide, à régler à la main. */
+    if (stats){
+      const nomModele = p.combatStats.robotModele || p.combatStats.modele || '';
+      if (nomModele){
+        const liste = (typeof robotsModeles !== 'undefined' ? robotsModeles : []) || [];
+        const m = liste.find(x=> x.nom === nomModele || x.id === nomModele) || liste.find(x=> String(x.nom || '').toLowerCase() === String(nomModele).toLowerCase());
+        if (m) stats.robotModeleId = m.id;
+        else journal.push('⚠️ ' + p.name + ' : modèle de robot « ' + nomModele + ' » introuvable — choisis-le à la main dans la fiche');
+      }
+    }
     return {
       name:p.name, metier:p.metier || '', emoji:p.emoji || '👤',
+      /* v583 : trois champs de fiche apparus depuis l'import (fonction à bord, duel, brouillon).
+         `enTravaux:true` → la fiche arrive en BROUILLON 🚧 : invisible des joueurs tant qu'elle n'est
+         pas publiée depuis l'éditeur (« voir mes brouillons » pour la tester). Sans versionPubliee,
+         `ficheJouable` la cache — c'est exactement le comportement d'un brouillon créé à la main. */
+      fonction: p.fonction || '',
+      canFight: !!p.canFight,
+      enTravaux: !!p.enTravaux,
       imageUrl:'', imagePath:null,
       visibilityCondition:p.visibilityCondition || null,
       hideOnExitRadius: !!p.hideOnExitRadius,
@@ -34424,6 +34448,57 @@ async function importerScenario(sc){
   return journal;
 }
 
+/* v584 — EXPORT EN LECTURE SEULE. Lit la base (fiches + documents de scènes des zones) et les
+   listes déjà chargées, retire tout ce qui est image (base64 ou adresse), et télécharge un .json.
+   Sert à donner à Claude l'état réel du contenu avant de concevoir quelque chose qui s'y raccroche. */
+function exportNettoyer(v){
+  if (Array.isArray(v)) return v.map(exportNettoyer);
+  if (v && typeof v === 'object'){
+    const o = {};
+    Object.keys(v).forEach(k=>{
+      if (/image|img|portrait|crop|bust|arena|icon(Url|Path|Ref)?$/i.test(k) && k !== 'hideIcon') return;
+      o[k] = exportNettoyer(v[k]);
+    });
+    return o;
+  }
+  if (typeof v === 'string' && v.startsWith('data:')) return '[image]';
+  return v;
+}
+document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
+  const rapport = document.getElementById('exportFichesReport');
+  const bouton = document.getElementById('exportFichesBtn');
+  bouton.disabled = true; rapport.textContent = 'Lecture de la base…';
+  try {
+    const fiches = toutesLesFiches().map(f=> exportNettoyer(f));
+    const zones = [];
+    if (zonesCol){
+      const snap = await zonesCol.get();
+      snap.forEach(d=> zones.push(exportNettoyer({ id:d.id, ...d.data() })));
+    }
+    const nomDe = (id)=>{ const f = fiches.find(x=> x.id === id); return f ? f.name : null; };
+    zones.forEach(z=>{ z._nomFiche = nomDe(z.id); });
+    const donnees = {
+      export: 'Mascotto', version: (document.getElementById('appVersionLabel') || {}).textContent || '', date: new Date().toISOString(),
+      compte: { fiches:fiches.length, zones:zones.length },
+      fiches, zones,
+      objets: exportNettoyer(typeof items !== 'undefined' ? items : []),
+      quetes: exportNettoyer(typeof quests !== 'undefined' ? quests : []),
+      metiers: exportNettoyer(typeof metiers !== 'undefined' ? metiers : []),
+      modelesRobots: exportNettoyer((typeof robotsModeles !== 'undefined' ? robotsModeles : []).map(m=> ({ id:m.id, nom:m.nom, vice:m.vice, element:m.element }))),
+      recettes: exportNettoyer(typeof recipes !== 'undefined' ? recipes : []),
+    };
+    const texte = JSON.stringify(donnees, null, 1);
+    const nom = 'mascotto-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    const blob = new Blob([texte], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nom;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+    rapport.textContent = '✅ ' + nom + ' — ' + fiches.length + ' fiches, ' + zones.length + ' zones, ' + Math.round(texte.length / 1024) + ' Ko. Regarde dans tes Téléchargements.';
+  } catch(e){
+    rapport.textContent = '⚠️ Export impossible : ' + (e && e.message ? e.message : e);
+  } finally { bouton.disabled = false; }
+});
 document.getElementById('scenarioImportBtn').addEventListener('click', async ()=>{
   const champ = document.getElementById('scenarioImportFile');
   const rapport = document.getElementById('scenarioImportReport');
@@ -35601,6 +35676,8 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v584 — Outils de test → 📤 Exporter mes fiches (lecture seule, fichier .json sans images).
+     v583 — IMPORT : enTravaux (brouillon), fonction, canFight, modèle de robot par son nom.
      v582 — essai : le canal audio de la page est suspendu entre deux prises de parole (bips du micro ?).
      v581 — le modèle de voix tourne dans un worker (la page n'est plus bloquée) ; les sons
      fabriqués sont gardés en cache (phrases connues instantanées) ; nasale par voyelle composée ;
