@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v588</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v589</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11347,23 +11347,35 @@ function texteCreneaux(f){
    croix, par « Enregistrer », peu importe le chemin), le guide se rouvre là où on l'avait
    laissé. Un bandeau dans l'éditeur rappelle ce qu'on est venu y faire. */
 let guideRetourAttendu = false;
+const CLE_BANDEAU = 'mascotto_bandeau_guide';
+let bandeauEtat = null;
 function bandeauGuide(texte, opts){
   fermerBandeauGuide();
   opts = opts || {};
+  if (!bandeauEtat){ try { bandeauEtat = JSON.parse(localStorage.getItem(CLE_BANDEAU) || 'null'); } catch(e){} if (!bandeauEtat) bandeauEtat = { x:null, y:null, replie:false }; }
+  const garder = ()=>{ try { localStorage.setItem(CLE_BANDEAU, JSON.stringify(bandeauEtat)); } catch(e){} };
   const b = document.createElement('div');
   b.id = 'bandeauGuide';
-  b.style.cssText = 'position:fixed; left:8px; right:8px; top:calc(env(safe-area-inset-top) + 58px); z-index:4550; background:#14532d; color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.45);';
-  b.innerHTML = `<div style="display:flex; align-items:center; gap:6px;"><b style="flex:1 1 auto;">🧰 Guide</b><button type="button" data-reduire style="background:none; border:none; color:#fff; font-size:16px;">▾</button></div>
-    <div data-corps><div style="margin:4px 0 8px; line-height:1.35;">${texte}</div>
-    <button type="button" data-revenir style="width:100%; padding:8px; border-radius:8px; border:none; background:#fff; color:#14532d; font-weight:700;">${opts.scene ? '💾 Enregistrer et revenir au guide' : '↩ Revenir au guide'}</button></div>`;
+  /* v589 : réduit, le bandeau n'est plus qu'une PASTILLE « 🧰 ▸ » ; ouvert ou réduit, il se
+     déplace du doigt (par son titre) et garde sa place — il ne couvre plus les boutons. */
+  const dessiner = ()=>{
+    const replie = bandeauEtat.replie;
+    b.style.cssText = replie
+      ? 'position:fixed; z-index:4550; background:#14532d; color:#fff; border-radius:999px; padding:6px 10px; font-size:14px; box-shadow:0 3px 10px rgba(0,0,0,.45); user-select:none; -webkit-user-select:none;'
+      : 'position:fixed; z-index:4550; width:min(92vw, 420px); background:#14532d; color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.45); user-select:none; -webkit-user-select:none;';
+    b.innerHTML = replie
+      ? `<div data-poignee style="display:flex; align-items:center; gap:4px; cursor:move;"><span>🧰</span><button type="button" data-reduire style="background:none; border:none; color:#fff; font-size:14px; padding:0 2px;">▸</button></div>`
+      : `<div data-poignee style="display:flex; align-items:center; gap:6px; cursor:move;"><b style="flex:1 1 auto;">⋮⋮ 🧰 Guide</b><button type="button" data-reduire style="background:none; border:none; color:#fff; font-size:16px;">▾</button></div>
+        <div><div style="margin:4px 0 8px; line-height:1.35;">${texte}</div>
+        <button type="button" data-revenir style="width:100%; padding:8px; border-radius:8px; border:none; background:#fff; color:#14532d; font-weight:700;">${opts.scene ? '💾 Enregistrer et revenir au guide' : '↩ Revenir au guide'}</button></div>`;
+    if (bandeauEtat.x == null){ b.style.left = '8px'; b.style.top = 'calc(env(safe-area-inset-top) + 58px)'; }
+    rendreDeplacable(b, b.querySelector('[data-poignee]'), bandeauEtat, garder);
+    b.querySelector('[data-reduire]').addEventListener('click', (e)=>{ e.stopPropagation(); bandeauEtat.replie = !bandeauEtat.replie; garder(); dessiner(); });
+    const rv = b.querySelector('[data-revenir]');
+    if (rv) rv.addEventListener('click', revenir);
+  };
   document.body.appendChild(b);
-  b.querySelector('[data-reduire]').addEventListener('click', (e)=>{
-    const c = b.querySelector('[data-corps]');
-    const cache = c.style.display === 'none';
-    c.style.display = cache ? 'block' : 'none';
-    e.currentTarget.textContent = cache ? '▾' : '▸';
-  });
-  b.querySelector('[data-revenir]').addEventListener('click', async ()=>{
+  const revenir = async ()=>{
     if (opts.scene){
       const ok = await enregistrerSceneCourante(true);
       if (!ok) return;
@@ -11375,7 +11387,8 @@ function bandeauGuide(texte, opts){
     fermerBandeauGuide();
     guideRetourAttendu = false;
     ouvrirBrouillons();
-  });
+  };
+  dessiner();
   guideRetourAttendu = true;
 }
 function fermerBandeauGuide(){ const b = document.getElementById('bandeauGuide'); if (b) b.remove(); }
@@ -11668,8 +11681,8 @@ async function ouvrirBrouillons(){
     const f = ficheParId(fid);
     fond.remove();
     ouvrirSceneGuidee(zid, sid,
-      'Un rectangle 🧍 neuf vient d\'être posé au milieu de la scène, il est sélectionné. <b>Fais-le glisser</b> là où <b>' + esc(f && f.name) + '</b> se tient, les pieds au sol, et ajuste sa hauteur à la taille d\'une personne. Puis appuie ci-dessous.',
-      ()=> addNewScenePoint('emplacement'));
+      'Un rectangle 🧍 neuf est posé au milieu de la scène, avec <b>' + esc(f && f.name) + '</b> dessiné dedans comme en jeu. <b>Fais glisser</b> le rectangle là où il se tient, les pieds au sol ; règle sa taille avec ↕＋ / ↕－ de la palette, et 🔃 pour le retourner. Puis appuie ci-dessous.',
+      ()=>{ apercuFicheId = fid; addNewScenePoint('emplacement'); });   // v589 : l'aperçu montre CE personnage
   });
   sur('[data-placer]', async (b)=>{
     const [fid, zid, sid] = b.dataset.placer.split('|');
@@ -28710,7 +28723,8 @@ function isPointHitAt(pt, div, clientX, clientY){
     /* v499 : sans occupant (dans l'éditeur, ou place vide), c'est le rectangle lui-même qui répond */
     if (im){
       const b = boiteOpaqueAffichee(im);
-      return !!b && clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
+      /* v589 : image pas encore calée (aperçu de l'éditeur qui charge) → le rectangle répond */
+      if (b) return clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
     }
   }
   const rect = div.getBoundingClientRect();
@@ -28772,8 +28786,23 @@ function renderSceneEditorPoints(){
       /* v497 : l'emplacement se dessine en rectangle pointillé, avec son étiquette — le jeu y
          posera lui-même l'habitant du moment, calé sur ses pixels opaques. */
       el.className = 'scene-point';
-      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(95,242,255,.10); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(95,242,255,.85)'}; box-shadow:none; border-radius:6px; pointer-events:none; display:flex; align-items:flex-end; justify-content:center;`;
-      el.innerHTML = `<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; margin-bottom:3px; white-space:nowrap;">🧍 emplacement</span>`;
+      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(95,242,255,.10); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(95,242,255,.85)'}; box-shadow:none; border-radius:6px; pointer-events:none; display:flex; align-items:flex-end; justify-content:center; overflow:visible;`;
+      /* v589 : APERÇU de l'occupant, dessiné exactement comme en jeu (pieds au bas du rectangle,
+         hauteur = hauteur du rectangle, miroir du rectangle) — demandé le 31/10 pour régler la
+         taille en voyant le résultat. Sans image sur la fiche : une silhouette grise. */
+      const occ = apercuOccupant(pt);
+      if (occ){
+        if (urlImageDeFiche(occ)){
+          const im = imageOccupantEmplacement(occ, pt);
+          im.style.opacity = '.9';
+          el.appendChild(im);
+        } else {
+          el.insertAdjacentHTML('afterbegin', `<div style="position:absolute; left:50%; bottom:0; width:${Math.max(16, h*0.42)}px; height:100%; transform:translateX(-50%); opacity:.75; background:url(&quot;data:image/svg+xml;utf8,${SILHOUETTE_SVG}&quot;) no-repeat center bottom / contain;"></div>`);
+        }
+        el.insertAdjacentHTML('beforeend', `<span style="position:absolute; left:50%; top:100%; transform:translateX(-50%); margin-top:3px; font-size:10px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; white-space:nowrap;">${(occ.emoji || '👤')} ${(occ.name || '').replace(/</g,'&lt;')}${pt.flipped ? ' 🔃' : ''}</span>`);
+      } else {
+        el.innerHTML = `<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; margin-bottom:3px; white-space:nowrap;">🧍 emplacement</span>`;
+      }
     } else if (url){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
@@ -28821,29 +28850,108 @@ function selectScenePoint(id){
   renderSceneEditorDetails();   // v507 : la ligne de boutons des rubriques s'y règle
 }
 
+const SILHOUETTE_SVG = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 100"><circle cx="20" cy="11" r="9" fill="#cfd8dc"/><path d="M8 100V60L4 40c-1-8 4-16 12-18h8c8 2 13 10 12 18l-4 20v40h-8V62h-2v38z" fill="#cfd8dc"/></svg>');
+
+/* v589 : qui montrer dans un rectangle 🧍 de l'éditeur. Les candidats : toutes les fiches
+   (brouillons compris) marquées sur CETTE scène. `apercuFicheId` choisit lequel ; sinon la
+   première. Le guide « À finir » le règle sur le personnage qu'on vient placer. */
+let apercuFicheId = null;
+function candidatsApercu(){
+  const sid = typeof sceneEditorCurrentSceneId !== 'undefined' ? sceneEditorCurrentSceneId : null;
+  if (!sid) return [];
+  return toutesLesFiches().filter(f=> f && f.pieceCommune && f.pieceCommune.sceneId === sid)
+    .sort((a,b)=> (a.name || '').localeCompare(b.name || '', 'fr'));
+}
+function apercuOccupant(pt){
+  const c = candidatsApercu();
+  if (!c.length) return null;
+  const places = sceneEditorPoints.filter(p=> p && p.type === 'emplacement');
+  const i = places.indexOf(pt);
+  /* le candidat choisi va dans le rectangle sélectionné ; les autres places prennent les suivants */
+  const choisi = c.find(f=> f.id === apercuFicheId) || c[0];
+  if (pt.id === sceneEditorSelectedPointId || places.length === 1) return choisi;
+  const autres = c.filter(f=> f.id !== choisi.id);
+  const sel = places.findIndex(p=> p.id === sceneEditorSelectedPointId);
+  const k = i - (sel >= 0 && i > sel ? 1 : 0);
+  return autres[k] || null;
+}
+
+/* v589 : LA PALETTE FLOTTANTE. Les boutons qui étaient collés aux bords de l'image (ils
+   masquaient le décor et le bandeau du guide les recouvrait) vivent dans une palette que l'on
+   DÉPLACE du doigt par sa poignée, que l'on replie en pastille, et qui garde sa place. */
+const CLE_PALETTE = 'mascotto_palette_scene';
+let paletteEtat = null;
+function lirePalette(){
+  if (paletteEtat) return paletteEtat;
+  try { paletteEtat = JSON.parse(localStorage.getItem(CLE_PALETTE) || 'null'); } catch(e){ paletteEtat = null; }
+  if (!paletteEtat) paletteEtat = { x: null, y: null, replie: false };
+  return paletteEtat;
+}
+function garderPalette(){ try { localStorage.setItem(CLE_PALETTE, JSON.stringify(paletteEtat)); } catch(e){} }
+function rendreDeplacable(el, poignee, etat, garder){
+  let dep = null;
+  const clamp = ()=>{
+    const r = el.getBoundingClientRect();
+    etat.x = Math.max(0, Math.min(window.innerWidth - r.width, etat.x));
+    etat.y = Math.max(0, Math.min(window.innerHeight - r.height, etat.y));
+    el.style.left = etat.x + 'px'; el.style.top = etat.y + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+  };
+  poignee.style.touchAction = 'none';
+  poignee.addEventListener('pointerdown', (ev)=>{
+    if (ev.target.closest('button')) return;   // un bouton de la poignée reste un bouton
+    const r = el.getBoundingClientRect();
+    dep = { dx: ev.clientX - r.left, dy: ev.clientY - r.top, bouge:false, x0: ev.clientX, y0: ev.clientY };
+    try { poignee.setPointerCapture(ev.pointerId); } catch(e){}
+  });
+  poignee.addEventListener('pointermove', (ev)=>{
+    if (!dep) return;
+    if (!dep.bouge && Math.hypot(ev.clientX - dep.x0, ev.clientY - dep.y0) < 6) return;
+    dep.bouge = true;
+    etat.x = ev.clientX - dep.dx; etat.y = ev.clientY - dep.dy;
+    clamp();
+  });
+  const fin = ()=>{ if (dep && dep.bouge) garder(); if (dep) dep.fini = dep.bouge; dep = null; };
+  poignee.addEventListener('pointerup', fin);
+  poignee.addEventListener('pointercancel', fin);
+  if (etat.x != null && etat.y != null) clamp();
+  return { aBouge: ()=> false };
+}
 function renderSceneEditorDpad(){
   const dpad = document.getElementById('sceneEditorDpad');
+  if (dpad) dpad.innerHTML = '';   // plus rien sur l'image
+  let pal = document.getElementById('scPalette');
   const pt = sceneEditorPoints.find(p=>p.id === sceneEditorSelectedPointId);
-  if (!pt){ dpad.innerHTML = ''; renderSceneEditorRotateBar(); return; }
-  /* Flèches ramenées sur le cadre de l'image et COLLÉES à ses bords : elles restent à portée
-     de pouce autour du point qu'on déplace, sans venir se poser au milieu de la scène.
-     Rectangulaires et plates contre le bord, elles mordent le moins possible sur le décor. */
-  const btn = 'pointer-events:auto; border:none; background:rgba(0,0,0,.62); color:#fff; font-size:18px; display:flex; align-items:center; justify-content:center; position:absolute;';
-  const horiz = 'width:78px; height:34px; border-radius:0 0 10px 10px;';
-  const horizBas = 'width:78px; height:34px; border-radius:10px 10px 0 0;';
-  const vert = 'width:34px; height:78px;';
-  dpad.innerHTML = `
-    <button type="button" id="scDpadUp" style="${btn}${horiz} left:50%; top:0; transform:translateX(-50%);">▲</button>
-    <button type="button" id="scDpadDown" style="${btn}${horizBas} left:50%; bottom:0; transform:translateX(-50%);">▼</button>
-    <button type="button" id="scDpadLeft" style="${btn}${vert} left:0; top:50%; transform:translateY(-50%); border-radius:0 10px 10px 0;">◀</button>
-    <button type="button" id="scDpadRight" style="${btn}${vert} right:0; top:50%; transform:translateY(-50%); border-radius:10px 0 0 10px;">▶</button>
-    <button type="button" id="scDpadSizeUp" style="${btn} width:44px; height:34px; right:0; top:0; border-radius:0 0 0 10px;">＋</button>
-    <button type="button" id="scDpadSizeDown" style="${btn} width:44px; height:34px; right:0; top:34px; border-radius:0 0 0 10px;">－</button>
-    <button type="button" id="scDpadWUp" style="${btn} width:52px; height:34px; left:0; top:0; border-radius:0 0 10px 0; font-size:14px;">↔＋</button>
-    <button type="button" id="scDpadWDown" style="${btn} width:52px; height:34px; left:0; top:34px; border-radius:0 0 10px 0; font-size:14px;">↔－</button>
-    <button type="button" id="scDpadHUp" style="${btn} width:52px; height:34px; right:0; top:74px; border-radius:10px 0 0 10px; font-size:14px;">↕＋</button>
-    <button type="button" id="scDpadHDown" style="${btn} width:52px; height:34px; right:0; top:108px; border-radius:10px 0 0 10px; font-size:14px;">↕－</button>
-  `;
+  if (!pt){ if (pal) pal.style.display = 'none'; renderSceneEditorRotateBar(); return; }
+  const etat = lirePalette();
+  if (!pal){
+    pal = document.createElement('div');
+    pal.id = 'scPalette';
+    pal.style.cssText = 'position:fixed; z-index:4020; right:8px; bottom:150px; background:rgba(0,0,0,.72); border:1px solid rgba(255,255,255,.25); border-radius:12px; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.5); user-select:none; -webkit-user-select:none;';
+    document.getElementById('sceneEditorFull').appendChild(pal);
+  }
+  pal.style.display = 'block';
+  const b = 'border:none; background:rgba(255,255,255,.14); color:#fff; font-size:17px; width:44px; height:40px; border-radius:8px; display:flex; align-items:center; justify-content:center; -webkit-touch-callout:none;';
+  const small = 'font-size:13px;';
+  const estEmpl = pt.type === 'emplacement';
+  const cands = estEmpl ? candidatsApercu() : [];
+  const occ = estEmpl ? (cands.find(f=> f.id === apercuFicheId) || cands[0]) : null;
+  pal.innerHTML = etat.replie
+    ? `<div data-poignee style="display:flex; align-items:center; gap:4px; padding:6px 8px; cursor:move;"><span style="font-size:14px;">🎛️</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▸</button></div>`
+    : `<div data-poignee style="display:flex; align-items:center; gap:6px; padding:5px 8px; border-bottom:1px solid rgba(255,255,255,.18); cursor:move;"><span style="font-size:12px; opacity:.85; flex:1 1 auto;">⋮⋮ ${estEmpl ? '🧍 rectangle' : 'point'}</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▾</button></div>
+      <div style="padding:6px; display:grid; grid-template-columns:repeat(3, 44px); gap:4px;">
+        <button type="button" id="scDpadWUp" style="${b}${small}">↔＋</button><button type="button" id="scDpadUp" style="${b}">▲</button><button type="button" id="scDpadHUp" style="${b}${small}">↕＋</button>
+        <button type="button" id="scDpadLeft" style="${b}">◀</button><button type="button" id="scDpadSizeUp" style="${b}">＋</button><button type="button" id="scDpadRight" style="${b}">▶</button>
+        <button type="button" id="scDpadWDown" style="${b}${small}">↔－</button><button type="button" id="scDpadDown" style="${b}">▼</button><button type="button" id="scDpadHDown" style="${b}${small}">↕－</button>
+        <button type="button" id="scDpadSizeDown" style="${b}">－</button><button type="button" id="scDpadFlip" style="${b}${small}${pt.flipped ? ' background:rgba(95,242,255,.35);' : ''}" title="Miroir">🔃</button>
+        ${estEmpl ? `<button type="button" id="scDpadApercu" style="${b}${small}" title="Aperçu : personnage suivant">${cands.length ? '👤' + (cands.length > 1 ? '⟳' : '') : '👤·'}</button>` : '<span></span>'}
+      </div>
+      ${estEmpl ? `<div style="padding:0 8px 6px; font-size:11px; opacity:.85; max-width:150px;">${occ ? 'Aperçu : ' + (occ.emoji || '') + ' ' + (occ.name || '').replace(/</g,'&lt;') + (cands.length > 1 ? ' (' + cands.length + ' ici)' : '') : 'Aucun personnage marqué sur cette scène'}</div>` : ''}`;
+  const poignee = pal.querySelector('[data-poignee]');
+  rendreDeplacable(pal, poignee, etat, garderPalette);
+  if (etat.x == null){ pal.style.left = 'auto'; pal.style.top = 'auto'; pal.style.right = '8px'; pal.style.bottom = '150px'; }
+  pal.querySelector('[data-plier]').addEventListener('click', (ev)=>{ ev.stopPropagation(); etat.replie = !etat.replie; garderPalette(); renderSceneEditorDpad(); });
+  if (etat.replie){ renderSceneEditorRotateBar(); return; }
   const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
   const step = 2;
   const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); renderSceneEditorDetails(); };
@@ -28859,6 +28967,14 @@ function renderSceneEditorDpad(){
   document.getElementById('scDpadWDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); after(); });
   document.getElementById('scDpadHUp').addEventListener('click', ()=>{ pt.h = clamp((pt.h||8)+step,4,95); after(); });
   document.getElementById('scDpadHDown').addEventListener('click', ()=>{ pt.h = clamp((pt.h||8)-step,4,95); after(); });
+  document.getElementById('scDpadFlip').addEventListener('click', ()=>{ pt.flipped = !pt.flipped; after(); });
+  const ap = document.getElementById('scDpadApercu');
+  if (ap) ap.addEventListener('click', ()=>{
+    if (!cands.length){ showToast('Aucun personnage n\'est marqué sur cette scène'); return; }
+    const i = cands.findIndex(f=> f.id === (occ && occ.id));
+    apercuFicheId = cands[(i + 1) % cands.length].id;
+    after();
+  });
   renderSceneEditorRotateBar();
 }
 
@@ -29899,6 +30015,8 @@ function openSceneEditor(creatureId){
     if (f) f.classList.remove('show');
   });
   sceneEditorZoneId = creatureId;
+  apercuFicheId = null;   // v589
+  { const pal = document.getElementById('scPalette'); if (pal) pal.style.display = 'none'; }
   sceneEditorScenes = [{ id: genSceneId(), name: 'Scène 1', imageUrl: '', points: [] }];
   sceneEditorStartSceneId = sceneEditorScenes[0].id;
   loadSceneIntoEditorState(sceneEditorScenes[0].id);
@@ -30799,7 +30917,7 @@ async function renderSceneViewCurrentScene(){
     if (pt.type === 'emplacement'){
       /* v497 : l'habitant du moment, posé dans le rectangle par ses pixels opaques. */
       el.style.overflow = 'visible';
-      el.appendChild(imageOccupantEmplacement(attribution[pt.id]));
+      el.appendChild(imageOccupantEmplacement(attribution[pt.id], pt));
     }
 
     if (pt.type === 'habitant'){
@@ -31301,17 +31419,23 @@ function bornesOpaques(img){
 function caler(img, W, H, nat, b){
   const s = H / b.h;   // v498 : seule la HAUTEUR du rectangle compte, la largeur déborde librement
   const dispW = nat.w * s, dispH = nat.h * s;
+  /* v589 : en miroir (scaleX(-1) autour du centre de l'image), la partie opaque se retrouve de
+     l'autre côté : on centre sur sa position miroir. */
+  const bx = img.dataset.flipped === '1' ? (nat.w - b.x - b.w) : b.x;
   img.style.width = (dispW / W * 100) + '%';
   img.style.height = (dispH / H * 100) + '%';
-  img.style.left = ((W / 2 - (b.x + b.w / 2) * s) / W * 100) + '%';
+  img.style.left = ((W / 2 - (bx + b.w / 2) * s) / W * 100) + '%';
   img.style.bottom = (-(nat.h - b.y - b.h) * s / H * 100) + '%';
   img.dataset.cale = '1';
 }
-function imageOccupantEmplacement(f){
+function imageOccupantEmplacement(f, pt){
   const img = document.createElement('img');
   img.className = 'pnj-emplace';
   img.dataset.ficheid = f.id;
-  img.style.cssText = 'position:absolute; max-width:none; max-height:none; object-fit:fill; pointer-events:none; -webkit-touch-callout:none; visibility:hidden;';
+  /* v589 : le miroir du rectangle 🧍 retourne son occupant (il regarde de l'autre côté). */
+  const flip = !!(pt && pt.flipped);
+  img.dataset.flipped = flip ? '1' : '0';
+  img.style.cssText = 'position:absolute; max-width:none; max-height:none; object-fit:fill; pointer-events:none; -webkit-touch-callout:none; visibility:hidden;' + (flip ? ' transform:scaleX(-1);' : '');
   const url = urlImageDeFiche(f);
   if (/^https?:/i.test(url)) img.crossOrigin = 'anonymous';
   img.onload = ()=>{
@@ -31333,7 +31457,8 @@ function boiteOpaqueAffichee(img){
   const r = img.getBoundingClientRect();
   const b = bornesOpaques(img);
   const s = r.width / img.naturalWidth;
-  return { left: r.left + b.x * s, right: r.left + (b.x + b.w) * s, top: r.top + b.y * s, bottom: r.top + (b.y + b.h) * s };
+  const bx = img.dataset.flipped === '1' ? (img.naturalWidth - b.x - b.w) : b.x;   // v589 : miroir
+  return { left: r.left + bx * s, right: r.left + (bx + b.w) * s, top: r.top + b.y * s, bottom: r.top + (b.y + b.h) * s };
 }
 
 function toucherEmplacement(pt){
@@ -31369,7 +31494,7 @@ function majEmplacementsScene(){
     el.dataset.ptid = pt.id;
     el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w||8; el.dataset.pth = pt.h||8;
     el.style.cssText = `position:absolute; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; pointer-events:none; overflow:visible;`;
-    el.appendChild(imageOccupantEmplacement(neuf[pt.id]));
+    el.appendChild(imageOccupantEmplacement(neuf[pt.id], pt));
     wrap.appendChild(el);
   });
   cur.attribution = neuf;
@@ -34932,6 +35057,7 @@ async function importerScenario(sc){
   };
   const premierDuGroupe = {};
   const scenesParZone = {};
+  const rectanglesManquants = new Set();
   for (const p of (sc.pnj||[])){
     if (p.dialogueSeul) continue;
     const id = cles.pnj[p.cle || p.name];
@@ -34958,7 +35084,7 @@ async function importerScenario(sc){
           maj.pieceCommune = { zoneId, sceneId: scene.id, nom: nomZone + ' · ' + (scene.name || 'scène') };
           maj.assignedZoneId = null; maj.lat = null; maj.lng = null;   // comme le bouton 🧍 de l'éditeur
           const places = (scene.points || []).filter(pt=> pt && pt.type === 'emplacement').length;
-          if (!places) journal.push('⚠️ ' + ctx + ' : la scène « ' + scene.name + ' » n\'a AUCUN rectangle 🧍 — pose-en un, sinon la version ne s\'affichera pas');
+          if (!places) rectanglesManquants.add(scene.name || 'scène');   // v589 : résumé en une ligne à la fin
         }
       }
     }
@@ -34990,7 +35116,8 @@ async function importerScenario(sc){
     }
   }
 
-  journal.push('— Les images ne sont pas importées : ajoute-les sur chaque fiche.');
+  if (rectanglesManquants.size) journal.push('🧰 Il reste ' + rectanglesManquants.size + ' rectangle(s) 🧍 à poser (' + Array.from(rectanglesManquants).join(', ') + ') — ouvre Édition → 🧰 À finir, il te guide.');
+  journal.push('— Les images ne sont pas importées : le guide 🧰 À finir t\'aide à les poser.');
   return journal;
 }
 
