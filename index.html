@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v580</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v582</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35601,6 +35601,10 @@ document.getElementById('ctrlArbreBtn').addEventListener('click', async ()=>{
      une nouvelle version peut avoir son propre dialogue ; résumé raconté côté joueur.
      v566 — après l'accueil, le guide demande ce que le personnage dit LES FOIS SUIVANTES
      (textApres) ; le mot « pseudo » dicté devient le marqueur {joueur}.
+     v582 — essai : le canal audio de la page est suspendu entre deux prises de parole (bips du micro ?).
+     v581 — le modèle de voix tourne dans un worker (la page n'est plus bloquée) ; les sons
+     fabriqués sont gardés en cache (phrases connues instantanées) ; nasale par voyelle composée ;
+     « répète » / « pardon » relit aussi l'annonce faite avant la question.
      v580 — d'après le journal : numéros de phonèmes pris dans la table du modèle (fin des phrases
      jetées sur les nasales), phrases longues coupées aux virgules, attente après micro réduite.
      v579 — JOURNAL DE DIAGNOSTIC (bouton 📋) : chaque événement du micro, de la voix, du son
@@ -35895,9 +35899,6 @@ function preparerVoix(){
       journal('PIPER préparation');
       etat('🔊 Préparation de la voix…');
       if (typeof createPiperPhonemize !== 'function') await chargerScript(PIPER.prononciateurJs);
-      if (typeof ort === 'undefined') await chargerScript(PIPER.ortJs);
-      ort.env.wasm.wasmPaths = PIPER.ortBase;
-      ort.env.wasm.numThreads = 1;   // le multi-thread demande des en-têtes que GitHub Pages n'envoie pas
       const [configBuf, modele] = await Promise.all([
         fichierEnCache(PIPER.voix + '.json', 'réglages de la voix'),
         fichierEnCache(PIPER.voix, 'voix française'),
@@ -35911,9 +35912,13 @@ function preparerVoix(){
         noExitRuntime: true,
       });
       etat('🔊 Chargement du modèle de voix…');
-      VX.session = await ort.InferenceSession.create(modele, { executionProviders:['wasm'] });
+      /* v581 : le modèle tourne dans un WORKER (fil séparé) — le journal du 31/10 a montré que la
+         fabrication d'une phrase (3 à 19 s sur le téléphone) bloquait la page : fin de lecture
+         signalée en retard, micro relancé en retard, interface figée. */
+      await demarrerWorkerVoix(modele);
       VX.ok = true;
       journal('PIPER prêt');
+      try { const cles = Object.keys(VX.config.phoneme_id_map || {}); journal('PIPER table du modèle', { sons:cles.length, cles:cles.join('') }); } catch(e){}
       etat('');
       return true;
     } catch(e){
@@ -35926,6 +35931,69 @@ function preparerVoix(){
   })();
   return VX.prete;
 }
+/* ---------- v581 : le worker qui fait tourner ONNX Runtime ---------- */
+const CODE_WORKER_VOIX = `
+  let session = null;
+  self.onmessage = async (e)=>{
+    const m = e.data;
+    try {
+      if (m.type === 'init'){
+        importScripts(m.ortJs);
+        ort.env.wasm.wasmPaths = m.ortBase;
+        ort.env.wasm.numThreads = 1;
+        session = await ort.InferenceSession.create(m.modele, { executionProviders:['wasm'] });
+        self.postMessage({ type:'pret' });
+        return;
+      }
+      if (m.type === 'synth'){
+        const ids = m.ids;
+        const feeds = {
+          input: new ort.Tensor('int64', BigInt64Array.from(ids.map(x=> BigInt(x))), [1, ids.length]),
+          input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
+          scales: new ort.Tensor('float32', Float32Array.from(m.scales), [3]),
+        };
+        if (m.sid) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([0n]), [1]);
+        const sortie = await session.run(feeds);
+        const pcm = new Float32Array(sortie.output.data);
+        self.postMessage({ type:'pcm', id:m.id, pcm }, [pcm.buffer]);
+      }
+    } catch(err){ self.postMessage({ type:'erreur', id:m.id, err:String(err && err.message || err) }); }
+  };
+`;
+function demarrerWorkerVoix(modele){
+  return new Promise((resolve, reject)=>{
+    const url = URL.createObjectURL(new Blob([CODE_WORKER_VOIX], { type:'text/javascript' }));
+    const w = new Worker(url);
+    VX.worker = w; VX.attentes = {}; VX.compteur = 0;
+    w.onerror = (e)=>{ journal('WORKER voix erreur', String(e.message || e)); reject(new Error('worker : ' + (e.message || 'erreur'))); };
+    w.onmessage = (e)=>{
+      const m = e.data;
+      if (m.type === 'pret'){ resolve(); return; }
+      if (m.type === 'erreur' && m.id === undefined){ reject(new Error(m.err)); return; }
+      const att = VX.attentes[m.id]; if (!att) return; delete VX.attentes[m.id];
+      if (m.type === 'pcm') att.resolve(m.pcm); else att.reject(new Error(m.err));
+    };
+    w.postMessage({ type:'init', ortJs:PIPER.ortJs, ortBase:PIPER.ortBase, modele }, [modele]);
+  });
+}
+function synthDansWorker(ids){
+  return new Promise((resolve, reject)=>{
+    const c = VX.config; const id = ++VX.compteur;
+    VX.attentes[id] = { resolve, reject };
+    VX.worker.postMessage({ type:'synth', id, ids, scales:[c.inference.noise_scale, c.inference.length_scale, c.inference.noise_w], sid:!!(c.speaker_id_map && Object.keys(c.speaker_id_map).length) });
+  });
+}
+/* v581 : MÉMOIRE DES SONS — une phrase fabriquée une fois est gardée dans le cache du navigateur
+   (clé : texte + voix) et repart instantanément la fois suivante. Le guide répète presque
+   toujours les mêmes phrases : dès la deuxième création, il parle sans attendre. */
+function cleSon(texte){ return 'https://sons.mascotto.local/' + encodeURIComponent(PIPER.voix.split('/').pop()) + '/' + encodeURIComponent(texte); }
+async function sonEnCache(texte){
+  try { const c = await caches.open(PIPER.cache); const r = await c.match(cleSon(texte)); if (!r) return null; return new Float32Array(await r.arrayBuffer()); } catch(e){ return null; }
+}
+async function garderSon(texte, pcm){
+  try { const c = await caches.open(PIPER.cache); await c.put(cleSon(texte), new Response(pcm.buffer.slice(0), { headers:{ 'Content-Type':'application/octet-stream' } })); } catch(e){}
+}
+
 /* Texte → identifiants de phonèmes, via le prononciateur (espeak-ng « fr »).
    v580 : les numéros viennent de la TABLE DU MODÈLE (phoneme_id_map de son .json), plus de celle
    du prononciateur — le journal du 31/10 a montré que la voix « low » ne connaît que 130 sons et
@@ -35937,7 +36005,12 @@ function idsDepuisPhonemes(phs){
   const ids = []; const inconnus = [];
   const pousser = (ch)=>{ const v = map[ch]; if (v && v.length) ids.push(v[0]); else inconnus.push(ch); };
   pousser('^'); pousser('_');
-  phs.forEach(ph=>{ pousser(ph); pousser('_'); });
+  let prec = null;
+  phs.forEach(ph=>{
+    /* un signe combinant absent de la table (la nasale « ̃ ») : on essaie la voyelle composée (« ɔ̃ ») */
+    if (!map[ph] && /^[\u0300-\u036f]$/.test(ph) && prec && map[prec + ph]){ ids.splice(-2, 2); pousser(prec + ph); pousser('_'); prec = null; return; }
+    pousser(ph); pousser('_'); prec = ph;
+  });
   pousser('$');
   if (inconnus.length) journal('VOIX phonèmes inconnus du modèle', inconnus.join(' '));
   return ids;
@@ -35959,17 +36032,13 @@ function phonemes(texte){
 }
 /* Phonèmes → son (Float32, fréquence du modèle). */
 async function synthetiser(texte){
+  const deja = await sonEnCache(texte);
+  if (deja && deja.length){ journal('VOIX son en mémoire', texte.slice(0, 40)); return deja; }
   const ids = await phonemes(texte);
   if (!ids || !ids.length) return null;
-  const c = VX.config;
-  const feeds = {
-    input: new ort.Tensor('int64', BigInt64Array.from(ids.map(x=> BigInt(x))), [1, ids.length]),
-    input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
-    scales: new ort.Tensor('float32', Float32Array.from([c.inference.noise_scale, c.inference.length_scale, c.inference.noise_w]), [3]),
-  };
-  if (c.speaker_id_map && Object.keys(c.speaker_id_map).length) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([0n]), [1]);
-  const sortie = await VX.session.run(feeds);
-  return sortie.output.data;
+  const pcm = await synthDansWorker(ids);
+  if (pcm && pcm.length) garderSon(texte, pcm);
+  return pcm;
 }
 function contexteAudio(){
   if (!VX.audio){
@@ -36034,10 +36103,20 @@ function phrasesDeLecture(texte){
 function parler(texte){
   $('gvQuestion').textContent = texte;
   journal('VOIX demandée', { car:String(texte).length, texte:String(texte).slice(0, 70) });
+  /* v581 : on retient l'annonce qui précède une question, pour « répète » */
+  if (GV.questionEnCours){ GV.avantQuestion = null; } else { GV.avantQuestion = texte; }
   arreterEcoute();
   return new Promise(async (resolveBrut)=>{
     const tDebut = Date.now();
-    const resolve = ()=>{ journal('VOIX terminée', { ms:Date.now() - tDebut }); resolveBrut(); };
+    const resolve = ()=>{
+      journal('VOIX terminée', { ms:Date.now() - tDebut });
+      /* v582 : on FERME le canal audio de la page dès que la voix a fini (avant que le micro
+         s'ouvre) — hypothèse du 31/10 : un canal audio ouvert en permanence change la façon
+         dont Android joue le son du micro (les bips n'existaient pas avec la voix du téléphone).
+         Il est rouvert automatiquement à la phrase suivante (contexteAudio → resume). */
+      if (VX.audio && VX.audio.state === 'running'){ journal('AUDIO suspend() après la voix'); try { VX.audio.suspend(); } catch(e){} }
+      resolveBrut();
+    };
     if (GV.muet){ journal('VOIX muette (rejeu)'); resolve(); return; }   // rejeu silencieux d'une reprise
     couperVoix();
     /* v578 : juste après le micro, Android garde le son pour lui un court moment — une voix jouée
@@ -36186,7 +36265,7 @@ function commandeGlobale(n){
   if (/^(retour|reviens|question d avant|precedente?)$/.test(n) || /^retour (en arriere|a la question)/.test(n)) return 'retour';
   if (/^(sommaire|menu|les etapes|etapes)$/.test(n)) return 'sommaire';
   if (/^(quitte|quitter|arrete|arrete le guide|ferme le guide|termine le guide)$/.test(n)) return 'quitter';
-  if (/^(repete|repete la question)$/.test(n)) return 'repete';
+  if (/^(repete|repete la question|tu peux repeter|peux tu repeter|repete s il te plait|pardon|comment|quoi|j ai pas entendu|je n ai pas entendu|pas compris|j ai pas compris)$/.test(n)) return 'repete';
   if (/^(liste|la liste|lis la liste|les choix|quels choix)$/.test(n)) return 'liste';
   return null;
 }
@@ -36207,7 +36286,9 @@ async function demanderEnDirect(opts){
     }
     const attente = attendreEntree();   // posée AVANT la lecture : un appui pendant qu'il parle compte
     journal('QUESTION', { etape:GV.courante && GV.courante.id, type:choix ? 'choix' : liste ? 'liste' : opts.libre ? 'dictée' : opts.nombre ? 'nombre' : opts.heure ? 'heure' : '?' });
+    GV.questionEnCours = true;
     await parler(question);
+    GV.questionEnCours = false;
     if (GV.resoudre) boucleEcoute();
     const entree = await attente;
     arreterEcoute();
@@ -36224,7 +36305,7 @@ async function demanderEnDirect(opts){
     if (cmd === 'retour') throw new SignalGuide(RETOUR);
     if (cmd === 'sommaire') throw new SignalGuide(SOMMAIRE);
     if (cmd === 'quitter'){ if (await confirmerDirect('Tu veux quitter le guide ? La fiche reste telle quelle à l\'écran.')) throw new SignalGuide(QUITTER); continue; }
-    if (cmd === 'repete') continue;
+    if (cmd === 'repete'){ if (GV.avantQuestion){ await parler(GV.avantQuestion); } question = opts.texte; continue; }   // v581 : relit aussi l'annonce faite juste avant la question
     if (cmd === 'liste'){
       if (liste) await parler(lireListe(liste));
       else if (choix) await parler('Les choix sont : ' + choix.map(c=> c.label).join(', ') + '.');
