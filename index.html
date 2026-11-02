@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v591</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v592</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11509,6 +11509,7 @@ async function ouvrirBrouillons(){
   const zoneParNom = (ref)=> ref ? toutes.find(x=> (x.interactionType || '') === 'zone' && (x.id === ref || x.name === ref)) : null;
   const memeNom = (a, b)=> String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   const zonesVoulues = new Set();
+  zonesEnTravaux.forEach(z=> zonesVoulues.add(z.id));   // v592 : les pièces d'une zone en travaux
   enTravaux.forEach(f=>{
     if (f.pieceCommune && f.pieceCommune.zoneId) zonesVoulues.add(f.pieceCommune.zoneId);
     const zp = f.emplacementPrevu && zoneParNom(f.emplacementPrevu.zone); if (zp) zonesVoulues.add(zp.id);
@@ -11641,8 +11642,33 @@ async function ouvrirBrouillons(){
         ${blocs}
       </div>`;
     });
+    /* v592 : une ZONE en travaux (importée depuis un dessin de Claude) : sa place sur la carte,
+       puis chaque pièce — le dessin de structure est à remplacer par le dessin de ChatGPT. */
     zonesEnTravaux.forEach(z=>{
-      html += `<div class="editor-list-item" style="align-items:center;"><div class="name">🗺️ ${esc(z.name || '(zone)')}<div class="meta" style="font-size:11px;">zone en travaux</div></div>${bouton('data-publier="' + z.id + '"', 'Publier')}</div>`;
+      const scenes = scenesDe[z.id] || [];
+      let manque = 0;
+      const okPos = (z.lat != null && z.lng != null);
+      if (!okPos) manque++;
+      let blocs = tache(okPos, '📍 Placer « ' + esc(z.name) + ' » sur la carte',
+        'Tant que la zone n\'a pas de position, personne ne peut y entrer.',
+        '1. <b>✏️ Ouvrir la fiche</b> de la zone.<br>2. Règle sa position sur la carte (📍 dans la fiche).<br>3. <b>Enregistrer</b>, puis reviens au guide.',
+        bouton('data-fiche="' + z.id + '"', '✏️ Ouvrir la fiche', true));
+      scenes.forEach(sc=>{
+        if (!sc || !sc.id) return;
+        const aImage = !!(sc.imageUrl || sc.imagePath || sc.imageRef);
+        const encoreStructure = !!(sc.structureRef && sc.imageRef === sc.structureRef);
+        const ok = aImage && !encoreStructure;
+        if (!aImage) manque++;
+        blocs += tache(ok, '🖼️ Image de la pièce « ' + esc(sc.name) + ' »' + (encoreStructure ? ' — encore le dessin de structure' : ''),
+          encoreStructure ? 'Le dessin de structure de Claude est en place : la pièce est jouable, mais c\'est un schéma. Remplace-le par le dessin de ChatGPT, fait à partir de ce schéma.' : (aImage ? '' : 'Sans image, la pièce est vide.'),
+          sc.prompt ? '1. <b>📋 Prompt</b>, colle-le dans ChatGPT en joignant le dessin de structure de cette pièce.<br>2. Enregistre l\'image obtenue sur ton téléphone.<br>3. <b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, choisis-la, puis <b>Enregistrer la scène</b>. Les points sont déjà posés.' : '<b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, puis <b>Enregistrer la scène</b>.',
+          (sc.prompt ? bouton('data-prompt-scene="' + z.id + '|' + sc.id + '"', '📋 Prompt') : '') + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', true), encoreStructure);
+      });
+      html += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
+        <div style="font-weight:700;">🗺️ ${esc(z.name || '(zone)')} <span class="meta" style="font-weight:400;">— zone en travaux · ${manque ? manque + ' chose(s) à faire' : '✅ prête à publier'}</span></div>
+        ${blocs}
+        <div style="display:flex; justify-content:flex-end; gap:5px;">${bouton('data-publier="' + z.id + '"', 'Publier la zone')}</div>
+      </div>`;
     });
     liste.innerHTML = html;
     if (ouvrirBrouillons.defilement) feuille.scrollTop = ouvrirBrouillons.defilement;
@@ -11736,6 +11762,16 @@ async function ouvrirBrouillons(){
     await zonesCol.doc(z.id).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(z.id);
     showToast('Code ' + v.code + ' posé ✅'); rouvrir();
+  });
+  sur('[data-prompt-scene]', (b)=>{
+    const [zid, sid] = b.dataset.promptScene.split('|');
+    const sc = (scenesDe[zid] || []).find(x=> x.id === sid);
+    if (sc && sc.prompt) copierAvecRepli(sc.prompt, b);
+  });
+  sur('[data-ouvrir-piece]', (b)=>{
+    const [zid, sid] = b.dataset.ouvrirPiece.split('|');
+    fond.remove();
+    ouvrirSceneGuidee(zid, sid, 'Appuie sur <b>🖼️ Image</b> en bas pour choisir le dessin de ChatGPT dans ta galerie (il remplace le dessin de structure, les points restent en place). Puis appuie ci-dessous.');
   });
   sur('[data-ouvrir-scene]', (b)=>{
     const [zid, sid] = b.dataset.ouvrirScene.split('|');
@@ -35101,7 +35137,12 @@ async function importerScenario(sc){
     const scenes = (z.scenes||[]).map(s=>({
       id: idScene[s.cle || s.name],
       name: s.name || 'Scène',
-      imageUrl:'', points:
+      /* v592 : une image de fond peut venir du fichier (dessin de structure, en data:) ; elle est
+         rangée dans scene_images à l'écriture comme toute image de scène. */
+      imageUrl: (typeof s.image === 'string' && s.image.startsWith('data:')) ? s.image : '',
+      imagePath: (typeof s.image === 'string' && !s.image.startsWith('data:') && s.image) ? s.image : null,
+      prompt: s.prompt || '',   // v592 : le prompt ChatGPT de cette pièce, pour le guide 🧰 À finir
+      points:
         (s.points||[]).map((pt,i)=>{
           const base = {
             id: 'pt_' + Date.now() + '_' + i + '_' + Math.floor(Math.random()*1000),
@@ -35152,8 +35193,37 @@ async function importerScenario(sc){
           if (pt.lockItem){
             base.lockType = 'item';
             base.lockItemId = importResoudre(cles.objets, pt.lockItem, items, journal, 'Zone « ' + z.name + ' »');
+          } else if (pt.lockCode){
+            base.lockType = 'code'; base.lockCode = String(pt.lockCode).replace(/[^0-9]/g, '');   // v592
           } else if (pt.type === 'sortie'){ base.lockType = 'none'; }
           if (pt.pnj) base.linkedPnjId = cles.pnj[pt.pnj] || null;
+          /* v592 — tout ce qu'une zone dessinée par Claude a besoin d'écrire d'un coup :
+             la flèche de sortie à sa place habituelle, l'apparence (miroir, rotation, invisible),
+             les horaires d'une porte, le contenu et le message d'un coffre, la taille d'un
+             emplacement. Les clés sont celles de l'éditeur, en français quand il y en a une. */
+          if (pt.fleche && (pt.type === 'sortie' || pt.type === 'sortie_zone')){
+            poserFlecheALaPlaceHabituelle(base);
+            if (typeof pt.x === 'number') base.x = pt.x;   // une place donnée explicitement l'emporte
+            if (typeof pt.y === 'number') base.y = pt.y;
+          }
+          if (pt.hideIcon || pt.invisible) base.hideIcon = true;
+          if (pt.flipped || pt.miroir) base.flipped = true;
+          if (typeof pt.rotation === 'number') base.rotation = pt.rotation;
+          if (pt.type === 'emplacement'){ base.hideIcon = true; if (!pt.w) base.w = 20; if (!pt.h) base.h = 40; }
+          if (pt.type === 'sortie' && Array.isArray(pt.openRanges || pt.horaires)){
+            base.openRanges = (pt.openRanges || pt.horaires).filter(c=> c && (c.start || c.end)).map(c=> ({ start: c.start || '', end: c.end || '' }));
+            if (pt.closedMessage || pt.messageFerme) base.closedMessage = pt.closedMessage || pt.messageFerme;
+          }
+          if (estCoffre(pt)){
+            base.loot = (pt.loot || pt.contenu || []).map(l=>{
+              const ref = (typeof l === 'string') ? l : (l.objet || l.itemName || l.cle);
+              const itemId = importResoudre(cles.objets, ref, items, journal, 'Coffre de la zone « ' + z.name + ' »');
+              return itemId ? { itemId, qty: parseInt((typeof l === 'object' && (l.qty || l.qte)) || 1, 10) || 1, chance: (typeof l === 'object' && l.chance != null) ? parseInt(l.chance, 10) : 100 } : null;
+            }).filter(Boolean);
+            if (pt.message) base.message = pt.message;
+            if (!base.resetMode) base.resetMode = 'perPlayer';   // chaque joueur a son coffre, comme dans l'éditeur
+          }
+          if (pt.type === 'dialogue' && pt.text) base.text = pt.text;
           return base;
         }),
       encounterChance: parseInt(s.encounterChance,10) || 0,
@@ -35173,6 +35243,7 @@ async function importerScenario(sc){
           scenes.forEach(s=>{
             const a = ancScenes.find(x=> x.name === s.name);
             if (!a) return;
+            if (s.imageUrl || s.imagePath) return;   // v592 : le fichier apporte sa propre image, on la garde
             ['imageUrl','imagePath','imageRef'].forEach(champ=>{
               if (a[champ]){ s[champ] = a[champ]; }
             });
@@ -35193,8 +35264,11 @@ async function importerScenario(sc){
       } catch(e){
         journal.push('⚠️ Zone « ' + z.name + ' » : impossible de relire les images existantes — vérifie-les après l\'import');
       }
+      const scenesAEcrire = await externalizeScenesForSave(scenes);   // v592 : images en data: → scene_images
+      /* le dessin de structure est repéré par sa référence : le guide saura quand il a été remplacé */
+      scenesAEcrire.forEach(sc=>{ if (sc.imageRef && (z.scenes || []).some(x=> (x.cle || x.name) && idScene[x.cle || x.name] === sc.id && typeof x.image === 'string' && x.image.startsWith('data:'))) sc.structureRef = sc.imageRef; });
       await zonesCol.doc(zoneId).set({
-        scenes,
+        scenes: scenesAEcrire,
         startSceneId: idScene[z.sceneDepart] || scenes[0].id,
         updatedAt: Date.now(),
       }, { merge:true });
@@ -35265,7 +35339,7 @@ async function importerScenario(sc){
         const scene = scenesParZone[zoneId].find(s=> s && s.id && String(s.name || '').trim().toLowerCase() === voulu);
         if (!scene) journal.push('⚠️ ' + ctx + ' : scène « ' + p.emplacement.scene + ' » introuvable dans la zone');
         else {
-          const nomZone = (toutesFiches.find(x=> x.id === zoneId) || {}).name || p.emplacement.zone;
+          const nomZone = (toutesFiches.find(x=> x.id === zoneId) || {}).name || ((sc.zones || []).find(z=> (z.cle || z.name) === p.emplacement.zone) || {}).name || p.emplacement.zone;
           maj.pieceCommune = { zoneId, sceneId: scene.id, nom: nomZone + ' · ' + (scene.name || 'scène') };
           maj.assignedZoneId = null; maj.lat = null; maj.lng = null;   // comme le bouton 🧍 de l'éditeur
           const places = (scene.points || []).filter(pt=> pt && pt.type === 'emplacement').length;
@@ -35302,7 +35376,7 @@ async function importerScenario(sc){
   }
 
   if (rectanglesManquants.size) journal.push('🧰 Il reste ' + rectanglesManquants.size + ' rectangle(s) 🧍 à poser (' + Array.from(rectanglesManquants).join(', ') + ') — ouvre Édition → 🧰 À finir, il te guide.');
-  journal.push('— Les images ne sont pas importées : le guide 🧰 À finir t\'aide à les poser.');
+  journal.push('— Images des personnages et dessins définitifs des pièces : le guide 🧰 À finir t\'aide à les poser.');
   return journal;
 }
 
