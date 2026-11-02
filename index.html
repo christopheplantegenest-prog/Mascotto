@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v590</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v591</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1965,6 +1965,11 @@
     <p class="meta" id="exitArrowDefautInfo" style="margin:0 0 6px;"></p>
     <p class="meta" style="margin:0 0 6px;">Elle se règle dans l'éditeur de scène : sélectionne une sortie qui porte la flèche, place-la avec les flèches de déplacement, puis « 💾 Faire de cette place la place habituelle ».</p>
     <button type="button" class="btn-secondary" id="exitArrowDefautResetBtn" style="width:100%;">↩️ Revenir à la place d'origine (en bas à gauche)</button>
+
+    <!-- v591 : le catalogue de coffres, même principe que la flèche -->
+    <div class="field-label" style="margin-top:16px;">📦 Catalogue de coffres</div>
+    <p class="meta" style="margin:0 0 6px;">Tes coffres enregistrés dans le jeu : un MODÈLE (malle, caisse…) a plusieurs ANGLES, chaque angle ses deux images, fermé et ouvert. Dans l'éditeur de scène, un point 📦 Coffre les prend d'un geste (« Coffre du catalogue »). Remplacer une image ici change tous les coffres qui l'utilisent. Le 🔃 miroir de la palette donne l'angle opposé sans image de plus.</p>
+    <div id="coffresCatalogueWrap"></div>
 
     </div>
     <!-- Le panneau 🏥 Infirmerie a été supprimé en v408 : images de la pièce et de la porte,
@@ -27923,6 +27928,155 @@ if (typeof db !== 'undefined' && db){
 const scImagesCol = (typeof db !== 'undefined') ? db.collection('scene_images') : null;
 let scImageCache = {}; // ref -> dataUrl
 
+/* ================= v591 — LE CATALOGUE DE COFFRES =================
+   Demandé le 02/11 : « le même système que pour la flèche » — des coffres enregistrés dans le
+   jeu, en plusieurs MODÈLES (malle, caisse…) et plusieurs ANGLES par modèle, chaque angle avec
+   ses deux images (fermé / ouvert), pour ne plus les chercher dans les fichiers du téléphone.
+   Un point 📦 ne recopie jamais les images : il porte seulement { coffreModele, coffreAngle },
+   et les images sont résolues à l'affichage. Remplacer une image ici change tous les coffres
+   qui l'utilisent, dans toutes les zones — exactement comme la flèche.
+   Rangement : un document par modèle dans `coffres_catalogue` ; les images vivent dans
+   `scene_images` (comme toute image de scène) et le modèle n'en garde que la référence. */
+const coffresCol = (typeof db !== 'undefined') ? db.collection('coffres_catalogue') : null;
+const COFFRES = { modeles: [], prets: false };
+function coffreModeleParId(id){ return COFFRES.modeles.find(m=> m.id === id) || null; }
+function coffreDuCatalogue(pt){
+  if (!pt || !pt.coffreModele) return null;
+  const m = coffreModeleParId(pt.coffreModele);
+  if (!m) return null;
+  return (m.angles || []).find(a=> a.id === pt.coffreAngle) || (m.angles || [])[0] || null;
+}
+function coffreNomComplet(pt){
+  const m = pt && coffreModeleParId(pt.coffreModele);
+  const a = coffreDuCatalogue(pt);
+  return m ? (m.nom || 'coffre') + (a && a.nom ? ' · ' + a.nom : '') : '';
+}
+/* URL d'une face (fermé/ouvert) d'un angle : image hébergée (chemin) ou image de scene_images (ref, lue une fois). */
+function coffreFaceUrl(a, face){
+  if (!a) return '';
+  if (a[face + 'Path']) return resolveMediaPath(a[face + 'Path']);
+  if (a[face + 'Ref']) return scImageCache[a[face + 'Ref']] || '';
+  return '';
+}
+async function coffresResoudreImages(){
+  const jobs = [];
+  COFFRES.modeles.forEach(m=> (m.angles || []).forEach(a=>{
+    ['ferme', 'ouvert'].forEach(face=>{ const r = a[face + 'Ref']; if (r && !scImageCache[r]) jobs.push(internalizeSceneImage(r)); });
+  }));
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+  const ed = document.getElementById('sceneEditorFull');
+  if (ed && ed.classList.contains('show') && typeof renderSceneEditorPoints === 'function') renderSceneEditorPoints();
+  const vue = document.getElementById('sceneViewFull');
+  if (vue && vue.classList.contains('show') && typeof renderSceneView === 'function'){ try { renderSceneView(); } catch(e){} }
+}
+if (coffresCol){
+  coffresCol.onSnapshot((snap)=>{
+    COFFRES.modeles = snap.docs.map(d=> ({ id: d.id, ...d.data() })).sort((a,b)=> (a.nom || '').localeCompare(b.nom || '', 'fr'));
+    COFFRES.prets = true;
+    coffresResoudreImages();
+    if (typeof renderCatalogueCoffres === 'function') renderCatalogueCoffres();
+    const ed = document.getElementById('sceneEditorFull');
+    if (ed && ed.classList.contains('show') && typeof renderSceneEditorPoints === 'function') renderSceneEditorPoints();
+  }, ()=>{});
+}
+
+/* ---------- Choisir un coffre du catalogue pour un point (éditeur de scène) ---------- */
+function ouvrirChoixCoffre(cb){
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '4650';
+  const esc = (t)=> String(t || '').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const vignette = (url, taille)=> url ? `<img src="${url}" style="width:${taille}px; height:${taille}px; object-fit:contain; background:rgba(0,0,0,.35); border-radius:8px;">` : `<div style="width:${taille}px; height:${taille}px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.35); border-radius:8px; font-size:28px;">📦</div>`;
+  const dessiner = (modele)=>{
+    fond.innerHTML = `<div class="sheet" style="max-height:85vh; overflow-y:auto;">
+      <div class="sheet-top"><h3 style="margin-top:0;">📦 ${modele ? esc(modele.nom) + ' — quel angle ?' : 'Quel coffre ?'}</h3><button class="sheet-x" data-fermer>✕</button></div>
+      ${modele ? `<button type="button" class="btn-secondary" data-retour style="width:100%; margin-bottom:8px;">← Autres modèles</button>` : ''}
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${modele
+          ? (modele.angles || []).map(a=> `<button type="button" class="btn-secondary" data-angle="${a.id}" style="flex:1 1 44%; display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px;">${vignette(coffreFaceUrl(a, 'ferme'), 84)}<span style="font-size:12px;">${esc(a.nom || 'angle')}</span></button>`).join('') || '<p class="meta">Ce modèle n\'a aucun angle : ajoute-en dans Outils de test → Zones et exploration → Catalogue de coffres.</p>'
+          : COFFRES.modeles.map(m=> `<button type="button" class="btn-secondary" data-modele="${m.id}" style="flex:1 1 44%; display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px;">${vignette(coffreFaceUrl((m.angles || [])[0], 'ferme'), 84)}<span style="font-size:12px; font-weight:700;">${esc(m.nom)}</span><span class="meta" style="font-size:11px;">${(m.angles || []).length} angle(s)</span></button>`).join('') || '<p class="meta">Le catalogue est vide : ajoute des coffres dans Outils de test → 🗺️ Zones et exploration → 📦 Catalogue de coffres.</p>'}
+      </div></div>`;
+    fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+    const r = fond.querySelector('[data-retour]'); if (r) r.addEventListener('click', ()=> dessiner(null));
+    fond.querySelectorAll('[data-modele]').forEach(b=> b.addEventListener('click', ()=> dessiner(coffreModeleParId(b.dataset.modele))));
+    fond.querySelectorAll('[data-angle]').forEach(b=> b.addEventListener('click', ()=>{ fond.remove(); cb(modele.id, b.dataset.angle); }));
+  };
+  dessiner(null);
+  document.body.appendChild(fond);
+}
+function poserCoffreDuCatalogue(pt, modeleId, angleId){
+  pt.coffreModele = modeleId; pt.coffreAngle = angleId;
+  pt.imageUrl = null; pt.imagePath = null; pt.imageRef = null;
+  pt.openImageUrl = null; pt.openImagePath = null; pt.openImageRef = null;
+  pt.hideIcon = false; pt.useExitArrow = false;
+}
+
+/* ---------- Le catalogue lui-même (Outils de test → Zones et exploration) ---------- */
+async function coffresEnregistrerModele(m){
+  if (!coffresCol) throw new Error('Firebase indisponible');
+  const data = { nom: m.nom || 'Coffre', angles: (m.angles || []).map(a=> ({ id: a.id, nom: a.nom || '', fermeRef: a.fermeRef || null, fermePath: a.fermePath || null, ouvertRef: a.ouvertRef || null, ouvertPath: a.ouvertPath || null })), updatedAt: Date.now() };
+  if (m.id) await coffresCol.doc(m.id).set(data, { merge:true });
+  else { const ref = await coffresCol.add({ ...data, createdAt: Date.now() }); m.id = ref.id; }
+}
+async function coffresPoserImage(m, a, face, depuis){
+  if (depuis === 'telephone'){
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const url = compressPointImageDataUrl(img);
+    const ref = await externalizeSceneImage(url);
+    a[face + 'Ref'] = ref; a[face + 'Path'] = null;
+    await coffresEnregistrerModele(m);
+    showToast('Image enregistrée');
+  } else {
+    openGithubFilePicker(null, async (item)=>{
+      a[face + 'Path'] = item.path; a[face + 'Ref'] = null;
+      try { await coffresEnregistrerModele(m); showToast('Image : ' + item.path); } catch(e){ showToast('Échec : ' + e.message); }
+    });
+  }
+}
+function renderCatalogueCoffres(){
+  const wrap = document.getElementById('coffresCatalogueWrap');
+  if (!wrap) return;
+  const esc = (t)=> String(t || '').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const vignette = (url)=> url ? `<img src="${url}" style="width:56px; height:56px; object-fit:contain; background:rgba(0,0,0,.35); border-radius:8px;">` : `<div style="width:56px; height:56px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.25); border-radius:8px; font-size:11px; color:#999;">vide</div>`;
+  const petit = 'padding:4px 8px; font-size:12px; flex:0 0 auto;';
+  wrap.innerHTML = (COFFRES.modeles.length ? '' : '<p class="meta" style="margin:0 0 6px;">Aucun coffre enregistré pour l\'instant.</p>')
+    + COFFRES.modeles.map(m=> `<div style="border:1px solid rgba(128,128,128,.35); border-radius:10px; padding:8px; margin-bottom:8px;">
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input type="text" class="field-input" data-nom-modele="${m.id}" value="${esc(m.nom)}" placeholder="Nom du modèle" style="flex:1 1 auto; margin:0;">
+        <button type="button" class="btn-secondary" data-suppr-modele="${m.id}" style="${petit} color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+      </div>
+      ${(m.angles || []).map(a=> `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(128,128,128,.35);">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="text" class="field-input" data-nom-angle="${m.id}|${a.id}" value="${esc(a.nom)}" placeholder="Nom de l'angle (face, trois-quarts…)" style="flex:1 1 auto; margin:0;">
+          <button type="button" class="btn-secondary" data-suppr-angle="${m.id}|${a.id}" style="${petit} color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕</button>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:6px;">
+          ${['ferme', 'ouvert'].map(face=> `<div style="flex:1 1 50%; display:flex; gap:6px; align-items:center;">
+            ${vignette(coffreFaceUrl(a, face))}
+            <div style="display:flex; flex-direction:column; gap:4px; flex:1 1 auto;">
+              <span class="meta" style="font-size:11px;">${face === 'ferme' ? 'Fermé' : 'Ouvert'}</span>
+              <button type="button" class="btn-secondary" data-img="${m.id}|${a.id}|${face}|telephone" style="${petit}">📷 Galerie</button>
+              <button type="button" class="btn-secondary" data-img="${m.id}|${a.id}|${face}|github" style="${petit}">📁 Hébergée</button>
+            </div></div>`).join('')}
+        </div>
+      </div>`).join('')}
+      <button type="button" class="btn-secondary" data-ajout-angle="${m.id}" style="width:100%; margin-top:8px;">＋ Ajouter un angle</button>
+    </div>`).join('')
+    + `<button type="button" class="btn-capture" id="coffreNouveauBtn" style="width:100%;">＋ Nouveau modèle de coffre</button>`;
+  const sur = (sel, ev, fn)=> wrap.querySelectorAll(sel).forEach(el=> el.addEventListener(ev, async (e)=>{ try { await fn(el, e); } catch(err){ showToast('Échec : ' + (err && err.message ? err.message : err)); } }));
+  const modele = (id)=> coffreModeleParId(id);
+  const angle = (m, id)=> (m.angles || []).find(a=> a.id === id);
+  sur('[data-nom-modele]', 'change', async (el)=>{ const m = modele(el.dataset.nomModele); if (!m) return; m.nom = el.value.trim() || 'Coffre'; await coffresEnregistrerModele(m); });
+  sur('[data-nom-angle]', 'change', async (el)=>{ const [mid, aid] = el.dataset.nomAngle.split('|'); const m = modele(mid); const a = m && angle(m, aid); if (!a) return; a.nom = el.value.trim(); await coffresEnregistrerModele(m); });
+  sur('[data-suppr-modele]', 'click', async (el)=>{ const m = modele(el.dataset.supprModele); if (!m) return; if (!(await appConfirm('Supprimer le modèle « ' + m.nom + ' » ? Les coffres des scènes qui l\'utilisent n\'auront plus d\'image.'))) return; await coffresCol.doc(m.id).delete(); });
+  sur('[data-suppr-angle]', 'click', async (el)=>{ const [mid, aid] = el.dataset.supprAngle.split('|'); const m = modele(mid); if (!m) return; if (!(await appConfirm('Supprimer cet angle ?'))) return; m.angles = (m.angles || []).filter(a=> a.id !== aid); await coffresEnregistrerModele(m); });
+  sur('[data-ajout-angle]', 'click', async (el)=>{ const m = modele(el.dataset.ajoutAngle); if (!m) return; m.angles = (m.angles || []).concat([{ id: 'a_' + Date.now().toString(36), nom: (m.angles || []).length ? '' : 'face' }]); await coffresEnregistrerModele(m); });
+  sur('[data-img]', 'click', async (el)=>{ const [mid, aid, face, depuis] = el.dataset.img.split('|'); const m = modele(mid); const a = m && angle(m, aid); if (!a) return; await coffresPoserImage(m, a, face, depuis); });
+  sur('#coffreNouveauBtn', 'click', async ()=>{ await coffresEnregistrerModele({ nom: 'Coffre ' + (COFFRES.modeles.length + 1), angles: [{ id: 'a_' + Date.now().toString(36), nom: 'face' }] }); });
+}
+
 /* ---------- Images hébergées hors Firestore (v213) ----------
    Une image peut désormais être désignée par un CHEMIN RELATIF (imagePath, ex. "zones/foret/plan.jpg")
    au lieu d'être stockée en base64. Le chemin est complété par une adresse de base réglable en UN SEUL
@@ -28098,7 +28252,7 @@ async function verifierLiensZone(scenes){
          prévient pas en jeu, le point répond simplement « il n'y a rien ». */
       if (estCoffre(pt)){
         const nomT = pt.type === 'recolte' ? 'Récolte' : 'Coffre';
-        if (!pt.openImageUrl && !pt.openImagePath) soucis.push({ pointId: pt.id, où: oùName, quoi: nomT + (pt.type === 'recolte' ? ' sans image « récolté »' : ' sans image d\'ouverture') });
+        if (!pt.openImageUrl && !pt.openImagePath && !coffreDuCatalogue(pt)) soucis.push({ pointId: pt.id, où: oùName, quoi: nomT + (pt.type === 'recolte' ? ' sans image « récolté »' : ' sans image d\'ouverture') });
         if (!(pt.loot || []).some(l=> l && l.itemId) && !pt.trapEnabled && !pt.message){
           soucis.push({ pointId: pt.id, où: oùName, quoi: nomT + ' vide : ni objet, ni piège, ni message' });
         }
@@ -28675,6 +28829,7 @@ let chestVisualState = {}; // pointId -> 'open' | 'closed'
    nouveau après un délai, pour chaque joueur. Tout le mécanisme du coffre lui sert. */
 function estCoffre(pt){ return !!pt && (pt.type === 'coffre' || pt.type === 'recolte'); }
 function chestOpenImageUrl(pt){
+  if (pt.coffreModele){ const u = coffreFaceUrl(coffreDuCatalogue(pt), 'ouvert'); if (u) return u; }   // v591
   if (pt.openImageUrl) return pt.openImageUrl;
   if (pt.openImagePath) return resolveMediaPath(pt.openImagePath);
   return '';
@@ -28700,6 +28855,7 @@ function pointEffectiveImageUrl(pt){
     if (it && it.imageUrl) return it.imageUrl;
   }
   if (pt.useExitArrow) return exitArrowUrl();
+  if (estCoffre(pt) && pt.coffreModele){ const u = coffreFaceUrl(coffreDuCatalogue(pt), 'ferme'); if (u) return u; }   // v591
   if (pt.imageUrl) return pt.imageUrl;
   if (pt.type === 'pnj' && pt.linkedPnjImageUrl) return pt.linkedPnjImageUrl;
   return null;
@@ -29211,6 +29367,7 @@ function renderSceneDetailAppearance(pt){
       const img = new Image();
       img.onload = ()=>{
         pt.imageUrl = compressPointImageDataUrl(img);
+        pt.coffreModele = null; pt.coffreAngle = null;   // v591 : image à la main → plus de catalogue
         pt.imagePath = null; // image importée du téléphone : on repasse en base64
         pt.useExitArrow = false;
         renderSceneEditorPoints();
@@ -29225,6 +29382,7 @@ function renderSceneDetailAppearance(pt){
     openGithubFilePicker(null, (item)=>{
       pt.imagePath = item.path;
       pt.imageUrl = resolveMediaPath(item.path);
+      pt.coffreModele = null; pt.coffreAngle = null;   // v591
       pt.imageRef = null;
       pt.useExitArrow = false;
       renderSceneEditorPoints();
@@ -29736,11 +29894,21 @@ function renderSceneDetailTypeSpecific(pt){
     typeWrap.innerHTML = `
       <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">${rec ? 'Le joueur touche la plante (ou le filon, l\'arbre…) : il récolte ce qu\'il y a, et l\'image passe à la version RÉCOLTÉE jusqu\'à ce que ça repousse. L\'image PLEINE est celle réglée dans « Apparence du point ». Un noyau d\'énergie est un objet comme un autre : mets-le dans le contenu.' : 'Le joueur touche le coffre : il s\'ouvre, l\'image change, et il reçoit ce qu\'il y a dedans. L\'image FERMÉE est celle réglée dans « Apparence du point ».'}</p>
 
-      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">${rec ? 'Image une fois récolté' : 'Image une fois ouvert'}</div>
-      ${ouverte ? `<img src="${ouverte}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image d'ouverture : le coffre gardera son image fermée.</p>`}
-      <button type="button" class="btn-secondary" data-coffre-img-github style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
-      <button type="button" class="btn-secondary" data-coffre-img-pick style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🖼️ Importer depuis le téléphone</button>
-      ${ouverte ? `<button type="button" class="btn-secondary" data-coffre-img-clear style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer l'image</button>` : ''}
+      ${rec ? '' : (pt.coffreModele ? `<div style="display:flex; gap:8px; align-items:center; background:rgba(95,242,255,.12); border-radius:8px; padding:6px; margin-bottom:8px;">
+          <img src="${coffreFaceUrl(coffreDuCatalogue(pt), 'ferme') || ''}" style="width:48px; height:48px; object-fit:contain; background:rgba(0,0,0,.35); border-radius:6px;">
+          <img src="${coffreFaceUrl(coffreDuCatalogue(pt), 'ouvert') || ''}" style="width:48px; height:48px; object-fit:contain; background:rgba(0,0,0,.35); border-radius:6px;">
+          <div style="flex:1 1 auto; font-size:12px; color:#fff;">📦 Catalogue : <b>${coffreNomComplet(pt).replace(/</g,'&lt;')}</b><br><span class="meta" style="font-size:11px;">images fermé / ouvert prises dans le catalogue</span></div>
+        </div>
+        <div class="field-row" style="gap:6px; margin-bottom:8px;">
+          <button type="button" class="btn-secondary" data-coffre-catalogue style="flex:1; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📦 Changer</button>
+          <button type="button" class="btn-secondary" data-coffre-catalogue-off style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Images à la main</button>
+        </div>`
+        : `<button type="button" class="btn-capture" data-coffre-catalogue style="width:100%; margin-bottom:8px;">📦 Prendre un coffre du catalogue</button>`)}
+      ${pt.coffreModele ? '' : `<div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">${rec ? 'Image une fois récolté' : 'Image une fois ouvert'}</div>`}
+      ${pt.coffreModele ? '' : ouverte ? `<img src="${ouverte}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image d'ouverture : le coffre gardera son image fermée.</p>`}
+      ${pt.coffreModele ? '' : `<button type="button" class="btn-secondary" data-coffre-img-github style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
+      <button type="button" class="btn-secondary" data-coffre-img-pick style="width:100%; margin-bottom:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🖼️ Importer depuis le téléphone</button>`}
+      ${ouverte && !pt.coffreModele ? `<button type="button" class="btn-secondary" data-coffre-img-clear style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer l'image</button>` : ''}
       ${pt.openImagePath ? `<p class="meta" style="margin:6px 0 0; word-break:break-all;">📁 ${pt.openImagePath}</p>` : ''}
       <input type="file" id="scenePointChestImgFile" accept="image/*" style="display:none;">
 
@@ -29804,6 +29972,11 @@ function renderSceneDetailTypeSpecific(pt){
       </div>
     `;
 
+    /* v591 : coffre du catalogue */
+    const cat = typeWrap.querySelector('[data-coffre-catalogue]');
+    if (cat) cat.addEventListener('click', ()=> ouvrirChoixCoffre((mid, aid)=>{ poserCoffreDuCatalogue(pt, mid, aid); renderSceneEditorPoints(); renderSceneEditorDetails(); }));
+    const catOff = typeWrap.querySelector('[data-coffre-catalogue-off]');
+    if (catOff) catOff.addEventListener('click', ()=>{ pt.coffreModele = null; pt.coffreAngle = null; renderSceneEditorPoints(); renderSceneEditorDetails(); });
     const gh = typeWrap.querySelector('[data-coffre-img-github]');
     if (gh) gh.addEventListener('click', ()=>{
       openGithubFilePicker(null, (item)=>{
@@ -34961,7 +35134,19 @@ async function importerScenario(sc){
           /* Un point « image en grand » ouvre une image plein écran : l'import
              n'en apporte aucune, il faut la poser à la main dans l'éditeur. */
           if (pt.type === 'image') journal.push('⚠️ Zone « ' + z.name + ' » : point « image en grand » — pense à y poser l\'image dans l\'éditeur');
-          if (estCoffre(pt) && !pt.openImageUrl && !pt.openImagePath) journal.push('⚠️ Zone « ' + z.name + ' » : coffre sans image d\'ouverture — il gardera son image fermée');
+          /* v591 : `coffre: "Malle en bois", angle: "face"` → coffre du catalogue, par son nom */
+          if (estCoffre(pt) && pt.coffre){
+            const voulu = String(pt.coffre).trim().toLowerCase();
+            const m = COFFRES.modeles.find(x=> String(x.nom || '').trim().toLowerCase() === voulu);
+            if (!m) journal.push('⚠️ Zone « ' + z.name + ' » : coffre « ' + pt.coffre + ' » absent du catalogue — mets ses images à la main');
+            else {
+              const va = String(pt.angle || '').trim().toLowerCase();
+              const a = (m.angles || []).find(x=> String(x.nom || '').trim().toLowerCase() === va) || (m.angles || [])[0];
+              base.coffreModele = m.id; base.coffreAngle = a ? a.id : null; base.hideIcon = false;
+              if (va && (!a || String(a.nom || '').trim().toLowerCase() !== va)) journal.push('ℹ️ Zone « ' + z.name + ' » : angle « ' + pt.angle + ' » inconnu pour « ' + m.nom + ' », premier angle pris');
+            }
+          }
+          if (estCoffre(pt) && !pt.openImageUrl && !pt.openImagePath && !base.coffreModele) journal.push('⚠️ Zone « ' + z.name + ' » : coffre sans image d\'ouverture — il gardera son image fermée');
           if (estCoffre(pt) && !(pt.loot||[]).some(l=>l && l.itemId) && !pt.trapEnabled && !pt.message) journal.push('⚠️ Zone « ' + z.name + ' » : coffre vide — ni objet, ni piège, ni message');
           if (pt.scene) base.targetSceneId = idScene[pt.scene] || null;
           if (pt.lockItem){
@@ -35642,7 +35827,7 @@ function verifierScenario(modele){
         if (pt.lockType === 'code' && String(pt.lockCode || '').trim()) dire('info', cp, n, 'Code numérique « ' + pt.lockCode + ' » : vérifie qu\'un indice le donne au joueur.');
       }
       if (estCoffre(pt)){
-        if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
+        if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef && !coffreDuCatalogue(pt)) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
         const loot = (pt.loot || []).filter(l=> l && l.itemId);
         if (!loot.length && !pt.message && !pt.trapEnabled) dire('avert', cp, n, 'Coffre vide, sans message : il dira « il n\'y a rien à l\'intérieur ».');
         loot.forEach(l=>{ if (!M.objetParId[l.itemId]) dire('erreur', cp, n, 'Coffre contenant un objet supprimé.'); });
