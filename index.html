@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v596</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v597</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8900,8 +8900,31 @@ document.getElementById('questJournalCloseBtn').addEventListener('click', ()=>{
   document.getElementById('questTrackerOverlay').classList.add('show');
 });
 
+/* v597 — FILE D'ATTENTE DES MESSAGES : deux messages coup sur coup (« +2 Boulon », « +1 Pile »)
+   s'écrasaient, le premier disparaissait avant d'être lu. Chaque message reste maintenant au
+   moins 2 s avant que le suivant le remplace. */
+let toastFile = [], toastFileTimer = null, toastAfficheA = 0;
+const TOAST_MIN_MS = 2000;
 function showToast(msg, iconUrl){
   const t = document.getElementById('toast');
+  const vu = Date.now() - toastAfficheA;
+  if ((t.classList.contains('show') && vu < TOAST_MIN_MS) || toastFile.length){
+    toastFile.push([msg, iconUrl]);
+    if (!toastFileTimer) toastFileTimer = setTimeout(viderFileToasts, Math.max(50, TOAST_MIN_MS - vu));
+    return;
+  }
+  afficherToast(msg, iconUrl);
+}
+function viderFileToasts(){
+  toastFileTimer = null;
+  const n = toastFile.shift();
+  if (!n) return;
+  afficherToast(n[0], n[1]);
+  if (toastFile.length) toastFileTimer = setTimeout(viderFileToasts, TOAST_MIN_MS);
+}
+function afficherToast(msg, iconUrl){
+  const t = document.getElementById('toast');
+  toastAfficheA = Date.now();
   if (iconUrl){
     t.innerHTML = `<img src="${iconUrl}" style="width:20px; height:20px; object-fit:contain; vertical-align:middle; border-radius:4px; margin-right:5px;">${msg}`;
   } else {
@@ -8911,7 +8934,8 @@ function showToast(msg, iconUrl){
   /* 1800 ms FIXES pour tout le monde : un message d'erreur disparaissait avant d'avoir pu être
      lu, ce qui nous a coûté plusieurs diagnostics à l'aveugle. La durée suit maintenant la
      longueur du texte, comme le récit de combat, et un appui le ferme tout de suite. */
-  const dureeToast = Math.max(2000, Math.min(8000, 1200 + String(msg == null ? '' : msg).length * 45));
+  /* v597 : 3 s au minimum (un objet ramassé partait trop vite pour être lu) */
+  const dureeToast = Math.max(3000, Math.min(8000, 1500 + String(msg == null ? '' : msg).length * 50));
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove('show'), dureeToast);
   t.onclick = ()=>{ clearTimeout(toastTimer); t.classList.remove('show'); };
@@ -11677,6 +11701,20 @@ async function ouvrirBrouillons(){
     try { const d = await zonesCol.doc(zid).get(); scenesDe[zid] = d.exists ? (d.data().scenes || []) : []; }
     catch(e){ scenesDe[zid] = null; }
   }
+  /* v597 : une zone DÉJÀ PUBLIÉE peut encore avoir une image à faire (la photo de Mado, importée
+     après la publication de la maison) : sa tâche ne s'affichait nulle part. On lit toutes les
+     zones d'un coup et on garde celles où une image qu'on touche attend encore son image. */
+  const zonesATerminer = [];
+  try {
+    const snapZ = await zonesCol.get();
+    snapZ.forEach(d=>{
+      if (zonesEnTravaux.some(z=> z.id === d.id)) return;   // déjà affichée
+      const fz = toutes.find(x=> x.id === d.id && (x.interactionType || '') === 'zone');
+      const scs = d.data().scenes || [];
+      const enAttente = scs.some(sc=> sc && (sc.points || []).some(pt=> pt && pt.type === 'image' && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath)));
+      if (fz && enAttente){ scenesDe[d.id] = scs; zonesATerminer.push(fz); }
+    });
+  } catch(e){}
   if (!document.body.contains(fond)) return;
   const sceneParNom = (zid, nom)=> (scenesDe[zid] || []).find(s=> s && memeNom(s.name, nom)) || null;
 
@@ -11796,7 +11834,7 @@ async function ouvrirBrouillons(){
   const groupes = new Map();
   enTravaux.forEach(f=>{ const g = groupeDeFiche(f); if (!groupes.has(g)) groupes.set(g, []); groupes.get(g).push(f); });
   const liste = fond.querySelector('[data-liste]');
-  if (!enTravaux.length && !zonesEnTravaux.length){
+  if (!enTravaux.length && !zonesEnTravaux.length && !zonesATerminer.length){
     liste.innerHTML = '<p class="meta">Aucune fiche en travaux : tout ce que tu as enregistré est publié.</p>';
   } else {
     let html = '';
@@ -11820,7 +11858,8 @@ async function ouvrirBrouillons(){
     });
     /* v592 : une ZONE en travaux (importée depuis un dessin de Claude) : sa place sur la carte,
        puis chaque pièce — le dessin de structure est à remplacer par le dessin de ChatGPT. */
-    zonesEnTravaux.forEach(z=>{
+    zonesEnTravaux.concat(zonesATerminer).forEach(z=>{
+      const publiee = !z.enTravaux;   // v597 : zone publiée qui a encore une image à faire
       const scenes = scenesDe[z.id] || [];
       let manque = 0;
       const okPos = (z.lat != null && z.lng != null);
@@ -11862,9 +11901,9 @@ async function ouvrirBrouillons(){
         });
       });
       html += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
-        <div style="font-weight:700;">🗺️ ${esc(z.name || '(zone)')} <span class="meta" style="font-weight:400;">— zone en travaux · ${manque ? manque + ' chose(s) à faire' : '✅ prête à publier'}</span></div>
+        <div style="font-weight:700;">🗺️ ${esc(z.name || '(zone)')} <span class="meta" style="font-weight:400;">— ${publiee ? 'zone publiée' : 'zone en travaux'} · ${manque ? manque + ' chose(s) à faire' : (publiee ? '✅ rien à faire' : '✅ prête à publier')}</span></div>
         ${blocs}
-        <div style="display:flex; justify-content:flex-end; gap:5px;">${bouton('data-publier="' + z.id + '"', 'Publier la zone')}</div>
+        ${publiee ? '' : '<div style="display:flex; justify-content:flex-end; gap:5px;">' + bouton('data-publier="' + z.id + '"', 'Publier la zone') + '</div>'}
       </div>`;
     });
     liste.innerHTML = html;
@@ -31486,14 +31525,22 @@ async function renderSceneViewCurrentScene(){
           if (!donnes && !(touches && touches.length) && !pt.message) lignes.push(pt.type === 'recolte' ? 'Il n\'y a rien à récolter.' : 'Il n\'y a rien à l\'intérieur.');
           /* Le piège peut mettre le dernier combattant valide à terre : dans ce cas on ne
              laisse pas le joueur planté dans le décor, il rentre se faire soigner. */
-          const plusPersonne = !equipeApteAuCombat();
+          /* v597 : seulement si le PIÈGE vient de mettre l'équipe à terre. Avant, un coffre sans
+             piège renvoyait au vaisseau 0,9 s après l'ouverture dès que l'équipe était déjà
+             K.O. (ou vide) : le message du coffre s'affichait et disparaissait aussitôt. Et le
+             retour attend maintenant que le joueur ait fermé le message. */
+          const plusPersonne = !!(touches && touches.length) && !equipeApteAuCombat();
           if (plusPersonne) lignes.push('Plus personne ne tient debout — retour au vaisseau.');
           if (lignes.length){
             document.getElementById('sceneDialogueText').textContent = lignes.join('\n\n');
             document.getElementById('sceneDialogueOverlay').classList.add('show');
+            sceneDialogueOuvertA = Date.now();
           }
           renderSceneViewCurrentScene();
-          if (plusPersonne) setTimeout(ramenerAInfirmerie, 900);
+          if (plusPersonne){
+            if (lignes.length) apresFermetureDialogueScene = ramenerAInfirmerie;
+            else setTimeout(ramenerAInfirmerie, 900);
+          }
         };
 
         /* Même verrouillage que les portes : un objet qu'on garde, ou un code au pavé. */
@@ -31528,6 +31575,7 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=>{
         document.getElementById('sceneDialogueText').textContent = pt.text || '(pas de texte configuré)';
         document.getElementById('sceneDialogueOverlay').classList.add('show');
+        sceneDialogueOuvertA = Date.now();
       };
     } else if (pt.type === 'action'){
       wrapPointActions[pt.id] = ()=>{
@@ -32146,12 +32194,18 @@ document.getElementById('sceneBigImageOverlay').addEventListener('click', (e)=>{
   if (Date.now() - sceneBigImageOpenedAt < 400) return; // clic résiduel de l'appui qui vient d'ouvrir
   if (e.target === e.currentTarget) closeSceneBigImage();
 });
-document.getElementById('sceneDialogueCloseBtn').addEventListener('click', ()=>{
+/* v597 : le message d'un point (coffre, texte) ne se ferme plus sur le « clic résiduel » de
+   l'appui qui vient de l'ouvrir, et peut déclencher une suite une fois fermé. */
+let sceneDialogueOuvertA = 0;
+let apresFermetureDialogueScene = null;
+function fermerDialogueScene(){
+  if (Date.now() - sceneDialogueOuvertA < 400) return;
   document.getElementById('sceneDialogueOverlay').classList.remove('show');
-});
-document.getElementById('sceneDialogueCloseBtn2').addEventListener('click', ()=>{
-  document.getElementById('sceneDialogueOverlay').classList.remove('show');
-});
+  const suite = apresFermetureDialogueScene; apresFermetureDialogueScene = null;
+  if (suite) suite();
+}
+document.getElementById('sceneDialogueCloseBtn').addEventListener('click', fermerDialogueScene);
+document.getElementById('sceneDialogueCloseBtn2').addEventListener('click', fermerDialogueScene);
 
 /* ================= COMBAT — structure + système d'états complet =================
    Inclus : jauge de vitesse temps réel, ciblage par tap, dégâts/soin, et les 17 états du prototype
