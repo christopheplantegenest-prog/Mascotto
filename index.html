@@ -1418,7 +1418,7 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v597</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v598</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11347,6 +11347,11 @@ function refStyleActive(){ try { return localStorage.getItem('mascotto_ref_style
    (pièces, bâtiments, personnages) restent dans le code et s'affichent en dessous. */
 const CHARTE_CONCEPTION_DEFAUT = `CHARTE DE CONCEPTION MASCOTTO — règles à appliquer à toute nouvelle zone, pièce ou personnage.
 
+UNIVERS
+- Mascotto est un univers futuriste : aucune référence à notre monde ni à notre époque.
+- Pas d'années ni de dates réelles (« 1987 »…), pas de marques, pas d'objets d'aujourd'hui ou d'autrefois (vieux camion, balai, téléphone fixe, télé cathodique…). Outils, véhicules et objets du quotidien sont futuristes.
+- Un nombre à trouver (code de coffre, de porte) est un matricule, un numéro de série, un code d'accès — jamais une année.
+
 ZONES ET PIÈCES
 - La sortie de zone est la flèche en bas à gauche de la première pièce.
 - La porte par laquelle on arrive est dans le dos du joueur : on ne la voit jamais.
@@ -11354,6 +11359,7 @@ ZONES ET PIÈCES
 - Par les fenêtres : uniquement de la verdure (arbres, pelouse, collines). Jamais de ville, de véhicule ni de vaisseau.
 - Caméra à hauteur d'homme, vue de trois-quarts ; on varie les angles d'une pièce à l'autre ; des lieux organiques et habités, pas des boîtes vides.
 - Méthode : Claude dessine le schéma de structure de chaque pièce (éléments numérotés, légende, zones rouges « laisser vide » là où le jeu posera personnages, objets et coffres), place les points dessus, puis ChatGPT dessine la pièce avec le prompt et le schéma.
+- Les points posés par Claude sont des estimations faites sur le schéma : une fois la vraie image posée, l'utilisateur recale lui-même tous les points (rectangles, objets, coffres, sorties, images) — le guide le lui demande pièce par pièce.
 - Une image qu'on touche (photo, affiche, plan) est UNE vraie image : la même est posée dans le décor ET s'ouvre en grand. Un texte utile (date, code) est écrit dans l'image.
 - Les dialogues ne décrivent que ce qui se voit vraiment dans l'image de la pièce : Claude demande les images des pièces avant d'écrire.
 
@@ -11711,7 +11717,9 @@ async function ouvrirBrouillons(){
       if (zonesEnTravaux.some(z=> z.id === d.id)) return;   // déjà affichée
       const fz = toutes.find(x=> x.id === d.id && (x.interactionType || '') === 'zone');
       const scs = d.data().scenes || [];
-      const enAttente = scs.some(sc=> sc && (sc.points || []).some(pt=> pt && pt.type === 'image' && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath)));
+      const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && pt.type === 'image' && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
+        /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
+        || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)));
       if (fz && enAttente){ scenesDe[d.id] = scs; zonesATerminer.push(fz); }
     });
   } catch(e){}
@@ -11886,6 +11894,16 @@ async function ouvrirBrouillons(){
           sc.prompt ? '1. <b>📤 Envoyer à ChatGPT</b> : le dessin de structure de cette pièce part avec le prompt. Choisis ChatGPT, envoie.<br>2. Enregistre l\'image obtenue sur ton téléphone.<br>3. <b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, choisis-la, puis <b>Enregistrer la scène</b>. Les points sont déjà posés.' : '<b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, puis <b>Enregistrer la scène</b>.',
           (sc.prompt ? bouton('data-envoi="scene|' + z.id + '|' + sc.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="scene|' + z.id + '|' + sc.id + '"', '📋 Copier') : '') + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce'), encoreStructure);
         if (sc.prompt && !ok) envois['scene|' + z.id + '|' + sc.id] = ()=> ({ texte: avecCharte(sc.prompt), imgs: sc.structureRef ? [fichierPourPartage('structure-' + sc.id, internalizeSceneImage(sc.structureRef))] : [] });
+        /* v598 : une fois la VRAIE image posée, tous les points se recalent à l'œil — mes positions
+           sont estimées sur le schéma (rectangles, objets, coffres, sorties, photo). */
+        if (sc.prompt && ok && (sc.points || []).length){
+          const okAj = !!sc.pointsAjustes;
+          if (!okAj) manque++;
+          blocs += tache(okAj, '🎯 Ajuster les points de « ' + esc(sc.name) + ' »',
+            'Claude a placé les points d\'après le schéma : sur la vraie image, ils tombent rarement pile. Rectangles des personnages, objets, coffres, sorties, images : recale-les à l\'œil.',
+            '1. <b>🗺️ Ouvrir la pièce</b>.<br>2. Touche chaque point et déplace-le / redimensionne-le avec la palette (👤⟳ montre le personnage dans son rectangle).<br>3. <b>Enregistrer la scène</b>, reviens au guide, puis <b>✔ C\'est fait</b>.',
+            bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', true) + bouton('data-ajuste="' + z.id + '|' + sc.id + '"', '✔ C\'est fait'));
+        }
         /* v596 : une image qu'on touche (photo, affiche…) — UNE vraie image, posée dans le décor
            ET ouverte en grand, pour que ce qu'on voit soit ce qu'on regarde. */
         (sc.points || []).forEach(pt=>{
@@ -11942,6 +11960,17 @@ async function ouvrirBrouillons(){
     await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(zid);
     showToast('Image posée ✅'); rouvrir();
+  });
+  sur('[data-ajuste]', async (b)=>{
+    const [zid, sid] = b.dataset.ajuste.split('|');
+    const doc = await zonesCol.doc(zid).get();
+    const scenes = (doc.exists && doc.data().scenes) || [];
+    const sc = scenes.find(x=> x && x.id === sid);
+    if (!sc){ showToast('Pièce introuvable'); return; }
+    sc.pointsAjustes = true;
+    await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+    oublierScenesDeZone(zid);
+    showToast('Noté ✅'); rouvrir();
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
@@ -12107,8 +12136,41 @@ async function oublierMesChoix(){
 /* Oublier UN personnage. C'est le geste courant quand on met un dialogue au point : on veut
    rejouer Vicky sans effacer le passage chez Debora, sinon la condition qu'on teste redevient
    fausse et on ne teste plus rien. Le bouton global reste pour repartir de zéro. */
+/* v598 — 🔄 SUR UNE FICHE DE ZONE (05/11 : « les zones d'exploration, c'est pas des PNJ… je peux
+   pas tester si les coffres fonctionnent »). La zone redevient neuve POUR CE JOUEUR SEULEMENT :
+   coffres refermés et pleins, objets ramassés revenus (sceneItemsTaken[zone]), et ses habitants
+   (personnages placés dans ses pièces) oublient leurs conversations et leurs combats. L'état
+   partagé entre joueurs (modes « une fois » / « minuté ») n'est pas touché. */
+async function oublierCetteZone(zone){
+  const nom = zone.name || 'cette zone';
+  const scenes = await zonesCol.doc(zone.id).get().then(d=> (d.exists && d.data().scenes) || []).catch(()=> []);
+  const habitants = new Set();
+  toutesLesFiches().forEach(f=>{
+    if (f && ((f.pieceCommune && f.pieceCommune.zoneId === zone.id) || f.assignedZoneId === zone.id)) habitants.add(f.id);
+  });
+  scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{ if (pt && pt.linkedPnjId) habitants.add(pt.linkedPnjId); }));
+  if (!(await appConfirm('Remettre « ' + nom + ' » comme neuve pour toi ?\n\nCoffres refermés et pleins, objets à ramasser revenus' + (habitants.size ? ', et ses ' + habitants.size + ' habitant(s) oublient vos conversations' : '') + '. Les autres joueurs ne sont pas touchés.'))) return;
+  const restant = {};
+  Object.keys(playerUsedChoices).forEach(k=>{ const id = k.split('__')[0]; if (!habitants.has(id)) restant[k] = playerUsedChoices[k]; });
+  playerUsedChoices = restant;
+  const victoires = { ...playerCombatsWon };
+  habitants.forEach(id=>{ delete victoires[id]; });
+  playerCombatsWon = victoires;
+  scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{ if (pt) delete chestVisualState[pt.id]; }));
+  if (sceneViewCreature && sceneViewCreature.id === zone.id) sceneViewTakenMap = {};
+  if (!currentUser || !db){ showToast('Zone remise à neuf (hors ligne)'); return; }
+  try {
+    await db.collection('players').doc(currentUser.uid).update({
+      usedChoices: restant, combatsWon: victoires,
+      ['sceneItemsTaken.' + zone.id]: firebase.firestore.FieldValue.delete(),   // identifiants Firestore : sans point, le chemin pointé est sûr
+    });
+    showToast('« ' + nom + ' » est comme neuve pour toi');
+  } catch(err){ showToast('Échec : ' + err.message); }
+}
 async function oublierCePersonnage(){
   if (!editingId){ showToast('Ouvre d\'abord une fiche existante'); return; }
+  const ficheZone = ficheParId(editingId);
+  if (ficheZone && (ficheZone.interactionType || '') === 'zone'){ await oublierCetteZone(ficheZone); return; }
   const nom = (document.getElementById('editName').value || 'ce personnage').trim();
   if (!(await appConfirm('Oublier tes conversations avec ' + nom + ' ? Les autres personnages gardent leur mémoire.'))) return;
   const prefixe = editingId + '__';
