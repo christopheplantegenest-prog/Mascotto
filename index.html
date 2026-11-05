@@ -1420,7 +1420,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v600</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v601</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -16644,7 +16644,7 @@ const DESC_STATUTS = {
   paralysie:'30 % de chances de sauter son tour',
   confusion:'33 % de chances de se frapper soi-même',
   sommeil:'saute ses tours tant qu\'il dort',
-  piege:'sans effet pour l\'instant — aucune mécanique dans le moteur',
+  piege:'sa prochaine attaque qui touche lui renvoie 30 % des dégâts infligés, puis le piège tombe',
   retourne:'sa prochaine action frappe son propre camp',
   sceau:'plus de soin, de protection ni de charge : seuls les coups passent',
   entrave:'ne peut plus utiliser sa dernière attaque',
@@ -19092,6 +19092,17 @@ function frapper(att, cible, attaque, puissance){
   else if (mult < 1) phrase += ' — peu efficace…';
   log(phrase + '.');
 
+  /* v601 : LE PIÈGE a enfin une mécanique (il n'en avait aucune). La première attaque qui
+     touche, lancée par un robot piégé, lui renvoie 30 % des dégâts ; le piège tombe ensuite. */
+  if (att.statuts.piege && att !== cible && dmg > 0 && att.alive){
+    const retourPiege = Math.max(1, Math.round(dmg * 0.3));
+    delete att.statuts.piege;
+    att.hp = Math.max(0, att.hp - retourPiege);
+    particule(att.uid, '-'+retourPiege, 'combat-particle-dmg');
+    log(`🕸️ ${att.nom} se prend dans le piège (-${retourPiege}).`);
+    verifierMort(att);
+  }
+
   // Statut de l'élément — désactivé par défaut (chanceStatutElement à 0)
   // Statut propre à l'attaque : c'est LUI qui compte désormais
   if (attaque.statut && cible.alive && hasard(attaque.chanceStatut || 100) && reussiteTactique(att, cible, attaque, true)) poserStatut(cible, attaque.statut, attaque.duree, undefined, att);
@@ -19243,11 +19254,21 @@ function cibleDe(a){
   return CIBLES.soi;
 }
 
+/* v601 : un état peut-il encore prendre sur ce combattant ? (pas déjà posé, pas immunisé) */
+function peutRecevoirEtat(c, s){
+  if (!c || !s || c.statuts[s]) return false;
+  return !(STATUTS_NEGATIFS.includes(s) && estImmunise(c, s));
+}
 function choisirCible(att, camp, attaque){
   let cibles = vivants(camp);
   const provoc = cibles.filter(c=> c.statuts.taunt);
   if (provoc.length) cibles = provoc;
   if (!cibles.length) return null;
+  // v601 : une attaque d'état pur vise d'abord ceux sur qui l'état peut encore prendre.
+  if (attaque && attaque.type === 'statut' && attaque.statut && camp !== att.side){
+    const sensibles = cibles.filter(c=> peutRecevoirEtat(c, attaque.statut));
+    if (sensibles.length) cibles = sensibles;
+  }
   /* PERSONNALITES D'IA (reprises du jeu). L'agressif fonce sur le plus
      faible, le chaotique frappe au hasard. Le normal et le defensif
      gardent le ciblage malin du flanc decouvert. */
@@ -19281,6 +19302,10 @@ function executerAttaque(att, attaque, cibleChoisie){
   att.mana = Math.max(0, att.mana - (attaque.cout||0));
   if ((attaque.cout||0) > 0) att.aDepenseCeTour = true;
   att.derniereAttaqueUtilisee = attaque;
+  /* v601 : le miroir ne renvoie que ce qui a été encaissé DEPUIS LA DERNIÈRE ACTION du lanceur
+     (avant, tout le combat s'additionnait : Retour à l'envoyeur finissait en coup fatal). */
+  const recuDepuisDerniereAction = att.dernierRecu || 0;
+  att.dernierRecu = 0;
   /* v19 : LE JOURNAL NOMME L'ATTAQUE. Sans ça un coup à 91 reste un mystère
      (son test du 31/08 : « ce n'était pas affiché le nom de l'attaque »). */
   if (!attaque.ultime) log(`${att.nom} utilise ${attaque.nom}${(attaque.cout||0) > 0 ? ` (coût ${MOT.manaIcone}${attaque.cout})` : ''}.`);
@@ -19456,27 +19481,33 @@ function executerAttaque(att, attaque, cibleChoisie){
     const cibleT = cibleReelle(cible);
     if (!reussiteTactique(att, cibleT, attaque)) return;
     let n = 0;
+    let gardes = 0;
     STATUTS_NEGATIFS.forEach(s=>{
       if (att.statuts[s]){
+        // v601 : ce que la cible ne peut pas recevoir (immunité) reste sur le lanceur.
+        if (estImmunise(cibleT, s)){ gardes++; return; }
         cibleT.statuts[s] = att.statuts[s];
         delete att.statuts[s];
         n++;
       }
     });
-    log(n ? `${att.nom} refile ${n} mauvais effet(s) à ${cibleT.nom}.` : `${att.nom} n'avait rien à refiler.`);
+    log(n ? `${att.nom} refile ${n} mauvais effet(s) à ${cibleT.nom}${gardes ? ` (${gardes} bloqué(s) par ses immunités)` : ''}.`
+          : (gardes ? `${cibleT.nom} est immunisé : ${att.nom} garde ses mauvais effets.` : `${att.nom} n'avait rien à refiler.`));
     return;
   }
   if (t === 'report'){
     // On repousse la cible en fin d'ordre : elle perd son initiative pour ce
     // tour. Contrôle du tempo, pas de dégâts gratuits.
-    if (attaque.puissance) frapper(att, cibleReelle(cible), attaque, attaque.puissance);
-    if (!reussiteTactique(att, cible, attaque)) return;
-    const perdu = Math.round(cible.jauge);
+    // v601 : une seule cible pour le coup ET le report (si un allié s'interpose, c'est lui qui recule).
+    const cR = cibleReelle(cible);
+    if (attaque.puissance) frapper(att, cR, attaque, attaque.puissance);
+    if (!cR.alive || !reussiteTactique(att, cR, attaque)) return;
+    const perdu = Math.round(cR.jauge);
     if (perdu > 0){
-      cible.jauge = 0;
-      log(`${att.nom} repousse ${cible.nom} : ${perdu} % de jauge perdus.`);
+      cR.jauge = 0;
+      log(`${att.nom} repousse ${cR.nom} : ${perdu} % de jauge perdus.`);
     } else {
-      log(`${cible.nom} venait de jouer : rien à repousser.`);
+      log(`${cR.nom} venait de jouer : rien à repousser.`);
     }
     return;
   }
@@ -19548,7 +19579,7 @@ function executerAttaque(att, attaque, cibleChoisie){
       att.hp = Math.max(0, att.hp - retour);
       particule(att.uid, '-'+retour, 'combat-particle-dmg');
       log(`${att.nom} se blesse en attaquant : ${retour}.`);
-      if (att.hp <= 0){ att.alive = false; log(`${att.nom} s'effondre de sa propre fureur.`); }
+      if (att.hp <= 0){ log(`${att.nom} s'effondre de sa propre fureur.`); verifierMort(att); }   // v601 : phénix, increvable…
     }
     return;
   }
@@ -19619,13 +19650,21 @@ function executerAttaque(att, attaque, cibleChoisie){
     return;
   }
   if (t === 'miroir'){
-    if (!att.dernierRecu){ log(`${att.nom} n'a rien à renvoyer.`); return; }
-    const dmg = Math.round(att.dernierRecu * (attaque.pctMiroir || 0.5));
+    if (!recuDepuisDerniereAction){ log(`${att.nom} n'a rien à renvoyer.`); return; }
+    /* v601 : le renvoi suit les règles d'un coup normal — bouclier et garde l'amortissent,
+       il charge l'ultime de la cible, et la mort passe par verifierMort (phénix, increvable…). */
+    let dmg = Math.max(1, Math.round(recuDepuisDerniereAction * (attaque.pctMiroir || 0.5)));
+    if (cible.statuts.bouclier) dmg = Math.max(1, Math.round(dmg * (1 - (cible.statuts.bouclier.valeur || 0.25))));
+    if (cible.statuts.garde)    dmg = Math.max(1, Math.round(dmg * (1 - (cible.statuts.garde.valeur || 0.25))));
     cible.hp = Math.max(0, cible.hp - dmg);
+    chargerUltime(cible, dmg);
+    cible.dernierRecu = (cible.dernierRecu || 0) + dmg;
+    cible.dernierAttaquant = att;
+    cible.toucheCeTour = true;
+    if (!modeSimulation) combat.hitUids.push(cible.uid);
     particule(cible.uid, '-'+dmg, 'combat-particle-dmg');
     log(`${att.nom} renvoie ${dmg} à ${cible.nom}.`);
-    if (cible.hp <= 0){ cible.alive = false; log(`${cible.nom} est hors de combat.`); }
-    att.dernierRecu = 0;
+    verifierMort(cible);
     return;
   }
 }
@@ -19719,14 +19758,26 @@ function iaChoisirAttaque(f){
     let score = 0;
     let offensif = true;   // seules les attaques offensives passent par la roue
 
-    if (a.type === 'charge'){ score = f.charges < 3 ? 18 : 2; offensif = false; }
+    if (a.type === 'charge'){
+      /* v601 : on amasse jusqu'à ce qu'exige la décharge la plus chère de la main
+         (avant : arrêt à 3, donc Banqueroute et ses 4 charges n'étaient jamais jouées). */
+      const besoin = Math.max(3, ...attaquesDe(f).filter(x=> x.type === 'decharge').map(x=> x.chargesRequises || 0));
+      score = f.charges < besoin ? 18 : 2; offensif = false;
+    }
     else if (a.type === 'decharge'){
       if (a.chargesRequises && f.charges < a.chargesRequises) score = -1;
       else score = a.puissance * (1 + f.charges*(a.bonusParCharge||0)) * 0.9;
     }
     else if (a.type === 'soin'){ score = (f.hp < f.maxHp*0.5 && f.repas < 4) ? 60 * Math.pow(R.rassasiement, f.repas) : 1; offensif = false; }
-    else if (a.type === 'statut' || a.type === 'statut_soi'){
-      score = 30;
+    else if (a.type === 'statut_soi'){
+      /* v601 : ne pas relancer un état déjà actif sur soi, ni un phénix déjà consumé
+         (l'IA payait 26 de cristal par tour pour rien). */
+      score = (f.statuts[a.statut] || (a.statut === 'phoenix' && f.phenixConsume)) ? 1 : 30;
+      offensif = false;
+    }
+    else if (a.type === 'statut'){
+      // v601 : personne ne peut recevoir l'état (immunisé ou déjà touché) → tour perdu.
+      score = cibles.some(c=> peutRecevoirEtat(c, a.statut)) ? 30 : 1;
       if (a.statut === 'sceau' && cibles.length){
         // Sceller quelqu'un qui n'a que des coups dans sa main ne coupe rien.
         const bloque = (cibles[0].main || []).filter(x=> !TYPES_OFFENSIFS.includes(x.type)).length;
@@ -19810,7 +19861,7 @@ function iaChoisirAttaque(f){
       score = a.puissance * (0.8 + 0.55 * (cibles.length - 1));
     }
     else if (a.type === 'statut_camp'){
-      const sans = cibles.filter(c=> !c.statuts[a.statut]).length;
+      const sans = cibles.filter(c=> peutRecevoirEtat(c, a.statut)).length;   // v601 : immunités comprises
       score = sans * 26 * ((a.chanceStatut || 100) / 100);
       if (!sans) score = 1;
     }
@@ -19827,7 +19878,7 @@ function iaChoisirAttaque(f){
       // contrôle qui fait vraiment jouer les combos : on empoisonne au
       // premier tour, et au second l'IA passe au gros coup.
       if (a.statut && a.type !== 'statut_soi' && a.type !== 'statut_camp' && cibles.length){
-        const sans = cibles.filter(c=> !c.statuts[a.statut]).length;
+        const sans = cibles.filter(c=> peutRecevoirEtat(c, a.statut)).length;   // v601 : immunités comprises
         score *= (0.25 + 0.75 * (sans / cibles.length));
       }
       score *= multiplicateurRoue(f.vice, cibles[0].vice);
@@ -19887,9 +19938,11 @@ function preTour(acteur){
       finirAction(acteur, 0); return 'suite';
     }
     const prep = acteur.preparation.attaque;
+    const ciblePrep = acteur.preparation.cible || null;
     acteur.preparation = null;
     log(`💥 ${acteur.nom} libere ${prep.nom} !`);
-    executerAttaque(acteur, Object.assign({}, prep, { preparation: 0 }), null);
+    // v601 : le cristal est déjà payé à la préparation (il était payé deux fois), et la cible choisie est gardée.
+    executerAttaque(acteur, Object.assign({}, prep, { preparation: 0, cout: 0 }), ciblePrep);
     finirAction(acteur, 0);
     return 'suite';
   }
@@ -19937,7 +19990,7 @@ function actionDuTour(acteur, attaqueChoisie, cibleChoisie){
   if (!attaque){ souffler(acteur); return 'suite'; }
   if (attaque.preparation && !acteur.preparation){
     acteur.mana = Math.max(0, acteur.mana - (attaque.cout||0));
-    acteur.preparation = { attaque, tours: attaque.preparation };
+    acteur.preparation = { attaque, tours: attaque.preparation, cible: cibleChoisie || null };
     log(`⏳ ${acteur.nom} prepare ${attaque.nom}…`);
     particule(acteur.uid, 'preparation', 'combat-particle-heal');
     finirAction(acteur, 0);
