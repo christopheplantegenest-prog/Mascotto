@@ -1420,7 +1420,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v603</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v604</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -20647,6 +20647,7 @@ function ctCombattantDepuisSlot(s, side, variation){
   const img = imagesDuModele(m);
   return {
     nom: m.nom, vice: m.vice, profil: m.profil || 'equilibre', trait: m.trait || 'aucun',
+    statsBase: statsValides(m.stats) || null,   // v604 : les stats du modèle (oubliées ici : le combat de test et le simulateur prenaient le profil brut)
     immunites: (m.immunites || []).slice(),
     main: main.map(attaquePourCombat),
     equipement: { arme: s.arme || null, armure: s.armure || null, accessoire: s.accessoire || null },
@@ -23113,6 +23114,7 @@ async function importerCatalogueProto(){
       const { element, ...reste } = a;   // l'élément (feu, ombre…) a été retiré du jeu
       const doc = { ...reste, vice: v, emoji: VICES[v].emoji, fx: {}, fxSelf: {}, importe: 'proto20', updatedAt: maintenant };
       Object.keys(doc).forEach(k=>{ if (doc[k] === undefined) delete doc[k]; });
+      if (attaques.some(x=> x.id === idAttaqueProto(v, a.nom))) return;   // v604 : ne jamais écraser une attaque réglée (équilibrage)
       ecritures.push([attaquesCol.doc(idAttaqueProto(v, a.nom)), doc]);
     });
   });
@@ -23120,6 +23122,7 @@ async function importerCatalogueProto(){
     const pool = CATALOGUE_PROTO_ATTAQUES[v] || [];
     const premier = (CATALOGUE_PROTO_JEUX[v] || [])[0];
     const jeu = premier ? premier.attaques.map(nm=> idAttaqueProto(v, nm)) : pool.slice(0, 4).map(a=> idAttaqueProto(v, a.nom));
+    if (robotsModeles.some(x=> x.id === 'ref_' + v)) return;   // v604 : idem pour les fiches de référence
     ecritures.push([robotsModelesCol.doc('ref_' + v), {
       nom: 'Référence ' + VICES[v].nom.toLowerCase(), vice: v, profil: 'equilibre', trait: 'aucun',
       immunites: (IMMUNITES_PAR_VICE[v] || []).slice(), jeu,
@@ -35724,6 +35727,8 @@ async function importerMiseAJour(sc){
   }
   try { await importerBible(sc.bible, journal); } catch(e){ journal.push('⚠️ Bible : ' + e.message); }   // v599
   try { await importerReglagesAttaques(sc.attaquesCombat, journal); } catch(e){ journal.push('⚠️ Attaques : ' + e.message); }   // v603
+  try { await importerModelesCombat(sc.modelesCombat, journal); } catch(e){ journal.push('⚠️ Modèles : ' + e.message); }   // v604
+  try { await verifierImportCombat(sc, journal); } catch(e){ journal.push('⚠️ Vérification : ' + e.message); }   // v604
   journal.push('— Rien d\'autre n\'a bougé : images, objets et réglages posés à la main sont intacts.');
   return journal;
 }
@@ -35751,6 +35756,76 @@ async function importerReglagesAttaques(liste, journal){
   }
   journal.push('⚔️ ' + n + ' attaque(s) de combat réglée(s)');
   if (introuvables.length) journal.push('⚠️ Attaques introuvables : ' + introuvables.join(', '));
+}
+
+/* v604 — LE CATALOGUE DE ROBOTS PAR IMPORT. `modelesCombat` : [{ nom, vice, profil, stats, attaques:[noms] }].
+   Chaque modèle a un identifiant fixe (cat_<péché>_<nom>) : réimporter le même fichier le remet à jour
+   au lieu de le dupliquer. Les images, le nom changé à la main, la fabrication et le piratage posés
+   ensuite dans l'éditeur ne sont PAS écrasés (on n'écrit que les champs de combat). */
+async function importerModelesCombat(liste, journal){
+  if (!Array.isArray(liste) || !liste.length) return;
+  if (!robotsModelesCol){ journal.push('⚠️ Modèles : base indisponible'); return; }
+  let crees = 0, majs = 0;
+  for (const m of liste){
+    const id = 'cat_' + m.vice + '_' + slugId(m.nom);
+    const existant = robotsModeles.find(x=> x.id === id);
+    const homonyme = robotsModeles.find(x=> x.id !== id && String(x.nom || '').toLowerCase() === String(m.nom || '').toLowerCase());
+    if (homonyme && !existant){ journal.push('⚠️ Modèle « ' + m.nom + ' » : un autre modèle porte déjà ce nom — laissé de côté'); continue; }
+    const jeu = (m.attaques || []).map(nom=>{
+      const a = attaques.find(x=> x.nom === nom && x.vice === m.vice) || attaques.find(x=> x.nom === nom);
+      return a ? a.id : null;
+    });
+    if (jeu.some(x=> !x)){ journal.push('⚠️ Modèle « ' + m.nom + ' » : attaque introuvable (' + (m.attaques || []).filter((n,i)=> !jeu[i]).join(', ') + ') — laissé de côté'); continue; }
+    const data = { vice: m.vice, profil: m.profil || 'equilibre', trait: m.trait || 'aucun',
+      immunites: (m.immunites || IMMUNITES_PAR_VICE[m.vice] || []).slice(0, 5), jeu,
+      stats: statsValides(m.stats) || statsDuProfil(m.profil || 'equilibre'),
+      catalogue: m.catalogue || 'combat', updatedAt: Date.now() };
+    if (!existant){ data.nom = m.nom; data.createdAt = Date.now(); }
+    await robotsModelesCol.doc(id).set(data, { merge:true });
+    if (existant) majs++; else crees++;
+  }
+  journal.push('🤖 Modèles de robots : ' + crees + ' créé(s), ' + majs + ' remis à jour');
+}
+/* v604 — LA VÉRIFICATION APRÈS IMPORT (sa demande : « il faut que ce soit bien fait »).
+   On RELIT la base et on compare chiffre par chiffre à ce que le fichier demandait. */
+async function verifierImportCombat(sc, journal){
+  const att = Array.isArray(sc.attaquesCombat) ? sc.attaquesCombat : [];
+  const mods = Array.isArray(sc.modelesCombat) ? sc.modelesCombat : [];
+  if (!att.length && !mods.length) return;
+  const ecarts = [];
+  let okA = 0, okM = 0;
+  if (att.length && attaquesCol){
+    const snap = await attaquesCol.get();
+    const docs = []; snap.forEach(d=> docs.push({ id: d.id, ...d.data() }));
+    att.forEach(r=>{
+      const a = docs.find(x=> String(x.nom || '').trim() === String(r.nom || '').trim() && (!r.vice || x.vice === r.vice));
+      if (!a){ ecarts.push('attaque « ' + r.nom + ' » absente'); return; }
+      const faux = CHAMPS_REGLAGE_ATTAQUE.filter(k=> typeof r[k] === 'number' && a[k] !== r[k]);
+      if (faux.length) ecarts.push('« ' + r.nom + ' » : ' + faux.map(k=> k + ' ' + a[k] + ' au lieu de ' + r[k]).join(', '));
+      else okA++;
+    });
+  }
+  if (mods.length && robotsModelesCol){
+    const snap = await robotsModelesCol.get();
+    const docs = []; snap.forEach(d=> docs.push({ id: d.id, ...d.data() }));
+    mods.forEach(m=>{
+      const d = docs.find(x=> x.id === 'cat_' + m.vice + '_' + slugId(m.nom));
+      if (!d){ ecarts.push('modèle « ' + m.nom + ' » absent'); return; }
+      const main = mainDeModele(d, d.jeu);
+      const noms = main.map(a=> a.nom);
+      const st = statsValides(d.stats);
+      const attendu = statsValides(m.stats);
+      if (main.length !== 4 || (m.attaques || []).some(n=> !noms.includes(n))) ecarts.push('« ' + m.nom + ' » : attaques ' + noms.join(', '));
+      else if (attendu && (!st || CLES_STATS.some(k=> st[k] !== attendu[k]))) ecarts.push('« ' + m.nom + ' » : stats différentes');
+      else okM++;
+    });
+  }
+  const bilan = [];
+  if (att.length) bilan.push(okA + '/' + att.length + ' attaques');
+  if (mods.length) bilan.push(okM + '/' + mods.length + ' modèles');
+  journal.push((ecarts.length ? '❌' : '✅') + ' Vérification relue dans la base : ' + bilan.join(' et ') + ' conformes');
+  ecarts.slice(0, 12).forEach(e=> journal.push('   ❌ ' + e));
+  if (ecarts.length > 12) journal.push('   … et ' + (ecarts.length - 12) + ' autre(s)');
 }
 
 async function importerScenario(sc){
@@ -36350,8 +36425,9 @@ document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
 async function lancerImportScenario(sc, nomFichier){
   const rapport = document.getElementById('scenarioImportReport');
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
-  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible','attaquesCombat']
-    .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + (k === 'attaquesCombat' ? 'réglages d\'attaques de combat' : k)) : null).filter(Boolean).join(' · ');   // v603
+  const LIB_COMPTE = { attaquesCombat:'réglages d\'attaques de combat', modelesCombat:'modèles de robots' };   // v603-v604
+  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible','attaquesCombat','modelesCombat']
+    .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + (LIB_COMPTE[k] || k)) : null).filter(Boolean).join(' · ');
   if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
   if (importEnCours){ showToast('Un import est déjà en cours'); return; }
   const ok = await appConfirm((sc.miseAJour ? 'Mettre à jour « ' : 'Importer « ') + (sc.titre || nomFichier) + ' » ?\n\n' + compte);
