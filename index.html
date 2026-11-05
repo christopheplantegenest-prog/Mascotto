@@ -1420,7 +1420,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v601</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v603</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -16455,7 +16455,7 @@ const REGLAGES_COMBAT = {
   // Formule de dégâts
   constanteDef: 5,      // v17 : 5 — les DEF valent 10-20 sur budget ; à 15 la défense ne comptait presque plus (rempart 61 %, bagarreur 84 %) — ex. 20 : dmg = puissance * atq / (def + constanteDef) — 30 donnait 13-15 cycles en 3v3
   vitesseSocle: 40,     // v17 : ajoutée à la vitesse de tout le monde — à 10 le bagarreur jouait 1,6 fois plus souvent que le rempart et gagnait tout ; à 40 les deux se valent
-  echelleDegats: 1.8,   // v17 : facteur global sur tous les dégâts — LE bouton de la durée des combats (calé par simulation)
+  echelleDegats: 1.2,   // v603 : 1.8 → 1.2 (05/11) — ~4 actions par robot en 3 contre 3 au lieu de 2,5, pour que les plans des jeux aient le temps de se jouer   // v17 : facteur global sur tous les dégâts — LE bouton de la durée des combats (calé par simulation)
   variance: 10,         // ± % aléatoire sur chaque coup
   precisionBase: 100,   // v17 : on ne rate plus par défaut — seuls les coups marqués -15 et moins ratent (rater était « vachement frustrant », test du 31/08)
   tactiqueBase: 85,     // chance de base d'une action tactique (agilité contre vigilance)
@@ -18567,7 +18567,8 @@ function statsEffectives(f){
   if (f.statuts.ralenti)  s.speed = Math.round(s.speed * (1 - R.ralentiPct/100));
   if (f.statuts.defDown)  { s.def = Math.round(s.def*0.7); s.mdef = Math.round(s.mdef*0.7); }
   // Renforts d'équipe : ils multiplient la stat, ils ne la remplacent pas.
-  if (f.statuts.atkUp)    s.atk   = Math.round(s.atk   * (1 + (f.statuts.atkUp.valeur || 0.25)));
+  if (f.statuts.atkUp)  { s.atk   = Math.round(s.atk   * (1 + (f.statuts.atkUp.valeur || 0.25)));
+                          s.matk  = Math.round(s.matk  * (1 + (f.statuts.atkUp.valeur || 0.25))); }   // v602 : l'énergétique aussi (oubliée)
   if (f.statuts.vitUp)    s.speed = Math.round(s.speed * (1 + (f.statuts.vitUp.valeur || 0.25)));
   // Traits et accessoires permanents qui touchent le gabarit
   if (f.trait === 'lourdaud')   s.speed = Math.round(s.speed * 0.85);
@@ -19324,6 +19325,9 @@ function executerAttaque(att, attaque, cibleChoisie){
     delete att.statuts.retourne;
   }
 
+  // v602 : sans cible imposée, on prend celle que l'IA a choisie avec l'attaque (adversaire ou allié).
+  if (!cibleChoisie && att.cibleVisee && att.cibleVisee.alive) cibleChoisie = att.cibleVisee;
+  att.cibleVisee = null;
   let cible = cibleChoisie && cibleChoisie.alive && cibleChoisie.side === camp ? cibleChoisie : choisirCible(att, camp, attaque);
   combat.derniereCible = cible;
   const t = attaque.type;
@@ -19739,179 +19743,270 @@ function verifierFin(){
   return false;
 }
 
-/* IA très simple : choisit l'attaque au meilleur rendement attendu. */
+/* =====================================================================================
+   v602 — L'IA QUI JOUE LE PLAN DE SON JEU (sa demande du 05/11).
+   L'ancienne IA notait surtout la PUISSANCE : elle martelait son plus gros coup et 54
+   attaques des 55 jeux du proto n'étaient jamais jouées (mesuré sur 140 000 combats).
+   Celle-ci estime, pour chaque attaque et chaque cible possible, ce que l'action RAPPORTE,
+   le tout dans une seule unité : des points de vie (dégâts infligés, PV rendus, dégâts
+   évités, tours volés à l'adversaire convertis en dégâts qu'il ne fera pas).
+   - L'HORIZON : combien de tours le combat va encore durer, d'après les PV et les menaces
+     des deux camps. Un poison, une charge ou un bouclier ne valent que s'il reste du temps
+     pour en profiter — c'est ce qui fait qu'une stratégie lente joue lentement et qu'une
+     stratégie expéditive finit vite.
+   - LE CRISTAL a un prix : celui d'un souffle (un demi-tour pour 30 de cristal).
+   - LA CIBLE est choisie avec l'attaque (att.cibleVisee), y compris l'allié à soigner.
+   ===================================================================================== */
+function iaDegats(att, cible, attaque, puissance){
+  if (!cible || !puissance || puissance <= 0) return 0;
+  const sa = statsEffectives(att), sc = statsEffectives(cible);
+  const ener = attaque.famille === 'ener';
+  let d = puissance * ((ener ? sa.matk : sa.atk) / ((ener ? sc.mdef : sc.def) + R.constanteDef)) * (R.echelleDegats || 1);
+  d *= multiplicateurRoue(att.vice, cible.vice);
+  if (cible.statuts.bouclier) d *= 1 - (cible.statuts.bouclier.valeur || 0.25);
+  if (cible.statuts.garde)    d *= 1 - (cible.statuts.garde.valeur || 0.25);
+  let prec = R.precisionBase + (attaque.precision || 0);
+  if (attaque.type === 'decharge') prec += 8 + (attaque.chargesRequises || 0) * 6;
+  if (prec < 999) d *= Math.max(5, Math.min(100, prec)) / 100;
+  return Math.max(1, d);
+}
+/* La puissance réelle d'une attaque pour CE lanceur, maintenant (charges, PV, états de la cible). */
+function iaPuissance(f, a, cible, charges){
+  const ch = charges == null ? f.charges : charges;
+  switch (a.type){
+    case 'degats_plein': return f.hp >= f.maxHp ? a.puissance * 1.3 : a.puissance;
+    case 'degats_bas': return a.puissance * (0.6 + (1 - f.hp / f.maxHp) * 1.6);
+    case 'degats_controle': {
+      const n = cible ? STATUTS_NEGATIFS.filter(s=> cible.statuts[s]).length : 0;
+      return a.puissance * (1 + n * (a.parStatut || 0.35));
+    }
+    case 'decharge':
+      if (a.chargesRequises && ch < a.chargesRequises) return 0;
+      return a.puissance * (1 + ch * (a.bonusParCharge || 0));
+    case 'copie': {
+      const m = f.derniereAttaqueSubie;
+      return (m && m.puissance) ? m.puissance * (a.multCopie || 1) : 0;
+    }
+    case 'miroir': return 0;
+    default: return a.puissance || 0;
+  }
+}
+/* La menace d'un combattant : les dégâts de son meilleur coup sur le camp d'en face. */
+function iaMenace(f, ctx){
+  if (ctx.menace.has(f.uid)) return ctx.menace.get(f.uid);
+  const adv = vivants(f.side === 'player' ? 'enemy' : 'player');
+  let best = 0;
+  if (adv.length) (f.main || []).forEach(a=>{
+    if (!a.puissance) return;
+    const p = iaPuissance(f, a, null);
+    if (!p) return;
+    let m = 0;
+    adv.forEach(t=> m += iaDegats(f, t, a, p));
+    m /= adv.length;
+    if (a.type === 'zone') m *= adv.length;
+    best = Math.max(best, m);
+  });
+  best = Math.max(best, 4);
+  ctx.menace.set(f.uid, best);
+  return best;
+}
+/* Ce qu'un état rapporte, en PV, sur la durée qui lui reste vraiment (min(durée, horizon)). */
+function iaValeurEtat(ctx, poseur, c, s, duree, valeur){
+  const t = Math.max(1, Math.min(duree || DUREE_STATUT[s] || 2, ctx.H + 0.5));
+  const m = iaMenace(c, ctx);
+  const allies = vivants(c.side);
+  const adverses = vivants(c.side === 'player' ? 'enemy' : 'player');
+  const recuParTour = adverses.reduce((x,a)=> x + iaMenace(a, ctx), 0) / Math.max(1, allies.length);
+  switch (s){
+    case 'poison': { let d = 0; for (let k = 1; k <= Math.ceil(t); k++) d += c.maxHp * R.degatsPoison / 100 * k; return Math.min(d, c.hp); }
+    case 'brulure': return Math.min(Math.min(t, 2) * c.maxHp * R.degatsBrulure / 100, c.hp);
+    case 'sommeil': return t * m;
+    case 'paralysie': return t * m * R.chanceParalysie / 100;
+    case 'confusion': return t * 0.33 * (m + iaDegats(c, c, { famille:'meca' }, 25));
+    case 'ralenti': {
+      const v = R.vitesseSocle + statsEffectives(c).speed;
+      return t * m * (1 - (v - statsEffectives(c).speed * R.ralentiPct / 100) / v);
+    }
+    case 'defDown': {
+      const notreFrappe = vivants(poseur.side).reduce((x,a)=> x + iaMenace(a, ctx), 0) / Math.max(1, allies.length);
+      return t * notreFrappe * (1 / 0.7 - 1);
+    }
+    case 'sceau': {
+      const main = c.main || [];
+      const coupe = main.filter(a=> !TYPES_OFFENSIFS.includes(a.type)).length / Math.max(1, main.length);
+      return t * coupe * m * 0.8 + (c.charges ? 0 : 0);
+    }
+    case 'retourne': return 1.6 * m;
+    case 'piege': return 0.3 * m;
+    case 'entrave': return c.derniereAttaqueUtilisee ? 0.3 * t * m : 0;
+    // ----- états qu'on se pose ou qu'on pose à un allié -----
+    case 'taunt': {
+      if (allies.length <= 1) return 0;
+      const plusFaible = allies.filter(a=> a !== c).reduce((x,a)=> Math.min(x, a.hp / a.maxHp), 1);
+      return (c.hp / c.maxHp) > plusFaible ? t * recuParTour * 0.5 * (allies.length - 1) * (1 - plusFaible) : 0;
+    }
+    case 'contre': return t * recuParTour * R.degatsContrePct / 100;
+    case 'reflet': return t * recuParTour * R.refletPct / 100;
+    case 'phoenix': {
+      const pMort = Math.min(1, recuParTour * ctx.H / Math.max(1, c.hp));
+      return pMort * (c.maxHp * R.phoenixPct / 100 + m * Math.min(2, ctx.H));
+    }
+    case 'regen': return Math.min(t * c.maxHp * (valeur || 0.08), (c.maxHp - c.hp) + recuParTour * t * 0.6);
+    case 'bouclier': return t * recuParTour * (valeur || 0.25);
+    case 'garde': return t * (recuParTour * allies.length) * (valeur || 0.25) * (allies.length > 1 ? 1 : 0.6);
+    case 'atkUp': return t * m * (valeur || 0.25);
+    case 'vitUp': { const v = R.vitesseSocle + statsEffectives(c).speed; return t * m * (statsEffectives(c).speed * (valeur || 0.25) / v); }
+    default: return 0;
+  }
+}
+/* Chances qu'un état pris par un adversaire prenne vraiment (immunité, déjà là, vigilance). */
+function iaChanceEtat(f, c, s, chance){
+  if (!peutRecevoirEtat(c, s)) return 0;
+  const sa = statsEffectives(f), sc = statsEffectives(c);
+  const tact = Math.max(25, Math.min(100, R.tactiqueBase + ((sa.agi||55) - (sc.vigi||55)) * R.tactiquePente)) / 100;
+  return (chance == null ? 100 : chance) / 100 * tact;
+}
+/* Une charge vaut ce qu'elle ajoutera à la meilleure décharge de la main. */
+function iaValeurCharges(f, n, ctx){
+  if (!n) return 0;
+  const decharges = (f.main || []).filter(a=> a.type === 'decharge');
+  if (!decharges.length) return 0;
+  const adv = vivants(f.side === 'player' ? 'enemy' : 'player');
+  const cible = adv[0];
+  if (!cible) return 0;
+  const val = (k)=> Math.max(0, ...decharges.map(d=> iaDegats(f, cible, d, iaPuissance(f, d, cible, k))));
+  const maintenant = val(f.charges);
+  let meilleur = 0;
+  decharges.forEach(d=>{
+    const vise = Math.max(d.chargesRequises || 0, f.charges + n);
+    const gain = val(vise) - maintenant;
+    meilleur = Math.max(meilleur, gain * n / Math.max(1, vise - f.charges));
+  });
+  // Il faut survivre jusqu'à la décharge : sans horizon, amasser ne sert à rien.
+  return meilleur * Math.max(0, Math.min(1, (ctx.H - 1) / 2));
+}
+/* Ce que rapporte un coup porté (dégâts utiles, achèvement, état posé au passage). */
+function iaValeurCoup(ctx, f, a, c, puissance){
+  const d = iaDegats(f, c, a, puissance);
+  let v = Math.min(d, c.hp);
+  if (d >= c.hp) v += iaMenace(c, ctx) * Math.min(ctx.H, 3) * 0.6;     // un adversaire de moins
+  if (a.statut && d < c.hp) v += iaChanceEtat(f, c, a.statut, a.chanceStatut) * iaValeurEtat(ctx, f, c, a.statut, a.duree);
+  return { v, d };
+}
+/* Toutes les options d'une attaque : [{ v, cible }] — la meilleure est retenue. */
+function iaEvaluer(ctx, f, a){
+  const t = a.type;
+  const adv = ctx.adverses, allies = ctx.allies;
+  const facteurRepas = Math.pow(R.rassasiement, f.repas);
+  const usure = Math.pow(R.usureProtection, f.protections);
+  const manque = c=> c.maxHp - c.hp;
+  const meilleurDe = (liste, fn)=> liste.reduce((m,c)=>{ const v = fn(c); return v > m.v ? { v, cible:c } : m; }, { v:-1e9, cible:null });
+  switch (t){
+    case 'charge': return { v: iaValeurCharges(f, a.charges || 1, ctx) };
+    case 'soin': return { v: Math.min(manque(f), f.maxHp * (a.soin || 0) * facteurRepas) * (f.hp < f.maxHp * 0.9 ? 1 : 0.2) };
+    case 'soin_allie': return meilleurDe(allies, c=> Math.min(manque(c), c.maxHp * (a.soin || 0) * facteurRepas) * (c.hp < c.maxHp * 0.9 ? 1 : 0.2));
+    case 'soin_camp': return { v: allies.reduce((x,c)=> x + Math.min(manque(c), c.maxHp * (a.soin || 0) * facteurRepas), 0) };
+    case 'regen': return meilleurDe(allies, c=> c.statuts.regen ? 0 : iaValeurEtat(ctx, f, c, 'regen', a.duree, (a.soin || 0.08) * facteurRepas));
+    case 'statut_soi':
+      if (f.statuts[a.statut] || (a.statut === 'phoenix' && f.phenixConsume)) return { v: 0 };
+      return { v: iaValeurEtat(ctx, f, f, a.statut, a.duree) };
+    case 'bouclier': return meilleurDe(allies, c=> c.statuts.bouclier ? 0 : iaValeurEtat(ctx, f, c, 'bouclier', a.duree, (a.reduction || 0.25) * usure));
+    case 'bouclier_camp': return { v: allies.reduce((x,c)=> x + (c.statuts.bouclier ? 0 : iaValeurEtat(ctx, f, c, 'bouclier', a.duree, (a.reduction || 0.25) * usure)), 0) };
+    case 'couverture': return { v: f.statuts.garde ? 0 : iaValeurEtat(ctx, f, f, 'garde', a.duree, (a.reduction || 0.25) * usure) };
+    case 'renfort': case 'renfort_camp': {
+      const st = a.stat === 'vit' ? 'vitUp' : 'atkUp';
+      if (t === 'renfort_camp') return { v: allies.reduce((x,c)=> x + (c.statuts[st] ? 0 : iaValeurEtat(ctx, f, c, st, a.duree, a.bonus || 0.25)), 0) };
+      return meilleurDe(allies, c=> c.statuts[st] ? 0 : iaValeurEtat(ctx, f, c, st, a.duree, a.bonus || 0.25));
+    }
+    case 'purifier': case 'purifier_camp': {
+      const soulage = c=> STATUTS_NEGATIFS.filter(s=> c.statuts[s]).reduce((x,s)=> x + iaValeurEtat(ctx, adv[0] || f, c, s, c.statuts[s].tours), 0);
+      if (t === 'purifier_camp') return { v: allies.reduce((x,c)=> x + soulage(c), 0) };
+      return meilleurDe(allies, soulage);
+    }
+    case 'zone': return { v: adv.reduce((x,c)=> x + iaValeurCoup(ctx, f, a, c, a.puissance).v, 0) };
+    case 'statut_camp': return { v: adv.reduce((x,c)=> x + iaChanceEtat(f, c, a.statut, a.chanceStatut) * iaValeurEtat(ctx, f, c, a.statut, a.duree), 0) };
+    case 'mana_camp': return { v: adv.reduce((x,c)=> x + Math.min(c.mana, a.mana || 20) * ctx.prixMana(c), 0) };
+    case 'statut': return meilleurDe(ctx.visables, c=> iaChanceEtat(f, c, a.statut, 100) * iaValeurEtat(ctx, f, c, a.statut, a.duree));
+    case 'entrave': return meilleurDe(ctx.visables, c=> c.statuts.entrave ? 0 : iaChanceEtat(f, c, 'entrave', 100) * iaValeurEtat(ctx, f, c, 'entrave', a.duree));
+    case 'transfert': return meilleurDe(ctx.visables, c=>{
+      let v = 0;
+      STATUTS_NEGATIFS.filter(s=> f.statuts[s] && !estImmunise(c, s)).forEach(s=>{
+        v += iaValeurEtat(ctx, c, f, s, f.statuts[s].tours);                       // ce dont on se débarrasse
+        if (!c.statuts[s]) v += iaValeurEtat(ctx, f, c, s, f.statuts[s].tours);    // ce que la cible récupère
+      });
+      return v * iaChanceEtat(f, c, '__', 100);
+    });
+    case 'miroir': {
+      const recu = f.dernierRecu || 0;
+      return meilleurDe(ctx.visables, c=> { const d = recu * (a.pctMiroir || 0.5); return Math.min(d, c.hp) + (d >= c.hp ? iaMenace(c, ctx) * Math.min(ctx.H, 3) * 0.6 : 0); });
+    }
+    default: break;
+  }
+  // ----- les coups portés à un adversaire -----
+  return meilleurDe(ctx.visables, c=>{
+    const p = iaPuissance(f, a, c);
+    if (t === 'decharge' && !p) return -1;
+    if (t === 'copie' && !p) return 0;
+    const { v: base, d } = iaValeurCoup(ctx, f, t === 'copie' ? Object.assign({}, f.derniereAttaqueSubie, { statut: f.derniereAttaqueSubie.statut }) : a, c, p);
+    let v = base;
+    const tact = iaChanceEtat(f, c, '__', 100) || 0.85;
+    if (t === 'degats' && a.charges) v += iaValeurCharges(f, a.charges, ctx);
+    if (t === 'decharge'){
+      // Décharger tôt gaspille : si une charge de plus rapporterait plus que ce coup ne perd à attendre, on attend.
+      const plus = iaValeurCharges(f, 1, ctx);
+      if (plus > 0 && d < c.hp && ctx.H > 2) v -= plus * 0.5;
+    }
+    if (t === 'drain' && !f.statuts.sceau) v += Math.min(manque(f), d * (a.drain || 0)) * 0.9;
+    if (t === 'recul'){
+      const retour = Math.min(d, c.hp) * (a.recul || 0);
+      v -= retour;
+      if (retour >= f.hp && !f.statuts.phoenix && !(f.trait === 'increvable' && !f.increvableUtilise)) v -= iaMenace(f, ctx) * Math.min(ctx.H, 3) * 0.6;
+    }
+    if (t === 'vol_atq') v += tact * 0.15 * (iaMenace(f, ctx) + iaMenace(c, ctx)) * Math.min(ctx.H, 3) * 0.5;
+    if (t === 'vol_vit') v += tact * iaValeurEtat(ctx, f, c, 'ralenti', 3) * 0.6;
+    if (t === 'vol_mana') v += tact * Math.min(c.mana, a.mana || 20) * ctx.prixMana(c);
+    if (t === 'rapt') v += tact * (c.charges || 0) * 0.4 * iaMenace(c, ctx);
+    if (t === 'report') v += tact * (c.jauge / 100) * iaMenace(c, ctx);
+    if (t === 'vol_objet') v += tact * 8;
+    return v;
+  });
+}
 function iaChoisirAttaque(f){
+  f.cibleVisee = null;
   const dispo = attaquesDe(f).filter(a=> abordable(f, a));
   if (!dispo.length) return null;              // plus de mana : on souffle
-  const campAdverse = f.side==='player' ? 'enemy' : 'player';
-  const cibles = vivants(campAdverse);
-  if (!cibles.length) return dispo[0];
+  const campAdverse = f.side === 'player' ? 'enemy' : 'player';
+  const adverses = vivants(campAdverse);
+  if (!adverses.length) return dispo[0];
   const allies = vivants(f.side);
-  const seul = allies.length <= 1;
-  // Ce qui manque au camp, en points de vie : c'est ce qui pilote les soins.
-  const manqueCamp = allies.reduce((t,a)=> t + (a.maxHp - a.hp), 0);
-  const pireAllie  = allies.length ? Math.min(...allies.map(a=> a.hp / a.maxHp)) : 1;
-
-  let meilleure = dispo[0], meilleurScore = -1e9;
-  const notes = [];   // toutes les attaques notees (pour l'IA chaotique)
-  dispo.forEach(a=>{
-    let score = 0;
-    let offensif = true;   // seules les attaques offensives passent par la roue
-
-    if (a.type === 'charge'){
-      /* v601 : on amasse jusqu'à ce qu'exige la décharge la plus chère de la main
-         (avant : arrêt à 3, donc Banqueroute et ses 4 charges n'étaient jamais jouées). */
-      const besoin = Math.max(3, ...attaquesDe(f).filter(x=> x.type === 'decharge').map(x=> x.chargesRequises || 0));
-      score = f.charges < besoin ? 18 : 2; offensif = false;
-    }
-    else if (a.type === 'decharge'){
-      if (a.chargesRequises && f.charges < a.chargesRequises) score = -1;
-      else score = a.puissance * (1 + f.charges*(a.bonusParCharge||0)) * 0.9;
-    }
-    else if (a.type === 'soin'){ score = (f.hp < f.maxHp*0.5 && f.repas < 4) ? 60 * Math.pow(R.rassasiement, f.repas) : 1; offensif = false; }
-    else if (a.type === 'statut_soi'){
-      /* v601 : ne pas relancer un état déjà actif sur soi, ni un phénix déjà consumé
-         (l'IA payait 26 de cristal par tour pour rien). */
-      score = (f.statuts[a.statut] || (a.statut === 'phoenix' && f.phenixConsume)) ? 1 : 30;
-      offensif = false;
-    }
-    else if (a.type === 'statut'){
-      // v601 : personne ne peut recevoir l'état (immunisé ou déjà touché) → tour perdu.
-      score = cibles.some(c=> peutRecevoirEtat(c, a.statut)) ? 30 : 1;
-      if (a.statut === 'sceau' && cibles.length){
-        // Sceller quelqu'un qui n'a que des coups dans sa main ne coupe rien.
-        const bloque = (cibles[0].main || []).filter(x=> !TYPES_OFFENSIFS.includes(x.type)).length;
-        score = 8 + bloque * 17;
-      }
-    }
-    /* ----- LE CONTRÔLE (paresse) -----
-       Ces attaques ne valent rien dans le vide : couper le mana d'un
-       adversaire déjà à sec, ou sceller quelqu'un qui n'a que des coups
-       dans sa main, c'est un tour perdu. */
-    else if (a.type === 'vol_mana'){
-      const pris = Math.min(cibles[0].mana, a.mana || 20);
-      score = a.puissance + pris * 0.7;
-    }
-    else if (a.type === 'mana_camp'){
-      offensif = false;
-      score = cibles.reduce((t,c)=> t + Math.min(c.mana, a.mana || 20), 0) * 0.55;
-    }
-    else if (a.type === 'report'){
-      // Plus la cible est près de jouer, plus il vaut le coup de la repousser.
-      score = a.puissance + (cibles[0].jauge / 100) * 40;
-    }
-    else if (a.type === 'degats_controle'){
-      const n = STATUTS_NEGATIFS.filter(s=> cibles[0].statuts[s]).length;
-      score = a.puissance * (1 + n * (a.parStatut || 0.35));
-    }
-    else if (a.type === 'transfert'){
-      const n = STATUTS_NEGATIFS.filter(s=> f.statuts[s]).length;
-      score = n ? 22 * n : 1;
-    }
-    else if (a.type === 'copie') score = f.dernierRecu ? 35 : 1;
-    else if (a.type === 'miroir') score = f.dernierRecu ? Math.min(70, 10 + f.dernierRecu * (a.pctMiroir||0.5) * 1.2) : 1;
-    else if (a.type === 'degats_bas') score = a.puissance * (0.6 + (1 - f.hp/f.maxHp)*1.6);
-    else if (a.type === 'recul') score = a.puissance * (f.hp > f.maxHp*0.35 ? 1 : 0.4);
-
-    /* ----- LES ATTAQUES D'ÉQUIPE -----
-       Sans ces lignes, l'IA les jouerait au petit bonheur et le tournoi ne
-       vaudrait rien : elle doit soigner quand ça saigne, pas avant. */
-    else if (a.type === 'soin_allie' || a.type === 'soin_camp'){
-      offensif = false;
-      const rendu = a.type === 'soin_camp'
-        ? allies.reduce((t,c)=> t + Math.min(c.maxHp - c.hp, c.maxHp * a.soin), 0)
-        : Math.min(manqueCamp, f.maxHp * a.soin);
-      // Utile seulement si quelqu'un est vraiment entamé, et tant qu'on n'est pas rassasié.
-      score = (pireAllie < 0.75 && f.repas < 4)
-        ? rendu * 0.55 * Math.pow(R.rassasiement, f.repas)
-        : 1;
-    }
-    else if (a.type === 'regen'){
-      offensif = false;
-      // Vaut le tour si quelqu'un est entamé et pas déjà en train de régénérer.
-      const entames = allies.filter(c=> !c.statuts.regen && c.hp < c.maxHp * 0.85).length;
-      score = (entames && f.repas < 4) ? 44 * Math.pow(R.rassasiement, f.repas) : 1;
-    }
-    else if (a.type === 'bouclier' || a.type === 'bouclier_camp'){
-      offensif = false;
-      const nus = allies.filter(c=> !c.statuts.bouclier).length;
-      const usure = Math.pow(R.usureProtection, f.protections);   // un bouclier usé ne vaut plus le tour
-      if (!nus || usure < 0.35) score = 1;
-      else score = (a.type === 'bouclier_camp' ? 26 * nus : 40) * ((a.reduction || 0.25) / 0.25) * 0.5 * usure;
-    }
-    else if (a.type === 'renfort' || a.type === 'renfort_camp'){
-      offensif = false;
-      const st = a.stat === 'vit' ? 'vitUp' : 'atkUp';
-      const nus = allies.filter(c=> !c.statuts[st]).length;
-      score = nus ? (a.type === 'renfort_camp' ? 22 * nus : 36) : 1;
-    }
-    else if (a.type === 'couverture'){
-      offensif = false;
-      // Se mettre devant quand on est seul ne protège personne.
-      const usure = Math.pow(R.usureProtection, f.protections);
-      score = (!seul && !f.statuts.garde && f.hp > f.maxHp*0.3 && usure >= 0.35) ? 58 * usure : 3;
-    }
-    else if (a.type === 'purifier' || a.type === 'purifier_camp'){
-      offensif = false;
-      const n = allies.reduce((t,c)=> t + STATUTS_NEGATIFS.filter(s=> c.statuts[s]).length, 0);
-      score = n ? 22 * (a.type === 'purifier_camp' ? n : Math.min(n,2)) : 1;
-    }
-    else if (a.type === 'zone'){
-      // Une attaque de zone ne vaut vraiment le coup qu'à partir de deux cibles.
-      score = a.puissance * (0.8 + 0.55 * (cibles.length - 1));
-    }
-    else if (a.type === 'statut_camp'){
-      const sans = cibles.filter(c=> peutRecevoirEtat(c, a.statut)).length;   // v601 : immunités comprises
-      score = sans * 26 * ((a.chanceStatut || 100) / 100);
-      if (!sans) score = 1;
-    }
-    else if (a.type === 'entrave'){
-      // Bloquer la derniere attaque adverse vaut le coup si elle existe
-      // et si la cible n'est pas deja verrouillee.
-      const c = cibles[0];
-      score = (c && c.derniereAttaqueUtilisee && !c.statuts.entrave) ? 34 : 1;
-    }
-    else score = a.puissance || 8;   // filet : toute attaque a un score
-
-    if (offensif){
-      // Poser un statut que la cible a déjà, c'est un tour perdu. C'est ce
-      // contrôle qui fait vraiment jouer les combos : on empoisonne au
-      // premier tour, et au second l'IA passe au gros coup.
-      if (a.statut && a.type !== 'statut_soi' && a.type !== 'statut_camp' && cibles.length){
-        const sans = cibles.filter(c=> peutRecevoirEtat(c, a.statut)).length;   // v601 : immunités comprises
-        score *= (0.25 + 0.75 * (sans / cibles.length));
-      }
-      score *= multiplicateurRoue(f.vice, cibles[0].vice);
-    }
-
-    /* L'ORDRE DU JEU. Les quatre attaques d'un jeu sont écrites dans leur
-       ordre d'intention : la première est l'ouverture, la dernière la
-       conclusion. Ce petit bonus dégressif suffit à faire jouer le combo
-       dans le bon sens, sans jamais forcer un coup devenu inutile. */
-    if (f.build && f.main){
-      const rang = f.main.indexOf(a);
-      if (rang >= 0) score += (f.main.length - rang) * 7;
-    }
-
-    // Et le prix pèse : une grosse attaque vide la réserve pour deux tours.
-    score -= (a.cout||0) * 0.55;
-    /* PERSONNALITES D'IA. L'agressif meprise tout ce qui n'attaque pas ;
-       le defensif prefere soigner et proteger. Le chaotique est traite
-       plus bas : il pioche au hasard parmi les coups utiles. */
-    if (f.ia === 'agressif' && !offensif) score *= 0.1;
-    if (f.ia === 'defensif'){
-      if (!offensif) score *= 1.6;
-      else score *= 0.8;
-    }
-    notes.push({ a, score });
-    if (score > meilleurScore){ meilleurScore = score; meilleure = a; }
+  const provoc = adverses.filter(c=> c.statuts.taunt);
+  const ctx = { menace: new Map(), adverses, allies, visables: provoc.length ? provoc : adverses };
+  // L'HORIZON : combien de tours avant qu'un camp tombe, au rythme actuel.
+  const pv = l=> l.reduce((x,c)=> x + c.hp, 0);
+  const frappe = l=> l.reduce((x,c)=> x + iaMenace(c, ctx), 0);
+  ctx.H = Math.max(1, Math.min(6, Math.min(pv(allies) / Math.max(1, frappe(adverses)), pv(adverses) / Math.max(1, frappe(allies)))));
+  // LE PRIX DU CRISTAL : un souffle rend 30 de cristal pour un demi-tour.
+  ctx.prixMana = c=> 0.5 * iaMenace(c, ctx) / Math.max(1, R.manaSouffle);
+  const prixPerso = 0.5 * iaMenace(f, ctx) / Math.max(1, R.manaSouffle) * (f.mana >= f.maxMana * 0.6 ? 0.6 : 1);
+  const notes = dispo.map(a=>{
+    let r;
+    try { r = iaEvaluer(ctx, f, a); } catch(e){ r = { v: a.puissance || 1 }; }
+    let score = (r.v || 0) - (a.cout || 0) * prixPerso;
+    const offensif = TYPES_OFFENSIFS.includes(a.type);
+    if (f.build && f.main){ const rang = f.main.indexOf(a); if (rang >= 0) score += (f.main.length - rang) * 0.5; }   // simple départage
+    if (f.ia === 'agressif' && !offensif) score *= score > 0 ? 0.3 : 1;
+    if (f.ia === 'defensif') score *= score > 0 ? (offensif ? 0.85 : 1.5) : 1;
+    score *= alea(0.92, 1.08);                   // un peu de vie : pas deux combats identiques
+    return { a, score, cible: r.cible || null };
   });
+  notes.sort((x,y)=> y.score - x.score);
+  let choix = notes[0];
   if (f.ia === 'chaotique'){
-    const utiles = notes.filter(x=> x.score > 1);
-    const parmi = utiles.length ? utiles : notes;
-    return parmi.length ? parmi[Math.floor(Math.random()*parmi.length)].a : meilleure;
+    const utiles = notes.filter(x=> x.score > notes[0].score * 0.3);
+    choix = utiles[Math.floor(Math.random() * utiles.length)] || notes[0];
   }
-  return meilleure;
+  f.cibleVisee = choix.cible;
+  return choix.a;
 }
 
 /* Fait jouer un tour. Renvoie 'attente' si c'est au joueur de choisir. */
@@ -35628,8 +35723,34 @@ async function importerMiseAJour(sc){
     journal.push('♻️ ' + qui + ' : ' + quoi.join(', '));
   }
   try { await importerBible(sc.bible, journal); } catch(e){ journal.push('⚠️ Bible : ' + e.message); }   // v599
+  try { await importerReglagesAttaques(sc.attaquesCombat, journal); } catch(e){ journal.push('⚠️ Attaques : ' + e.message); }   // v603
   journal.push('— Rien d\'autre n\'a bougé : images, objets et réglages posés à la main sont intacts.');
   return journal;
+}
+
+/* v603 — LES RÉGLAGES D'ATTAQUES PAR IMPORT (l'équilibrage calculé par simulation).
+   `attaquesCombat` : [{ nom, vice?, puissance?, cout?, … }] — on retrouve l'attaque du catalogue
+   de combat par son nom (et son péché s'il est donné) et on ne réécrit QUE les chiffres fournis. */
+const CHAMPS_REGLAGE_ATTAQUE = ['puissance','cout','soin','drain','recul','bonus','reduction','duree','chanceStatut',
+  'parStatut','pctMiroir','multCopie','mana','precision','charges','chargesRequises','bonusParCharge'];
+async function importerReglagesAttaques(liste, journal){
+  if (!Array.isArray(liste) || !liste.length) return;
+  if (!attaquesCol){ journal.push('⚠️ Attaques : base indisponible'); return; }
+  let n = 0;
+  const introuvables = [];
+  for (const r of liste){
+    const nom = String(r.nom || '').trim();
+    const a = attaques.find(x=> String(x.nom || '').trim() === nom && (!r.vice || x.vice === r.vice));
+    if (!a){ introuvables.push(nom); continue; }
+    const maj = {};
+    CHAMPS_REGLAGE_ATTAQUE.forEach(k=>{ if (typeof r[k] === 'number' && isFinite(r[k])) maj[k] = r[k]; });
+    if (!Object.keys(maj).length) continue;
+    await attaquesCol.doc(a.id).set({ ...maj, updatedAt: Date.now() }, { merge:true });
+    Object.assign(a, maj);
+    n++;
+  }
+  journal.push('⚔️ ' + n + ' attaque(s) de combat réglée(s)');
+  if (introuvables.length) journal.push('⚠️ Attaques introuvables : ' + introuvables.join(', '));
 }
 
 async function importerScenario(sc){
@@ -36229,8 +36350,8 @@ document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
 async function lancerImportScenario(sc, nomFichier){
   const rapport = document.getElementById('scenarioImportReport');
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
-  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible']
-    .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + k) : null).filter(Boolean).join(' · ');
+  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible','attaquesCombat']
+    .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + (k === 'attaquesCombat' ? 'réglages d\'attaques de combat' : k)) : null).filter(Boolean).join(' · ');   // v603
   if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
   if (importEnCours){ showToast('Un import est déjà en cours'); return; }
   const ok = await appConfirm((sc.miseAJour ? 'Mettre à jour « ' : 'Importer « ') + (sc.titre || nomFichier) + ' » ?\n\n' + compte);
