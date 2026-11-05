@@ -1420,7 +1420,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v599</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v600</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1785,6 +1785,7 @@
       <p class="meta" style="margin:0 0 6px; opacity:.8;">Le sélecteur de fichiers peut faire recharger l'appli : ce n'est pas grave ici, rien n'est perdu tant que l'import n'a pas commencé. Reviens simplement dans cet onglet.</p>
       <input type="file" id="scenarioImportFile" accept="application/json,.json" class="field-input" style="margin-bottom:8px;">
       <button type="button" class="btn-capture" id="scenarioImportBtn" style="width:100%; height:42px;">📥 Importer le fichier choisi</button>
+      <button type="button" class="btn-capture" id="scenarioImportDepotBtn" style="width:100%; height:42px; margin-top:8px;">📁 Importer un fichier du dépôt (dossier imports)</button>
       <div id="scenarioImportReport" style="margin-top:8px; font-size:12px; line-height:1.5;"></div>
     </div>
     <button type="button" class="btn-secondary tt-cat" data-ttcat="export" style="width:100%; margin-bottom:6px; text-align:left;">📤 Exporter mes fiches</button>
@@ -32585,11 +32586,11 @@ const GITHUB_REPO_OWNER = 'christopheplantegenest-prog';
 const GITHUB_REPO_NAME = 'Mascotto';
 let githubPickerTargetInputId = null;
 let githubPickerOnPick = null; // mode rappel : reçoit {path, url} au lieu de remplir un champ texte
-function openGithubFilePicker(targetInputId, onPick){
+function openGithubFilePicker(targetInputId, onPick, dossierDeDepart){
   githubPickerTargetInputId = targetInputId;
   githubPickerOnPick = onPick || null;
   document.getElementById('githubPickerOverlay').classList.add('show');
-  loadGithubPickerPath('');
+  loadGithubPickerPath(dossierDeDepart || '');   // v600 : peut s'ouvrir directement dans un dossier
 }
 async function loadGithubPickerPath(path){
   const listEl = document.getElementById('githubPickerList');
@@ -32637,7 +32638,10 @@ async function loadGithubPickerPath(path){
       });
     });
   } catch(e){
-    listEl.innerHTML = '<p class="meta">Impossible de charger la liste (dépôt privé, connexion indisponible, ou dossier introuvable). Tu peux toujours coller le lien à la main.</p>';
+    listEl.innerHTML = '<p class="meta">Impossible de charger la liste (dépôt privé, connexion indisponible, ou dossier introuvable). Tu peux toujours coller le lien à la main.</p>'
+      + (path ? '<button type="button" class="btn-secondary" id="githubPickerRootBtn" style="width:100%; margin-top:6px;">📁 Revenir à la racine du dépôt</button>' : '');
+    const racine = document.getElementById('githubPickerRootBtn');   // v600 : dossier « imports » pas encore créé
+    if (racine) racine.addEventListener('click', ()=> loadGithubPickerPath(''));
   }
 }
 document.getElementById('githubPickerCloseBtn').addEventListener('click', ()=>{
@@ -36145,7 +36149,11 @@ document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
       objets: exportNettoyer(typeof items !== 'undefined' ? items : []),
       quetes: exportNettoyer(typeof quests !== 'undefined' ? quests : []),
       metiers: exportNettoyer(typeof metiers !== 'undefined' ? metiers : []),
-      modelesRobots: exportNettoyer((typeof robotsModeles !== 'undefined' ? robotsModeles : []).map(m=> ({ id:m.id, nom:m.nom, vice:m.vice, element:m.element }))),
+      /* v600 : les modèles EN ENTIER (stats, vice, élément, combinaison d'attaques) et le catalogue
+         d'attaques — pour concevoir un robot à partir de son style de combat. */
+      modelesRobots: exportNettoyer(typeof robotsModeles !== 'undefined' ? robotsModeles : []),
+      attaques: exportNettoyer(typeof attaques !== 'undefined' ? attaques : []),
+      ultimes: exportNettoyer(typeof ultimesPerso !== 'undefined' ? ultimesPerso : []),
       recettes: exportNettoyer(typeof recipes !== 'undefined' ? recipes : []),
       charteConception: await lireCharteConception(),   // v596 : Claude la lit avant de concevoir
       bible: await bibleExport(),   // v599 : socle, sommaire et toutes les fiches de la Bible
@@ -36162,41 +36170,62 @@ document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
     rapport.textContent = '⚠️ Export impossible : ' + (e && e.message ? e.message : e);
   } finally { bouton.disabled = false; }
 });
-document.getElementById('scenarioImportBtn').addEventListener('click', async ()=>{
-  const champ = document.getElementById('scenarioImportFile');
+/* v600 : le cœur de l'import, commun au fichier choisi sur le téléphone et au fichier pris dans
+   le dépôt GitHub (dossier « imports ») — ce second chemin évite le sélecteur de fichiers
+   d'Android, qui fait recharger le jeu sur un téléphone à 2 Go et perd le fichier choisi. */
+async function lancerImportScenario(sc, nomFichier){
   const rapport = document.getElementById('scenarioImportReport');
-  const f = champ.files && champ.files[0];
-  if (!f){ showToast('Choisis d\'abord un fichier .json'); return; }
   if (!creatureCol){ showToast('Firebase indisponible ici'); return; }
-  let sc;
-  try {
-    sc = JSON.parse(await f.text());
-  } catch(err){
-    rapport.innerHTML = '<span style="color:#e66;">Fichier illisible : ' + err.message + '</span>';
-    return;
-  }
   const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible']
     .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + k) : null).filter(Boolean).join(' · ');
   if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
   if (importEnCours){ showToast('Un import est déjà en cours'); return; }
-  const ok = await appConfirm((sc.miseAJour ? 'Mettre à jour « ' : 'Importer « ') + (sc.titre || f.name) + ' » ?\n\n' + compte);
+  const ok = await appConfirm((sc.miseAJour ? 'Mettre à jour « ' : 'Importer « ') + (sc.titre || nomFichier) + ' » ?\n\n' + compte);
   if (!ok) return;
   if (importEnCours){ showToast('Un import est déjà en cours'); return; }
-  /* v586 : bouton bloqué pendant l'import — un deuxième lancement créerait des homonymes. */
+  /* v586 : boutons bloqués pendant l'import — un deuxième lancement créerait des homonymes. */
   importEnCours = true;
-  const bouton = document.getElementById('scenarioImportBtn');
-  bouton.disabled = true;
+  const boutons = ['scenarioImportBtn', 'scenarioImportDepotBtn'].map(id=> document.getElementById(id)).filter(Boolean);
+  boutons.forEach(b=> b.disabled = true);
   rapport.textContent = 'Import en cours…';
   try {
     const journal = sc.miseAJour ? await importerMiseAJour(sc) : await importerScenario(sc);   // v594
-    rapport.innerHTML = journal.map(l=> '<div>' + l.replace(/</g,'&lt;') + '</div>').join('');
+    rapport.innerHTML = '<div>📄 ' + String(nomFichier || '').replace(/</g,'&lt;') + '</div>' + journal.map(l=> '<div>' + l.replace(/</g,'&lt;') + '</div>').join('');
     showToast('Import terminé');
   } catch(err){
     rapport.innerHTML += '<div style="color:#e66;">Interrompu : ' + err.message + '</div>';
   } finally {
     importEnCours = false;
-    bouton.disabled = false;
+    boutons.forEach(b=> b.disabled = false);
   }
+}
+document.getElementById('scenarioImportBtn').addEventListener('click', async ()=>{
+  const champ = document.getElementById('scenarioImportFile');
+  const rapport = document.getElementById('scenarioImportReport');
+  const f = champ.files && champ.files[0];
+  if (!f){ showToast('Choisis d\'abord un fichier .json'); return; }
+  let sc;
+  try { sc = JSON.parse(await f.text()); }
+  catch(err){ rapport.innerHTML = '<span style="color:#e66;">Fichier illisible : ' + err.message + '</span>'; return; }
+  await lancerImportScenario(sc, f.name);
+});
+/* v600 — 📁 IMPORTER UN FICHIER DU DÉPÔT : la liste du dossier « imports » du dépôt GitHub. Le
+   fichier est lu sur raw.githubusercontent.com (à jour dès le dépôt, sans attendre Pages). */
+const DOSSIER_IMPORTS = 'imports';
+document.getElementById('scenarioImportDepotBtn').addEventListener('click', ()=>{
+  const rapport = document.getElementById('scenarioImportReport');
+  openGithubFilePicker(null, async (item)=>{
+    if (!/\.json$/i.test(item.path || '')){ showToast('Choisis un fichier .json'); return; }
+    rapport.textContent = 'Lecture de « ' + item.path + ' »…';
+    let sc;
+    try {
+      const url = item.url || ('https://raw.githubusercontent.com/' + GITHUB_REPO_OWNER + '/' + GITHUB_REPO_NAME + '/main/' + item.path);
+      const res = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      sc = JSON.parse(await res.text());
+    } catch(err){ rapport.innerHTML = '<span style="color:#e66;">Fichier illisible : ' + String(err.message).replace(/</g,'&lt;') + '</span>'; return; }
+    await lancerImportScenario(sc, item.path.split('/').pop());
+  }, DOSSIER_IMPORTS);   // ouvre directement le dossier des fichiers de Claude
 });
 
 
