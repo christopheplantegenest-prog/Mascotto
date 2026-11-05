@@ -380,6 +380,7 @@
     width:38px; height:38px; font-size:18px; border:1px solid rgba(255,255,255,.35);
   }
   #appConfirmOverlay{ z-index:5000; }
+  #importConflictOverlay{ z-index:4900; }   /* v599 : l'import vit dans la Bible (4400) */
   .sheet{
     width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line);
     border-radius:20px 20px 0 0; padding:20px 20px max(20px, env(safe-area-inset-bottom));
@@ -1418,7 +1419,8 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v598</span>
+        <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v599</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11416,6 +11418,283 @@ async function ouvrirCharteConception(){
     zone.value = CHARTE_CONCEPTION_DEFAUT;
   });
 }
+
+/* =====================================================================================
+   v599 — 📖 LA BIBLE DU JEU (05/11). Un outil de CONCEPTION pour Christophe et Claude, pas
+   quelque chose que le jeu lit en jouant : rien n'est chargé tant qu'on n'ouvre pas l'onglet.
+   - Le SOCLE COMMUN : la charte de conception (éditable) et les blocs de style (fixés).
+   - Les FICHES : une par organisation, lieu, personnage… courte, avec seulement ce qui lui
+     est propre, des LIENS explicites vers les autres fiches, et des liens vers les fiches du
+     JEU (zones, versions d'un personnage) : horaires et dialogues réels se lisent dans le jeu,
+     on ne les recopie pas dans la Bible — pas de contradiction possible.
+   - Le SOMMAIRE est généré : une ligne par fiche avec ses liens. Il reste court même avec cent
+     fiches ; Claude lit le socle + le sommaire, puis seulement les fiches qui le concernent.
+   - L'EXPORT CIBLÉ d'une fiche donne à Claude : socle, sommaire, la fiche, ses voisines
+     directes, et les données réelles du jeu qui leur sont liées.
+   - Les échanges avec Claude (import, export) sont rangés ici, sortis des Outils de test.
+   Rangement : collection `bible_fiches`. Un fichier d'import peut apporter `bible: [...]`
+   (création ou mise à jour par NOM, liens par nom). */
+const bibleCol = (typeof db !== 'undefined' && db) ? db.collection('bible_fiches') : null;
+const BIBLE_TYPES = [
+  { id: 'organisation', nom: 'Organisations', emoji: '🏢' },
+  { id: 'lieu', nom: 'Lieux', emoji: '📍' },
+  { id: 'personnage', nom: 'Personnages', emoji: '👤' },
+  { id: 'objet', nom: 'Objets et matériel', emoji: '🧰' },
+  { id: 'autre', nom: 'Autres', emoji: '📄' },
+];
+let bibleFiches = [];
+async function bibleCharger(){
+  if (!bibleCol) return [];
+  const snap = await bibleCol.get();
+  const out = [];
+  snap.forEach(d=> out.push({ id: d.id, ...d.data() }));
+  out.sort((a, b)=> String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
+  bibleFiches = out;
+  return out;
+}
+const bibleNomDe = (id)=> (bibleFiches.find(f=> f.id === id) || {}).nom || '?';
+/* Les voisines : ce que la fiche cite, et ce qui la cite. */
+function bibleVoisines(f){
+  const ids = new Set(f.liens || []);
+  bibleFiches.forEach(x=>{ if (x.id !== f.id && (x.liens || []).includes(f.id)) ids.add(x.id); });
+  ids.delete(f.id);
+  return bibleFiches.filter(x=> ids.has(x.id));
+}
+function bibleSommaire(){
+  return bibleFiches.map(f=>{
+    const t = BIBLE_TYPES.find(x=> x.id === f.type) || BIBLE_TYPES[4];
+    const v = bibleVoisines(f).map(x=> x.nom);
+    return t.emoji + ' ' + (f.nom || '?') + (f.resume ? ' — ' + f.resume : '') + (v.length ? '  ↔ ' + v.join(', ') : '');
+  });
+}
+function bibleTelecharger(donnees, nom){
+  const texte = JSON.stringify(donnees, null, 1);
+  const blob = new Blob([texte], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nom;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  return Math.round(texte.length / 1024);
+}
+/* La Bible entière, telle qu'elle part dans l'export complet. */
+async function bibleExport(){
+  try { await bibleCharger(); } catch(e){ return { erreur: String(e && e.message || e) }; }
+  return {
+    socle: { charteConception: await lireCharteConception(), styles: { pieces: CHARTE_DECOR, batiments: CHARTE_BATIMENT, personnages: CHARTE_PERSO, poses: CHARTE_POSE } },
+    sommaire: bibleSommaire(),
+    fiches: bibleFiches.map(f=> ({ id: f.id, nom: f.nom, type: f.type, resume: f.resume || '', texte: f.texte || '', liens: (f.liens || []).map(bibleNomDe), jeu: (f.jeu || []).map(id=> (ficheParId(id) || {}).name || id) })),
+  };
+}
+/* L'export CIBLÉ : de quoi concevoir autour d'une fiche sans tout relire. */
+async function bibleExportCible(f){
+  const voisines = bibleVoisines(f);
+  const lot = [f].concat(voisines);
+  const jeuIds = new Set();
+  lot.forEach(x=> (x.jeu || []).forEach(id=> jeuIds.add(id)));
+  /* les versions d'un personnage viennent avec lui */
+  Array.from(jeuIds).forEach(id=>{ const g = ficheParId(id); if (g) toutesLesFiches().filter(v=> (v.dupeGroup || v.id) === (g.dupeGroup || g.id)).forEach(v=> jeuIds.add(v.id)); });
+  const fichesJeu = toutesLesFiches().filter(x=> jeuIds.has(x.id)).map(x=> exportNettoyer(x));
+  const zones = [];
+  for (const x of fichesJeu){
+    if ((x.interactionType || '') !== 'zone') continue;
+    try { const d = await zonesCol.doc(x.id).get(); if (d.exists) zones.push(exportNettoyer({ id: d.id, _nomFiche: x.name, ...d.data() })); } catch(e){}
+  }
+  const donnees = {
+    export: 'Mascotto — Bible, export ciblé', version: (document.getElementById('appVersionLabel') || {}).textContent || '', date: new Date().toISOString(),
+    socle: { charteConception: await lireCharteConception(), styles: { pieces: CHARTE_DECOR, batiments: CHARTE_BATIMENT, personnages: CHARTE_PERSO, poses: CHARTE_POSE } },
+    sommaire: bibleSommaire(),
+    ficheVisee: f.nom,
+    fiches: lot.map(x=> ({ nom: x.nom, type: x.type, resume: x.resume || '', texte: x.texte || '', liens: (x.liens || []).map(bibleNomDe), jeu: (x.jeu || []).map(id=> (ficheParId(id) || {}).name || id) })),
+    jeu: { fiches: fichesJeu, zones },
+  };
+  const nom = 'mascotto-bible-' + String(f.nom || 'fiche').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-') + '-' + new Date().toISOString().slice(0, 10) + '.json';
+  return { nom, ko: bibleTelecharger(donnees, nom) };
+}
+/* Import : `bible: [{ nom, type, resume, texte, liens:[noms], jeu:[noms de fiches du jeu] }]`.
+   Une fiche du même nom est MISE À JOUR (seuls les champs donnés changent), sinon créée. */
+async function importerBible(liste, journal){
+  if (!Array.isArray(liste) || !liste.length || !bibleCol) return;
+  await bibleCharger();
+  const memeNom = (a, b)=> String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  const ids = {};
+  for (const b of liste){
+    if (!b || !b.nom) continue;
+    const ex = bibleFiches.find(f=> memeNom(f.nom, b.nom));
+    const data = { nom: b.nom, updatedAt: Date.now() };
+    ['type', 'resume', 'texte'].forEach(k=>{ if (typeof b[k] === 'string') data[k] = b[k]; });
+    if (ex){ await bibleCol.doc(ex.id).set(data, { merge: true }); ids[b.nom] = ex.id; journal.push('📖 Bible : « ' + b.nom + ' » mise à jour'); }
+    else { const ref = await bibleCol.add({ type: 'autre', resume: '', texte: '', liens: [], jeu: [], ...data, createdAt: Date.now() }); ids[b.nom] = ref.id; journal.push('📖 Bible : « ' + b.nom + ' » ajoutée'); }
+  }
+  await bibleCharger();
+  for (const b of liste){
+    if (!b || !b.nom || !ids[b.nom]) continue;
+    const maj = {};
+    if (Array.isArray(b.liens)){
+      maj.liens = b.liens.map(n=> (bibleFiches.find(f=> memeNom(f.nom, n)) || {}).id).filter(Boolean);
+      b.liens.forEach(n=>{ if (!bibleFiches.some(f=> memeNom(f.nom, n))) journal.push('⚠️ Bible : lien « ' + n + ' » introuvable (fiche « ' + b.nom + ' »)'); });
+    }
+    if (Array.isArray(b.jeu)){
+      maj.jeu = b.jeu.map(n=> (toutesLesFiches().find(x=> memeNom(x.name, n) || x.id === n) || {}).id).filter(Boolean);
+      b.jeu.forEach(n=>{ if (!toutesLesFiches().some(x=> memeNom(x.name, n) || x.id === n)) journal.push('⚠️ Bible : fiche du jeu « ' + n + ' » introuvable (fiche « ' + b.nom + ' »)'); });
+    }
+    if (Object.keys(maj).length) await bibleCol.doc(ids[b.nom]).set(maj, { merge: true });
+  }
+}
+
+/* ---------- L'écran ---------- */
+function bibleEsc(t){ return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+let bibleOnglet = 'fiches';
+function bibleFond(){
+  let fond = document.getElementById('bibleOverlay');
+  if (!fond){
+    fond = document.createElement('div');
+    fond.id = 'bibleOverlay';
+    fond.className = 'overlay';
+    fond.style.zIndex = '4400';   // sous le sélecteur (4500), la charte (4800) et les confirmations (5000)
+    fond.innerHTML = `<div class="sheet" style="max-height:92vh; overflow-y:auto;">
+      <div class="sheet-top"><h3 style="margin-top:0;">📖 Bible du jeu</h3><button class="sheet-x" data-bible-fermer>✕</button></div>
+      <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px;">
+        <button class="btn-secondary" data-bible-onglet="fiches" style="flex:1 1 auto; padding:6px 8px; font-size:12px;">📚 Fiches</button>
+        <button class="btn-secondary" data-bible-onglet="socle" style="flex:1 1 auto; padding:6px 8px; font-size:12px;">📘 Socle commun</button>
+        <button class="btn-secondary" data-bible-onglet="echanges" style="flex:1 1 auto; padding:6px 8px; font-size:12px;">🔁 Échanges avec Claude</button>
+        <button class="btn-secondary" data-bible-guide style="flex:1 1 auto; padding:6px 8px; font-size:12px;">🧰 À finir</button>
+      </div>
+      <div data-bible-corps></div>
+      <div data-bible-echanges style="display:none;"></div>
+    </div>`;
+    document.body.appendChild(fond);
+    fond.querySelector('[data-bible-fermer]').addEventListener('click', ()=> fond.classList.remove('show'));
+    fond.querySelectorAll('[data-bible-onglet]').forEach(b=> b.addEventListener('click', ()=>{ bibleOnglet = b.dataset.bibleOnglet; bibleAfficher(); }));
+    fond.querySelector('[data-bible-guide]').addEventListener('click', ()=>{ fond.classList.remove('show'); ouvrirBrouillons(); });
+    /* L'import et l'export quittent les Outils de test : ils vivent ici, avec leurs écouteurs. */
+    const ech = fond.querySelector('[data-bible-echanges]');
+    ech.innerHTML = '<p class="meta" style="margin:0 0 8px;">Ce que Claude t\'envoie s\'importe ici ; ce que tu lui envoies s\'exporte ici. L\'export complet contient aussi toute la Bible. Pour un chantier précis, préfère l\'export ciblé, depuis la fiche concernée.</p>';
+    ['import', 'export'].forEach(k=>{
+      const panneau = document.getElementById('ttPanel-' + k);
+      const bouton = document.querySelector('.tt-cat[data-ttcat="' + k + '"]');
+      if (!panneau) return;
+      const titre = document.createElement('h4');
+      titre.textContent = k === 'import' ? '📥 Importer un fichier de Claude' : '📤 Tout exporter pour Claude';
+      titre.style.margin = '10px 0 6px';
+      ech.appendChild(titre);
+      panneau.style.display = 'block';
+      ech.appendChild(panneau);
+      if (bouton) bouton.style.display = 'none';
+    });
+  }
+  return fond;
+}
+async function ouvrirBible(){
+  const fond = bibleFond();
+  fond.classList.add('show');
+  await bibleAfficher();
+}
+async function bibleAfficher(){
+  const fond = bibleFond();
+  const corps = fond.querySelector('[data-bible-corps]');
+  const ech = fond.querySelector('[data-bible-echanges]');
+  fond.querySelectorAll('[data-bible-onglet]').forEach(b=>{ b.className = b.dataset.bibleOnglet === bibleOnglet ? 'btn-capture' : 'btn-secondary'; });
+  ech.style.display = bibleOnglet === 'echanges' ? 'block' : 'none';
+  corps.style.display = bibleOnglet === 'echanges' ? 'none' : 'block';
+  if (bibleOnglet === 'socle'){
+    corps.innerHTML = `<p class="meta" style="margin:0 0 8px;">Ce qui vaut pour TOUT le jeu. Les fiches n'y ajoutent que ce qui leur est propre, sans le répéter.</p>
+      <button class="btn-capture" data-bible-charte style="width:100%; margin-bottom:10px;">📘 Charte de conception (modifiable)</button>
+      <details><summary style="font-size:13px; font-weight:600;">🎨 Les blocs de style (fixés dans le jeu)</summary>
+      <pre style="white-space:pre-wrap; font-size:11px; line-height:1.35;">${bibleEsc(CHARTE_DECOR)}\n\n${bibleEsc(CHARTE_BATIMENT)}\n\n${bibleEsc(CHARTE_PERSO)}\n\n${bibleEsc(CHARTE_POSE)}</pre></details>`;
+    corps.querySelector('[data-bible-charte]').addEventListener('click', ()=> ouvrirCharteConception());
+    return;
+  }
+  if (bibleOnglet !== 'fiches') return;
+  corps.innerHTML = '<p class="meta">Chargement…</p>';
+  try { await bibleCharger(); } catch(e){ corps.innerHTML = '<p class="meta">Lecture impossible : ' + bibleEsc(e.message) + '</p>'; return; }
+  let html = `<button class="btn-capture" data-bible-nouvelle style="width:100%; margin-bottom:10px;">＋ Nouvelle fiche</button>`;
+  if (!bibleFiches.length) html += '<p class="meta">Aucune fiche pour l\'instant. Claude en apporte avec ses fichiers d\'import, et tu peux en créer ici.</p>';
+  BIBLE_TYPES.forEach(t=>{
+    const fs = bibleFiches.filter(f=> (f.type || 'autre') === t.id || (t.id === 'autre' && !BIBLE_TYPES.some(x=> x.id === f.type)));
+    if (!fs.length) return;
+    html += `<div style="font-weight:700; margin:10px 0 4px;">${t.emoji} ${t.nom}</div>`;
+    fs.forEach(f=>{
+      const v = bibleVoisines(f).map(x=> x.nom);
+      html += `<button class="btn-secondary" data-bible-fiche="${f.id}" style="width:100%; text-align:left; margin-bottom:5px; padding:8px; font-size:13px; line-height:1.35;">
+        <b>${bibleEsc(f.nom)}</b>${f.resume ? ' — ' + bibleEsc(f.resume) : ''}${v.length ? '<br><span class="meta" style="font-size:11px;">↔ ' + bibleEsc(v.join(', ')) + '</span>' : ''}</button>`;
+    });
+  });
+  corps.innerHTML = html;
+  corps.querySelector('[data-bible-nouvelle]').addEventListener('click', ()=> bibleEditer(null));
+  corps.querySelectorAll('[data-bible-fiche]').forEach(b=> b.addEventListener('click', ()=> bibleEditer(bibleFiches.find(f=> f.id === b.dataset.bibleFiche))));
+}
+function bibleEditer(f){
+  const fond = bibleFond();
+  const corps = fond.querySelector('[data-bible-corps]');
+  const neuve = !f;
+  f = f || { nom: '', type: 'lieu', resume: '', texte: '', liens: [], jeu: [] };
+  let liens = (f.liens || []).slice(), jeu = (f.jeu || []).slice();
+  const options = BIBLE_TYPES.map(t=> `<option value="${t.id}" ${t.id === f.type ? 'selected' : ''}>${t.emoji} ${t.nom}</option>`).join('');
+  corps.innerHTML = `<button class="btn-secondary" data-retour style="display:block; margin-bottom:8px; padding:6px 10px; font-size:12px;">← Toutes les fiches</button>
+    <label class="meta">Nom</label><input class="field-input" data-nom value="${bibleEsc(f.nom)}" style="width:100%; box-sizing:border-box; margin-bottom:6px;">
+    <label class="meta">Type</label><select class="field-input" data-type style="width:100%; margin-bottom:6px;">${options}</select>
+    <label class="meta">En une ligne (pour le sommaire)</label><input class="field-input" data-resume value="${bibleEsc(f.resume)}" style="width:100%; box-sizing:border-box; margin-bottom:6px;">
+    <label class="meta">Ce qui lui est propre (ne pas répéter le socle commun)</label>
+    <textarea data-texte style="width:100%; min-height:38vh; font-size:13px; line-height:1.4; box-sizing:border-box;">${bibleEsc(f.texte)}</textarea>
+    <div style="margin-top:8px;"><b style="font-size:13px;">↔ Liée à</b> <span class="meta" style="font-size:11px;">(autres fiches de la Bible)</span><div data-liens style="margin-top:4px;"></div></div>
+    <div style="margin-top:8px;"><b style="font-size:13px;">🎮 Dans le jeu</b> <span class="meta" style="font-size:11px;">(zones, personnages : leurs horaires et dialogues réels partent avec l'export ciblé)</span><div data-jeu style="margin-top:4px;"></div></div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;">
+      <button class="btn-capture" data-enreg style="flex:1 1 100%;">Enregistrer</button>
+      ${neuve ? '' : '<button class="btn-secondary" data-export style="flex:1 1 auto;">📤 Export ciblé pour Claude</button><button class="btn-secondary" data-suppr style="flex:0 0 auto;">🗑️</button>'}
+    </div>
+    <div data-rapport class="meta" style="margin-top:6px;"></div>`;
+  const puces = (ids, nomDe, attr)=> ids.map(id=> `<span style="display:inline-flex; align-items:center; gap:4px; margin:2px; padding:3px 8px; border-radius:12px; background:rgba(128,128,128,.18); font-size:12px;">${bibleEsc(nomDe(id))}<button data-${attr}="${id}" style="border:none; background:none; padding:0 2px; font-size:13px;">✕</button></span>`).join('');
+  const redessiner = ()=>{
+    const zl = corps.querySelector('[data-liens]');
+    zl.innerHTML = puces(liens, bibleNomDe, 'ote-lien') + '<button class="btn-secondary" data-ajout-lien style="padding:3px 8px; font-size:12px;">＋</button>';
+    const zj = corps.querySelector('[data-jeu]');
+    zj.innerHTML = puces(jeu, (id)=> { const g = ficheParId(id); return g ? (g.emoji || '') + ' ' + g.name : '(supprimée)'; }, 'ote-jeu') + '<button class="btn-secondary" data-ajout-jeu style="padding:3px 8px; font-size:12px;">＋</button>';
+    zl.querySelectorAll('[data-ote-lien]').forEach(b=> b.addEventListener('click', ()=>{ liens = liens.filter(x=> x !== b.dataset.oteLien); redessiner(); }));
+    zj.querySelectorAll('[data-ote-jeu]').forEach(b=> b.addEventListener('click', ()=>{ jeu = jeu.filter(x=> x !== b.dataset.oteJeu); redessiner(); }));
+    zl.querySelector('[data-ajout-lien]').addEventListener('click', ()=>{
+      const choix = bibleFiches.filter(x=> x.id !== f.id && !liens.includes(x.id)).map(x=> ({ id: x.id, name: x.nom, emoji: (BIBLE_TYPES.find(t=> t.id === x.type) || BIBLE_TYPES[4]).emoji }));
+      if (!choix.length){ showToast('Aucune autre fiche à lier'); return; }
+      ouvrirChooser(choix, (id)=>{ liens.push(id); redessiner(); });
+    });
+    zj.querySelector('[data-ajout-jeu]').addEventListener('click', ()=>{
+      /* une ligne par personnage (sa première version) et par zone : les autres versions suivent */
+      const vus = new Set();
+      const choix = toutesLesFiches().filter(x=>{ const g = x.dupeGroup || x.id; if (vus.has(g)) return false; vus.add(g); return !jeu.includes(x.id); })
+        .map(x=> ({ id: x.id, name: x.name || '(sans nom)', emoji: x.emoji || '👤' })).sort((a, b)=> a.name.localeCompare(b.name, 'fr'));
+      ouvrirChooser(choix, (id)=>{ jeu.push(id); redessiner(); });
+    });
+  };
+  redessiner();
+  corps.querySelector('[data-retour]').addEventListener('click', ()=> bibleAfficher());
+  corps.querySelector('[data-enreg]').addEventListener('click', async ()=>{
+    const data = { nom: corps.querySelector('[data-nom]').value.trim(), type: corps.querySelector('[data-type]').value, resume: corps.querySelector('[data-resume]').value.trim(), texte: corps.querySelector('[data-texte]').value, liens, jeu, updatedAt: Date.now() };
+    if (!data.nom){ showToast('Donne un nom à la fiche'); return; }
+    if (!bibleCol){ showToast('Firebase indisponible ici'); return; }
+    try {
+      if (neuve){ const ref = await bibleCol.add({ ...data, createdAt: Date.now() }); f.id = ref.id; }
+      else await bibleCol.doc(f.id).set(data, { merge: true });
+      showToast('Fiche enregistrée ✅'); bibleAfficher();
+    } catch(e){ showToast('Échec : ' + e.message); }
+  });
+  const ex = corps.querySelector('[data-export]');
+  if (ex) ex.addEventListener('click', async ()=>{
+    ex.disabled = true;
+    try { const r = await bibleExportCible({ ...f, liens, jeu }); corps.querySelector('[data-rapport]').textContent = '✅ ' + r.nom + ' (' + r.ko + ' Ko) — dans tes Téléchargements, à m\'envoyer.'; }
+    catch(e){ corps.querySelector('[data-rapport]').textContent = '⚠️ ' + e.message; }
+    ex.disabled = false;
+  });
+  const su = corps.querySelector('[data-suppr]');
+  if (su) su.addEventListener('click', async ()=>{
+    if (!(await appConfirm('Supprimer la fiche « ' + f.nom + ' » de la Bible ? Rien ne change dans le jeu.'))) return;
+    await bibleCol.doc(f.id).delete();
+    /* les liens qui la visaient disparaissent avec elle */
+    for (const x of bibleFiches){ if ((x.liens || []).includes(f.id)) await bibleCol.doc(x.id).set({ liens: x.liens.filter(i=> i !== f.id) }, { merge: true }); }
+    showToast('Fiche supprimée'); bibleAfficher();
+  });
+}
+document.getElementById('bibleBtn').addEventListener('click', ouvrirBible);
+
+try { bibleFond(); } catch(e){}   // dès le démarrage : l'import et l'export sont rangés dans la Bible
 
 function avecCharte(prompt, batiment){
   const bloc = batiment ? CHARTE_BATIMENT : CHARTE_DECOR;
@@ -35291,6 +35570,7 @@ async function importerMiseAJour(sc){
     await creatureCol.doc(f.id).set({ ...maj, updatedAt: Date.now() }, { merge:true });
     journal.push('♻️ ' + qui + ' : ' + quoi.join(', '));
   }
+  try { await importerBible(sc.bible, journal); } catch(e){ journal.push('⚠️ Bible : ' + e.message); }   // v599
   journal.push('— Rien d\'autre n\'a bougé : images, objets et réglages posés à la main sont intacts.');
   return journal;
 }
@@ -35824,6 +36104,7 @@ async function importerScenario(sc){
   }
 
   if (rectanglesManquants.size) journal.push('🧰 Il reste ' + rectanglesManquants.size + ' rectangle(s) 🧍 à poser (' + Array.from(rectanglesManquants).join(', ') + ') — ouvre Édition → 🧰 À finir, il te guide.');
+  try { await importerBible(sc.bible, journal); } catch(e){ journal.push('⚠️ Bible : ' + e.message); }   // v599
   journal.push('— Images des personnages et dessins définitifs des pièces : le guide 🧰 À finir t\'aide à les poser.');
   return journal;
 }
@@ -35867,6 +36148,7 @@ document.getElementById('exportFichesBtn').addEventListener('click', async ()=>{
       modelesRobots: exportNettoyer((typeof robotsModeles !== 'undefined' ? robotsModeles : []).map(m=> ({ id:m.id, nom:m.nom, vice:m.vice, element:m.element }))),
       recettes: exportNettoyer(typeof recipes !== 'undefined' ? recipes : []),
       charteConception: await lireCharteConception(),   // v596 : Claude la lit avant de concevoir
+      bible: await bibleExport(),   // v599 : socle, sommaire et toutes les fiches de la Bible
     };
     const texte = JSON.stringify(donnees, null, 1);
     const nom = 'mascotto-export-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -35893,7 +36175,7 @@ document.getElementById('scenarioImportBtn').addEventListener('click', async ()=
     rapport.innerHTML = '<span style="color:#e66;">Fichier illisible : ' + err.message + '</span>';
     return;
   }
-  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones']
+  const compte = ['objets','recettes','attaques','quetes','missions','pnj','zones','bible']
     .map(k=> (sc[k]||[]).length ? (sc[k].length + ' ' + k) : null).filter(Boolean).join(' · ');
   if (!compte){ rapport.innerHTML = '<span style="color:#e66;">Ce fichier ne contient rien à importer.</span>'; return; }
   if (importEnCours){ showToast('Un import est déjà en cours'); return; }
