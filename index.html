@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v616</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v617</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11860,6 +11860,43 @@ ${CHARTE_ROBOT}
 FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun décor, aucun sol, aucune ombre portée, aucun cadre, aucun texte ni aucune lettre.`;
 }
 
+/* v617 — LES DEUX PLANCHES. Une demande = une image avec plusieurs vues côte à côte, que le jeu
+   découpe seul. Combat : face + dos. Déplacement : les cinq vues de la carte. */
+function promptPlancheCombat(m, nomsRefs, nomRefDos){
+  const refs = nomsRefs || [];
+  const lignesRefs = [];
+  if (refs.length) lignesRefs.push((refs.length > 1 ? 'Les ' + refs.length + ' premières images jointes (' + refs.join(', ') + ') sont d\'autres robots' : 'La première image jointe (' + refs[0] + ') est un autre robot') + ' de la même série : reprends-en UNIQUEMENT le trait de dessin, l\'ombrage et la grosseur de la tête par rapport au corps. Tout le reste doit être DIFFÉRENT : ni leurs yeux, ni leurs mains, ni leurs oreilles, ni leurs formes, ni leurs couleurs, ni leurs motifs, ni leur matière.');
+  if (nomRefDos) lignesRefs.push('La DERNIÈRE image jointe (' + nomRefDos + ' vu de dos) montre seulement comment on dessine un robot de la série VU DE DOS : la position des bras et de la tête. N\'en reprends rien d\'autre.');
+  return `Dessine UNE SEULE IMAGE, une planche sur fond TRANSPARENT (PNG), avec DEUX dessins du MÊME robot de combat côte à côte :
+- À GAUCHE : le robot VU DE FACE, en pose de combat, tourné vers nous comme vers un adversaire, le regard planté sur nous.
+- À DROITE : exactement le même robot VU DE DOS, dans la même pose de combat : il nous tourne le dos et fait face à un adversaire au fond de l'image. On voit l'arrière de la tête (aucun œil, aucun visage) et tout le dos ; les bras se tendent vers le FOND de l'image, on voit l'arrière des épaules et des coudes, les mains sont en partie cachées par le corps. Chaque élément garde sa place de la vue de face ; le motif du dos est bien visible.
+Les deux dessins ont la même taille et la même hauteur, et sont SÉPARÉS PAR UN GRAND ESPACE VIDE : rien ne doit se toucher ni se chevaucher, pas même une flamme ou une étincelle. Chacun est entier dans l'image, avec de la marge.
+
+${enteteRobot(m)}
+
+${CHARTE_ROBOT}${lignesRefs.length ? '\n\n' + lignesRefs.join('\n') : ''}
+
+COULEURS : uniquement celles de l'apparence ci-dessus.
+
+FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun décor, aucun sol, aucune ombre portée, aucun cadre, aucun texte ni aucune lettre, aucun halo autour des silhouettes. Les flammes, étincelles ou lueurs qui font partie du robot sont permises.`;
+}
+function promptPlancheDeplacement(m){
+  return `L'image jointe est ${m.nom || 'ce robot'}, vu de face. Dessine UNE SEULE IMAGE, une planche sur fond TRANSPARENT (PNG), avec CINQ dessins de ce MÊME robot côte à côte, de gauche à droite, pour le faire se déplacer sur une carte :
+1. VU DE FACE.
+2. TROIS-QUARTS AVANT, le corps tourné vers la GAUCHE de l'image.
+3. DE PROFIL, tourné vers la GAUCHE de l'image.
+4. TROIS-QUARTS ARRIÈRE : on voit surtout son dos, il s'éloigne vers le fond à GAUCHE.
+5. VU DE DOS.
+Dans les cinq vues, il FLOTTE tranquillement, en pose neutre et détendue (pas de pose de combat), les bras le long du corps. C'est exactement le même robot que sur l'image jointe : mêmes couleurs, même matière, mêmes proportions, mêmes détails, chacun à sa place selon l'angle. Les cinq dessins ont la MÊME TAILLE et flottent à la MÊME HAUTEUR, comme posés sur une même ligne de sol invisible.
+Les cinq dessins sont SÉPARÉS PAR DE GRANDS ESPACES VIDES : rien ne doit se toucher ni se chevaucher, pas même une flamme ou une étincelle.
+
+${enteteRobot(m)}
+
+${CHARTE_ROBOT}
+
+FORMAT : une seule image large, PNG à fond TRANSPARENT. Interdits : aucun décor, aucun sol, aucune ombre portée, aucun disque, aucun cadre, aucun texte ni aucune lettre, aucun halo autour des silhouettes.`;
+}
+
 /* v595 — 📤 ENVOYER À CHATGPT (05/11 : « le moins d'aller-retour possible… que l'image soit copiée
    en même temps que je copie le prompt »). Le partage du téléphone (navigator.share) emporte le
    prompt ET les images d'un coup. Les images sont préparées dès l'affichage du guide : le partage
@@ -12007,6 +12044,91 @@ function ouvrirSceneGuidee(zoneId, sceneId, texte, action){
 }
 
 /* Choisir une image depuis le téléphone, sans passer par l'éditeur. */
+/* v617 — DÉCOUPER UNE PLANCHE. ChatGPT dessine plusieurs vues côte à côte sur fond transparent ;
+   le jeu repère les colonnes vides qui les séparent et rend une image par vue, de gauche à droite.
+   Fond opaque (ChatGPT oublie parfois la transparence) : la couleur du bord est effacée par
+   remplissage depuis les bords. Renvoie { vues:[canvas…] } ou { erreur:'…' }. */
+function effacerFondDepuisBords(ctx, w, h, tol){
+  const im = ctx.getImageData(0, 0, w, h), d = im.data;
+  const bords = [];
+  for (let x = 0; x < w; x++){ bords.push(x, (h - 1) * w + x); }
+  for (let y = 0; y < h; y++){ bords.push(y * w, y * w + w - 1); }
+  // couleur de fond = moyenne des pixels du bord
+  let r = 0, g = 0, b = 0;
+  bords.forEach(i=>{ r += d[i*4]; g += d[i*4+1]; b += d[i*4+2]; });
+  r /= bords.length; g /= bords.length; b /= bords.length;
+  const proche = (i)=> Math.abs(d[i*4]-r) + Math.abs(d[i*4+1]-g) + Math.abs(d[i*4+2]-b) <= tol;
+  const vu = new Uint8Array(w * h); const pile = [];
+  bords.forEach(i=>{ if (!vu[i] && proche(i)){ vu[i] = 1; pile.push(i); } });
+  while (pile.length){
+    const i = pile.pop(); d[i*4+3] = 0;
+    const x = i % w, y = (i / w) | 0;
+    const v = [x > 0 ? i-1 : -1, x < w-1 ? i+1 : -1, y > 0 ? i-w : -1, y < h-1 ? i+w : -1];
+    for (const j of v){ if (j >= 0 && !vu[j] && proche(j)){ vu[j] = 1; pile.push(j); } }
+  }
+  ctx.putImageData(im, 0, 0);
+}
+function decouperPlanche(img, n){
+  const W = img.width, H = img.height;
+  if (!W || !H) return { erreur:'image illisible' };
+  const src = document.createElement('canvas'); src.width = W; src.height = H;
+  const sctx = src.getContext('2d', { willReadFrequently:true });
+  sctx.drawImage(img, 0, 0);
+  // fond opaque ? (presque aucun pixel transparent)
+  const tout = sctx.getImageData(0, 0, W, H).data;
+  let transp = 0; for (let i = 3; i < tout.length; i += 4 * 7) if (tout[i] < 20) transp++;
+  if (transp < (W * H / 7) * 0.03) effacerFondDepuisBords(sctx, W, H, 60);
+  const d = sctx.getImageData(0, 0, W, H).data;
+  // colonnes occupées
+  const col = new Array(W).fill(0);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y*W + x)*4 + 3] > 40) col[x]++;
+  const seuil = Math.max(1, Math.round(H * 0.004));
+  let segs = []; let deb = -1;
+  for (let x = 0; x <= W; x++){
+    const occ = x < W && col[x] >= seuil;
+    if (occ && deb < 0) deb = x;
+    if (!occ && deb >= 0){ let m = 0; for (let k = deb; k < x; k++) m += col[k]; segs.push({ a:deb, b:x-1, m }); deb = -1; }
+  }
+  if (!segs.length) return { erreur:'image vide' };
+  // les miettes (étincelles détachées) rejoignent leur voisine la plus proche
+  const total = segs.reduce((t, sg)=> t + sg.m, 0);
+  const fusion = (i, j)=>{ const A = segs[Math.min(i,j)], B = segs[Math.max(i,j)]; A.b = B.b; A.m += B.m; segs.splice(Math.max(i,j), 1); };
+  let k;
+  while ((k = segs.findIndex(sg=> sg.m < total * 0.015)) >= 0 && segs.length > 1){
+    const gG = k > 0 ? segs[k].a - segs[k-1].b : Infinity, gD = k < segs.length-1 ? segs[k+1].a - segs[k].b : Infinity;
+    fusion(k, gG <= gD ? k-1 : k+1);
+  }
+  while (segs.length > n){
+    let iMin = 0, gMin = Infinity;
+    for (let i = 0; i < segs.length - 1; i++){ const g = segs[i+1].a - segs[i].b; if (g < gMin){ gMin = g; iMin = i; } }
+    fusion(iMin, iMin + 1);
+  }
+  if (segs.length < n) return { erreur: 'je ne trouve que ' + segs.length + ' dessin(s) séparé(s) sur ' + n + ' : les vues se touchent' };
+  const vues = segs.map(sg=>{
+    let y0 = H, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = sg.a; x <= sg.b; x++) if (d[(y*W + x)*4 + 3] > 40){ if (y < y0) y0 = y; if (y > y1) y1 = y; break; }
+    const pad = 2, x0 = Math.max(0, sg.a - pad), x1 = Math.min(W - 1, sg.b + pad);
+    y0 = Math.max(0, y0 - pad); y1 = Math.min(H - 1, y1 + pad);
+    const c = document.createElement('canvas'); c.width = x1 - x0 + 1; c.height = y1 - y0 + 1;
+    c.getContext('2d').drawImage(src, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+    return c;
+  });
+  return { vues };
+}
+/* Les vues de déplacement d'un même robot gardent leur taille relative : même cadre pour les
+   cinq, chacune posée en bas et centrée (c'est ce qui l'empêche de « sauter » en tournant). */
+function cadrerVuesDeplacement(vues, hauteurMax){
+  const mw = Math.max(...vues.map(c=> c.width)), mh = Math.max(...vues.map(c=> c.height));
+  const k = Math.min(1, hauteurMax / mh);
+  const W = Math.max(1, Math.round(mw * k)), H = Math.max(1, Math.round(mh * k));
+  return vues.map(c=>{
+    const o = document.createElement('canvas'); o.width = W; o.height = H;
+    const w = Math.round(c.width * k), h = Math.round(c.height * k);
+    o.getContext('2d').drawImage(c, Math.round((W - w) / 2), H - h, w, h);
+    return o;
+  });
+}
+
 function choisirFichierImage(){
   return new Promise((resolve)=>{
     const inp = document.createElement('input');
@@ -12336,9 +12458,10 @@ async function ouvrirBrouillons(){
   /* v612 — 🤖 ROBOTS : chaque modèle qui a une apparence (écrite par Claude, importée) et à qui il
      manque une image de combat. Face : Tirelire part comme référence de style. Dos : sa face part. */
   const aImgRobot = (m, cle)=> !!(m[cle + 'ImagePath'] || m[cle + 'ImageRef'] || m[cle + 'ImageDataUrl']);
-  const srcImgRobot = (m, cle)=> m[cle + 'ImagePath'] ? resolveMediaPath(m[cle + 'ImagePath']) : (m[cle + 'ImageRef'] ? internalizeSceneImage(m[cle + 'ImageRef']) : (m[cle + 'ImageDataUrl'] || null));
+  const aDeplacement = (m)=> !!(m.vuesDeplacement && ['face','av34','profil','ar34','dos'].every(k=> m.vuesDeplacement[k]));
+  const srcImgRobot = (m, cle)=> /^mv:/.test(cle) ? (m.vuesDeplacement && m.vuesDeplacement[cle.slice(3)] ? internalizeSceneImage(m.vuesDeplacement[cle.slice(3)]) : null) : m[cle + 'ImagePath'] ? resolveMediaPath(m[cle + 'ImagePath']) : (m[cle + 'ImageRef'] ? internalizeSceneImage(m[cle + 'ImageRef']) : (m[cle + 'ImageDataUrl'] || null));
   const robotsAFaire = (typeof robotsModeles !== 'undefined' ? robotsModeles : []).filter(m=> m && m.apparence && String(m.apparence).trim())
-    .sort((a, b)=> (!!a.imagesValidees - !!b.imagesValidees) || (aImgRobot(a,'face') && aImgRobot(a,'dos')) - (aImgRobot(b,'face') && aImgRobot(b,'dos')) || String(a.nom).localeCompare(String(b.nom)));
+    .sort((a, b)=> ((!!a.imagesValidees && aDeplacement(a)) - (!!b.imagesValidees && aDeplacement(b))) || (!!a.imagesValidees - !!b.imagesValidees) || (aImgRobot(a,'face') && aImgRobot(a,'dos')) - (aImgRobot(b,'face') && aImgRobot(b,'dos')) || String(a.nom).localeCompare(String(b.nom)));
   if (robotsAFaire.length){
     const tirelire = robotsModeles.find(m=> String(m.nom || '').trim().toLowerCase() === 'tirelire' && aImgRobot(m, 'face'));
     /* v616 : Tirelire ne part plus comme référence de face (ChatGPT la recopiait). Seuls les robots
@@ -12359,45 +12482,50 @@ async function ouvrirBrouillons(){
     rh += '<p class="meta" style="font-size:12px;">Pour la face, les robots que tu as <b>validés</b> partent comme références de style (jusqu\'à 3). Tant qu\'aucun n\'est validé, le prompt part seul.</p>';
     robotsAFaire.forEach(m=>{
       const nom = esc(m.nom || 'ce robot');
-      if (m.imagesValidees){
-        /* v614 : validé → une ligne, en bas ; il sert de référence aux suivants. */
-        const vg = (cle)=> aImgRobot(m, cle) ? '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:36px; height:36px; object-fit:contain; border-radius:4px; background:rgba(0,0,0,.25);">' : '';
-        rh += '<div style="display:flex; gap:6px; align-items:center; margin:4px 0; font-size:13px;"><span style="opacity:.6;">✅</span>' + vg('face') + vg('dos')
-          + '<div style="flex:1; opacity:.6;">' + nom + ' — validé, sert de référence</div>' + bouton('data-valider-robot="' + m.id + '|0"', '↩ Rouvrir') + '</div>';
+      const okF = aImgRobot(m, 'face'), okD = aImgRobot(m, 'dos'), okC = okF && okD, okMv = aDeplacement(m);
+      const vg = (cle, t)=> '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:' + t + 'px; height:' + t + 'px; object-fit:contain; border-radius:4px; background:rgba(0,0,0,.25);">';
+      if (m.imagesValidees && okMv){
+        /* v614/v617 : fini (combat validé + planche de déplacement) → une ligne, en bas. */
+        rh += '<div style="display:flex; gap:6px; align-items:center; margin:4px 0; font-size:13px;"><span style="opacity:.6;">✅</span>' + vg('face', 36) + vg('dos', 36) + vg('mv:profil', 36)
+          + '<div style="flex:1; opacity:.6;">' + nom + ' — fini, sert de référence</div>' + bouton('data-valider-robot="' + m.id + '|0"', '↩ Rouvrir') + '</div>';
         return;
       }
-      const okF = aImgRobot(m, 'face'), okD = aImgRobot(m, 'dos');
       const v = VICES[m.vice] || {};
-      envois['rface|' + m.id] = ()=>{
-        const refs = refsStyle(m);
-        return { texte: promptRobotFace(m, refs.map(x=> x.nom)), imgs: refs.map(x=> fichierPourPartage('ref-face-' + x.id, srcImgRobot(x, 'face'))) };
+      envois['rplc|' + m.id] = ()=>{
+        const refs = refsStyle(m), rd = refDos(m);
+        return { texte: promptPlancheCombat(m, refs.map(x=> x.nom), rd ? rd.nom : null),
+          imgs: refs.map(x=> fichierPourPartage('ref-face-' + x.id, srcImgRobot(x, 'face'))).concat(rd ? [fichierPourPartage('ref-dos-' + rd.id, srcImgRobot(rd, 'dos'))] : []) };
       };
-      if (okF) envois['rdos|' + m.id] = ()=>{
-        const rd = refDos(m);
-        return { texte: promptRobotDos(m, rd ? rd.nom : null),
-          imgs: [fichierPourPartage('robot-face-' + m.id, srcImgRobot(m, 'face'))].concat(rd ? [fichierPourPartage('ref-dos-' + rd.id, srcImgRobot(rd, 'dos'))] : []) };
-      };
-      const vignette = (cle)=> aImgRobot(m, cle) ? '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:64px; height:64px; object-fit:contain; border-radius:6px; background:rgba(0,0,0,.25);">' : '';
+      if (okF) envois['rplm|' + m.id] = ()=> ({ texte: promptPlancheDeplacement(m), imgs: [fichierPourPartage('robot-face-' + m.id, srcImgRobot(m, 'face'))] });
       let blocs = '';
-      if (okF && okD){
-        blocs = '<div style="display:flex; gap:8px; align-items:center; margin:6px 0;">' + vignette('face') + vignette('dos') + '<div class="meta" style="font-size:12px;">Face et dos posés. S\'ils te vont, <b>✅ Valider</b> : il passe en bas et sert de référence aux suivants. Sinon, refais celui qui ne va pas :</div></div>'
-          + '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + bouton('data-envoi="rface|' + m.id + '"', '📤 Refaire la face') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Remplacer la face')
-          + bouton('data-envoi="rdos|' + m.id + '"', '📤 Refaire le dos') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Remplacer le dos') + '</div>'
-          + '<div style="display:flex; justify-content:flex-end; margin-top:8px;">' + bouton('data-valider-robot="' + m.id + '|1"', '✅ Valider ce robot', true) + '</div>';
+      // --- planche de combat ---
+      if (m.imagesValidees){
+        blocs += '<div style="display:flex; gap:8px; align-items:center; margin:6px 0;">' + vg('face', 44) + vg('dos', 44) + '<div class="meta" style="flex:1; font-size:12px;">✅ Combat validé</div>' + bouton('data-valider-robot="' + m.id + '|0"', '↩ Rouvrir') + '</div>';
+      } else if (okC){
+        blocs += '<div style="display:flex; gap:8px; align-items:center; margin:6px 0;">' + vg('face', 64) + vg('dos', 64) + '<div class="meta" style="font-size:12px;">Face et dos posés. S\'ils te vont, <b>✅ Valider</b> : il sert alors de référence aux suivants. Sinon, refais la planche :</div></div>'
+          + '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + bouton('data-envoi="rplc|' + m.id + '"', '📤 Refaire la planche') + bouton('data-poser-planche="' + m.id + '|combat"', '📷 Remplacer la planche')
+          + bouton('data-poser-robot="' + m.id + '|face"', '📷 Face seule') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Dos seul') + '</div>'
+          + '<div style="display:flex; justify-content:flex-end; margin-top:8px;">' + bouton('data-valider-robot="' + m.id + '|1"', '✅ Valider le combat', true) + '</div>';
       } else {
-        blocs += tache(okF, '🤖 Image de combat de FACE',
-          'C\'est le robot qu\'on affronte, et son portrait dans la barre des tours. Un PNG à fond transparent.',
-          '1. <b>📤 Envoyer à ChatGPT</b> : le prompt part (avec les robots validés comme références de style, s\'il y en a). Choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne.<br>3. <b>📷 Choisir l\'image</b>.',
-          bouton('data-envoi="rface|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rface|' + m.id + '"', '📋 Copier') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Choisir l\'image'));
-        if (okF) blocs += '<div style="display:flex; gap:8px; align-items:center; margin:-2px 0 4px 22px;">' + vignette('face') + bouton('data-envoi="rface|' + m.id + '"', '📤 Refaire la face') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Remplacer') + '</div>';
-        blocs += tache(okD, '🤖 Image de combat de DOS',
-          'C\'est le robot vu de derrière, quand il se bat à tes côtés.',
-          okF ? '1. <b>📤 Envoyer à ChatGPT</b> : sa face part avec le prompt (le même robot), plus le dos d\'un autre robot (la vue de dos). Choisis ChatGPT, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.' : 'Fais d\'abord la face : le dos se dessine à partir d\'elle.',
-          okF ? bouton('data-envoi="rdos|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rdos|' + m.id + '"', '📋 Copier') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Choisir l\'image') : '');
+        blocs += tache(false, '🤖 Planche de COMBAT (face + dos)',
+          'Une seule image : le robot de face à gauche, de dos à droite. Le jeu la coupe en deux tout seul.',
+          '1. <b>📤 Envoyer à ChatGPT</b> : le prompt part (avec les robots validés comme références, s\'il y en a). Choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne.<br>3. <b>📷 Choisir la planche</b> : le jeu pose la face et le dos.',
+          bouton('data-envoi="rplc|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rplc|' + m.id + '"', '📋 Copier') + bouton('data-poser-planche="' + m.id + '|combat"', '📷 Choisir la planche'));
+        blocs += '<div class="meta" style="font-size:11px; margin:-2px 0 6px 22px;">Ou une image à la fois : ' + bouton('data-poser-robot="' + m.id + '|face"', '📷 Face seule') + ' ' + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Dos seul') + '</div>';
       }
-      const manque = (okF ? 0 : 1) + (okD ? 0 : 1);
+      // --- planche de déplacement ---
+      if (okMv){
+        blocs += '<div style="display:flex; gap:4px; align-items:center; margin:8px 0 4px;">' + ['face','av34','profil','ar34','dos'].map(k=> vg('mv:' + k, 40)).join('') + '<div class="meta" style="font-size:12px; margin-left:4px;">✅ Déplacement posé</div></div>'
+          + '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + bouton('data-envoi="rplm|' + m.id + '"', '📤 Refaire la planche') + bouton('data-poser-planche="' + m.id + '|deplacement"', '📷 Remplacer la planche') + '</div>';
+      } else {
+        blocs += tache(false, '🧭 Planche de DÉPLACEMENT (5 vues)',
+          'Les cinq vues qui le font tourner sur la carte quand il devient ton apparence. Le jeu la coupe en cinq tout seul.',
+          okF ? '1. <b>📤 Envoyer à ChatGPT</b> : sa face part avec le prompt, pour que ce soit le même robot. Choisis ChatGPT, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.' : 'Fais d\'abord la planche de combat : celle-ci se dessine à partir de sa face.',
+          okF ? bouton('data-envoi="rplm|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rplm|' + m.id + '"', '📋 Copier') + bouton('data-poser-planche="' + m.id + '|deplacement"', '📷 Choisir la planche') : '');
+      }
+      const etat = !okC ? 'combat à faire' : (!m.imagesValidees ? 'combat à valider' : (!okMv ? 'déplacement à faire' : 'fini'));
       rh += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
-        <div style="font-weight:700;">${esc(v.emoji || '🤖')} ${nom} <span class="meta" style="font-weight:400;">— ${esc(v.nom || m.vice || '')} · ${manque ? manque + ' image(s) à faire' : 'à valider'}</span></div>
+        <div style="font-weight:700;">${esc(v.emoji || '🤖')} ${nom} <span class="meta" style="font-weight:400;">— ${esc(v.nom || m.vice || '')} · ${etat}</span></div>
         <details style="margin-top:4px;"><summary class="meta" style="font-size:12px;">Son apparence</summary><div style="font-size:12px; line-height:1.4; margin-top:4px;">${esc(m.apparence)}</div></details>
         ${blocs}
       </div>`;
@@ -12465,6 +12593,38 @@ async function ouvrirBrouillons(){
     await robotsModelesCol.doc(id).set({ imagesValidees: oui === '1', updatedAt: Date.now() }, { merge:true });
     const m = robotsModeles.find(x=> x.id === id); if (m) m.imagesValidees = oui === '1';   // sans attendre l'instantané
     showToast(oui === '1' ? 'Robot validé ✅' : 'Robot rouvert'); rouvrir();
+  });
+  /* v617 : une planche → le jeu la coupe et pose chaque vue. */
+  sur('[data-poser-planche]', async (b)=>{
+    const [id, quoi] = b.dataset.poserPlanche.split('|');
+    if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const n = quoi === 'combat' ? 2 : 5;
+    const r = decouperPlanche(img, n);
+    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, vues bien séparées, fond transparent.'); return; }
+    const data = { updatedAt: Date.now() };
+    if (quoi === 'combat'){
+      for (const [i, cle] of [[0,'face'],[1,'dos']]){
+        const ref = await externalizeSceneImage(encoderImageSousLimite(r.vues[i], 600, true));
+        if (!ref){ showToast('Échec : image non enregistrée'); return; }
+        data[cle + 'ImageRef'] = ref; data[cle + 'ImagePath'] = null;
+      }
+    } else {
+      const cadres = cadrerVuesDeplacement(r.vues, 320);
+      const vues = {};
+      const cles = ['face','av34','profil','ar34','dos'];
+      for (let i = 0; i < 5; i++){
+        const ref = await externalizeSceneImage(encoderImageSousLimite(cadres[i], 320, true));
+        if (!ref){ showToast('Échec : image non enregistrée'); return; }
+        vues[cles[i]] = ref;
+      }
+      data.vuesDeplacement = vues;
+    }
+    await robotsModelesCol.doc(id).set(data, { merge:true });
+    const m = robotsModeles.find(x=> x.id === id); if (m) Object.assign(m, data);   // sans attendre l'instantané
+    delete avatarModeleCache[id];
+    showToast(quoi === 'combat' ? 'Face et dos posés ✅' : 'Les 5 vues de déplacement sont posées ✅'); rouvrir();
   });
   /* v612 : même traitement que l'éditeur du modèle — sprite de 600 px, rangé dans la réserve d'images. */
   sur('[data-poser-robot]', async (b)=>{
@@ -26635,7 +26795,37 @@ if (robotsCol){
   });
 }
 
-function getRobotById(id){ return robots.find(r=>r.id===id) || null; }
+function getRobotById(id){
+  if (id && String(id).startsWith('modele:')) return robotAvatarDeModele(String(id).slice(7));
+  return robots.find(r=>r.id===id) || null;
+}
+/* v617 : chaque robot de combat possédé peut devenir l'apparence du joueur, dès que sa planche
+   de déplacement est posée. Ses 5 vues sont rangées dans la réserve d'images (références) :
+   on les résout une fois, en tâche de fond, puis on les garde en mémoire. */
+const avatarModeleCache = {};
+const VUES_AVATAR = ['face','av34','profil','ar34','dos'];
+function robotAvatarDeModele(mid){
+  const m = (typeof ctModele === 'function') ? ctModele(mid) : null;
+  if (!m || !m.vuesDeplacement || !VUES_AVATAR.every(k=> m.vuesDeplacement[k])) return null;
+  const c = avatarModeleCache[mid];
+  if (c && c.images) return { id:'modele:' + mid, name:m.nom, images:c.images };
+  if (!c){
+    avatarModeleCache[mid] = { chargement:true };
+    Promise.all(VUES_AVATAR.map(k=> internalizeSceneImage(m.vuesDeplacement[k]).catch(()=> null))).then(urls=>{
+      if (urls.some(u=> !u)){ delete avatarModeleCache[mid]; return; }
+      const images = {}; VUES_AVATAR.forEach((k, i)=> images[k] = urls[i]);
+      avatarModeleCache[mid] = { images };
+      try { renderRobotPicker(); } catch(e){}
+      try { lastRobotPaintKey = null; refreshPlayerRobotVisual(); } catch(e){}
+    });
+  }
+  return { id:'modele:' + mid, name:m.nom, images:null };
+}
+function modelesAvatarPossedes(){
+  if (typeof recruits === 'undefined' || typeof robotsModeles === 'undefined') return [];
+  const ids = [...new Set(recruits.filter(r=> r && r.robotModeleId).map(r=> r.robotModeleId))];
+  return ids.map(id=> ctModele(id)).filter(m=> m && m.vuesDeplacement && VUES_AVATAR.every(k=> m.vuesDeplacement[k]));
+}
 
 /* ---------- Liste ---------- */
 function renderRobotsListView(){
@@ -26796,7 +26986,8 @@ function renderRobotPicker(){
   if (!wrap) return;
   wrap.innerHTML = '';
   const hint = document.getElementById('optionsRobotHint');
-  if (!robots.length){
+  const possedes = modelesAvatarPossedes();   // v617
+  if (!robots.length && !possedes.length){
     if (hint) hint.textContent = "Aucun robot disponible pour l'instant.";
     return;
   }
@@ -26814,6 +27005,15 @@ function renderRobotPicker(){
     if (r.id === myRobotId) b.className = 'on';
     b.innerHTML = `<img src="${r.images.face}"><span>${r.name || '—'}</span>`;
     b.addEventListener('click', ()=> setMyRobot(r.id));
+    wrap.appendChild(b);
+  });
+  /* v617 : tes robots de combat qui ont leur planche de déplacement */
+  possedes.slice().sort((a,b)=> String(a.nom||'').localeCompare(String(b.nom||''))).forEach(m=>{
+    const av = robotAvatarDeModele(m.id);
+    const b = document.createElement('button');
+    if (('modele:' + m.id) === myRobotId) b.className = 'on';
+    b.innerHTML = (av && av.images ? `<img src="${av.images.face}">` : '<div style="height:52px;display:flex;align-items:center;justify-content:center;font-size:22px;">🤖</div>') + `<span>${htmlEsc(m.nom || '—')}</span>`;
+    b.addEventListener('click', ()=> setMyRobot('modele:' + m.id));
     wrap.appendChild(b);
   });
 }
