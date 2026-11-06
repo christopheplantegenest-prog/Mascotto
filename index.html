@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v619</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v620</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3735,6 +3735,7 @@
     <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="sceneLumEteinte"> La lumière s'éteint (la pièce entière s'assombrit)</label>
     <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">éteinte à</span><input type="time" id="sceneLumExt" class="field-input" style="margin:0; width:130px;"></div>
     <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">rallumée à</span><input type="time" id="sceneLumAll" class="field-input" style="margin:0; width:130px;"></div>
+    <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">obscurité</span><input type="range" id="sceneLumIntensite" min="10" max="100" step="5" style="flex:1;"><span id="sceneLumIntensiteVal" style="width:42px; text-align:right;"></span></div>
     <label style="display:flex; gap:8px; align-items:center; margin-top:12px;"><input type="checkbox" id="sceneLumExterieur"> Scène en extérieur (s'assombrit quand le soleil est couché)</label>
     <p class="meta" style="margin-top:12px;">🌙 Les fenêtres : pose des points « 🌙 Zone de nuit (fenêtre) » dessus. Elles s'assombrissent toutes seules quand le soleil est couché, même pièce allumée.</p>
     <p class="meta" id="sceneLumSoleil"></p>
@@ -29976,6 +29977,8 @@ function renderSceneLumiereOverlay(){
   document.getElementById('sceneLumExt').value = l.extinction || '22:00';
   document.getElementById('sceneLumAll').value = l.allumage || '06:00';
   document.getElementById('sceneLumExterieur').checked = !!l.exterieur;
+  document.getElementById('sceneLumIntensite').value = intensitePiece(sc);
+  document.getElementById('sceneLumIntensiteVal').textContent = intensitePiece(sc) + ' %';
   const pos = (typeof playerPos !== 'undefined' && playerPos) ? playerPos : POSITION_PAR_DEFAUT;
   const so = soleilDuJour(new Date(), pos.lat, pos.lng);
   document.getElementById('sceneLumSoleil').textContent = so.lever ? ('☀️ Aujourd\'hui, chez toi : lever ' + hhmm(so.lever) + ', coucher ' + hhmm(so.coucher) + '.') : '';
@@ -29988,7 +29991,9 @@ function lireSceneLumiere(){
     extinction: document.getElementById('sceneLumExt').value || '22:00',
     allumage: document.getElementById('sceneLumAll').value || '06:00',
     exterieur: document.getElementById('sceneLumExterieur').checked,
+    intensite: parseInt(document.getElementById('sceneLumIntensite').value, 10) || INTENSITE_PIECE,
   };
+  document.getElementById('sceneLumIntensiteVal').textContent = sc.lumiere.intensite + ' %';
   delete sc.filtreNuit;
   if (apercuNuitEditeur) renderSceneEditorPoints();
 }
@@ -29998,7 +30003,8 @@ document.getElementById('sceneEditorLumiereBtn').addEventListener('click', ()=>{
   document.getElementById('sceneLumiereOverlay').classList.add('show');
 });
 document.getElementById('sceneLumiereCloseBtn').addEventListener('click', ()=> document.getElementById('sceneLumiereOverlay').classList.remove('show'));
-['sceneLumEteinte','sceneLumExt','sceneLumAll','sceneLumExterieur'].forEach(id=> document.getElementById(id).addEventListener('change', lireSceneLumiere));
+['sceneLumEteinte','sceneLumExt','sceneLumAll','sceneLumExterieur','sceneLumIntensite'].forEach(id=> document.getElementById(id).addEventListener('change', lireSceneLumiere));
+document.getElementById('sceneLumIntensite').addEventListener('input', lireSceneLumiere);
 document.getElementById('sceneLumApercuBtn').addEventListener('click', ()=>{
   apercuNuitEditeur = !apercuNuitEditeur;
   document.getElementById('sceneLumiereOverlay').classList.remove('show');
@@ -30323,12 +30329,15 @@ function renderSceneEditorPoints(){
   if (apercuNuitEditeur){
     const scA = sceneEditeurCourante();
     if (scA){
-      voilesDeNuit(scA, { points: sceneEditorPoints }, new Date(), true).forEach(v=>{
+      const voile = (x, y, w2, h2, fond, z)=>{
         const d = document.createElement('div');
         d.className = 'apercu-nuit';
-        d.style.cssText = `position:absolute; left:${rect.left + (v.x/100)*rect.width}px; top:${rect.top + (v.y/100)*rect.height}px; width:${(v.w/100)*rect.width}px; height:${(v.h/100)*rect.height}px; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; background:${v.fond};`;
+        d.style.cssText = `position:absolute; left:${rect.left + (x/100)*rect.width}px; top:${rect.top + (y/100)*rect.height}px; width:${(w2/100)*rect.width}px; height:${(h2/100)*rect.height}px; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; border-radius:0; background:${fond}; ${z ? 'z-index:' + z + ';' : ''}`;
         wrap.appendChild(d);
-      });
+      };
+      sceneEditorPoints.filter(p=> p.type === 'nuit').forEach(p=> voile(p.x, p.y, p.w || 20, p.h || 20, fondVoile(intensiteFenetre(p))));
+      const lA = lumiereDeScene(scA);
+      if (lA.eteinte || lA.exterieur) voile(50, 50, 100, 100, fondVoile(intensitePiece(scA)), 4);   // par-dessus les points
     }
     const chip = document.createElement('button');
     chip.type = 'button'; chip.className = 'apercu-nuit';
@@ -30720,7 +30729,7 @@ function renderSceneDetailAppearance(pt){
     </div>
     </div>
     <div data-rp="image">
-    ${isLinkedPnj ? `
+    ${pt.type === 'nuit' ? '' : isLinkedPnj ? `
       <p class="meta" style="margin:0 0 6px;">Utilise l'image de ce PNJ — pas besoin d'en choisir une autre ici.</p>
     ` : pt.type === 'objet' ? `
       <label class="meta" style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><input type="checkbox" data-point-custom-img ${pt.useCustomImage?'checked':''}> Utiliser une image personnalisée (au lieu de celle de l'objet)</label>
@@ -30748,7 +30757,7 @@ function renderSceneDetailAppearance(pt){
     `}
     </div>
     <div data-rp="options">
-    <label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Invisible pour le joueur (le point reste touchable)</label>
+    ${pt.type === 'nuit' ? '' : `<label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Invisible pour le joueur (le point reste touchable)</label>`}
     </div>
   `;
   const backBtn = appWrap.querySelector('[data-plane-back]');
@@ -30869,6 +30878,16 @@ function renderSceneDetailAppearance(pt){
 
 function renderSceneDetailTypeSpecific(pt){
   const typeWrap = document.getElementById('sceneDetailTypeSpecific');
+  if (pt.type === 'nuit'){   // v620
+    const v = intensiteFenetre(pt);
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.8); margin:0 0 6px;">🌙 Cette zone s'assombrit quand le soleil est couché. Ce qui est posé devant elle (un plan au-dessus) reste éclairé.</p>
+      <div style="display:flex; gap:8px; align-items:center; color:#fff;">obscurité <input type="range" min="10" max="100" step="5" value="${v}" data-nuit-intensite style="flex:1;"><span data-nuit-val style="width:42px; text-align:right;">${v} %</span></div>
+      <button type="button" class="btn-secondary" data-nuit-defaut style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">↺ Réglage d'origine (${INTENSITE_FENETRE} %)</button>`;
+    const r = typeWrap.querySelector('[data-nuit-intensite]');
+    r.addEventListener('input', ()=>{ pt.intensite = parseInt(r.value, 10); typeWrap.querySelector('[data-nuit-val]').textContent = pt.intensite + ' %'; if (apercuNuitEditeur) renderSceneEditorPoints(); });
+    typeWrap.querySelector('[data-nuit-defaut]').addEventListener('click', ()=>{ delete pt.intensite; renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); if (apercuNuitEditeur) renderSceneEditorPoints(); });
+    return;
+  }
   if (pt.type === 'sortie_zone'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ferme la zone et retourne à la carte — pas de réglage supplémentaire.</p>`;
     return;
@@ -32471,9 +32490,13 @@ async function renderSceneViewCurrentScene(){
   /* v497 : qui se tient dans les emplacements de cette pièce, décidé une fois pour toute la scène. */
   const attribution = attribuerEmplacements(sc, scRaw.id);
   emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
-  poserVoilesDeNuit(wrap, scRaw, sc);   // v618 : sous les personnages et les objets
+  const nuitIci = etatDeNuit(scRaw);   // v620
   (sc.points || []).forEach(pt=>{
-    if (pt.type === 'nuit') return;   // v618 : un rectangle 🌙 ne se dessine pas, il sert au filtre
+    /* v620 : une fenêtre 🌙 s'assombrit À SON PLAN — un personnage posé devant reste éclairé */
+    if (pt.type === 'nuit'){
+      if (nuitIci.fenetres) wrap.appendChild(creerVoile(pt.x, pt.y, pt.w || 20, pt.h || 20, fondVoile(intensiteFenetre(pt)), pt.id));
+      return;
+    }
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
     if (pt.type === 'emplacement' && !attribution[pt.id]) return;   // v497 : place vide, rien à dessiner
     if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
@@ -32780,6 +32803,7 @@ async function renderSceneViewCurrentScene(){
     wrap.appendChild(el);
   });
 
+  poserVoilesDeNuit(wrap, scRaw, sc);   // v620 : par-dessus tout
   positionSceneViewPoints();
   bacsSceneCourante = { points: sc.points || [], sceneId: scRaw.id };   // v495
   armerMinuterieBacs(sc.points, scRaw.id);   // v492
@@ -32907,24 +32931,28 @@ function etatDeNuit(scRaw, now, forcerNuit){
   const piece = forcerNuit ? !!(l.eteinte || l.exterieur) : (lumiereEteinte(scRaw, now) || (!!l.exterieur && couche));
   return { piece, fenetres: couche };
 }
-function htmlVoile(x, y, w, h, piece){
-  return { x, y, w, h, fond: piece ? 'rgba(8,14,48,.62)' : 'rgba(8,14,48,.72)' };
+/* v620 : l'intensité se règle — une fenêtre (dehors, la nuit) bien noire d'office, une pièce
+   éteinte seulement tamisée. Chaque fenêtre et chaque pièce peut être retouchée. */
+const INTENSITE_FENETRE = 85, INTENSITE_PIECE = 55;
+function fondVoile(intensite){
+  const i = Math.max(0, Math.min(100, Number(intensite)));
+  return 'rgba(8,14,48,' + (i / 100 * 0.92).toFixed(3) + ')';
 }
-function voilesDeNuit(scRaw, sc, now, forcerNuit){
-  const e = etatDeNuit(scRaw, now, forcerNuit);
-  if (e.piece) return [htmlVoile(50, 50, 100, 100, true)];
-  if (!e.fenetres) return [];
-  return (sc.points || []).filter(p=> p && p.type === 'nuit').map(p=> htmlVoile(p.x, p.y, p.w || 20, p.h || 20, false));
+function intensitePiece(scRaw){ const l = lumiereDeScene(scRaw); return l.intensite != null ? l.intensite : INTENSITE_PIECE; }
+function intensiteFenetre(pt){ return pt && pt.intensite != null ? pt.intensite : INTENSITE_FENETRE; }
+/* Un voile : rectangle aux coins droits (la classe .scene-point arrondissait tout en ovale). */
+function creerVoile(x, y, w, h, fond, ptid){
+  const d = document.createElement('div');
+  d.className = 'scene-point voile-nuit';
+  d.dataset.ptid = ptid;
+  d.dataset.ptx = x; d.dataset.pty = y; d.dataset.ptw = w; d.dataset.pth = h;
+  d.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; border:none; border-radius:0; box-shadow:none; background:' + fond + ';';
+  return d;
 }
+/* La pièce éteinte se pose PAR-DESSUS tout (décor, objets, personnages) : tout est dans le noir. */
 function poserVoilesDeNuit(wrap, scRaw, sc){
-  voilesDeNuit(scRaw, sc).forEach((v, i)=>{
-    const d = document.createElement('div');
-    d.className = 'scene-point voile-nuit';
-    d.dataset.ptid = '__nuit_' + i;
-    d.dataset.ptx = v.x; d.dataset.pty = v.y; d.dataset.ptw = v.w; d.dataset.pth = v.h;
-    d.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; background:' + v.fond + ';';
-    wrap.appendChild(d);
-  });
+  const e = etatDeNuit(scRaw);
+  if (e.piece) wrap.appendChild(creerVoile(50, 50, 100, 100, fondVoile(intensitePiece(scRaw)), '__nuit_piece'));
 }
 
 function positionSceneViewPoints(){
@@ -36458,7 +36486,7 @@ async function importerMiseAJour(sc){
       if (typeof s.prompt === 'string'){ scn.prompt = s.prompt; touche = true; journal.push('📝 « ' + scn.name + ' » : prompt mis à jour'); }
       /* v619 : la lumière et les rencontres de la scène */
       if (s.lumiere && typeof s.lumiere === 'object'){
-        scn.lumiere = { eteinte: !!s.lumiere.eteinte, extinction: s.lumiere.extinction || '22:00', allumage: s.lumiere.allumage || '06:00', exterieur: !!s.lumiere.exterieur };
+        scn.lumiere = { eteinte: !!s.lumiere.eteinte, extinction: s.lumiere.extinction || '22:00', allumage: s.lumiere.allumage || '06:00', exterieur: !!s.lumiere.exterieur, intensite: (typeof s.lumiere.intensite === 'number') ? s.lumiere.intensite : INTENSITE_PIECE };
         delete scn.filtreNuit; touche = true;
         journal.push('💡 « ' + scn.name + ' » : ' + (scn.lumiere.eteinte ? 'lumière éteinte de ' + scn.lumiere.extinction + ' à ' + scn.lumiere.allumage : 'lumière toujours allumée') + (scn.lumiere.exterieur ? ', extérieur' : ''));
       } else if (typeof s.filtreNuit === 'boolean'){
