@@ -1341,6 +1341,7 @@
       <p class="meta" id="authStatus">Connexion en cours…</p>
       <button class="btn-capture" id="googleSignInBtn" style="width:100%; display:none;">Se connecter avec Google</button>
       <button class="btn-secondary" id="guestContinueBtn" style="width:100%; display:none; margin-top:8px;">Continuer en invité (nouveau profil)</button>
+      <button class="btn-secondary" id="authGoogleSecoursBtn" style="width:100%; display:none; margin-top:8px;">🔑 Se connecter avec Google</button>
     </div>
   </div>
 
@@ -1361,6 +1362,8 @@
       <p class="meta">Il sera visible par les autres joueurs — pas ton vrai nom si tu préfères.</p>
       <input type="text" id="pseudoInput" class="field-input" placeholder="Pseudo" maxlength="20">
       <button class="btn-capture" id="pseudoSaveBtn" style="width:100%; margin-top:14px;">Valider</button>
+      <!-- v609 : une sortie pour qui a DÉJÀ un compte et se retrouve ici par erreur. -->
+      <button class="btn-secondary" id="pseudoGoogleBtn" style="width:100%; margin-top:10px;">🔑 J'ai déjà un compte : me connecter avec Google</button>
     </div>
   </div>
 
@@ -1420,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v609</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v611</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -4344,6 +4347,9 @@ function showAuthScreen(text, showRetryBtn){
   googleSignInBtn.textContent = 'Réessayer';
   googleSignInBtn.style.display = showRetryBtn ? 'block' : 'none';
   guestContinueBtn.style.display = 'none';
+  /* v609 : à côté de « Réessayer », une vraie sortie vers son compte Google. */
+  const secours = document.getElementById('authGoogleSecoursBtn');
+  if (secours) secours.style.display = showRetryBtn ? 'block' : 'none';
   authOverlay.classList.add('show');
   /* Le voile parle à la place de cet écran tant que tout va bien — mais dès qu'un BOUTON
      apparaît, il faut pouvoir appuyer dessus. Le laisser couvert, c'est un écran mort. */
@@ -4381,8 +4387,15 @@ function afficherChoixConnexion(){
   googleSignInBtn.textContent = 'Se connecter avec Google';
   googleSignInBtn.style.display = 'block';
   guestContinueBtn.style.display = 'block';
+  const secours = document.getElementById('authGoogleSecoursBtn');
+  if (secours) secours.style.display = 'none';
   authOverlay.classList.add('show');
 }
+document.getElementById('authGoogleSecoursBtn').addEventListener('click', ()=> connexionGoogle());
+document.getElementById('pseudoGoogleBtn').addEventListener('click', ()=>{
+  document.getElementById('pseudoOverlay').classList.remove('show');
+  connexionGoogle();
+});
 
 googleSignInBtn.addEventListener('click', ()=>{
   if (googleSignInBtn.textContent === 'Réessayer'){ location.reload(); return; }
@@ -4450,7 +4463,19 @@ function onSignedIn(user){
     ecrireRecrutesLocal(recruitedSourceIds);
   }
   if (typeof majRecruesPretes === 'function') majRecruesPretes();
-  db.collection('players').doc(user.uid).get().then((doc)=>{
+  /* v609 : un `get()` ordinaire peut répondre depuis le CACHE LOCAL, qui peut être vide ou
+     incomplet (au retour dans l'appli, en sortant du vaisseau…). « Pas de pseudo » lu dans le
+     cache ne prouve rien : on redemande alors au SERVEUR avant d'afficher l'écran du pseudo.
+     C'est ce faux « nouveau joueur » qui faisait réapparaître l'écran du pseudo. */
+  const refJoueur = db.collection('players').doc(user.uid);
+  refJoueur.get().then((doc)=>{
+    const sansPseudo = !(doc.exists && doc.data().pseudo);
+    if (sansPseudo && doc.metadata && doc.metadata.fromCache){
+      journal('joueur', 'pseudo absent du cache', 'relecture au serveur avant de conclure');
+      return refJoueur.get({ source: 'server' });
+    }
+    return doc;
+  }).then((doc)=>{
     currentAgency = (doc.exists && doc.data().agencyName) || null;
     if (doc.exists && doc.data().pseudo){
       currentPseudo = doc.data().pseudo;
@@ -10556,6 +10581,9 @@ function renderEditorList(snap){
       const fiches = (snap && snap.docs) ? snap.docs.map(x=> ({ id: x.id, ...x.data() })) : toutesLesFiches();
       fiches.forEach(f=>{ if (f && f.pieceCommune && f.pieceCommune.sceneId) groupesEnRectangle.add(f.dupeGroup || f.id); });
     }
+    const SYMBOLES_TYPE = { dialogue:'💬', shop:'🛒', concession:'🚀', combat:'🤖' };   // v610
+    const symb = (d.interactionType || 'dialogue') === 'zone' ? '' : (SYMBOLES_TYPE[d.interactionType || 'dialogue'] || '');
+    const symboleType = symb ? `<span title="${({dialogue:'Personnage de dialogue',shop:'Boutique',concession:'Concessionnaire de vaisseaux',combat:'Robot'})[d.interactionType || 'dialogue']}" style="margin-right:4px;">${symb}</span>` : '';
     const rectTag = groupesEnRectangle.has(groupeDeDoc(doc)) ? ` <span title="Placé dans un rectangle d'emplacement" style="font-size:11px;">🧍</span>` : '';
     /* Le statut n'a de sens que pour UNE version : sur une ligne qui en représente plusieurs,
        « hors horaire » désignerait la seule qu'on montre et laisserait croire que tout dort. */
@@ -10563,7 +10591,7 @@ function renderEditorList(snap){
     const suffixe = n > 1 ? '' : statutSuffixe(d);
     row.innerHTML = `
       <div class="thumb">${thumb}</div>
-      <div class="name" style="${style}">${d.name || '(sans nom)'}${rectTag}${suffixe}${groupTag}</div>
+      <div class="name" style="${style}">${symboleType}${d.name || '(sans nom)'}${rectTag}${suffixe}${groupTag}</div>
       <button class="btn-secondary" data-edit="${doc.id}">Modifier</button>
       <button class="btn-secondary" data-del="${doc.id}" data-nvers="${n}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
     `;
@@ -10605,8 +10633,18 @@ function renderEditorList(snap){
         : '<p class="meta">Aucune fiche ici pour le moment.</p>';
       return;
     }
-    CATEGORIES.forEach(cat=>{
-      const dedans = docs.filter(doc=> (doc.data().interactionType || 'dialogue') === cat.cle);
+    /* v610 : les zones gardent leur rubrique ; TOUS les personnages (dialogue, boutique,
+       concessionnaire, robot) sont réunis dans une seule rubrique rangée PAR LIEU. Le type se
+       lit au petit symbole devant le nom (💬 🛒 🚀 🤖) au lieu d'éparpiller un même lieu dans
+       quatre catégories. */
+    const RUBRIQUES = [
+      CATEGORIES[0],
+      { cle:'__personnages', titre:'👥 Personnages', parZone:true },
+    ];
+    RUBRIQUES.forEach(cat=>{
+      const dedans = docs.filter(doc=> cat.cle === '__personnages'
+        ? (doc.data().interactionType || 'dialogue') !== 'zone'
+        : (doc.data().interactionType || 'dialogue') === cat.cle);
       if (!dedans.length) return;
       conteneur.appendChild(titre(cat.titre + '  (' + dedans.length + ')', 1));
       if (!cat.parZone){
@@ -28612,13 +28650,54 @@ function ouvrirLeVaisseauQuandLaRepriseARendu(){
        qu'elle ait repris quelque chose ou non. C'est le signal fiable que la place est libre. */
     if (repriseEtape === 'terminée' || tropLong){
       clearInterval(guetter);
+      /* v610 : on revient là où le joueur était avant la pause — sur la CARTE s'il y était,
+         dans la PIÈCE du vaisseau où il se trouvait sinon. Le vaisseau, sans souvenir, reste
+         le départ par défaut. (Combat et exploration sont déjà repris plus haut.) */
+      const lieu = lireDernierLieu();
+      if (lieu && lieu.type === 'carte'){
+        journal('reprise', 'retour sur la carte', 'dernier lieu connu', true);
+        leverLeVoileDeDemarrage('retour sur la carte');
+        return;
+      }
       journal('reprise', 'ouverture du vaisseau de démarrage',
-        tropLong ? 'après expiration de l\'attente' : 'rien à reprendre', true);
-      ouvrirLeVaisseau();
+        tropLong ? 'après expiration de l\'attente' : (lieu && lieu.sceneId ? 'retour dans la pièce où il était' : 'rien à reprendre'), true);
+      if (lieu && lieu.type === 'vaisseau' && lieu.sceneId && shipZoneId){
+        openSceneView({ id: shipZoneId, name: nomDuVaisseauActif() }, lieu.sceneId, { isShip:true });
+      } else {
+        ouvrirLeVaisseau();
+      }
       leverLeVoileQuandLeVaisseauEstLa();
     }
   }, 150);
 }
+/* v610 — LE DERNIER LIEU. Retenu sur le téléphone (instantané, sans réseau) dès que le jeu
+   est réellement à l'écran : carte, pièce du vaisseau, ou zone d'exploration (cette dernière
+   est déjà reprise par la fiche joueur). Jamais pendant le démarrage, où la carte est sous le
+   voile : on écraserait le vrai souvenir par « carte ». */
+const CLE_DERNIER_LIEU = 'mascotto_dernier_lieu';
+function lireDernierLieu(){
+  try { return JSON.parse(localStorage.getItem(CLE_DERNIER_LIEU) || 'null'); } catch(e){ return null; }
+}
+let dernierLieuEcrit = '';
+function noterDernierLieu(){
+  const voile = document.getElementById('voileDemarrage');
+  if (voile && !voile.dataset.leve) return;          // démarrage en cours : on ne sait rien encore
+  if (combatState) return;                            // le combat a sa propre sauvegarde
+  const scene = document.getElementById('sceneViewFull');
+  let lieu;
+  if (scene && scene.classList.contains('show')){
+    if (!aBord()) lieu = { type:'zone' };
+    else lieu = { type:'vaisseau', sceneId: sceneViewAnnexe ? (sceneViewAnnexe.retourSceneId || null) : (sceneViewCurrentSceneId || null) };
+  } else {
+    lieu = { type:'carte' };
+  }
+  const txt = JSON.stringify(lieu);
+  if (txt === dernierLieuEcrit) return;
+  dernierLieuEcrit = txt;
+  try { localStorage.setItem(CLE_DERNIER_LIEU, txt); } catch(e){}
+}
+setInterval(noterDernierLieu, 1000);
+document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState === 'hidden') noterDernierLieu(); });
 function leverLeVoileQuandLeVaisseauEstLa(){
   let essais = 0;
   const guetter = setInterval(()=>{
@@ -34434,7 +34513,8 @@ async function tryResumeSession(forcer){
         if (zoneDoc.exists){
           etapeReprise('ouverture de la scène');
           openSceneView({ id: zoneDoc.id, ...zoneDoc.data() }, pd.currentSceneId);
-          showToast('🔄 Reprise de ton exploration en cours…');
+          /* v610 : plus de message « Reprise de ton exploration » — le retour doit être fluide,
+             le joueur revient simplement là où il était. */
         }
       }
     }
