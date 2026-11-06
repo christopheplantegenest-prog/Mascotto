@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v613</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v615</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12049,6 +12049,9 @@ async function poserImageDepuisGuide(id, quoi){
 }
 
 async function ouvrirBrouillons(){
+  /* v614 : les images à partager se préparent à neuf à chaque ouverture (une face remplacée
+     repartait sous son ancienne version, gardée en mémoire depuis la première ouverture). */
+  Object.keys(partageFichiers).forEach(k=> delete partageFichiers[k]);
   fermerBandeauGuide();
   guideRetourAttendu = false;
   const enTravaux = toutesLesFiches().filter(f=> f.enTravaux && (f.interactionType || 'dialogue') !== 'zone');
@@ -12335,23 +12338,30 @@ async function ouvrirBrouillons(){
   const aImgRobot = (m, cle)=> !!(m[cle + 'ImagePath'] || m[cle + 'ImageRef'] || m[cle + 'ImageDataUrl']);
   const srcImgRobot = (m, cle)=> m[cle + 'ImagePath'] ? resolveMediaPath(m[cle + 'ImagePath']) : (m[cle + 'ImageRef'] ? internalizeSceneImage(m[cle + 'ImageRef']) : (m[cle + 'ImageDataUrl'] || null));
   const robotsAFaire = (typeof robotsModeles !== 'undefined' ? robotsModeles : []).filter(m=> m && m.apparence && String(m.apparence).trim())
-    .sort((a, b)=> (aImgRobot(a,'face') && aImgRobot(a,'dos')) - (aImgRobot(b,'face') && aImgRobot(b,'dos')) || String(a.nom).localeCompare(String(b.nom)));
+    .sort((a, b)=> (!!a.imagesValidees - !!b.imagesValidees) || (aImgRobot(a,'face') && aImgRobot(a,'dos')) - (aImgRobot(b,'face') && aImgRobot(b,'dos')) || String(a.nom).localeCompare(String(b.nom)));
   if (robotsAFaire.length){
     const tirelire = robotsModeles.find(m=> String(m.nom || '').trim().toLowerCase() === 'tirelire' && aImgRobot(m, 'face'));
     /* v613 : jusqu'à 3 références de style — Tirelire, puis les robots déjà faits avec le guide
        (d'un autre péché d'abord), jamais le robot lui-même. */
     const refsStyle = (m)=>{
-      const faits = robotsModeles.filter(x=> x && x.id !== m.id && x !== tirelire && x.apparence && aImgRobot(x, 'face'))
+      const faits = robotsModeles.filter(x=> x && x.id !== m.id && x !== tirelire && x.imagesValidees && aImgRobot(x, 'face'))   // v614 : validés seulement
         .sort((a, b)=> (a.vice === m.vice) - (b.vice === m.vice) || String(a.nom).localeCompare(String(b.nom)));
       return (tirelire && tirelire.id !== m.id ? [tirelire] : []).concat(faits).slice(0, 3);
     };
     /* le modèle de vue de dos : un robot fait avec le guide qui a son dos, sinon Tirelire */
-    const refDos = (m)=> robotsModeles.find(x=> x && x.id !== m.id && x.apparence && aImgRobot(x, 'dos') && aImgRobot(x, 'face'))
+    const refDos = (m)=> robotsModeles.find(x=> x && x.id !== m.id && x.imagesValidees && aImgRobot(x, 'dos') && aImgRobot(x, 'face'))
       || (tirelire && tirelire.id !== m.id && aImgRobot(tirelire, 'dos') ? tirelire : null);
     let rh = '<div style="font-weight:700; margin:14px 0 6px;">🤖 Robots — images de combat</div>';
     if (!tirelire) rh += '<p class="meta" style="font-size:12px;">⚠️ Tirelire n\'a pas d\'image de face : la référence de style ne partira pas, le style passera par le texte seul.</p>';
     robotsAFaire.forEach(m=>{
       const nom = esc(m.nom || 'ce robot');
+      if (m.imagesValidees){
+        /* v614 : validé → une ligne, en bas ; il sert de référence aux suivants. */
+        const vg = (cle)=> aImgRobot(m, cle) ? '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:36px; height:36px; object-fit:contain; border-radius:4px; background:rgba(0,0,0,.25);">' : '';
+        rh += '<div style="display:flex; gap:6px; align-items:center; margin:4px 0; font-size:13px;"><span style="opacity:.6;">✅</span>' + vg('face') + vg('dos')
+          + '<div style="flex:1; opacity:.6;">' + nom + ' — validé, sert de référence</div>' + bouton('data-valider-robot="' + m.id + '|0"', '↩ Rouvrir') + '</div>';
+        return;
+      }
       const okF = aImgRobot(m, 'face'), okD = aImgRobot(m, 'dos');
       const v = VICES[m.vice] || {};
       envois['rface|' + m.id] = ()=>{
@@ -12366,9 +12376,10 @@ async function ouvrirBrouillons(){
       const vignette = (cle)=> aImgRobot(m, cle) ? '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:64px; height:64px; object-fit:contain; border-radius:6px; background:rgba(0,0,0,.25);">' : '';
       let blocs = '';
       if (okF && okD){
-        blocs = '<div style="display:flex; gap:8px; align-items:center; margin:6px 0;">' + vignette('face') + vignette('dos') + '<div class="meta" style="font-size:12px;">✅ Face et dos posés. Si un dessin ne te va pas, refais-le :</div></div>'
+        blocs = '<div style="display:flex; gap:8px; align-items:center; margin:6px 0;">' + vignette('face') + vignette('dos') + '<div class="meta" style="font-size:12px;">Face et dos posés. S\'ils te vont, <b>✅ Valider</b> : il passe en bas et sert de référence aux suivants. Sinon, refais celui qui ne va pas :</div></div>'
           + '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + bouton('data-envoi="rface|' + m.id + '"', '📤 Refaire la face') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Remplacer la face')
-          + bouton('data-envoi="rdos|' + m.id + '"', '📤 Refaire le dos') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Remplacer le dos') + '</div>';
+          + bouton('data-envoi="rdos|' + m.id + '"', '📤 Refaire le dos') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Remplacer le dos') + '</div>'
+          + '<div style="display:flex; justify-content:flex-end; margin-top:8px;">' + bouton('data-valider-robot="' + m.id + '|1"', '✅ Valider ce robot', true) + '</div>';
       } else {
         blocs += tache(okF, '🤖 Image de combat de FACE',
           'C\'est le robot qu\'on affronte, et son portrait dans la barre des tours. Un PNG à fond transparent.',
@@ -12382,7 +12393,7 @@ async function ouvrirBrouillons(){
       }
       const manque = (okF ? 0 : 1) + (okD ? 0 : 1);
       rh += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
-        <div style="font-weight:700;">${esc(v.emoji || '🤖')} ${nom} <span class="meta" style="font-weight:400;">— ${esc(v.nom || m.vice || '')} · ${manque ? manque + ' image(s) à faire' : '✅ prêt'}</span></div>
+        <div style="font-weight:700;">${esc(v.emoji || '🤖')} ${nom} <span class="meta" style="font-weight:400;">— ${esc(v.nom || m.vice || '')} · ${manque ? manque + ' image(s) à faire' : 'à valider'}</span></div>
         <details style="margin-top:4px;"><summary class="meta" style="font-size:12px;">Son apparence</summary><div style="font-size:12px; line-height:1.4; margin-top:4px;">${esc(m.apparence)}</div></details>
         ${blocs}
       </div>`;
@@ -12444,6 +12455,13 @@ async function ouvrirBrouillons(){
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
+  sur('[data-valider-robot]', async (b)=>{
+    const [id, oui] = b.dataset.validerRobot.split('|');
+    if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
+    await robotsModelesCol.doc(id).set({ imagesValidees: oui === '1', updatedAt: Date.now() }, { merge:true });
+    const m = robotsModeles.find(x=> x.id === id); if (m) m.imagesValidees = oui === '1';   // sans attendre l'instantané
+    showToast(oui === '1' ? 'Robot validé ✅' : 'Robot rouvert'); rouvrir();
+  });
   /* v612 : même traitement que l'éditeur du modèle — sprite de 600 px, rangé dans la réserve d'images. */
   sur('[data-poser-robot]', async (b)=>{
     const [id, cle] = b.dataset.poserRobot.split('|');
@@ -28374,7 +28392,36 @@ function toucherPorteHabitant(pt){
 }
 
 function openRecruitRoom(hab){
-  const pasAmenagee = ()=> showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée');
+  /* v615 : sans image de chambre, la pièce s'ouvre quand même sur un fond neutre (avec son image de
+     face s'il en a une) : c'est le seul accès à sa fiche — profil, attaques, équipement, renvoi. */
+  const pasAmenagee = async ()=>{
+    const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
+    let src = null;
+    try {
+      if (m && m.faceImagePath) src = resolveMediaPath(m.faceImagePath);
+      else if (m && m.faceImageRef) src = await internalizeSceneImage(m.faceImageRef);
+      else if (m && m.faceImageDataUrl) src = m.faceImageDataUrl;
+    } catch(e){ src = null; }
+    const img = src ? await new Promise(ok=>{ const i = new Image(); i.onload = ()=> ok(i); i.onerror = ()=> ok(null); i.src = src; }) : null;
+    const c = document.createElement('canvas'); c.width = 900; c.height = 1200;
+    const g = c.getContext('2d');
+    const fond = g.createLinearGradient(0, 0, 0, 1200);
+    fond.addColorStop(0, '#2b3140'); fond.addColorStop(0.7, '#1b1f29'); fond.addColorStop(1, '#14171f');
+    g.fillStyle = fond; g.fillRect(0, 0, 900, 1200);
+    g.fillStyle = 'rgba(255,255,255,.06)';
+    g.beginPath(); g.ellipse(450, 930, 300, 60, 0, 0, Math.PI * 2); g.fill();
+    if (img){
+      const k = Math.min(560 / img.width, 560 / img.height);
+      const w = img.width * k, h = img.height * k;
+      try { g.drawImage(img, 450 - w / 2, 860 - h, w, h); } catch(e){}
+    } else {
+      g.font = '220px sans-serif'; g.textAlign = 'center'; g.fillText('🤖', 450, 820);
+    }
+    let url = null;
+    try { url = c.toDataURL('image/png'); } catch(e){ url = null; }
+    if (!url){ showToast('La chambre de ' + hab.name + ' n\'est pas encore aménagée'); return; }
+    montrerChambre(url, true);
+  };
   /* v488 — un habitant dont la fiche désigne un atelier-zone y entre directement. On relit la
      fiche d'abord (l'auteur peut avoir changé de zone après le recrutement), le recruté ensuite. */
   const zoneAnnexe = ()=>{
@@ -28398,9 +28445,9 @@ function openRecruitRoom(hab){
       .then((u)=>{ if (u) montrerChambre(u); else showToast('Image de chambre illisible'); })
       .catch(()=> showToast('Image de chambre illisible'));
   };
-  const montrerChambre = (url)=>{
+  const montrerChambre = (url, provisoire)=>{
       document.getElementById('quartersOverlay').classList.remove('show');
-      showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name);
+      showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name + (provisoire ? ' (pas encore aménagée)' : ''));
       openSceneBigImage(url, true);
       /* Depuis sa chambre, on accède à sa fiche : équipement, craft, apprentissage. C'est ce qui
          fait de la chambre un lieu utile et pas seulement un décor à regarder. */
