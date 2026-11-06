@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v617</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v618</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3721,6 +3721,9 @@
     <input type="number" id="sceneEncChance" class="field-input" value="0" min="0" max="100">
     <div class="field-label">Monstres possibles pour une rencontre (jusqu'à 3 tirés au sort)</div>
     <div id="sceneEncMonstersPick"></div>
+    <h3 style="margin:18px 0 4px;">🌙 Filtre de nuit</h3>
+    <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="sceneNuitChk"> Assombrir cette scène de 22 h à 6 h</label>
+    <p class="meta">Sans rectangle 🌙 dans la scène, toute l'image s'assombrit. Avec des rectangles « 🌙 Zone de nuit » (une fenêtre…), seuls eux s'assombrissent.</p>
   </div>
 </div>
 
@@ -29165,6 +29168,7 @@ const SCENE_POINT_TYPES = [
   { id:'bac', label:'🪴 Bac de culture (serre)' },   // v491
   { id:'emplacement', label:'🧍 Emplacement de PNJ (pièce commune)' },   // v497
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
+  { id:'nuit', label:'🌙 Zone de nuit (fenêtre)' },   // v618
 ];
 
 /* Flèche de sortie fournie par le jeu : une image SVG légère, embarquée dans le code.
@@ -29935,6 +29939,10 @@ document.getElementById('sceneEditorEncounterBtn').addEventListener('click', ()=
 document.getElementById('sceneEncounterCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEncounterOverlay').classList.remove('show');
 });
+document.getElementById('sceneNuitChk').addEventListener('change', (e)=>{   // v618
+  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
+  if (sc) sc.filtreNuit = !!e.target.checked;
+});
 document.getElementById('sceneEncChance').addEventListener('change', (e)=>{
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   if (!sc) return;
@@ -29956,6 +29964,7 @@ function nomDuPnjDuPoint(p){
 function renderSceneEncounterOverlay(){
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   if (!sc) return;
+  document.getElementById('sceneNuitChk').checked = !!sc.filtreNuit;   // v618
   /* Un agresseur dans la pièce : pas de rencontre possible ici, les champs se bloquent. */
   const agresseurs = agresseursDeLaScene(sc);
   const bloc = document.getElementById('sceneEncBloqueAgresseur');
@@ -30261,6 +30270,11 @@ function renderSceneEditorPoints(){
       } else {
         el.innerHTML = `<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; margin-bottom:3px; white-space:nowrap;">🧍 emplacement</span>`;
       }
+    } else if (pt.type === 'nuit'){
+      /* v618 : la zone que le filtre de nuit assombrit (une fenêtre, par exemple) */
+      el.className = 'scene-point';
+      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(8,14,48,.45); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(150,170,255,.9)'}; box-shadow:none; border-radius:4px; pointer-events:none; display:flex; align-items:center; justify-content:center;`;
+      el.innerHTML = '<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; white-space:nowrap;">🌙 nuit</span>';
     } else if (url){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
@@ -30505,6 +30519,7 @@ function addNewScenePoint(typeId){
   if (flecheToutePrete) poserFlecheALaPlaceHabituelle(newPt);
   /* v497 : un emplacement est un rectangle debout, sans icône — c'est la place d'un personnage. */
   if (typeId === 'emplacement'){ newPt.w = 20; newPt.h = 40; newPt.hideIcon = true; }   // v498 : un peu plus large au départ
+  if (typeId === 'nuit'){ newPt.w = 30; newPt.h = 25; }   // v618
   renderSceneEditorPoints();
   selectScenePoint(newPt.id);
 }
@@ -32356,7 +32371,9 @@ async function renderSceneViewCurrentScene(){
   /* v497 : qui se tient dans les emplacements de cette pièce, décidé une fois pour toute la scène. */
   const attribution = attribuerEmplacements(sc, scRaw.id);
   emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
+  poserVoilesDeNuit(wrap, scRaw, sc);   // v618 : sous les personnages et les objets
   (sc.points || []).forEach(pt=>{
+    if (pt.type === 'nuit') return;   // v618 : un rectangle 🌙 ne se dessine pas, il sert au filtre
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
     if (pt.type === 'emplacement' && !attribution[pt.id]) return;   // v497 : place vide, rien à dessiner
     if (pt.type === 'pnj' && pt.linkedPnjId && infoPnj.partis.has(pt.linkedPnjId)) return;
@@ -32736,6 +32753,36 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
     }
   }
 });
+
+/* v618 — LE FILTRE DE NUIT. Une scène cochée « 🌙 filtre de nuit » s'assombrit de 22 h à 6 h :
+   toute l'image, ou seulement ses rectangles 🌙 (une fenêtre de bar qui donne sur la nuit
+   pendant que la salle reste éclairée). */
+const NUIT_DEBUT = '22:00', NUIT_FIN = '06:00';
+function estLaNuit(now){
+  try { return heureDansCreneaux([{ start: NUIT_DEBUT, end: NUIT_FIN }], now || new Date()); } catch(e){ return false; }
+}
+function poserVoilesDeNuit(wrap, scRaw, sc){
+  if (!scRaw || !scRaw.filtreNuit || !estLaNuit()) return;
+  const zones = (sc.points || []).filter(p=> p && p.type === 'nuit');
+  const rects = zones.length ? zones : [{ id:'tout', x:50, y:50, w:100, h:100 }];
+  rects.forEach(r=>{
+    const v = document.createElement('div');
+    v.className = 'scene-point voile-nuit';
+    v.dataset.ptid = '__nuit_' + r.id;
+    v.dataset.ptx = r.x; v.dataset.pty = r.y; v.dataset.ptw = r.w || 20; v.dataset.pth = r.h || 20;
+    v.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; background:rgba(8,14,48,.62); mix-blend-mode:multiply;'
+      + (zones.length ? ' border-radius:2px;' : '');
+    wrap.appendChild(v);
+    if (!zones.length){
+      // un léger reflet de lune par-dessus, pour que la nuit ne soit pas qu'un écran noir
+      const l = document.createElement('div');
+      l.className = 'scene-point voile-nuit';
+      l.dataset.ptid = '__nuit_lune'; l.dataset.ptx = 50; l.dataset.pty = 50; l.dataset.ptw = 100; l.dataset.pth = 100;
+      l.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; background:rgba(70,110,200,.10);';
+      wrap.appendChild(l);
+    }
+  });
+}
 
 function positionSceneViewPoints(){
   const wrap = document.getElementById('sceneViewImgWrap');
@@ -34998,7 +35045,10 @@ function rollSceneEncounter(){
   latestSnap.forEach(doc=> allCreaturesById[doc.id] = { id: doc.id, ...doc.data() });
   const pool = sc.encounterMonsterIds
     .map(id=> allCreaturesById[id])
-    .filter(c=> c && c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable);
+    .filter(c=> c && c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable)
+    /* v618 : un monstre de nuit (l'Affamé chez Mado) ne sort que dans ses horaires — avant, les
+       rencontres ignoraient l'heure, il aurait surgi en plein jour. */
+    .map(c=> ficheJouable(c)).filter(c=> c && isActiveNow(c));
   if (!pool.length) return;
   const chosen = pool.slice().sort(()=> Math.random()-0.5).slice(0, Math.min(3, pool.length));
   /* v471 : la rencontre attend que la scène soit VISIBLE (image de fond chargée), puis laisse une
@@ -36180,6 +36230,38 @@ function importListeQtes(liste, table, journal, contexte){
        de leur pièce, qui devient le leur). */
 async function importerMiseAJour(sc){
   const journal = ['ℹ️ Mise à jour faite par ' + ((document.getElementById('appVersionLabel') || {}).textContent || '?')];
+  /* v618 — LES ADVERSAIRES. `adversaires: [{ nom, modele, emoji?, timeRanges?, ia?, ecart? }]` :
+     une fiche de combat (monstre) par adversaire, retrouvée par son nom ; son robot vient du
+     catalogue (stats et attaques du modèle). Ils passent AVANT les scènes, qui peuvent les citer. */
+  const advParNom = {};
+  for (const a of (sc.adversaires || [])){
+    const nom = String(a.nom || '').trim();
+    const m = robotsModeles.find(x=> x.nom === a.modele) || robotsModeles.find(x=> String(x.nom || '').toLowerCase() === String(a.modele || '').toLowerCase());
+    if (!nom || !m){ journal.push('⚠️ Adversaire « ' + nom + ' » : modèle « ' + (a.modele || '?') + ' » introuvable — laissé de côté'); continue; }
+    const existe = toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat');
+    const cs = Object.assign({}, (existe && existe.combatStats) || {}, {
+      robotModeleId: m.id, recruitable: false, budgetCategory: a.categorie || 'monstre_commun', rarity: 'commun',
+      aiPersonality: a.ia || 'normal', ecartStats: (typeof a.ecart === 'number') ? a.ecart : 5,
+      canFlee: false, fleeChance: (typeof a.fuite === 'number') ? a.fuite : 30, fleeHpThreshold: 25, fleeSelfChance: 15,
+      attackIds: [], startingAttackIds: [], immunities: [], resistances: [],
+      rewardItemIds: (existe && existe.combatStats && existe.combatStats.rewardItemIds) || [],
+      stealEasyItemId: null, stealHardItemId: null, tribe: '', hp: 50, atk: 10, def: 10, matk: 10, mdef: 10, speed: 10, precision: 90, evasion: 10,
+    });
+    const data = { name: nom, interactionType: 'combat', emoji: a.emoji || (VICES[m.vice] && VICES[m.vice].emoji) || '🤖',
+      combatStats: cs, enTravaux: false, updatedAt: Date.now(),
+      timeRanges: normaliserCreneaux({ timeRanges: Array.isArray(a.timeRanges) ? a.timeRanges : [], startTime: a.startTime || '', endTime: a.endTime || '' }),
+      daysOfWeek: Array.isArray(a.daysOfWeek) ? a.daysOfWeek : [], startDate: a.startDate || '', endDate: a.endDate || '' };
+    if (existe){
+      await creatureCol.doc(existe.id).set(data, { merge:true });
+      advParNom[nom] = existe.id;
+      journal.push('♻️ Adversaire « ' + nom + ' » (' + m.nom + ') remis à jour');
+    } else {
+      const ref = await creatureCol.add(Object.assign({ createdAt: Date.now(), dialogueSteps: [], imageUrl: '', imagePath: null, lat: null, lng: null, mapIconScale: 1, mapIconRotation: 0 }, data));
+      advParNom[nom] = ref.id;
+      journal.push('🤖 Adversaire « ' + nom + ' » (' + m.nom + ') créé');
+    }
+  }
+  const idDeFiche = (nom)=> advParNom[nom] || ((toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat') || {}).id) || null;
   const fiches = toutesLesFiches();
   const scenesMaj = {};   // zoneId → scènes telles qu'écrites
   for (const z of (sc.zones || [])){
@@ -36192,6 +36274,20 @@ async function importerMiseAJour(sc){
       const scn = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.name || '').trim().toLowerCase());
       if (!scn){ journal.push('⚠️ « ' + z.name + ' » : scène « ' + s.name + ' » introuvable'); continue; }
       if (typeof s.prompt === 'string'){ scn.prompt = s.prompt; touche = true; journal.push('📝 « ' + scn.name + ' » : prompt mis à jour'); }
+      /* v618 : le filtre de nuit et les rencontres aléatoires de la scène */
+      if (typeof s.filtreNuit === 'boolean'){ scn.filtreNuit = s.filtreNuit; touche = true; journal.push('🌙 « ' + scn.name + ' » : filtre de nuit ' + (s.filtreNuit ? 'posé' : 'retiré')); }
+      if (s.rencontres){
+        const ids = (s.rencontres.monstres || []).map(n=> ({ n, id: idDeFiche(n) }));
+        ids.filter(x=> !x.id).forEach(x=> journal.push('⚠️ « ' + scn.name + ' » : monstre « ' + x.n + ' » introuvable'));
+        const agresseur = (scn.points || []).some(p=> p && p.type === 'pnj' && p.autoTrigger);
+        if (agresseur) journal.push('⚠️ « ' + scn.name + ' » : un agresseur est déjà posé ici — pas de rencontre aléatoire possible');
+        else {
+          scn.encounterChance = Math.max(0, Math.min(100, parseInt(s.rencontres.chance, 10) || 0));
+          scn.encounterMonsterIds = ids.filter(x=> x.id).map(x=> x.id);
+          touche = true;
+          journal.push('🎲 « ' + scn.name + ' » : rencontres ' + scn.encounterChance + ' % (' + ids.filter(x=> x.id).map(x=> x.n).join(', ') + ')');
+        }
+      }
       if (Array.isArray(s.points)){
         const types = new Set(s.points.map(pt=> pt.type || 'decor'));
         (s.retirer || []).forEach(t=> types.add(t));   // v596 : types à enlever sans remplaçant (ex. l'ancien texte de la photo)
@@ -36209,7 +36305,7 @@ async function importerMiseAJour(sc){
           if (pt.hideIcon || pt.invisible || base.type === 'emplacement') base.hideIcon = true;
           if (pt.text) base.text = pt.text;
           if (pt.prompt) base.prompt = String(pt.prompt);   // v596 : point « image » — son prompt, pour le guide
-          if (!['emplacement', 'decor', 'dialogue', 'image'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
+          if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
           return base;
         });
         scn.points = gardes.concat(neufs);
