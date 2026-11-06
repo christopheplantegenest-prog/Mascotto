@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v612</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v613</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11822,27 +11822,38 @@ function enteteRobot(m){
     + (noms.length ? ' Ses attaques : ' + noms.join(', ') + '.' : '')
     + '\nApparence : ' + (m.apparence || 'invente une apparence qui montre sa façon de se battre.');
 }
-function promptRobotFace(m, avecRef){
+/* v613 : plusieurs références de style (une seule = il la recopie, couleurs comprises), et le dos
+   reçoit un dos d'un autre robot comme modèle de POSE (les bras vus de derrière). */
+function promptRobotFace(m, nomsRefs){
+  const refs = nomsRefs || [];
   return `Dessine ce robot de combat seul, VU DE FACE, en pose de combat, sur fond TRANSPARENT (PNG).
 
 ${enteteRobot(m)}
 
 Cadrage : le robot entier dans l'image avec un peu de marge, de face, tourné vers le spectateur comme vers un adversaire ; pose dynamique, bras prêts à frapper, le regard planté sur nous.
+Chaque élément décrit dans l'apparence est à la place exacte indiquée ; un élément placé « au dos » ne se voit pas de face, sauf si l'apparence dit qu'il dépasse.
 
-${CHARTE_ROBOT}${avecRef ? `
+${CHARTE_ROBOT}${refs.length ? `
 
-L'image jointe (Tirelire) est la RÉFÉRENCE DE STYLE : reprends son trait, son ombrage, ses proportions tête / corps, sa façon de dessiner les yeux, les oreillettes, les bras et les mains. Ne reprends NI ses couleurs, NI sa matière, NI sa fente, NI son hublot : ce robot-ci est un autre modèle.` : ''}
+${refs.length > 1 ? 'Les ' + refs.length + ' images jointes (' + refs.join(', ') + ') sont' : 'L\'image jointe (' + refs[0] + ') est'} la RÉFÉRENCE DE STYLE de la série : reprends-en UNIQUEMENT le trait, l'ombrage, les proportions tête / corps et la façon de dessiner les yeux, les oreillettes, les articulations et les mains. Ce robot-ci est un autre modèle : ne reprends AUCUNE de leurs couleurs, AUCUN de leurs motifs (bandes, liserés, rayures), AUCUNE de leurs formes de tête, de ventre ou de dessous, AUCUNE de leurs matières.` : ''}
+
+COULEURS : uniquement celles de l'apparence ci-dessus. Les bandes des bras, les oreillettes, les liserés et les accents prennent les couleurs de CE robot, rien d'une image de référence.
 
 FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun décor, aucun sol, aucune ombre portée, aucun cadre, aucun texte ni aucune lettre. Les flammes, étincelles ou lueurs qui font partie du robot sont permises ; aucun halo autour de la silhouette.`;
 }
-function promptRobotDos(m){
-  return `Avec l'image jointe (${m.nom || 'le robot'} vu de face), dessine le MÊME robot VU DE DOS, en pose de combat, sur fond TRANSPARENT (PNG).
+function promptRobotDos(m, nomRefDos){
+  return `La PREMIÈRE image jointe est ${m.nom || 'le robot'} vu de face. Dessine le MÊME robot VU DE DOS, en pose de combat, sur fond TRANSPARENT (PNG).${nomRefDos ? `
+La DEUXIÈME image jointe (${nomRefDos}, un autre robot vu de dos) sert UNIQUEMENT de modèle pour la vue de dos : comment on voit le dos, l'arrière de la tête et les bras de derrière. N'en reprends ni les couleurs, ni les motifs, ni les formes.` : ''}
 
-C'est la vue qu'a le joueur quand ce robot se bat à ses côtés : on voit son dos et l'arrière de sa tête, il fait face à un adversaire placé au fond de l'image. Les yeux ne se voient pas. Même pose de combat, vue de derrière.
+C'est la vue qu'a le joueur quand ce robot se bat à ses côtés : il nous TOURNE LE DOS et fait face à un adversaire placé au fond de l'image.
+LA VUE DE DOS, précisément :
+- on voit l'arrière de la tête (aucun œil, aucun visage) et tout le dos ;
+- les bras se tendent vers l'adversaire, donc vers le FOND de l'image, loin de nous : on voit l'arrière des épaules et des coudes ; les poings sont devant le robot, en partie cachés par son corps, et on n'en voit que l'arrière (jamais les doigts repliés tournés vers nous) ;
+- chaque élément garde EXACTEMENT sa place de l'image de face : ce qui est à gauche de son corps reste du côté de sa gauche ; ce qui dépassait derrière ses épaules de face se trouve sur le haut de son dos ;
+- le motif du dos décrit dans l'apparence est bien visible, à la place indiquée.
 Ne change RIEN au robot : ni les couleurs, ni la matière, ni les proportions, ni la taille, ni le style de dessin. Seul le point de vue change.
 
 ${enteteRobot(m)}
-Le motif du dos décrit dans l'apparence doit bien se voir.
 
 ${CHARTE_ROBOT}
 
@@ -12327,14 +12338,31 @@ async function ouvrirBrouillons(){
     .sort((a, b)=> (aImgRobot(a,'face') && aImgRobot(a,'dos')) - (aImgRobot(b,'face') && aImgRobot(b,'dos')) || String(a.nom).localeCompare(String(b.nom)));
   if (robotsAFaire.length){
     const tirelire = robotsModeles.find(m=> String(m.nom || '').trim().toLowerCase() === 'tirelire' && aImgRobot(m, 'face'));
+    /* v613 : jusqu'à 3 références de style — Tirelire, puis les robots déjà faits avec le guide
+       (d'un autre péché d'abord), jamais le robot lui-même. */
+    const refsStyle = (m)=>{
+      const faits = robotsModeles.filter(x=> x && x.id !== m.id && x !== tirelire && x.apparence && aImgRobot(x, 'face'))
+        .sort((a, b)=> (a.vice === m.vice) - (b.vice === m.vice) || String(a.nom).localeCompare(String(b.nom)));
+      return (tirelire && tirelire.id !== m.id ? [tirelire] : []).concat(faits).slice(0, 3);
+    };
+    /* le modèle de vue de dos : un robot fait avec le guide qui a son dos, sinon Tirelire */
+    const refDos = (m)=> robotsModeles.find(x=> x && x.id !== m.id && x.apparence && aImgRobot(x, 'dos') && aImgRobot(x, 'face'))
+      || (tirelire && tirelire.id !== m.id && aImgRobot(tirelire, 'dos') ? tirelire : null);
     let rh = '<div style="font-weight:700; margin:14px 0 6px;">🤖 Robots — images de combat</div>';
     if (!tirelire) rh += '<p class="meta" style="font-size:12px;">⚠️ Tirelire n\'a pas d\'image de face : la référence de style ne partira pas, le style passera par le texte seul.</p>';
     robotsAFaire.forEach(m=>{
       const nom = esc(m.nom || 'ce robot');
       const okF = aImgRobot(m, 'face'), okD = aImgRobot(m, 'dos');
       const v = VICES[m.vice] || {};
-      envois['rface|' + m.id] = ()=> ({ texte: promptRobotFace(m, !!tirelire), imgs: tirelire ? [fichierPourPartage('tirelire-face', srcImgRobot(tirelire, 'face'))] : [] });
-      if (okF) envois['rdos|' + m.id] = ()=> ({ texte: promptRobotDos(m), imgs: [fichierPourPartage('robot-face-' + m.id, srcImgRobot(m, 'face'))] });
+      envois['rface|' + m.id] = ()=>{
+        const refs = refsStyle(m);
+        return { texte: promptRobotFace(m, refs.map(x=> x.nom)), imgs: refs.map(x=> fichierPourPartage('ref-face-' + x.id, srcImgRobot(x, 'face'))) };
+      };
+      if (okF) envois['rdos|' + m.id] = ()=>{
+        const rd = refDos(m);
+        return { texte: promptRobotDos(m, rd ? rd.nom : null),
+          imgs: [fichierPourPartage('robot-face-' + m.id, srcImgRobot(m, 'face'))].concat(rd ? [fichierPourPartage('ref-dos-' + rd.id, srcImgRobot(rd, 'dos'))] : []) };
+      };
       const vignette = (cle)=> aImgRobot(m, cle) ? '<img data-robot-vignette="' + m.id + '|' + cle + '" style="width:64px; height:64px; object-fit:contain; border-radius:6px; background:rgba(0,0,0,.25);">' : '';
       let blocs = '';
       if (okF && okD){
@@ -12344,12 +12372,12 @@ async function ouvrirBrouillons(){
       } else {
         blocs += tache(okF, '🤖 Image de combat de FACE',
           'C\'est le robot qu\'on affronte, et son portrait dans la barre des tours. Un PNG à fond transparent.',
-          '1. <b>📤 Envoyer à ChatGPT</b> : le prompt part avec l\'image de Tirelire, la référence de style. Choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne.<br>3. <b>📷 Choisir l\'image</b>.',
+          '1. <b>📤 Envoyer à ChatGPT</b> : le prompt part avec les robots de référence (le style seulement). Choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne.<br>3. <b>📷 Choisir l\'image</b>.',
           bouton('data-envoi="rface|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rface|' + m.id + '"', '📋 Copier') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Choisir l\'image'));
         if (okF) blocs += '<div style="display:flex; gap:8px; align-items:center; margin:-2px 0 4px 22px;">' + vignette('face') + bouton('data-envoi="rface|' + m.id + '"', '📤 Refaire la face') + bouton('data-poser-robot="' + m.id + '|face"', '📷 Remplacer') + '</div>';
         blocs += tache(okD, '🤖 Image de combat de DOS',
           'C\'est le robot vu de derrière, quand il se bat à tes côtés.',
-          okF ? '1. <b>📤 Envoyer à ChatGPT</b> : sa face part avec le prompt, pour que ce soit le même robot. Choisis ChatGPT, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.' : 'Fais d\'abord la face : le dos se dessine à partir d\'elle.',
+          okF ? '1. <b>📤 Envoyer à ChatGPT</b> : sa face part avec le prompt (le même robot), plus le dos d\'un autre robot (la vue de dos). Choisis ChatGPT, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.' : 'Fais d\'abord la face : le dos se dessine à partir d\'elle.',
           okF ? bouton('data-envoi="rdos|' + m.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="rdos|' + m.id + '"', '📋 Copier') + bouton('data-poser-robot="' + m.id + '|dos"', '📷 Choisir l\'image') : '');
       }
       const manque = (okF ? 0 : 1) + (okD ? 0 : 1);
