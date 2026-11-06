@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v620</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v622</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3098,9 +3098,10 @@
       <div class="field-label">Photo depuis ton téléphone</div>
       <input type="file" id="editImageFile" accept="image/*" class="field-input">
       <button type="button" class="btn-secondary" id="editImageGithubBtn" style="width:100%; margin-top:6px;">📁 Image hébergée</button>
-      <div id="imagePreviewWrap" style="display:none; margin-top:8px;">
+      <div id="imagePreviewWrap" style="display:none; margin-top:8px; align-items:center;">
         <img id="imagePreview" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
         <button class="btn-secondary" id="clearImageBtn" style="margin-left:8px; flex:none;">Retirer</button>
+        <span id="imagePreviewDefaut" class="meta" style="display:none; margin-left:8px; font-size:12px;">🤖 Image de son modèle de robot, par défaut. Pose une image ici pour lui donner une pose à lui.</span>
       </div>
 
       <div class="field-label">Type d'interaction</div>
@@ -3737,7 +3738,7 @@
     <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">rallumée à</span><input type="time" id="sceneLumAll" class="field-input" style="margin:0; width:130px;"></div>
     <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">obscurité</span><input type="range" id="sceneLumIntensite" min="10" max="100" step="5" style="flex:1;"><span id="sceneLumIntensiteVal" style="width:42px; text-align:right;"></span></div>
     <label style="display:flex; gap:8px; align-items:center; margin-top:12px;"><input type="checkbox" id="sceneLumExterieur"> Scène en extérieur (s'assombrit quand le soleil est couché)</label>
-    <p class="meta" style="margin-top:12px;">🌙 Les fenêtres : pose des points « 🌙 Zone de nuit (fenêtre) » dessus. Elles s'assombrissent toutes seules quand le soleil est couché, même pièce allumée.</p>
+    <p class="meta" style="margin-top:12px;">🪟 Les fenêtres : pose des points « 🪟 Fenêtre ». Elles passent toutes seules à leur vue de nuit quand le soleil est couché, même pièce allumée.</p>
     <p class="meta" id="sceneLumSoleil"></p>
     <button type="button" class="btn-secondary" id="sceneLumApercuBtn" style="margin-top:8px; width:100%;">🌙 Voir la scène de nuit</button>
   </div>
@@ -10067,8 +10068,7 @@ document.getElementById('editImageFile').addEventListener('change', (e)=>{
       if (!url){ showToast('Image trop lourde même réduite — passe par « hébergée »'); return; }
       uploadedImageDataUrl = url;
       uploadedImagePath = null; // photo du téléphone : on repasse en base64
-      document.getElementById('imagePreview').src = uploadedImageDataUrl;
-      document.getElementById('imagePreviewWrap').style.display = 'block';
+      majApercuImageFiche();   // v621
     };
     img.src = ev.target.result;
   };
@@ -10078,8 +10078,7 @@ document.getElementById('editImageGithubBtn').addEventListener('click', ()=>{
   openGithubFilePicker(null, (item)=>{
     uploadedImagePath = item.path;
     uploadedImageDataUrl = resolveMediaPath(item.path);
-    document.getElementById('imagePreview').src = uploadedImageDataUrl;
-    document.getElementById('imagePreviewWrap').style.display = 'block';
+    majApercuImageFiche();   // v621
     showToast('Image : ' + item.path);
   });
 });
@@ -10087,8 +10086,28 @@ document.getElementById('clearImageBtn').addEventListener('click', ()=>{
   uploadedImageDataUrl = null;
   uploadedImagePath = null;
   document.getElementById('editImageFile').value = '';
-  document.getElementById('imagePreviewWrap').style.display = 'none';
+  majApercuImageFiche();   // v621 : on retombe sur l'image du modèle, s'il y en a un
 });
+/* v621 : l'aperçu de l'image de la fiche — la sienne, sinon celle du modèle de robot choisi
+   (affichée seulement : elle n'est jamais enregistrée sur la fiche). */
+function majApercuImageFiche(){
+  const wrap = document.getElementById('imagePreviewWrap');
+  const im = document.getElementById('imagePreview');
+  const clear = document.getElementById('clearImageBtn');
+  const note = document.getElementById('imagePreviewDefaut');
+  if (!wrap || !im) return;
+  if (uploadedImageDataUrl){
+    im.src = uploadedImageDataUrl; wrap.style.display = 'flex'; clear.style.display = ''; note.style.display = 'none';
+    return;
+  }
+  const sel = document.getElementById('editCombatModele');
+  const m = sel && sel.value && typeof ctModele === 'function' ? ctModele(sel.value) : null;
+  const montrer = (u)=>{ if (uploadedImageDataUrl || !u) return; im.src = u; wrap.style.display = 'flex'; clear.style.display = 'none'; note.style.display = ''; };
+  wrap.style.display = 'none';
+  const u = urlFaceModele(m, montrer);
+  if (u) montrer(u);
+}
+document.getElementById('editCombatModele').addEventListener('change', ()=>{ majApercuImageFiche(); });
 
 /* Image d'arène de combat (zone d'exploration) : même compression que les images de scène (JPEG, redim, externalisation dédupliquée) */
 let editZoneArenaImageDataUrl = null; // dataURL brute si nouvellement choisie
@@ -10587,7 +10606,13 @@ function renderEditorList(snap){
     const d = doc.data();
     const row = document.createElement('div');
     row.className = 'editor-list-item';
-    const thumb = d.imageUrl ? `<img src="${d.imageUrl}">` : (d.emoji || '🐾');
+    /* v621 : sans image à elle, la fiche d'un robot montre la face de son modèle */
+    const propre = d.imagePath ? resolveMediaPath(d.imagePath) : (d.imageUrl || '');
+    const parDefaut = propre ? '' : faceModeleDeFicheSync(d, (u)=>{ const im = row.querySelector('[data-face-defaut]'); if (im){ im.src = u; im.style.display = ''; } });
+    const thumb = propre ? `<img src="${propre}">`
+      : parDefaut ? `<img src="${parDefaut}" title="image du modèle">`
+      : modeleDeFiche(d) && (modeleDeFiche(d).faceImageRef) ? `<img data-face-defaut style="display:none;" title="image du modèle">`
+      : (d.emoji || '🐾');
     /* v443 : la ligne représente le PERSONNAGE, pas la fiche. Quand il a plusieurs versions,
        on annonce leur nombre au lieu d'un vague « lié à d'autres versions » : c'est le compte
        qui dit s'il faut s'attendre à en trouver deux ou vingt en ouvrant. */
@@ -10924,12 +10949,7 @@ function loadForEdit(id){
 
   uploadedImagePath = d.imagePath || null;
   uploadedImageDataUrl = uploadedImagePath ? resolveMediaPath(uploadedImagePath) : (d.imageUrl || null);
-  if (uploadedImageDataUrl){
-    document.getElementById('imagePreview').src = uploadedImageDataUrl;
-    document.getElementById('imagePreviewWrap').style.display = 'block';
-  } else {
-    document.getElementById('imagePreviewWrap').style.display = 'none';
-  }
+  majApercuImageFiche();   // v621 : sans image à elle, celle de son modèle
 
   pendingPieceCommune = (d.pieceCommune && d.pieceCommune.sceneId) ? { ...d.pieceCommune } : null;   // v497
   if (pendingPieceCommune){
@@ -11916,6 +11936,50 @@ ${CHARTE_ROBOT}
 FORMAT : une seule image large, PNG à fond TRANSPARENT. Interdits : aucun décor, aucun sol, aucune ombre portée, aucun disque, aucun cadre, aucun texte ni aucune lettre, aucun halo autour des silhouettes.`;
 }
 
+/* v622 — les trois planches de fenêtres */
+const STYLE_TRAIT_FENETRES = `STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats de couleurs unis, ombrage cel aux bords tranchés, aucun dégradé, aucun reflet, aucun rendu photo.`;
+function promptPlancheCadres(){
+  return `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX FENÊTRES DIFFÉRENTES vues de face, en 2 rangées de 3, SÉPARÉES PAR DE GRANDS ESPACES VIDES (rien ne se touche).
+
+Chaque fenêtre : le cadre seul (encadrement, montants, appui), SANS mur autour. TOUTE LA PARTIE VITRÉE est peinte en MAGENTA PUR #FF00FF, en aplat parfaitement uni : aucun reflet, aucun dégradé, aucune ombre, aucun motif sur le magenta. Les montants et croisillons éventuels sont dessinés par-dessus le magenta. Le magenta ne touche jamais le bord extérieur du cadre.
+
+Les six modèles, tous dans l'univers du jeu (science-fiction propre et habitée) :
+1. une baie rectangulaire large d'un seul tenant, cadre fin anthracite à pans coupés ;
+2. une fenêtre haute et étroite à deux vantaux ;
+3. un hublot rond à cadre épais riveté ;
+4. une fenêtre au sommet arrondi, avec un appui où pousse une petite plante ;
+5. une fenêtre d'atelier à petits carreaux, cadre métal ;
+6. une fenêtre carrée avec deux rideaux de tissu ouverts sur les côtés.
+
+${STYLE_TRAIT_FENETRES}
+
+FORMAT : une seule image large, PNG à fond TRANSPARENT. Interdits : aucun décor autour, aucun mur, aucune ombre portée, aucun texte, aucun numéro.`;
+}
+function promptPlancheVuesJour(){
+  return `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX VUES DE L'EXTÉRIEUR, telles qu'on les verrait à travers une fenêtre, en 2 rangées de 3, SÉPARÉES PAR DE LARGES BANDES TRANSPARENTES (rien ne se touche).
+
+Chaque vue est un RECTANGLE PLEIN au format paysage 4:3, sans cadre de fenêtre, sans vitre, sans bordure. En PLEIN JOUR, ciel bleu, quelques nuages.
+Les six vues, toutes différentes, de la verdure uniquement :
+1. un jardin avec un grand arbre et une pelouse ;
+2. une forêt toute proche, troncs et feuillages ;
+3. des collines douces au loin, sous un grand ciel ;
+4. un parc avec une allée, des buissons et un lampadaire éteint ;
+5. un champ fleuri avec une haie ;
+6. un lac calme bordé d'arbres.
+Le point de vue est celui d'une fenêtre au premier étage, l'horizon vers le milieu de l'image.
+
+${STYLE_TRAIT_FENETRES}
+
+FORMAT : une seule image large, PNG, fond TRANSPARENT entre les vues. Interdits : aucun texte, aucun numéro, aucun bâtiment, aucun véhicule, aucun personnage.`;
+}
+function promptPlancheVuesNuit(){
+  return `L'image jointe montre six vues de l'extérieur, de jour. Redessine EXACTEMENT LES MÊMES SIX VUES, À LA MÊME PLACE (même ordre, même disposition en 2 rangées de 3, même cadrage, mêmes éléments), mais LA NUIT : ciel bleu nuit profond, lune et quelques étoiles, la végétation dans des bleus sombres, le lampadaire du parc allumé avec un aplat de lumière chaude, des reflets de lune sur le lac. Garde les mêmes larges bandes TRANSPARENTES entre les vues.
+
+${STYLE_TRAIT_FENETRES}
+
+FORMAT : une seule image large, PNG, fond TRANSPARENT entre les vues. Interdits : aucun texte, aucun numéro, aucun personnage.`;
+}
+
 /* v595 — 📤 ENVOYER À CHATGPT (05/11 : « le moins d'aller-retour possible… que l'image soit copiée
    en même temps que je copie le prompt »). Le partage du téléphone (navigator.share) emporte le
    prompt ET les images d'un coup. Les images sont préparées dès l'affichage du guide : le partage
@@ -12086,6 +12150,59 @@ function effacerFondDepuisBords(ctx, w, h, tol){
     for (const j of v){ if (j >= 0 && !vu[j] && proche(j)){ vu[j] = 1; pile.push(j); } }
   }
   ctx.putImageData(im, 0, 0);
+}
+/* v622 — DÉCOUPER UNE GRILLE : les rangées d'abord (bandes vides horizontales), puis les dessins
+   de chaque rangée. Rend les morceaux dans l'ordre de lecture (gauche → droite, haut → bas). */
+function decouperGrille(img, n){
+  const W = img.width, H = img.height;
+  if (!W || !H) return { erreur:'image illisible' };
+  const src = document.createElement('canvas'); src.width = W; src.height = H;
+  const sctx = src.getContext('2d', { willReadFrequently:true });
+  sctx.drawImage(img, 0, 0);
+  const tout = sctx.getImageData(0, 0, W, H).data;
+  let transp = 0; for (let i = 3; i < tout.length; i += 4 * 7) if (tout[i] < 20) transp++;
+  if (transp < (W * H / 7) * 0.03) effacerFondDepuisBords(sctx, W, H, 60);
+  const d = sctx.getImageData(0, 0, W, H).data;
+  const plein = (x, y)=> d[(y*W + x)*4 + 3] > 40;
+  const segmenter = (occ, masse, mini)=>{
+    let segs = [], deb = -1;
+    for (let i = 0; i <= occ.length; i++){
+      const o = i < occ.length && occ[i];
+      if (o && deb < 0) deb = i;
+      if (!o && deb >= 0){ let m = 0; for (let k = deb; k < i; k++) m += masse[k]; segs.push({ a:deb, b:i-1, m }); deb = -1; }
+    }
+    const total = segs.reduce((t, sg)=> t + sg.m, 0);
+    let k;
+    while ((k = segs.findIndex(sg=> sg.m < total * mini)) >= 0 && segs.length > 1){
+      const gG = k > 0 ? segs[k].a - segs[k-1].b : Infinity, gD = k < segs.length-1 ? segs[k+1].a - segs[k].b : Infinity;
+      const j = gG <= gD ? k-1 : k+1, A = segs[Math.min(k,j)], B = segs[Math.max(k,j)];
+      A.b = B.b; A.m += B.m; segs.splice(Math.max(k,j), 1);
+    }
+    return segs;
+  };
+  // rangées
+  const lig = new Array(H).fill(0);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (plein(x, y)) lig[y]++;
+  const seuilL = Math.max(1, Math.round(W * 0.003));
+  const rangees = segmenter(lig.map(v=> v >= seuilL), lig, 0.03);
+  const boites = [];
+  rangees.forEach(r=>{
+    const col = new Array(W).fill(0);
+    for (let y = r.a; y <= r.b; y++) for (let x = 0; x < W; x++) if (plein(x, y)) col[x]++;
+    const seuilC = Math.max(1, Math.round((r.b - r.a + 1) * 0.004));
+    segmenter(col.map(v=> v >= seuilC), col, 0.03).forEach(c=>{
+      let y0 = r.b, y1 = r.a;
+      for (let y = r.a; y <= r.b; y++) for (let x = c.a; x <= c.b; x++) if (plein(x, y)){ if (y < y0) y0 = y; if (y > y1) y1 = y; break; }
+      boites.push({ x0:c.a, x1:c.b, y0, y1 });
+    });
+  });
+  if (boites.length !== n) return { erreur: 'je trouve ' + boites.length + ' dessin(s) séparé(s) au lieu de ' + n };
+  return { vues: boites.map(bx=>{
+    const pad = 2, x0 = Math.max(0, bx.x0 - pad), x1 = Math.min(W - 1, bx.x1 + pad), y0 = Math.max(0, bx.y0 - pad), y1 = Math.min(H - 1, bx.y1 + pad);
+    const c = document.createElement('canvas'); c.width = x1 - x0 + 1; c.height = y1 - y0 + 1;
+    c.getContext('2d').drawImage(src, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+    return c;
+  }) };
 }
 function decouperPlanche(img, n){
   const W = img.width, H = img.height;
@@ -12558,6 +12675,31 @@ async function ouvrirBrouillons(){
       if (src) im.src = src;
     });
   }
+  /* v622 — 🪟 FENÊTRES : trois planches pour ChatGPT (cadres, vues de jour, mêmes vues de nuit),
+     découpées par le jeu et rangées dans la bibliothèque. */
+  {
+    const B = fenetresBiblio;
+    const nC = B.cadres.length, nV = B.vues.length, attente = (B.vuesSansNuit || []).length;
+    envois['fcad'] = ()=> ({ texte: promptPlancheCadres(), imgs: [] });
+    envois['fjour'] = ()=> ({ texte: promptPlancheVuesJour(), imgs: [] });
+    if (B.plancheJourRef) envois['fnuit'] = ()=> ({ texte: promptPlancheVuesNuit(), imgs: [fichierPourPartage('planche-jour', urlDeRef(B.plancheJourRef))] });
+    let fh = '<div style="font-weight:700; margin:14px 0 6px;">🪟 Fenêtres — la bibliothèque</div>'
+      + '<p class="meta" style="font-size:12px;">' + nC + ' cadre(s) · ' + nV + ' vue(s) dehors → ' + (nC * B.vues.filter(v=> v.nuitRef).length) + ' fenêtre(s) possibles. Chaque planche en ajoute 6.</p>';
+    fh += tache(nC > 0, '🪟 Planche de CADRES (6 fenêtres)',
+      'Les cadres, avec le vitrage peint en magenta : le jeu y fera passer la vue dehors.',
+      '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b> : le jeu la coupe en 6.',
+      bouton('data-envoi="fcad"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="fcad"', '📋 Copier') + bouton('data-poser-fenetres="cadres"', '📷 Choisir la planche'));
+    fh += tache(nV > 0 && !attente, '🌄 Planche de VUES DE JOUR (6 vues)',
+      'Ce qu\'on voit dehors, en plein jour.',
+      '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.',
+      bouton('data-envoi="fjour"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="fjour"', '📋 Copier') + bouton('data-poser-fenetres="jour"', '📷 Choisir la planche'));
+    fh += tache(nV > 0 && !attente, '🌃 Les MÊMES VUES, DE NUIT',
+      'Les six vues de la dernière planche de jour, redessinées la nuit, chacune à sa place.',
+      B.plancheJourRef && attente ? '1. <b>📤 Envoyer à ChatGPT</b> : la planche de jour part avec le prompt.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b> : chaque vue de nuit rejoint sa vue de jour.' : 'Fais d\'abord la planche de vues de jour.',
+      B.plancheJourRef && attente ? bouton('data-envoi="fnuit"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="fnuit"', '📋 Copier') + bouton('data-poser-fenetres="nuit"', '📷 Choisir la planche') : '');
+    if (nC && nV && !attente) fh += '<div style="display:flex; flex-wrap:wrap; gap:5px; margin:4px 0 10px 22px;">' + bouton('data-envoi="fcad"', '📤 6 cadres de plus') + bouton('data-poser-fenetres="cadres"', '📷 Ajouter des cadres') + bouton('data-envoi="fjour"', '📤 6 vues de plus') + bouton('data-poser-fenetres="jour"', '📷 Ajouter des vues') + '</div>';
+    liste.insertAdjacentHTML('beforeend', fh);
+  }
   if (ouvrirBrouillons.defilement) feuille.scrollTop = ouvrirBrouillons.defilement;
 
   /* --- Les gestes --- */
@@ -12612,6 +12754,38 @@ async function ouvrirBrouillons(){
     await robotsModelesCol.doc(id).set({ imagesValidees: oui === '1', updatedAt: Date.now() }, { merge:true });
     const m = robotsModeles.find(x=> x.id === id); if (m) m.imagesValidees = oui === '1';   // sans attendre l'instantané
     showToast(oui === '1' ? 'Robot validé ✅' : 'Robot rouvert'); rouvrir();
+  });
+  /* v622 : les planches de fenêtres → la bibliothèque */
+  sur('[data-poser-fenetres]', async (b)=>{
+    const quoi = b.dataset.poserFenetres;
+    if (!fenetresDoc()){ showToast('Firebase indisponible ici'); return; }
+    if (quoi === 'nuit' && (fenetresBiblio.vuesSansNuit || []).length !== 6){ showToast('Fais d\'abord une planche de vues de jour'); return; }
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const r = decouperGrille(img, 6);
+    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, six dessins bien séparés, fond transparent.'); return; }
+    const refs = [];
+    for (const c of r.vues){
+      const ref = await externalizeSceneImage(encoderImageSousLimite(c, quoi === 'cadres' ? 500 : 640, true));
+      if (!ref){ showToast('Échec : image non enregistrée'); return; }
+      refs.push(ref);
+    }
+    const B = fenetresBiblio, t = Date.now();
+    if (quoi === 'cadres'){
+      refs.forEach((ref, i)=> B.cadres.push({ id: 'cad_' + t + '_' + i, nom: 'Cadre ' + (B.cadres.length + 1), ref }));
+    } else if (quoi === 'jour'){
+      const ids = refs.map((ref, i)=> 'vue_' + t + '_' + i);
+      refs.forEach((ref, i)=> B.vues.push({ id: ids[i], nom: 'Vue ' + (B.vues.length + 1), jourRef: ref, nuitRef: null }));
+      B.plancheJourRef = await externalizeSceneImage(encoderImageSousLimite(img, 1200, true));
+      B.vuesSansNuit = ids;
+    } else {
+      B.vuesSansNuit.forEach((id, i)=>{ const v = B.vues.find(x=> x.id === id); if (v) v.nuitRef = refs[i]; });
+      B.vuesSansNuit = [];
+    }
+    Object.keys(compoFenetreCache).forEach(k=> delete compoFenetreCache[k]);
+    await enregistrerFenetresBiblio();
+    showToast(quoi === 'cadres' ? '6 cadres rangés ✅' : quoi === 'jour' ? '6 vues de jour rangées ✅ — fais-les de nuit' : '6 vues de nuit appariées ✅');
+    rouvrir();
   });
   /* v617 : une planche → le jeu la coupe et pose chaque vue. */
   sur('[data-poser-planche]', async (b)=>{
@@ -29188,7 +29362,7 @@ const SCENE_POINT_TYPES = [
   { id:'bac', label:'🪴 Bac de culture (serre)' },   // v491
   { id:'emplacement', label:'🧍 Emplacement de PNJ (pièce commune)' },   // v497
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
-  { id:'nuit', label:'🌙 Zone de nuit (fenêtre)' },   // v618
+  { id:'fenetre', label:'🪟 Fenêtre (jour / nuit)' },   // v622
 ];
 
 /* Flèche de sortie fournie par le jeu : une image SVG légère, embarquée dans le code.
@@ -30335,7 +30509,6 @@ function renderSceneEditorPoints(){
         d.style.cssText = `position:absolute; left:${rect.left + (x/100)*rect.width}px; top:${rect.top + (y/100)*rect.height}px; width:${(w2/100)*rect.width}px; height:${(h2/100)*rect.height}px; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; border-radius:0; background:${fond}; ${z ? 'z-index:' + z + ';' : ''}`;
         wrap.appendChild(d);
       };
-      sceneEditorPoints.filter(p=> p.type === 'nuit').forEach(p=> voile(p.x, p.y, p.w || 20, p.h || 20, fondVoile(intensiteFenetre(p))));
       const lA = lumiereDeScene(scA);
       if (lA.eteinte || lA.exterieur) voile(50, 50, 100, 100, fondVoile(intensitePiece(scA)), 4);   // par-dessus les points
     }
@@ -30380,10 +30553,20 @@ function renderSceneEditorPoints(){
         el.innerHTML = `<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; margin-bottom:3px; white-space:nowrap;">🧍 emplacement</span>`;
       }
     } else if (pt.type === 'nuit'){
-      /* v618 : la zone que le filtre de nuit assombrit (une fenêtre, par exemple) */
+      /* v622 : un ancien rectangle 🌙 (v618-v621) — il ne sert plus, à supprimer */
       el.className = 'scene-point';
-      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(8,14,48,.45); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(150,170,255,.9)'}; box-shadow:none; border-radius:4px; pointer-events:none; display:flex; align-items:center; justify-content:center;`;
-      el.innerHTML = '<span style="font-size:11px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); padding:1px 6px; border-radius:4px; white-space:nowrap;">🌙 nuit</span>';
+      el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(192,57,43,.15); border:2px dashed ${selected ? 'var(--danger)' : 'rgba(255,150,150,.9)'}; box-shadow:none; border-radius:0; pointer-events:none; display:flex; align-items:center; justify-content:center;`;
+      el.innerHTML = '<span style="font-size:10px; font-weight:700; color:#fff; background:rgba(0,0,0,.65); padding:1px 6px; border-radius:4px; text-align:center;">🌙 ancien — à supprimer<br>(pose une 🪟 fenêtre)</span>';
+    } else if (pt.type === 'fenetre'){
+      /* v622 : la fenêtre composée, de jour (ou de nuit dans l'aperçu), avec sa perspective */
+      const scF = sceneEditeurCourante();
+      const lF = lumiereDeScene(scF);
+      const sombre = apercuNuitEditeur && (lF.eteinte || lF.exterieur);
+      const fen = elementFenetre(pt, apercuNuitEditeur, sombre ? intensitePiece(scF) / 100 * 0.92 : 0);
+      el.className = 'scene-point';
+      el.style.cssText = fen.style.cssText + ` left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; z-index:5; ${selected ? 'outline:2px dashed var(--danger); outline-offset:2px;' : (pt.cadreId ? '' : 'outline:2px dashed rgba(150,170,255,.9);')}`;
+      while (fen.firstChild) el.appendChild(fen.firstChild);
+      if (!pt.cadreId) el.insertAdjacentHTML('beforeend', '<span style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; color:#fff; background:rgba(0,0,0,.55); text-align:center;">🪟 bibliothèque vide</span>');
     } else if (url){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
@@ -30628,7 +30811,11 @@ function addNewScenePoint(typeId){
   if (flecheToutePrete) poserFlecheALaPlaceHabituelle(newPt);
   /* v497 : un emplacement est un rectangle debout, sans icône — c'est la place d'un personnage. */
   if (typeId === 'emplacement'){ newPt.w = 20; newPt.h = 40; newPt.hideIcon = true; }   // v498 : un peu plus large au départ
-  if (typeId === 'nuit'){ newPt.w = 30; newPt.h = 25; }   // v618
+  if (typeId === 'fenetre'){   // v622 : le premier cadre et la première vue de la bibliothèque
+    newPt.w = 18; newPt.h = 24; newPt.perspective = 0;
+    newPt.cadreId = (fenetresBiblio.cadres[0] || {}).id || null;
+    newPt.vueId = (fenetresBiblio.vues.find(v=> v.nuitRef) || fenetresBiblio.vues[0] || {}).id || null;
+  }
   renderSceneEditorPoints();
   selectScenePoint(newPt.id);
 }
@@ -30729,7 +30916,7 @@ function renderSceneDetailAppearance(pt){
     </div>
     </div>
     <div data-rp="image">
-    ${pt.type === 'nuit' ? '' : isLinkedPnj ? `
+    ${(pt.type === 'nuit' || pt.type === 'fenetre') ? '' : isLinkedPnj ? `
       <p class="meta" style="margin:0 0 6px;">Utilise l'image de ce PNJ — pas besoin d'en choisir une autre ici.</p>
     ` : pt.type === 'objet' ? `
       <label class="meta" style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><input type="checkbox" data-point-custom-img ${pt.useCustomImage?'checked':''}> Utiliser une image personnalisée (au lieu de celle de l'objet)</label>
@@ -30757,7 +30944,7 @@ function renderSceneDetailAppearance(pt){
     `}
     </div>
     <div data-rp="options">
-    ${pt.type === 'nuit' ? '' : `<label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Invisible pour le joueur (le point reste touchable)</label>`}
+    ${(pt.type === 'nuit' || pt.type === 'fenetre') ? '' : `<label class="meta" style="display:flex; align-items:center; gap:6px; margin-top:6px;"><input type="checkbox" data-point-hide ${pt.hideIcon?'checked':''}> 🙈 Invisible pour le joueur (le point reste touchable)</label>`}
     </div>
   `;
   const backBtn = appWrap.querySelector('[data-plane-back]');
@@ -30878,14 +31065,32 @@ function renderSceneDetailAppearance(pt){
 
 function renderSceneDetailTypeSpecific(pt){
   const typeWrap = document.getElementById('sceneDetailTypeSpecific');
-  if (pt.type === 'nuit'){   // v620
-    const v = intensiteFenetre(pt);
-    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.8); margin:0 0 6px;">🌙 Cette zone s'assombrit quand le soleil est couché. Ce qui est posé devant elle (un plan au-dessus) reste éclairé.</p>
-      <div style="display:flex; gap:8px; align-items:center; color:#fff;">obscurité <input type="range" min="10" max="100" step="5" value="${v}" data-nuit-intensite style="flex:1;"><span data-nuit-val style="width:42px; text-align:right;">${v} %</span></div>
-      <button type="button" class="btn-secondary" data-nuit-defaut style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">↺ Réglage d'origine (${INTENSITE_FENETRE} %)</button>`;
-    const r = typeWrap.querySelector('[data-nuit-intensite]');
-    r.addEventListener('input', ()=>{ pt.intensite = parseInt(r.value, 10); typeWrap.querySelector('[data-nuit-val]').textContent = pt.intensite + ' %'; if (apercuNuitEditeur) renderSceneEditorPoints(); });
-    typeWrap.querySelector('[data-nuit-defaut]').addEventListener('click', ()=>{ delete pt.intensite; renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); if (apercuNuitEditeur) renderSceneEditorPoints(); });
+  if (pt.type === 'nuit'){   // v622
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.8); margin:0;">🌙 Ancien rectangle de nuit : il ne sert plus. Supprime-le et pose à la place un point « 🪟 Fenêtre ».</p>`;
+    return;
+  }
+  if (pt.type === 'fenetre'){   // v622 : cadre, vue dehors, perspective
+    const B = fenetresBiblio;
+    if (!B.cadres.length){
+      typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.8); margin:0;">🪟 La bibliothèque de fenêtres est vide : fais d'abord les planches dans 🧰 À finir → 🪟 Fenêtres.</p>`;
+      return;
+    }
+    const vignette = (attr, id, sel, titre)=> `<button type="button" ${attr}="${id}" title="${titre}" style="width:54px; height:54px; padding:2px; margin:2px; border-radius:6px; background:rgba(255,255,255,.08); border:2px solid ${sel ? 'var(--accent)' : 'rgba(255,255,255,.25)'};"><img data-vref style="width:100%; height:100%; object-fit:contain;"></button>`;
+    const p = Number(pt.perspective) || 0;
+    typeWrap.innerHTML = `<div style="color:#fff;">
+      <div class="meta" style="color:rgba(255,255,255,.8);">Cadre</div>
+      <div>${B.cadres.map(c=> vignette('data-fen-cadre', c.id, c.id === pt.cadreId, c.nom || '')).join('')}</div>
+      <div class="meta" style="color:rgba(255,255,255,.8); margin-top:6px;">Vue dehors (de jour ; la nuit vient toute seule)</div>
+      <div>${B.vues.map(v=> vignette('data-fen-vue', v.id, v.id === pt.vueId, (v.nom || '') + (v.nuitRef ? '' : ' (pas encore de nuit)'))).join('')}</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">perspective <input type="range" min="-60" max="60" step="2" value="${p}" data-fen-persp style="flex:1;"><span data-fen-pval style="width:40px; text-align:right;">${p}°</span></div>
+      <button type="button" class="btn-secondary" data-fen-face style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">↺ De face (0°)</button>
+      <p class="meta" style="color:rgba(255,255,255,.7); margin:6px 0 0;">La perspective raccourcit un côté, pour une fenêtre sur un mur de biais. Pour voir la nuit : 💡 Lumière → 🌙 Voir la scène de nuit.</p>
+    </div>`;
+    typeWrap.querySelectorAll('[data-fen-cadre]').forEach(b=>{ const c = B.cadres.find(x=> x.id === b.dataset.fenCadre); urlDeRef(c && c.ref).then(u=>{ if (u) b.querySelector('img').src = u; }); b.addEventListener('click', ()=>{ pt.cadreId = b.dataset.fenCadre; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); }); });
+    typeWrap.querySelectorAll('[data-fen-vue]').forEach(b=>{ const v = B.vues.find(x=> x.id === b.dataset.fenVue); urlDeRef(v && v.jourRef).then(u=>{ if (u) b.querySelector('img').src = u; }); b.addEventListener('click', ()=>{ pt.vueId = b.dataset.fenVue; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); }); });
+    const r = typeWrap.querySelector('[data-fen-persp]');
+    r.addEventListener('input', ()=>{ pt.perspective = parseInt(r.value, 10) || 0; typeWrap.querySelector('[data-fen-pval]').textContent = pt.perspective + '°'; renderSceneEditorPoints(); });
+    typeWrap.querySelector('[data-fen-face]').addEventListener('click', ()=>{ pt.perspective = 0; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); });
     return;
   }
   if (pt.type === 'sortie_zone'){
@@ -32492,9 +32697,11 @@ async function renderSceneViewCurrentScene(){
   emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
   const nuitIci = etatDeNuit(scRaw);   // v620
   (sc.points || []).forEach(pt=>{
-    /* v620 : une fenêtre 🌙 s'assombrit À SON PLAN — un personnage posé devant reste éclairé */
-    if (pt.type === 'nuit'){
-      if (nuitIci.fenetres) wrap.appendChild(creerVoile(pt.x, pt.y, pt.w || 20, pt.h || 20, fondVoile(intensiteFenetre(pt)), pt.id));
+    if (pt.type === 'nuit') return;   // v622 : les anciens rectangles 🌙 ne servent plus
+    /* v622 : une fenêtre 🪟 — vue de nuit quand le soleil est couché ; pièce éteinte : son cadre
+       s'assombrit mais la vue dehors garde sa lumière (elle passe par-dessus le voile). */
+    if (pt.type === 'fenetre'){
+      wrap.appendChild(elementFenetre(pt, nuitIci.fenetres, nuitIci.piece ? intensitePiece(scRaw) / 100 * 0.92 : 0));
       return;
     }
     if ((pt.type === 'objet' || pt.type === 'action') && !isScenePointAvailable(pt)) return;
@@ -32804,6 +33011,7 @@ async function renderSceneViewCurrentScene(){
   });
 
   poserVoilesDeNuit(wrap, scRaw, sc);   // v620 : par-dessus tout
+  if (nuitIci.piece) wrap.querySelectorAll('[data-fenetre]').forEach(e=> wrap.appendChild(e));   // v622 : la vue dehors reste visible
   positionSceneViewPoints();
   bacsSceneCourante = { points: sc.points || [], sceneId: scRaw.id };   // v495
   armerMinuterieBacs(sc.points, scRaw.id);   // v492
@@ -32869,7 +33077,7 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
     const scRaw = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
     const sc = scRaw ? resolveSceneContent(scRaw) : null;
     const pt = sc ? (sc.points||[]).find(p=>p.id===ptId) : null;
-    if (!pt || pt.type === 'decor') continue;
+    if (!pt || pt.type === 'decor' || pt.type === 'fenetre' || pt.type === 'nuit') continue;
     if (isPointHitAt(pt, div, ev.clientX, ev.clientY)){
       const action = sceneViewPointActions[ptId];
       if (action) action();
@@ -32884,6 +33092,114 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
      « en extérieur » s'assombrit tout entière.
    • La LUMIÈRE d'une pièce : éteinte entre deux heures réglées sur la scène (💡 Lumière) — chez
      Mado, de 22 h à 6 h, quand elle dort. La pièce entière s'assombrit alors. */
+/* v622 — LA BIBLIOTHÈQUE DE FENÊTRES (app_config/fenetres). Des CADRES (le vitrage peint en
+   magenta pur) et des VUES dehors, chacune en jour et en nuit. Un point 🪟 combine un cadre et une
+   vue : le jeu montre la vue à travers le magenta, de jour ou de nuit selon le soleil. */
+let fenetresBiblio = { cadres: [], vues: [], plancheJourRef: null, vuesSansNuit: [] };
+const fenetresDoc = ()=> (typeof db !== 'undefined' && db) ? db.collection('app_config').doc('fenetres') : null;
+setTimeout(()=>{
+  try {
+    fenetresDoc().onSnapshot(doc=>{
+      const d = (doc && doc.exists && doc.data()) || {};
+      fenetresBiblio = { cadres: d.cadres || [], vues: d.vues || [], plancheJourRef: d.plancheJourRef || null, vuesSansNuit: d.vuesSansNuit || [] };
+    }, ()=>{});
+  } catch(e){}
+}, 0);
+async function enregistrerFenetresBiblio(){
+  await fenetresDoc().set({ cadres: fenetresBiblio.cadres, vues: fenetresBiblio.vues, plancheJourRef: fenetresBiblio.plancheJourRef || null, vuesSansNuit: fenetresBiblio.vuesSansNuit || [], updatedAt: Date.now() }, { merge:true });
+}
+const refImageCache = {};
+function urlDeRef(ref){
+  if (!ref) return Promise.resolve('');
+  if (!refImageCache[ref]) refImageCache[ref] = internalizeSceneImage(ref).then(u=> u || '').catch(()=> '');
+  return refImageCache[ref];
+}
+function chargerImage(url){
+  return new Promise(ok=>{ if (!url){ ok(null); return; } const i = new Image(); i.onload = ()=> ok(i); i.onerror = ()=> ok(null); i.src = url; });
+}
+const estMagenta = (r, g, b)=> r > 150 && b > 150 && g < 120 && (r - g) > 80 && (b - g) > 80;
+const compoFenetreCache = {};
+/* La fenêtre composée : la vue (jour ou nuit) à travers le vitrage magenta, le cadre par-dessus.
+   `assombrir` (0 à 1) : la pièce est éteinte — le cadre s'assombrit, la vue dehors non. */
+function composerFenetre(cadreId, vueId, nuit, assombrir){
+  const cle = [cadreId, vueId, nuit ? 1 : 0, (assombrir || 0).toFixed(2)].join('|');
+  if (compoFenetreCache[cle]) return compoFenetreCache[cle];
+  compoFenetreCache[cle] = (async ()=>{
+    const cadre = fenetresBiblio.cadres.find(c=> c.id === cadreId);
+    const vue = fenetresBiblio.vues.find(v=> v.id === vueId);
+    if (!cadre) return '';
+    const imC = await chargerImage(await urlDeRef(cadre.ref));
+    if (!imC) return '';
+    const W = imC.naturalWidth, H = imC.naturalHeight;
+    const fc = document.createElement('canvas'); fc.width = W; fc.height = H;
+    const fx = fc.getContext('2d', { willReadFrequently:true }); fx.drawImage(imC, 0, 0);
+    const id = fx.getImageData(0, 0, W, H), px = id.data;
+    const masque = new Uint8Array(W * H);
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let i = 0; i < W * H; i++){
+      if (px[i*4+3] > 40 && estMagenta(px[i*4], px[i*4+1], px[i*4+2])){
+        masque[i] = 1; const x = i % W, y = (i / W) | 0;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    // le vitrage déborde d'un pixel (le liseré rosé entre le magenta et le trait) : on l'élargit
+    const elargi = masque.slice();
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++){
+      const i = y * W + x;
+      if (!masque[i] && (masque[i-1] || masque[i+1] || masque[i-W] || masque[i+W])){
+        const r = px[i*4], g = px[i*4+1], b = px[i*4+2];
+        if (r - g > 40 && b - g > 40) elargi[i] = 1;
+      }
+    }
+    for (let i = 0; i < W * H; i++) if (elargi[i]) px[i*4+3] = 0;
+    fx.putImageData(id, 0, 0);
+    if (assombrir > 0){
+      fx.globalCompositeOperation = 'source-atop';
+      fx.fillStyle = 'rgba(8,14,48,' + Math.min(0.97, assombrir).toFixed(3) + ')';
+      fx.fillRect(0, 0, W, H);
+      fx.globalCompositeOperation = 'source-over';
+    }
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const ox = out.getContext('2d');
+    if (vue && x1 >= 0){
+      const imV = await chargerImage(await urlDeRef(nuit ? (vue.nuitRef || vue.jourRef) : vue.jourRef));
+      if (imV){
+        // la vue couvre le vitrage (recadrée au centre, sans déformation)
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+        const k = Math.max(bw / imV.naturalWidth, bh / imV.naturalHeight);
+        const vw = imV.naturalWidth * k, vh = imV.naturalHeight * k;
+        const vc = document.createElement('canvas'); vc.width = W; vc.height = H;
+        const vx = vc.getContext('2d');
+        vx.drawImage(imV, x0 + (bw - vw) / 2, y0 + (bh - vh) / 2, vw, vh);
+        const mi = vx.getImageData(0, 0, W, H);
+        for (let i = 0; i < W * H; i++) if (!elargi[i]) mi.data[i*4+3] = 0;
+        vx.putImageData(mi, 0, 0);
+        ox.drawImage(vc, 0, 0);
+      }
+    }
+    ox.drawImage(fc, 0, 0);
+    return out.toDataURL('image/png');
+  })();
+  return compoFenetreCache[cle];
+}
+function transformFenetre(pt){
+  const p = Number(pt.perspective) || 0;
+  return 'translate(-50%,-50%) perspective(420px) rotateY(' + p + 'deg)' + (pt.flipped ? ' scaleX(-1)' : '');
+}
+/* v622 : le point 🪟 dans la vue de scène (ou l'éditeur) */
+function elementFenetre(pt, nuit, assombrir){
+  const el = document.createElement('div');
+  el.className = 'scene-point';
+  el.dataset.ptid = pt.id; el.dataset.fenetre = '1';
+  el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w || 20; el.dataset.pth = pt.h || 25;
+  el.style.cssText = 'position:absolute; background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; transform:' + transformFenetre(pt) + ';';
+  const im = document.createElement('img');
+  im.style.cssText = 'width:100%; height:100%; object-fit:fill; pointer-events:none; display:none;';
+  el.appendChild(im);
+  if (pt.cadreId) composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(u=>{ if (u){ im.src = u; im.style.display = ''; } });
+  return el;
+}
+
 const POSITION_PAR_DEFAUT = { lat: 45.86, lng: 0.07 };   // Charente, si le GPS n'a encore rien donné
 function soleilDuJour(date, lat, lng){
   const rad = Math.PI / 180, d = date || new Date();
@@ -32933,7 +33249,7 @@ function etatDeNuit(scRaw, now, forcerNuit){
 }
 /* v620 : l'intensité se règle — une fenêtre (dehors, la nuit) bien noire d'office, une pièce
    éteinte seulement tamisée. Chaque fenêtre et chaque pièce peut être retouchée. */
-const INTENSITE_FENETRE = 85, INTENSITE_PIECE = 55;
+const INTENSITE_FENETRE = 85, INTENSITE_PIECE = 95;   // v622 : la pièce éteinte, vraiment dans le noir
 function fondVoile(intensite){
   const i = Math.max(0, Math.min(100, Number(intensite)));
   return 'rgba(8,14,48,' + (i / 100 * 0.92).toFixed(3) + ')';
@@ -33102,8 +33418,33 @@ function attribuerEmplacements(sc, sceneId, now){
 
 function urlImageDeFiche(f){
   if (!f) return '';
-  return f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+  const propre = f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+  return propre || faceModeleDeFicheSync(f);   // v621 : sans image à elle, celle de son robot
 }
+/* v621 — L'IMAGE PAR DÉFAUT D'UNE FICHE DE ROBOT. Une fiche sans image à elle montre la face de
+   son modèle (dans la liste de l'éditeur, sa fiche, un emplacement 🧍). Une image posée sur la
+   fiche — une pose particulière — passe toujours devant. Les faces rangées dans la réserve
+   d'images (références) se lisent une fois, puis restent en mémoire. */
+const faceModeleCache = {};
+function modeleDeFiche(f){
+  const id = f && f.combatStats && f.combatStats.robotModeleId;
+  return id && typeof ctModele === 'function' ? ctModele(id) : null;
+}
+function urlFaceModele(m, quandPrete){
+  if (!m) return '';
+  if (m.faceImagePath) return resolveMediaPath(m.faceImagePath);
+  if (m.faceImageDataUrl) return m.faceImageDataUrl;
+  const ref = m.faceImageRef;
+  if (!ref) return '';
+  const c = faceModeleCache[ref];
+  if (typeof c === 'string') return c;
+  if (!c){
+    faceModeleCache[ref] = internalizeSceneImage(ref).then(u=>{ faceModeleCache[ref] = u || ''; return u || ''; }).catch(()=>{ faceModeleCache[ref] = ''; return ''; });
+  }
+  if (quandPrete) faceModeleCache[ref].then(u=>{ if (u) quandPrete(u); });
+  return '';
+}
+function faceModeleDeFicheSync(f, quandPrete){ return urlFaceModele(modeleDeFiche(f), quandPrete); }
 
 /* La boîte des pixels opaques d'une image (dans ses propres pixels), calculée une fois. Si le
    canevas est teinté (image d'un autre domaine sans CORS), on retombe sur le cadre entier. */
