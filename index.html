@@ -1420,7 +1420,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v607</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v609</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8028,13 +8028,21 @@ function bustUrlPourFiche(c){
   if (c.bustImageRef) return bustImageCache[c.bustImageRef] || null;
   return null;
 }
+/* v608 : le buste est attendu mais pas encore arrivé (ni échoué). Pendant ce court instant,
+   on n'affiche RIEN plutôt que l'image en pied — c'est elle qui « clignotait » avant le buste. */
+function bustEnAttente(c){
+  return !!(c && c.bustImageRef && !c.bustImagePath && bustImageCache[c.bustImageRef] === undefined);
+}
 function prechargerBuste(c){
   if (!c || !c.bustImageRef || c.bustImagePath) return;
   if (bustImageCache[c.bustImageRef]) return;
   internalizeSceneImage(c.bustImageRef).then((url)=>{
-    bustImageCache[c.bustImageRef] = url;
+    bustImageCache[c.bustImageRef] = url || false;
+    try { if (activeCreature && activeCreature.id === c.id) renderSheet(); } catch(e){}
+  }).catch(()=>{
+    bustImageCache[c.bustImageRef] = false;   // v608 : échec → on retombe sur l'image en pied
     if (activeCreature && activeCreature.id === c.id) renderSheet();
-  }).catch(()=>{});
+  });
 }
 
 function openSheet(c){
@@ -8264,7 +8272,9 @@ function renderSheet(){
   const emojiEl = document.getElementById('sheetEmoji');
   const buste = bustUrlPourFiche(c);
   const portrait = buste || c.imageUrl;
-  emojiEl.innerHTML = portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾');
+  emojiEl.innerHTML = bustEnAttente(c)
+    ? `<div style="width:160px;height:160px;max-width:100%;margin:0 auto;"></div>`   // v608 : place réservée, pas de clignotement
+    : (portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾'));
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
@@ -10528,6 +10538,7 @@ function renderEditorList(snap){
 
   const parNom = (a,b)=> (a.data().name || '').localeCompare(b.data().name || '', 'fr');
 
+  let groupesEnRectangle = null;   // v608 : calculé une fois par affichage de la liste
   const ligne = (doc)=>{
     const d = doc.data();
     const row = document.createElement('div');
@@ -10538,13 +10549,21 @@ function renderEditorList(snap){
        qui dit s'il faut s'attendre à en trouver deux ou vingt en ouvrant. */
     const n = comptesDeGroupe[groupeDeDoc(doc)] || 1;
     const groupTag = n > 1 ? ` <span class="meta" style="font-size:10px;">🧬 ${n} versions</span>` : '';
+    /* v608 : un petit 🧍 signale un personnage dont au moins une version se montre dans un
+       rectangle d'emplacement — il reste rangé avec les autres habitants de SA zone. */
+    if (!groupesEnRectangle){
+      groupesEnRectangle = new Set();
+      const fiches = (snap && snap.docs) ? snap.docs.map(x=> ({ id: x.id, ...x.data() })) : toutesLesFiches();
+      fiches.forEach(f=>{ if (f && f.pieceCommune && f.pieceCommune.sceneId) groupesEnRectangle.add(f.dupeGroup || f.id); });
+    }
+    const rectTag = groupesEnRectangle.has(groupeDeDoc(doc)) ? ` <span title="Placé dans un rectangle d'emplacement" style="font-size:11px;">🧍</span>` : '';
     /* Le statut n'a de sens que pour UNE version : sur une ligne qui en représente plusieurs,
        « hors horaire » désignerait la seule qu'on montre et laisserait croire que tout dort. */
     const style = n > 1 ? '' : statutStyle(d);
     const suffixe = n > 1 ? '' : statutSuffixe(d);
     row.innerHTML = `
       <div class="thumb">${thumb}</div>
-      <div class="name" style="${style}">${d.name || '(sans nom)'}${suffixe}${groupTag}</div>
+      <div class="name" style="${style}">${d.name || '(sans nom)'}${rectTag}${suffixe}${groupTag}</div>
       <button class="btn-secondary" data-edit="${doc.id}">Modifier</button>
       <button class="btn-secondary" data-del="${doc.id}" data-nvers="${n}" style="color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Suppr.</button>
     `;
@@ -10598,8 +10617,13 @@ function renderEditorList(snap){
       dedans.forEach(doc=>{
         /* Trois cas, pas deux : rattaché à une zone · posé sur la carte · en réserve (aucun des deux). */
         const d0 = doc.data();
+        /* v608 : un personnage posé dans un rectangle d'une ZONE est rangé avec cette zone
+           (avant, il formait une catégorie à part « Zone · scène », en double de la zone).
+           Seules les pièces du vaisseau, qui n'ont pas de zone, gardent leur propre groupe. */
         const zid = (d0.pieceCommune && d0.pieceCommune.sceneId)
-          ? 'piece:' + d0.pieceCommune.sceneId   // v497
+          ? ((d0.pieceCommune.zoneId && nomsDeZone[d0.pieceCommune.zoneId]
+              && !(typeof zoneEstABord === 'function' && zoneEstABord(d0.pieceCommune.zoneId)))
+              ? d0.pieceCommune.zoneId : ('piece:' + d0.pieceCommune.sceneId))   // v497 → v608
           : (d0.assignedZoneId
           || ((typeof d0.lat === 'number' && typeof d0.lng === 'number') ? '' : 'reserve'));
         if (zid.startsWith('piece:') && !nomsDeZone[zid]) nomsDeZone[zid] = '🚀 ' + (d0.pieceCommune.nom || 'Pièce du vaisseau');
@@ -17260,7 +17284,10 @@ function renderParamsType(type, valeurs, wrapId, prefixe){
 }
 function lireParamsType(prefixe){
   const out = {};
-  Object.keys(LIB_PARAMS).forEach(k=>{
+  /* v609 : « statut » n'est pas dans LIB_PARAMS (il a son propre libellé « État posé ») :
+     il n'était donc JAMAIS relu. Tout état choisi dans le menu — attaque ou étape d'ultime —
+     disparaissait à l'enregistrement (Ahriman sans poison ni entrave). */
+  Object.keys(LIB_PARAMS).concat(LIB_PARAMS.statut ? [] : ['statut']).forEach(k=>{
     const el = document.getElementById(prefixe + k);
     if (!el) return;
     if (k === 'statut' || k === 'stat'){ if (el.value) out[k] = el.value; return; }
@@ -34124,8 +34151,16 @@ function clearCurrentZoneScene(){
 function saveCombatSnapshot(releaseTurn){
   if (!combatState) return;
   if (combatState.isPvp){ if (!combatState.isSpectator) syncPvpDuel(releaseTurn); return; }
-  m2SauvegarderCombat();
+  /* v608 : un robot du joueur qui tombe, ou qui passe sous le quart de ses PV, déclenche une
+     sauvegarde IMMÉDIATE (au lieu d'attendre jusqu'à 6 s). Recharger la page juste avant une
+     défaite ne ramène donc plus avant le coup dur : il est déjà enregistré. */
+  const etatJoueur = (combatState.fighters || []).filter(f=> f.side === 'player')
+    .map(f=> !f.alive ? 'K' : (f.hp < f.maxHp * 0.25 ? 'B' : 'S')).join('');
+  const critique = etatJoueur !== m2DernierEtatJoueur;
+  m2DernierEtatJoueur = etatJoueur;
+  m2SauvegarderCombat(critique);
 }
+let m2DernierEtatJoueur = '';
 /* Repère local (localStorage) en plus du nettoyage Firestore : un enregistrement sur le téléphone est
    instantané et ne peut pas être coupé par une fermeture brutale de l'appli, contrairement à une requête
    réseau — contrairement à clearSavedCombat() côté serveur qui reste toujours théoriquement interruptible.
