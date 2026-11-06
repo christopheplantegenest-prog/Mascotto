@@ -1423,7 +1423,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v618</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v619</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3643,6 +3643,7 @@
       <button type="button" class="scene-action-btn" id="sceneEditorScenesBtn">🎬 Scènes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorEncounterBtn">🎲 Rencontres</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorLumiereBtn">💡 Lumière</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageGithubBtn">📁 Image hébergée</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
@@ -3717,13 +3718,27 @@
     </div>
     <p class="meta">Vérifié une fois à chaque entrée dans cette scène (en arrivant depuis la carte ou par une sortie). Une scène a des rencontres aléatoires <b>ou</b> un agresseur, jamais les deux.</p>
     <p class="meta" id="sceneEncBloqueAgresseur" style="display:none; color:var(--danger);"></p>
-    <div class="field-label">% de risque de rencontre</div>
-    <input type="number" id="sceneEncChance" class="field-input" value="0" min="0" max="100">
-    <div class="field-label">Monstres possibles pour une rencontre (jusqu'à 3 tirés au sort)</div>
-    <div id="sceneEncMonstersPick"></div>
-    <h3 style="margin:18px 0 4px;">🌙 Filtre de nuit</h3>
-    <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="sceneNuitChk"> Assombrir cette scène de 22 h à 6 h</label>
-    <p class="meta">Sans rectangle 🌙 dans la scène, toute l'image s'assombrit. Avec des rectangles « 🌙 Zone de nuit » (une fenêtre…), seuls eux s'assombrissent.</p>
+    <p class="meta">Chaque rencontre est un groupe de 1 à 3 adversaires avec sa chance. Les chances s'additionnent : ce qui reste jusqu'à 100 %, c'est la chance qu'il ne se passe rien.</p>
+    <div id="sceneEncListe"></div>
+    <button type="button" class="btn-secondary" id="sceneEncAjouterBtn" style="margin-top:8px;">➕ Ajouter une rencontre</button>
+    <p class="meta" id="sceneEncTotal" style="margin-top:8px;"></p>
+  </div>
+</div>
+
+<!-- v619 : la lumière de la scène -->
+<div class="overlay" id="sceneLumiereOverlay" style="z-index:4400;">
+  <div class="sheet" style="max-height:85vh; overflow-y:auto;">
+    <div class="sheet-top">
+      <h3 style="margin-top:0;">💡 Lumière de la scène</h3>
+      <button class="sheet-x" id="sceneLumiereCloseBtn">✕</button>
+    </div>
+    <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="sceneLumEteinte"> La lumière s'éteint (la pièce entière s'assombrit)</label>
+    <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">éteinte à</span><input type="time" id="sceneLumExt" class="field-input" style="margin:0; width:130px;"></div>
+    <div style="display:flex; gap:6px; align-items:center; margin:6px 0 0 26px;"><span style="width:90px;">rallumée à</span><input type="time" id="sceneLumAll" class="field-input" style="margin:0; width:130px;"></div>
+    <label style="display:flex; gap:8px; align-items:center; margin-top:12px;"><input type="checkbox" id="sceneLumExterieur"> Scène en extérieur (s'assombrit quand le soleil est couché)</label>
+    <p class="meta" style="margin-top:12px;">🌙 Les fenêtres : pose des points « 🌙 Zone de nuit (fenêtre) » dessus. Elles s'assombrissent toutes seules quand le soleil est couché, même pièce allumée.</p>
+    <p class="meta" id="sceneLumSoleil"></p>
+    <button type="button" class="btn-secondary" id="sceneLumApercuBtn" style="margin-top:8px; width:100%;">🌙 Voir la scène de nuit</button>
   </div>
 </div>
 
@@ -13511,9 +13526,9 @@ const Robot = (()=>{
   function comptabiliserRencontre(sceneId){
     try {
       const sc = sceneViewScenes.find(s=> s.id === sceneId);
-      if (!sc || !(sc.encounterChance > 0) || !(sc.encounterMonsterIds || []).length) return;
+      if (!sc || !sceneADesRencontres(sc)) return;
       const seau = R.rencontres[R.rythme === 'presse' ? 'pressees' : 'lentes'];
-      seau.scenes++; seau.attendues += sc.encounterChance / 100;
+      seau.scenes++; seau.attendues += chanceTotaleRencontres(sc) / 100;
       R.attenteRencontre = { sceneId, rythme: R.rythme, depuis: Date.now() };
     } catch(e){}
   }
@@ -21705,8 +21720,12 @@ function m2AlliesDepuisEquipe(){
 }
 function m2EnnemisDepuisFiches(liste){
   const cfgs = [], sansModele = [];
+  const total = {}, vu = {};
+  (liste || []).slice(0, 3).forEach(c=>{ const n = (c && c.name) || ''; total[n] = (total[n] || 0) + 1; });
   (liste || []).slice(0, 3).forEach(c=>{
-    const cfg = m2CfgDepuisFiche(c);
+    const n = (c && c.name) || '';
+    vu[n] = (vu[n] || 0) + 1;
+    const cfg = m2CfgDepuisFiche(c, total[n] > 1 ? n + ' ' + 'ABC'[vu[n] - 1] : undefined);   // v619 : deux Affamés → Affamé A, Affamé B
     if (cfg) cfgs.push(cfg); else sansModele.push((c && c.name) || '?');
   });
   return { cfgs, sansModele };
@@ -29939,15 +29958,60 @@ document.getElementById('sceneEditorEncounterBtn').addEventListener('click', ()=
 document.getElementById('sceneEncounterCloseBtn').addEventListener('click', ()=>{
   document.getElementById('sceneEncounterOverlay').classList.remove('show');
 });
-document.getElementById('sceneNuitChk').addEventListener('change', (e)=>{   // v618
-  const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
-  if (sc) sc.filtreNuit = !!e.target.checked;
-});
-document.getElementById('sceneEncChance').addEventListener('change', (e)=>{
+document.getElementById('sceneEncAjouterBtn').addEventListener('click', ()=>{   // v619
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   if (!sc) return;
-  sc.encounterChance = Math.max(0, Math.min(100, parseInt(e.target.value,10) || 0));
+  rencontresEnListe(sc).push({ id: 'renc_' + Date.now(), adversaires: [], chance: 10, moment: 'toujours', debut: '', fin: '' });
+  renderSceneEncounterOverlay();
 });
+/* v619 : l'ancien réglage (une chance + des monstres tirés au sort) devient une liste —
+   une rencontre par monstre, la chance partagée entre eux. */
+/* v619 : la fenêtre 💡 Lumière, et l'aperçu de nuit dans l'éditeur */
+let apercuNuitEditeur = false;
+function sceneEditeurCourante(){ return sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId); }
+function renderSceneLumiereOverlay(){
+  const sc = sceneEditeurCourante(); if (!sc) return;
+  const l = lumiereDeScene(sc);
+  document.getElementById('sceneLumEteinte').checked = !!l.eteinte;
+  document.getElementById('sceneLumExt').value = l.extinction || '22:00';
+  document.getElementById('sceneLumAll').value = l.allumage || '06:00';
+  document.getElementById('sceneLumExterieur').checked = !!l.exterieur;
+  const pos = (typeof playerPos !== 'undefined' && playerPos) ? playerPos : POSITION_PAR_DEFAUT;
+  const so = soleilDuJour(new Date(), pos.lat, pos.lng);
+  document.getElementById('sceneLumSoleil').textContent = so.lever ? ('☀️ Aujourd\'hui, chez toi : lever ' + hhmm(so.lever) + ', coucher ' + hhmm(so.coucher) + '.') : '';
+  document.getElementById('sceneLumApercuBtn').textContent = apercuNuitEditeur ? '☀️ Revenir au jour' : '🌙 Voir la scène de nuit';
+}
+function lireSceneLumiere(){
+  const sc = sceneEditeurCourante(); if (!sc) return;
+  sc.lumiere = {
+    eteinte: document.getElementById('sceneLumEteinte').checked,
+    extinction: document.getElementById('sceneLumExt').value || '22:00',
+    allumage: document.getElementById('sceneLumAll').value || '06:00',
+    exterieur: document.getElementById('sceneLumExterieur').checked,
+  };
+  delete sc.filtreNuit;
+  if (apercuNuitEditeur) renderSceneEditorPoints();
+}
+document.getElementById('sceneEditorLumiereBtn').addEventListener('click', ()=>{
+  syncCurrentVariantFromEditorState();
+  renderSceneLumiereOverlay();
+  document.getElementById('sceneLumiereOverlay').classList.add('show');
+});
+document.getElementById('sceneLumiereCloseBtn').addEventListener('click', ()=> document.getElementById('sceneLumiereOverlay').classList.remove('show'));
+['sceneLumEteinte','sceneLumExt','sceneLumAll','sceneLumExterieur'].forEach(id=> document.getElementById(id).addEventListener('change', lireSceneLumiere));
+document.getElementById('sceneLumApercuBtn').addEventListener('click', ()=>{
+  apercuNuitEditeur = !apercuNuitEditeur;
+  document.getElementById('sceneLumiereOverlay').classList.remove('show');
+  renderSceneEditorPoints();
+});
+function rencontresEnListe(sc){
+  if (!Array.isArray(sc.rencontres)){
+    const ids = sc.encounterMonsterIds || [], ch = sc.encounterChance || 0;
+    sc.rencontres = (ch > 0 && ids.length) ? ids.map((id, i)=> ({ id: 'renc_' + Date.now() + '_' + i, adversaires: [id], chance: Math.round(ch / ids.length), moment: 'toujours', debut: '', fin: '' })) : [];
+    sc.encounterChance = 0; sc.encounterMonsterIds = [];
+  }
+  return sc.rencontres;
+}
 /* v562 — une scène a des RENCONTRES ALÉATOIRES ou un AGRESSEUR, jamais les deux (voir en
    tête du journal : ils se chevauchaient). Les points de toutes les variantes comptent. */
 function agresseursDeLaScene(sc){
@@ -29956,7 +30020,13 @@ function agresseursDeLaScene(sc){
   return tous.filter(p=> p && p.type === 'pnj' && p.autoTrigger);
 }
 function sceneADesRencontres(sc){
-  return !!sc && (sc.encounterChance || 0) > 0 && (sc.encounterMonsterIds || []).length > 0;
+  if (!sc) return false;
+  if (Array.isArray(sc.rencontres)) return rencontresValides(sc).length > 0;   // v619
+  return (sc.encounterChance || 0) > 0 && (sc.encounterMonsterIds || []).length > 0;
+}
+function chanceTotaleRencontres(sc){
+  if (Array.isArray(sc && sc.rencontres)) return Math.min(100, rencontresValides(sc).reduce((t, r)=> t + r.chance, 0));
+  return (sc && sc.encounterChance) || 0;
 }
 function nomDuPnjDuPoint(p){
   try { const f = p && p.linkedPnjId ? ficheParId(p.linkedPnjId) : null; return (f && f.name) || 'un personnage'; } catch(e){ return 'un personnage'; }
@@ -29964,35 +30034,46 @@ function nomDuPnjDuPoint(p){
 function renderSceneEncounterOverlay(){
   const sc = sceneEditorScenes.find(s=>s.id===sceneEditorCurrentSceneId);
   if (!sc) return;
-  document.getElementById('sceneNuitChk').checked = !!sc.filtreNuit;   // v618
-  /* Un agresseur dans la pièce : pas de rencontre possible ici, les champs se bloquent. */
+  /* Un agresseur dans la pièce : pas de rencontre possible ici. */
   const agresseurs = agresseursDeLaScene(sc);
   const bloc = document.getElementById('sceneEncBloqueAgresseur');
-  const chance = document.getElementById('sceneEncChance');
+  const liste = document.getElementById('sceneEncListe');
+  const ajouter = document.getElementById('sceneEncAjouterBtn');
+  const totalEl = document.getElementById('sceneEncTotal');
   if (agresseurs.length){
     bloc.style.display = 'block';
     bloc.textContent = '🗡️ Cette scène a un agresseur (' + agresseurs.map(nomDuPnjDuPoint).join(', ') + ') : pas de rencontre aléatoire ici. Décoche « Vient au joueur dès l\'entrée » sur ce personnage pour en activer.';
-    chance.disabled = true;
-    document.getElementById('sceneEncMonstersPick').innerHTML = '';
+    liste.innerHTML = ''; ajouter.style.display = 'none'; totalEl.textContent = '';
     return;
   }
-  bloc.style.display = 'none';
-  chance.disabled = false;
-  document.getElementById('sceneEncChance').value = sc.encounterChance || 0;
-  if (!sc.encounterMonsterIds) sc.encounterMonsterIds = [];
-  const monsterPool = tousLesMonstres();
-  const wrap = document.getElementById('sceneEncMonstersPick');
-  wrap.innerHTML = monsterPool.length ? monsterPool.map(m=>`
-    <button type="button" class="btn-secondary scene-enc-monster-btn" data-mid="${m.id}" style="margin:2px; ${sc.encounterMonsterIds.includes(m.id) ? 'background:var(--accent); color:#fff; border-color:var(--accent);' : ''}">${m.emoji||'👾'} ${m.name}</button>
-  `).join('') : '<p class="meta">Crée d\'abord un monstre (non recrutable) dans l\'éditeur PNJ.</p>';
-  wrap.querySelectorAll('.scene-enc-monster-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const id = btn.dataset.mid;
-      const pos = sc.encounterMonsterIds.indexOf(id);
-      if (pos === -1) sc.encounterMonsterIds.push(id); else sc.encounterMonsterIds.splice(pos,1);
-      renderSceneEncounterOverlay();
-    });
-  });
+  bloc.style.display = 'none'; ajouter.style.display = '';
+  const rencs = rencontresEnListe(sc);
+  const monstres = tousLesMonstres();
+  const nomDe = (id)=>{ const m = monstres.find(x=> x.id === id); return m ? ((m.emoji || '👾') + ' ' + m.name) : '⚠️ supprimé'; };
+  const esc = (t)=> String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  liste.innerHTML = rencs.map((r, i)=>`
+    <div style="border:1px solid rgba(128,128,128,.35); border-radius:10px; padding:8px; margin-top:8px;">
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <b>Rencontre ${i + 1}</b>
+        <input type="number" min="0" max="100" value="${r.chance || 0}" data-renc-chance="${i}" class="field-input" style="width:70px; margin:0;"> %
+        <button type="button" class="btn-secondary" data-renc-suppr="${i}" style="margin-left:auto;">🗑️</button>
+      </div>
+      <div style="margin-top:6px;">${(r.adversaires || []).map((id, k)=> `<button type="button" class="btn-secondary" data-renc-retirer="${i}|${k}" style="margin:2px;">${esc(nomDe(id))} ✕</button>`).join('') || '<span class="meta">Aucun adversaire.</span>'}</div>
+      ${(r.adversaires || []).length < 3 ? `<select class="field-input" data-renc-ajout="${i}" style="margin-top:4px;"><option value="">➕ Ajouter un adversaire…</option>${monstres.map(m=> `<option value="${m.id}">${esc((m.emoji || '👾') + ' ' + m.name)}</option>`).join('')}</select>` : ''}
+      <select class="field-input" data-renc-moment="${i}" style="margin-top:4px;">${MOMENTS_RENCONTRE.map(m=> `<option value="${m.id}" ${(r.moment || 'toujours') === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+      ${r.moment === 'horaires' ? `<div style="display:flex; gap:6px; align-items:center; margin-top:4px;">de <input type="time" value="${esc(r.debut || '')}" data-renc-debut="${i}" class="field-input" style="margin:0;"> à <input type="time" value="${esc(r.fin || '')}" data-renc-fin="${i}" class="field-input" style="margin:0;"></div>` : ''}
+      ${r.moment === 'eteinte' && !(lumiereDeScene(sc).eteinte) ? '<p class="meta" style="color:var(--danger);">💡 La lumière de cette scène ne s\'éteint jamais : règle ses heures dans 💡 Lumière.</p>' : ''}
+    </div>`).join('') || '<p class="meta">Aucune rencontre dans cette scène.</p>';
+  const total = rencs.reduce((t, r)=> t + (((r.adversaires || []).length && r.chance > 0) ? r.chance : 0), 0);
+  totalEl.innerHTML = total > 100 ? `<span style="color:var(--danger);">Total ${total} % : au-delà de 100 %, les dernières rencontres ne sortiront jamais.</span>` : `Total ${total} % · rien ne se passe : ${100 - total} %`;
+  const ici = (sel, ev, fn)=> liste.querySelectorAll(sel).forEach(el=> el.addEventListener(ev, ()=> fn(el)));
+  ici('[data-renc-chance]', 'change', el=>{ rencs[+el.dataset.rencChance].chance = Math.max(0, Math.min(100, parseInt(el.value, 10) || 0)); renderSceneEncounterOverlay(); });
+  ici('[data-renc-suppr]', 'click', el=>{ rencs.splice(+el.dataset.rencSuppr, 1); renderSceneEncounterOverlay(); });
+  ici('[data-renc-retirer]', 'click', el=>{ const [i, k] = el.dataset.rencRetirer.split('|').map(Number); rencs[i].adversaires.splice(k, 1); renderSceneEncounterOverlay(); });
+  ici('[data-renc-ajout]', 'change', el=>{ if (!el.value) return; const r = rencs[+el.dataset.rencAjout]; if (!r.adversaires) r.adversaires = []; if (r.adversaires.length < 3) r.adversaires.push(el.value); renderSceneEncounterOverlay(); });
+  ici('[data-renc-moment]', 'change', el=>{ rencs[+el.dataset.rencMoment].moment = el.value; renderSceneEncounterOverlay(); });
+  ici('[data-renc-debut]', 'change', el=>{ rencs[+el.dataset.rencDebut].debut = el.value; });
+  ici('[data-renc-fin]', 'change', el=>{ rencs[+el.dataset.rencFin].fin = el.value; });
 }
 document.getElementById('sceneVariantAddBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
@@ -30236,8 +30317,27 @@ function renderSceneEditorImage(){
 
 function renderSceneEditorPoints(){
   const wrap = document.getElementById('sceneEditorImgWrap');
-  wrap.querySelectorAll('.scene-point').forEach(el=> el.remove());
+  wrap.querySelectorAll('.scene-point, .apercu-nuit').forEach(el=> el.remove());
   const rect = getSceneImageDisplayRect(wrap);
+  /* v619 : aperçu de nuit — la pièce éteinte (si elle s'éteint) et les fenêtres sombres */
+  if (apercuNuitEditeur){
+    const scA = sceneEditeurCourante();
+    if (scA){
+      voilesDeNuit(scA, { points: sceneEditorPoints }, new Date(), true).forEach(v=>{
+        const d = document.createElement('div');
+        d.className = 'apercu-nuit';
+        d.style.cssText = `position:absolute; left:${rect.left + (v.x/100)*rect.width}px; top:${rect.top + (v.y/100)*rect.height}px; width:${(v.w/100)*rect.width}px; height:${(v.h/100)*rect.height}px; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; background:${v.fond};`;
+        wrap.appendChild(d);
+      });
+    }
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'apercu-nuit';
+    chip.textContent = '🌙 Aperçu de nuit — ☀️ revenir';
+    chip.style.cssText = `position:absolute; left:${rect.left + 6}px; top:${rect.top + 6}px; z-index:5; font-size:12px; padding:4px 8px; border-radius:8px; border:none; background:rgba(0,0,0,.7); color:#fff;`;
+    chip.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); });
+    chip.addEventListener('click', (e)=>{ e.stopPropagation(); apercuNuitEditeur = false; renderSceneEditorPoints(); });
+    wrap.appendChild(chip);
+  }
   sceneEditorPoints.forEach(pt=>{
     if (pt.w === undefined) pt.w = 8;
     if (pt.h === undefined) pt.h = 8;
@@ -31091,7 +31191,7 @@ function renderSceneDetailTypeSpecific(pt){
         <span style="font-size:13px; color:rgba(255,255,255,.9);">🗡️ Vient au joueur dès l'entrée (agression)</span>
       </label>
       ${sceneADesRencontres(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId))
-        ? `<p class="meta" style="color:var(--danger); margin-top:4px;">🎲 Cette scène a des rencontres aléatoires (${(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId) || {}).encounterChance} %) : pas d'agresseur ici. Mets le risque de rencontre à 0 pour en poser un.</p>`
+        ? `<p class="meta" style="color:var(--danger); margin-top:4px;">🎲 Cette scène a des rencontres aléatoires (${chanceTotaleRencontres(sceneEditorScenes.find(s=> s.id === sceneEditorCurrentSceneId) || {})} %) : pas d'agresseur ici. Retire ses rencontres pour en poser un.</p>`
         : ''}
       <p class="meta" style="color:rgba(255,255,255,.6); margin-top:4px;">Son dialogue s'ouvre tout seul quand le joueur entre dans la scène, sans qu'il ait à le toucher. Combine avec un choix « ⚔️ Déclencher un combat » pour une agression complète : deux mots, puis les coups.</p>
       <label style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-left:22px;">
@@ -32270,7 +32370,7 @@ function equipeApteAuCombat(){
     && recruitEffectiveHp(r) > 0);
 }
 function zoneComporteDesCombats(zone){
-  return (zone.scenes || []).some(s=> (s.encounterChance || 0) > 0 && (s.encounterMonsterIds || []).length);
+  return (zone.scenes || []).some(s=> sceneADesRencontres(s));
 }
 function openSceneView(creature, resumeSceneId, opts){
   sceneViewIsShip = !!(opts && opts.isShip);
@@ -32754,33 +32854,76 @@ document.getElementById('sceneViewImgWrap').addEventListener('pointerdown', (ev)
   }
 });
 
-/* v618 — LE FILTRE DE NUIT. Une scène cochée « 🌙 filtre de nuit » s'assombrit de 22 h à 6 h :
-   toute l'image, ou seulement ses rectangles 🌙 (une fenêtre de bar qui donne sur la nuit
-   pendant que la salle reste éclairée). */
-const NUIT_DEBUT = '22:00', NUIT_FIN = '06:00';
-function estLaNuit(now){
-  try { return heureDansCreneaux([{ start: NUIT_DEBUT, end: NUIT_FIN }], now || new Date()); } catch(e){ return false; }
+/* v619 — LA NUIT ET LA LUMIÈRE.
+   • Le SOLEIL : le jeu calcule chaque jour le lever et le coucher, d'après la date et la position
+     du joueur. Les rectangles 🌙 (fenêtres) s'assombrissent quand il est couché ; une scène
+     « en extérieur » s'assombrit tout entière.
+   • La LUMIÈRE d'une pièce : éteinte entre deux heures réglées sur la scène (💡 Lumière) — chez
+     Mado, de 22 h à 6 h, quand elle dort. La pièce entière s'assombrit alors. */
+const POSITION_PAR_DEFAUT = { lat: 45.86, lng: 0.07 };   // Charente, si le GPS n'a encore rien donné
+function soleilDuJour(date, lat, lng){
+  const rad = Math.PI / 180, d = date || new Date();
+  const jd = d.getTime() / 86400000 + 2440587.5;
+  const n = Math.round(jd - 2451545.0 + 0.0008);
+  const Js = n - lng / 360;
+  const M = (357.5291 + 0.98560028 * Js) % 360;
+  const C = 1.9148 * Math.sin(M * rad) + 0.02 * Math.sin(2 * M * rad) + 0.0003 * Math.sin(3 * M * rad);
+  const L = (M + C + 180 + 102.9372) % 360;
+  const Jt = 2451545.0 + Js + 0.0053 * Math.sin(M * rad) - 0.0069 * Math.sin(2 * L * rad);
+  const sinD = Math.sin(L * rad) * Math.sin(23.4397 * rad), cosD = Math.cos(Math.asin(sinD));
+  const cosW = (Math.sin(-0.833 * rad) - Math.sin(lat * rad) * sinD) / (Math.cos(lat * rad) * cosD);
+  if (cosW > 1) return { toujoursNuit: true };
+  if (cosW < -1) return { toujoursJour: true };
+  const w = Math.acos(cosW) / rad;
+  const enDate = (j)=> new Date((j - 2440587.5) * 86400000);
+  return { lever: enDate(Jt - w / 360), coucher: enDate(Jt + w / 360) };
+}
+function soleilCouche(now){
+  now = now || new Date();
+  const pos = (typeof playerPos !== 'undefined' && playerPos) ? playerPos : POSITION_PAR_DEFAUT;
+  const s = soleilDuJour(now, pos.lat, pos.lng);
+  if (s.toujoursNuit) return true;
+  if (s.toujoursJour) return false;
+  return now < s.lever || now > s.coucher;
+}
+function hhmm(d){ return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+/* La lumière de la scène : { eteinte, extinction, allumage, exterieur }. L'ancien « filtre de
+   nuit » de la v618 vaut une lumière éteinte de 22 h à 6 h. */
+function lumiereDeScene(scRaw){
+  if (!scRaw) return {};
+  if (scRaw.lumiere) return scRaw.lumiere;
+  if (scRaw.filtreNuit) return { eteinte: true, extinction: '22:00', allumage: '06:00' };
+  return {};
+}
+function lumiereEteinte(scRaw, now){
+  const l = lumiereDeScene(scRaw);
+  if (!l.eteinte || !l.extinction || !l.allumage) return false;
+  try { return heureDansCreneaux([{ start: l.extinction, end: l.allumage }], now || new Date()); } catch(e){ return false; }
+}
+/* Ce qui est sombre dans la scène à cet instant : la pièce entière, ou seulement les fenêtres. */
+function etatDeNuit(scRaw, now, forcerNuit){
+  const l = lumiereDeScene(scRaw);
+  const couche = forcerNuit ? true : soleilCouche(now);
+  const piece = forcerNuit ? !!(l.eteinte || l.exterieur) : (lumiereEteinte(scRaw, now) || (!!l.exterieur && couche));
+  return { piece, fenetres: couche };
+}
+function htmlVoile(x, y, w, h, piece){
+  return { x, y, w, h, fond: piece ? 'rgba(8,14,48,.62)' : 'rgba(8,14,48,.72)' };
+}
+function voilesDeNuit(scRaw, sc, now, forcerNuit){
+  const e = etatDeNuit(scRaw, now, forcerNuit);
+  if (e.piece) return [htmlVoile(50, 50, 100, 100, true)];
+  if (!e.fenetres) return [];
+  return (sc.points || []).filter(p=> p && p.type === 'nuit').map(p=> htmlVoile(p.x, p.y, p.w || 20, p.h || 20, false));
 }
 function poserVoilesDeNuit(wrap, scRaw, sc){
-  if (!scRaw || !scRaw.filtreNuit || !estLaNuit()) return;
-  const zones = (sc.points || []).filter(p=> p && p.type === 'nuit');
-  const rects = zones.length ? zones : [{ id:'tout', x:50, y:50, w:100, h:100 }];
-  rects.forEach(r=>{
-    const v = document.createElement('div');
-    v.className = 'scene-point voile-nuit';
-    v.dataset.ptid = '__nuit_' + r.id;
-    v.dataset.ptx = r.x; v.dataset.pty = r.y; v.dataset.ptw = r.w || 20; v.dataset.pth = r.h || 20;
-    v.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; background:rgba(8,14,48,.62); mix-blend-mode:multiply;'
-      + (zones.length ? ' border-radius:2px;' : '');
-    wrap.appendChild(v);
-    if (!zones.length){
-      // un léger reflet de lune par-dessus, pour que la nuit ne soit pas qu'un écran noir
-      const l = document.createElement('div');
-      l.className = 'scene-point voile-nuit';
-      l.dataset.ptid = '__nuit_lune'; l.dataset.ptx = 50; l.dataset.pty = 50; l.dataset.ptw = 100; l.dataset.pth = 100;
-      l.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; background:rgba(70,110,200,.10);';
-      wrap.appendChild(l);
-    }
+  voilesDeNuit(scRaw, sc).forEach((v, i)=>{
+    const d = document.createElement('div');
+    d.className = 'scene-point voile-nuit';
+    d.dataset.ptid = '__nuit_' + i;
+    d.dataset.ptx = v.x; d.dataset.pty = v.y; d.dataset.ptw = v.w; d.dataset.pth = v.h;
+    d.style.cssText = 'position:absolute; transform:translate(-50%,-50%); pointer-events:none; mix-blend-mode:multiply; background:' + v.fond + ';';
+    wrap.appendChild(d);
   });
 }
 
@@ -35035,10 +35178,49 @@ async function launchZoneCombat(enemyCreatureList, pt, opts){
 async function startZoneBossCombat(bossCreature, pt){
   await launchZoneCombat([bossCreature], pt);
 }
+/* v619 — LES RENCONTRES EN LISTE. Chaque rencontre = un groupe de 1 à 3 adversaires (le même
+   peut revenir), une chance en %, et un moment : à toute heure, de nuit (soleil couché), lumière
+   éteinte, ou des horaires. Les chances s'additionnent (100 % au plus) ; le reste, c'est rien. */
+const MOMENTS_RENCONTRE = [
+  { id:'toujours', label:'⏰ À toute heure' },
+  { id:'nuit', label:'🌙 De nuit (soleil couché)' },
+  { id:'eteinte', label:'💡 Lumière éteinte' },
+  { id:'horaires', label:'🕒 Mes horaires' },
+];
+function momentRencontreOk(scRaw, r, now){
+  now = now || new Date();
+  const m = r.moment || 'toujours';
+  if (m === 'nuit') return soleilCouche(now);
+  if (m === 'eteinte') return lumiereEteinte(scRaw, now);
+  if (m === 'horaires'){
+    if (!r.debut || !r.fin) return true;
+    try { return heureDansCreneaux([{ start: r.debut, end: r.fin }], now); } catch(e){ return true; }
+  }
+  return true;
+}
+function rencontresValides(sc){
+  return Array.isArray(sc && sc.rencontres) ? sc.rencontres.filter(r=> r && (r.adversaires || []).length && (r.chance || 0) > 0) : [];
+}
 /* Tirage d'une rencontre aléatoire à l'entrée d'une scène (une seule fois par entrée, pas à chaque re-rendu). */
 function rollSceneEncounter(){
   const sc = sceneViewScenes.find(s=>s.id===sceneViewCurrentSceneId);
-  if (!sc || !sc.encounterChance || !(sc.encounterMonsterIds||[]).length) return;
+  if (!sc) return;
+  if (Array.isArray(sc.rencontres)){
+    if (!latestSnap) return;
+    const parId = {};
+    latestSnap.forEach(doc=> parId[doc.id] = { id: doc.id, ...doc.data() });
+    const possibles = rencontresValides(sc).filter(r=> momentRencontreOk(sc, r));
+    const x = Math.random() * 100;
+    let cumul = 0, tiree = null;
+    for (const r of possibles){ cumul += r.chance; if (x < cumul){ tiree = r; break; } if (cumul >= 100) break; }
+    if (!tiree) return;
+    const groupe = tiree.adversaires.slice(0, 3).map(id=> parId[id])
+      .filter(c=> c && c.interactionType === 'combat' && c.combatStats && !c.combatStats.recruitable).map(c=> ficheJouable(c)).filter(Boolean);
+    if (!groupe.length) return;
+    lancerRencontreQuandVisible(groupe);
+    return;
+  }
+  if (!sc.encounterChance || !(sc.encounterMonsterIds||[]).length) return;
   if (Math.random()*100 >= sc.encounterChance) return;
   if (!latestSnap) return;
   const allCreaturesById = {};
@@ -35046,11 +35228,11 @@ function rollSceneEncounter(){
   const pool = sc.encounterMonsterIds
     .map(id=> allCreaturesById[id])
     .filter(c=> c && c.interactionType==='combat' && c.combatStats && !c.combatStats.recruitable)
-    /* v618 : un monstre de nuit (l'Affamé chez Mado) ne sort que dans ses horaires — avant, les
-       rencontres ignoraient l'heure, il aurait surgi en plein jour. */
-    .map(c=> ficheJouable(c)).filter(c=> c && isActiveNow(c));
+    .map(c=> ficheJouable(c)).filter(Boolean);
   if (!pool.length) return;
-  const chosen = pool.slice().sort(()=> Math.random()-0.5).slice(0, Math.min(3, pool.length));
+  lancerRencontreQuandVisible(pool.slice().sort(()=> Math.random()-0.5).slice(0, Math.min(3, pool.length)));
+}
+function lancerRencontreQuandVisible(chosen){
   /* v471 : la rencontre attend que la scène soit VISIBLE (image de fond chargée), puis laisse une
      seconde au joueur pour voir où il est. Avant, elle partait à 350 ms fixes — sur un téléphone
      un peu lent, avant même l'affichage de la scène, d'où l'impression d'un combat qui se déclenche
@@ -36274,18 +36456,31 @@ async function importerMiseAJour(sc){
       const scn = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.name || '').trim().toLowerCase());
       if (!scn){ journal.push('⚠️ « ' + z.name + ' » : scène « ' + s.name + ' » introuvable'); continue; }
       if (typeof s.prompt === 'string'){ scn.prompt = s.prompt; touche = true; journal.push('📝 « ' + scn.name + ' » : prompt mis à jour'); }
-      /* v618 : le filtre de nuit et les rencontres aléatoires de la scène */
-      if (typeof s.filtreNuit === 'boolean'){ scn.filtreNuit = s.filtreNuit; touche = true; journal.push('🌙 « ' + scn.name + ' » : filtre de nuit ' + (s.filtreNuit ? 'posé' : 'retiré')); }
+      /* v619 : la lumière et les rencontres de la scène */
+      if (s.lumiere && typeof s.lumiere === 'object'){
+        scn.lumiere = { eteinte: !!s.lumiere.eteinte, extinction: s.lumiere.extinction || '22:00', allumage: s.lumiere.allumage || '06:00', exterieur: !!s.lumiere.exterieur };
+        delete scn.filtreNuit; touche = true;
+        journal.push('💡 « ' + scn.name + ' » : ' + (scn.lumiere.eteinte ? 'lumière éteinte de ' + scn.lumiere.extinction + ' à ' + scn.lumiere.allumage : 'lumière toujours allumée') + (scn.lumiere.exterieur ? ', extérieur' : ''));
+      } else if (typeof s.filtreNuit === 'boolean'){
+        scn.lumiere = s.filtreNuit ? { eteinte: true, extinction: '22:00', allumage: '06:00', exterieur: false } : { eteinte: false, extinction: '22:00', allumage: '06:00', exterieur: false };
+        delete scn.filtreNuit; touche = true;
+      }
       if (s.rencontres){
-        const ids = (s.rencontres.monstres || []).map(n=> ({ n, id: idDeFiche(n) }));
-        ids.filter(x=> !x.id).forEach(x=> journal.push('⚠️ « ' + scn.name + ' » : monstre « ' + x.n + ' » introuvable'));
         const agresseur = (scn.points || []).some(p=> p && p.type === 'pnj' && p.autoTrigger);
         if (agresseur) journal.push('⚠️ « ' + scn.name + ' » : un agresseur est déjà posé ici — pas de rencontre aléatoire possible');
         else {
-          scn.encounterChance = Math.max(0, Math.min(100, parseInt(s.rencontres.chance, 10) || 0));
-          scn.encounterMonsterIds = ids.filter(x=> x.id).map(x=> x.id);
+          // ancienne forme { chance, monstres } : une rencontre par monstre
+          const liste = Array.isArray(s.rencontres) ? s.rencontres
+            : (s.rencontres.monstres || []).map(n=> ({ adversaires: [n], chance: Math.round((s.rencontres.chance || 0) / Math.max(1, (s.rencontres.monstres || []).length)) }));
+          scn.rencontres = liste.map((r, i)=>{
+            const ids = (r.adversaires || []).slice(0, 3).map(n=> ({ n, id: idDeFiche(n) }));
+            ids.filter(x=> !x.id).forEach(x=> journal.push('⚠️ « ' + scn.name + ' » : adversaire « ' + x.n + ' » introuvable'));
+            const moment = ['toujours','nuit','eteinte','horaires'].includes(r.moment) ? r.moment : 'toujours';
+            return { id: 'renc_' + Date.now() + '_' + i, adversaires: ids.filter(x=> x.id).map(x=> x.id), chance: Math.max(0, Math.min(100, parseInt(r.chance, 10) || 0)), moment, debut: r.debut || '', fin: r.fin || '' };
+          });
+          scn.encounterChance = 0; scn.encounterMonsterIds = [];
           touche = true;
-          journal.push('🎲 « ' + scn.name + ' » : rencontres ' + scn.encounterChance + ' % (' + ids.filter(x=> x.id).map(x=> x.n).join(', ') + ')');
+          scn.rencontres.forEach((r, i)=> journal.push('🎲 « ' + scn.name + ' » : rencontre ' + (i + 1) + ', ' + r.chance + ' % (' + (MOMENTS_RENCONTRE.find(m=> m.id === r.moment) || {}).label + ')'));
         }
       }
       if (Array.isArray(s.points)){
@@ -37496,8 +37691,8 @@ function verifierScenario(modele){
     if (!z.scenes.find(sc=> sc.id === z.startSceneId)) dire('erreur', cz, nomZ, 'La scène de départ n\'existe pas.');
     z.scenes.forEach(sc=>{
       if (!sc.imageUrl && !sc.imageRef && !sc.imagePath) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Scène sans image de fond : elle s\'affichera vide.');
-      if ((sc.encounterChance || 0) > 0 && (sc.encounterMonsterIds || []).length) dire('info', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontres aléatoires (' + sc.encounterChance + ' %) : hors simulation.');
-      (sc.encounterMonsterIds || []).forEach(id=>{ if (!M.ficheParId[id]) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontre aléatoire sur un monstre supprimé.'); });
+      if (sceneADesRencontres(sc)) dire('info', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontres aléatoires (' + chanceTotaleRencontres(sc) + ' %) : hors simulation.');
+      (sc.encounterMonsterIds || []).concat(...(Array.isArray(sc.rencontres) ? sc.rencontres.map(r=> r.adversaires || []) : [])).forEach(id=>{ if (!M.ficheParId[id]) dire('erreur', cz, nomZ + ' · ' + ctrlNomScene(sc), 'Rencontre aléatoire sur un monstre supprimé.'); });
     });
     const pointsZ = ctrlPointsDeZone(z);
     if (!pointsZ.some(({ pt })=> pt.type === 'sortie_zone')) dire('erreur', cz, nomZ, 'Aucune porte « Sortie de zone » : le joueur ne pourra pas ressortir.');
