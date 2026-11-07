@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v630</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v631</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -34799,35 +34799,62 @@ async function ouvrirEditeurKit(){
   await monter(); dessinerSelection(); dessinerPanneau();
 }
 
-/* ---------- 📐 régler une coquille (ses six repères) ---------- */
+/* ---------- 📐 régler une coquille (ses six repères) ----------
+   v631 : on CHOISIT un repère (gros bouton), puis on TOUCHE l'image là où il va — plus de petit
+   point à attraper. Les flèches le poussent d'un cran ; un coin de sol ou de plafond peut
+   sortir de l'image (le sol continue sous le bord). */
 async function ouvrirReglageCoquille(id){
   const c = coquilleParId(id); if (!c) return;
   const url = await urlDeRef(c.imageRef); if (!url){ showToast('Image illisible'); return; }
   const geo = Object.assign(geoDefautCoquille(c.W, c.H), c.geo || {});
   let nx = c.nx || geoKit(c).nx, ny = c.ny || geoKit(c).ny;
+  let actif = 'A1';
+  const REPERES = [['A1', '↖ Mur du fond'], ['A2', '↘ Mur du fond'], ['F1', '◣ Sol'], ['F2', '◢ Sol'], ['C1', '◤ Plafond'], ['C2', '◥ Plafond']];
   const fond = document.createElement('div');
   fond.className = 'overlay show'; fond.style.cssText = 'z-index:4800; align-items:stretch; padding:0;';
   fond.innerHTML = `<div style="width:100%; height:100%; display:flex; flex-direction:column; background:var(--panel);">
     <div data-pano style="flex:none; background:#000;"></div>
-    <div style="flex:1; overflow-y:auto; padding:8px 12px max(12px, env(safe-area-inset-bottom));">
-      <p class="meta" style="margin:0 0 6px; font-size:11px;">Glisse les six repères : les deux coins du MUR DU FOND (en haut à gauche, en bas à droite), les deux coins du SOL en bas de l'image, les deux coins du PLAFOND en haut. La grille suit.</p>
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+    <div style="flex:1; min-height:0; overflow-y:auto; padding:6px 10px max(10px, env(safe-area-inset-bottom));">
+      <div data-aide style="margin:0 0 6px; font-size:12px; color:var(--muted); line-height:1.35;"></div>
+      <div data-reperes style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:4px;"></div>
+      <div style="display:flex; gap:4px; margin-top:6px; align-items:center;">
+        <span class="meta" style="flex:1; font-size:11px;">Pousser d'un cran :</span>
+        <button type="button" class="btn-secondary" data-dep="g" style="padding:4px 10px;">◀</button><button type="button" class="btn-secondary" data-dep="d" style="padding:4px 10px;">▶</button><button type="button" class="btn-secondary" data-dep="h" style="padding:4px 10px;">▲</button><button type="button" class="btn-secondary" data-dep="b" style="padding:4px 10px;">▼</button>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px;">
         <label class="meta" style="display:flex; align-items:center; gap:6px;">Largeur <input type="number" data-nx min="4" max="40" value="${nx}" class="field-input" style="width:64px;"> cases</label>
         <label class="meta" style="display:flex; align-items:center; gap:6px;">Profondeur <input type="number" data-ny min="2" max="40" value="${ny}" class="field-input" style="width:64px;"> cases</label>
-        <span class="meta" data-dims></span>
+        <span class="meta" data-dims style="font-size:11px;"></span>
       </div>
       <p class="meta" style="margin:4px 0 0; font-size:11px;">Une case = 40 cm. Une porte fait 3 cases de large : règle la largeur pour qu'elle ait la bonne taille dans la pièce.</p>
-      <div style="display:flex; gap:6px; margin-top:10px;"><button type="button" class="btn-primary" data-ok style="flex:1;">💾 Enregistrer</button><button type="button" class="btn-secondary" data-x>✕</button></div>
+      <div style="display:flex; gap:6px; margin-top:8px;"><button type="button" class="btn-primary" data-ok style="flex:1;">💾 Enregistrer</button><button type="button" class="btn-secondary" data-x>✕</button></div>
     </div>
   </div>`;
   document.body.appendChild(fond);
-  const pano = monterPanorama(fond.querySelector('[data-pano]'), url, 'min(150vw, 60vh)');
+  const pano = monterPanorama(fond.querySelector('[data-pano]'), url, 'min(150vw, 50vh)');
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 100 100'); svg.setAttribute('preserveAspectRatio', 'none');
-  svg.style.cssText = 'position:absolute; inset:0; width:100%; height:100%;';
+  svg.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; touch-action:none;';
   pano.calque.appendChild(svg);
-  const dims = fond.querySelector('[data-dims]');
+  const dims = fond.querySelector('[data-dims]'), aide = fond.querySelector('[data-aide]'), rep = fond.querySelector('[data-reperes]');
   const G = ()=> geoKit(Object.assign({}, c, { geo, nx, ny }));
+  const position = (nom)=> nom === 'A1' ? [geo.xA1, geo.yT] : nom === 'A2' ? [geo.xA2, geo.yA] : nom === 'F1' ? [geo.xF1, c.H] : nom === 'F2' ? [geo.xF2, c.H] : nom === 'C1' ? [geo.xC1, 0] : [geo.xC2, 0];
+  const poser = (nom, x, y)=>{
+    if (nom === 'A1'){ geo.xA1 = Math.min(x, geo.xA2 - 20); geo.yT = Math.min(y, geo.yA - 20); }
+    if (nom === 'A2'){ geo.xA2 = Math.max(x, geo.xA1 + 20); geo.yA = Math.max(y, geo.yT + 20); }
+    if (nom === 'F1') geo.xF1 = Math.min(x, geo.xA1 - 5);
+    if (nom === 'F2') geo.xF2 = Math.max(x, geo.xA2 + 5);
+    if (nom === 'C1') geo.xC1 = Math.min(x, geo.xA1 - 5);
+    if (nom === 'C2') geo.xC2 = Math.max(x, geo.xA2 + 5);
+  };
+  const dessinerReperes = ()=>{
+    rep.innerHTML = REPERES.map(([nom, l])=> `<button type="button" class="btn-secondary" data-rep="${nom}" style="padding:7px 4px; font-size:12px; ${nom === actif ? 'border-color:var(--accent); background:rgba(15,138,82,.12);' : ''}">${l}</button>`).join('');
+    rep.querySelectorAll('[data-rep]').forEach(b=> b.addEventListener('click', ()=>{ actif = b.dataset.rep; dessinerReperes(); dessiner(); }));
+    const dehors = (nom)=>{ const [x] = position(nom); return x < 0 || x > c.W; };
+    aide.textContent = (actif === 'A1' || actif === 'A2') ? 'Touche l\'image : le coin ' + (actif === 'A1' ? 'HAUT-GAUCHE' : 'BAS-DROIT') + ' du mur du fond va là.'
+      : (actif === 'F1' || actif === 'F2') ? 'Touche l\'image : là où le ' + (actif === 'F1' ? 'mur de gauche' : 'mur de droite') + ' touche le BAS de l\'image (le sol continue sous le bord).' + (dehors(actif) ? ' Ce coin est hors de l\'image : ◀ ▶ pour le pousser.' : '')
+      : 'Touche l\'image : là où le ' + (actif === 'C1' ? 'mur de gauche' : 'mur de droite') + ' touche le HAUT de l\'image.' + (dehors(actif) ? ' Ce coin est hors de l\'image : ◀ ▶ pour le pousser.' : '');
+  };
   const dessiner = ()=>{
     const g = G(); svg.innerHTML = '';
     const ns = 'http://www.w3.org/2000/svg';
@@ -34838,31 +34865,26 @@ async function ouvrirReglageCoquille(id){
     for (let i = 0; i <= g.nh; i++){ const y = g.yA - i * (g.yA - g.yT) / g.nh; ligne([g.xA1, y], [g.xA2, y], st); ligne([g.xL(g.yF), g.yF - i * g.cellH(g.yF)], [g.xA1, y], st); ligne([g.xR(g.yF), g.yF - i * g.cellH(g.yF)], [g.xA2, y], st); }
     ligne([g.xA1, g.yT], [g.xA2, g.yT], st2); ligne([g.xA1, g.yA], [g.xA2, g.yA], st2); ligne([g.xA1, g.yT], [g.xA1, g.yA], st2); ligne([g.xA2, g.yT], [g.xA2, g.yA], st2);
     ligne([g.xC1, g.yC], [g.xA1, g.yT], st2); ligne([g.xC2, g.yC], [g.xA2, g.yT], st2); ligne([g.xF1, g.yF], [g.xA1, g.yA], st2); ligne([g.xF2, g.yF], [g.xA2, g.yA], st2);
-    const reperes = [['A1', geo.xA1, geo.yT], ['A2', geo.xA2, geo.yA], ['F1', geo.xF1, g.H], ['F2', geo.xF2, g.H], ['C1', geo.xC1, 0], ['C2', geo.xC2, 0]];
-    reperes.forEach(([nom, x, y])=>{
-      const cx = Math.max(2, Math.min(98, x / g.W * 100)), cy = Math.max(2, Math.min(98, y / g.H * 100));
-      const e = document.createElementNS(ns, 'ellipse'); e.setAttribute('cx', cx); e.setAttribute('cy', cy); e.setAttribute('rx', 2.6); e.setAttribute('ry', 2.6 * g.W / g.H);
-      e.setAttribute('style', 'fill:#ffb400; stroke:#000; stroke-width:1; vector-effect:non-scaling-stroke; touch-action:none; cursor:grab;');
-      e.dataset.repere = nom; svg.appendChild(e);
+    REPERES.forEach(([nom])=>{
+      const [x, y] = position(nom);
+      const cx = Math.max(3, Math.min(97, x / g.W * 100)), cy = Math.max(3, Math.min(97, y / g.H * 100));
+      const e = document.createElementNS(ns, 'ellipse'); e.setAttribute('cx', cx); e.setAttribute('cy', cy); e.setAttribute('rx', nom === actif ? 4 : 2.4); e.setAttribute('ry', (nom === actif ? 4 : 2.4) * g.W / g.H);
+      e.setAttribute('style', 'fill:' + (nom === actif ? '#ff5a00' : '#ffb400') + '; stroke:#000; stroke-width:1; vector-effect:non-scaling-stroke; pointer-events:none;');
+      svg.appendChild(e);
     });
     dims.textContent = '→ ' + g.nx + ' × ' + g.ny + ' cases au sol, murs de ' + g.nh + ' cases';
   };
-  let glisse = null;
-  svg.addEventListener('pointerdown', (ev)=>{ const r = ev.target.closest('[data-repere]'); if (!r) return; glisse = r.dataset.repere; try { svg.setPointerCapture(ev.pointerId); } catch(e){} ev.preventDefault(); });
-  svg.addEventListener('pointermove', (ev)=>{
-    if (!glisse) return;
+  svg.addEventListener('pointerdown', (ev)=>{
     const r = pano.scene.getBoundingClientRect();
     const x = Math.round((ev.clientX - r.left) / r.width * c.W), y = Math.round((ev.clientY - r.top) / r.height * c.H);
-    if (glisse === 'A1'){ geo.xA1 = Math.min(x, geo.xA2 - 20); geo.yT = Math.min(y, geo.yA - 20); }
-    if (glisse === 'A2'){ geo.xA2 = Math.max(x, geo.xA1 + 20); geo.yA = Math.max(y, geo.yT + 20); }
-    if (glisse === 'F1') geo.xF1 = Math.min(x, geo.xA1 - 5);
-    if (glisse === 'F2') geo.xF2 = Math.max(x, geo.xA2 + 5);
-    if (glisse === 'C1') geo.xC1 = Math.min(x, geo.xA1 - 5);
-    if (glisse === 'C2') geo.xC2 = Math.max(x, geo.xA2 + 5);
-    dessiner();
+    poser(actif, x, y); dessiner(); dessinerReperes(); ev.preventDefault();
   });
-  const fin = ()=>{ glisse = null; };
-  svg.addEventListener('pointerup', fin); svg.addEventListener('pointercancel', fin);
+  fond.querySelectorAll('[data-dep]').forEach(b=> b.addEventListener('click', ()=>{
+    const [x, y] = position(actif), pas = Math.round(c.W / 100);
+    const d = b.dataset.dep;
+    poser(actif, x + (d === 'g' ? -pas : d === 'd' ? pas : 0), y + (d === 'h' ? -pas : d === 'b' ? pas : 0));
+    dessiner(); dessinerReperes();
+  }));
   fond.querySelector('[data-nx]').addEventListener('input', (e)=>{ nx = Math.max(4, Math.min(40, parseInt(e.target.value, 10) || nx)); dessiner(); });
   fond.querySelector('[data-ny]').addEventListener('input', (e)=>{ ny = Math.max(2, Math.min(40, parseInt(e.target.value, 10) || ny)); dessiner(); });
   fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
@@ -34870,7 +34892,7 @@ async function ouvrirReglageCoquille(id){
     c.geo = geo; c.nx = nx; c.ny = ny;
     try { await enregistrerKitBiblio(); showToast('Coquille réglée ✅'); fond.remove(); } catch(e){ showToast('Échec : ' + e.message); }
   });
-  dessiner();
+  dessinerReperes(); dessiner();
 }
 
 /* ---------- Édition → 🧩 Pièces en kit : la bibliothèque ---------- */
