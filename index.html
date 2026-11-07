@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v632</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v633</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -34416,6 +34416,14 @@ function emplacementKit(G, o, m){
   const poly = [[xB, hautB], [xFr, hautF], [xFr, basF], [xB, basB]];
   return { zone: o.zone, poly, quad: { xB, hautB, basB, xFr, hautF, basF } };
 }
+/* v633 : où l'image d'un meuble au sol / au plafond se dessine (largeur = la boîte de son empreinte) */
+function boiteImageKit(e, iw, ih){
+  const b = boiteDe(e.poly);
+  const wpx = Math.max(e.ancre.wpx, b.w), hpx = wpx * ih / iw;
+  const cx = e.zone === 'sol' ? (b.w > e.ancre.wpx ? b.cx : e.ancre.cx) : (b.w > e.ancre.wpx ? b.cx : e.ancre.cx);
+  const x = cx - wpx / 2, y = e.zone === 'sol' ? e.ancre.yBas - hpx : e.ancre.yHaut;
+  return { wpx, hpx, x, y, cx };
+}
 function boiteDe(poly){
   const xs = poly.map(p=> p[0]), ys = poly.map(p=> p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -34461,17 +34469,22 @@ function refVueKit(o, m){
 }
 /* une première place libre pour un meuble (en balayant), ou null */
 function premierePlaceLibre(G, objets, m){
+  /* v633 : la place libre la plus proche du MILIEU (de la pièce, ou du mur), pas le coin */
   const { w, d, h } = dimsKit({ zone:'sol' }, m);
   for (const zone of zonesPossibles(m)){
+    const cands = [];
     if (zone === 'sol' || zone === 'plafond'){
-      for (let r = 0; r + d <= G.ny; r++) for (let c = 0; c + w <= G.nx; c++){ const o = { zone, c, r }; if (placementValide(G, objets, o, m)) return o; }
+      const cc = (G.nx - w) / 2, rc = (G.ny - d) / 2;
+      for (let r = 0; r + d <= G.ny; r++) for (let c = 0; c + w <= G.nx; c++) cands.push({ o: { zone, c, r }, dist: Math.hypot(c - cc, (r - rc) * 1.4) });
     } else if (zone === 'fond'){
-      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h));
-      for (let c = 0; c + w <= G.nx; c++){ const o = { zone, c, k: k0 }; if (placementValide(G, objets, o, m)) return o; }
+      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h)), cc = (G.nx - w) / 2;
+      for (let c = 0; c + w <= G.nx; c++) cands.push({ o: { zone, c, k: k0 }, dist: Math.abs(c - cc) });
     } else {
-      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h));
-      for (let r = 0; r + w <= G.ny; r++){ const o = { zone, r, k: k0 }; if (placementValide(G, objets, o, m)) return o; }
+      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h)), rc = (G.ny - w) / 2;
+      for (let r = 0; r + w <= G.ny; r++) cands.push({ o: { zone, r, k: k0 }, dist: Math.abs(r - rc) });
     }
+    cands.sort((a, b)=> a.dist - b.dist);
+    for (const { o } of cands) if (placementValide(G, objets, o, m)) return o;
   }
   return null;
 }
@@ -34512,7 +34525,7 @@ function dessinerDansQuad(ctx, img, q){
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   for (let i = 0; i < n; i++){
     const x = x0 + i, u = n > 1 ? i / (n - 1) : 0;
-    const estB = q.xB < q.xFr ? u : 1 - u;   // 0 côté « front », 1 côté « fond »
+    const estB = q.xB < q.xFr ? 1 - u : u;   // 0 côté « devant » (le grand bord), 1 côté « fond » — v633 : était inversé
     const haut = q.hautF + (q.hautB - q.hautF) * estB, bas = q.basF + (q.basB - q.basF) * estB;
     const sx = Math.min(iw - 1, Math.floor(u * iw));   // l'image est vue de face : de gauche à droite comme à l'écran
     ctx.drawImage(img, sx, 0, 1, ih, x, haut, 1.2, Math.max(1, bas - haut));
@@ -34548,12 +34561,12 @@ async function composerKit(kit, opts){
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
   for (const { o, m, img, e } of avecGeo){
+    if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth, ih: img.naturalHeight };
     if (opts.sauf && opts.sauf === o.id) continue;
     const iw = img.naturalWidth, ih = img.naturalHeight;
     ctx.save();
     if (e.zone === 'sol' || e.zone === 'plafond'){
-      const wpx = e.ancre.wpx, hpx = wpx * ih / iw;
-      const x = e.ancre.cx - wpx / 2, y = e.zone === 'sol' ? e.ancre.yBas - hpx : e.ancre.yHaut;
+      const { wpx, hpx, x, y } = boiteImageKit(e, iw, ih);
       if (e.zone === 'sol'){
         ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(e.ancre.cx, e.ancre.yBas - wpx * 0.03, wpx * 0.48, wpx * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       }
@@ -34640,7 +34653,18 @@ async function ouvrirEditeurKit(){
   const aide = fond.querySelector('[data-aide]'), panneau = fond.querySelector('[data-panneau]'), selBar = fond.querySelector('[data-selection]');
   const panoWrap = fond.querySelector('[data-pano]');
   let pano = null, svg = null;
-  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
+  const tailles = {};
+  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true, tailles }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
+  /* v633 : la zone qu'on attrape = l'image dessinée du meuble (un gros rectangle), pas sa petite empreinte au sol */
+  const polyPrise = (x, e)=>{
+    if (e.zone === 'sol' || e.zone === 'plafond'){
+      const t = tailles[x.id]; if (!t) return e.poly;
+      const b = boiteImageKit(e, t.iw, t.ih), p = boiteDe(e.poly);
+      const x0 = Math.min(b.x, p.x0), x1 = Math.max(b.x + b.wpx, p.x1), y0 = Math.min(b.y, p.y0), y1 = Math.max(b.y + b.hpx, p.y1);
+      return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    }
+    return e.poly;
+  };
   const objet = (id)=> kit.objets.find(o=> o.id === id);
   const meubleDe = (o)=> meubleParId(o.meubleId) || o.cadre || null;
   const pctPoly = (poly)=> poly.map(p=> (p[0] / G.W * 100).toFixed(2) + ',' + (p[1] / G.H * 100).toFixed(2)).join(' ');
@@ -34669,11 +34693,14 @@ async function ouvrirEditeurKit(){
         for (let k = 0; k <= G.nh; k++) ligne([xl(G.yF), G.yF - k * G.cellH(G.yF)], [xl(G.yA), G.yA - k * G.cellH(G.yA)], st);
       }
     }
-    kit.objets.forEach(x=>{
-      const m = meubleDe(x); if (!m) return;
-      const e = emplacementKit(G, x, m);
+    /* du fond vers l'avant, le choisi en dernier : ce qui est devant se prend en premier */
+    const ordreZ = (x)=> x.zone === 'fond' ? 0 : (x.zone === 'g' || x.zone === 'd') ? 1 : x.zone === 'plafond' ? 2 : 3;
+    const tries = kit.objets.map(x=>{ const m = meubleDe(x); return m ? { x, m, e: emplacementKit(G, x, m) } : null; }).filter(Boolean)
+      .sort((a, b)=> (a.x.id === sel) - (b.x.id === sel) || ordreZ(a.x) - ordreZ(b.x) || (a.e.ancre && b.e.ancre ? (a.e.ancre.yBas || 0) - (b.e.ancre.yBas || 0) : 0));
+    tries.forEach(({ x, e })=>{
       const estSel = x.id === sel;
-      const p = poly(pctPoly(e.poly), estSel ? 'fill:rgba(95,242,255,.18); stroke:#5ff2ff; stroke-width:2; vector-effect:non-scaling-stroke; cursor:grab;' : 'fill:rgba(255,255,255,0.001); stroke:none; cursor:grab;');
+      if (estSel) poly(pctPoly(e.poly), 'fill:rgba(95,242,255,.18); stroke:#5ff2ff; stroke-width:1.5; vector-effect:non-scaling-stroke; pointer-events:none;');
+      const p = poly(pctPoly(polyPrise(x, e)), estSel ? 'fill:rgba(95,242,255,.08); stroke:#5ff2ff; stroke-width:2.5; stroke-dasharray:6 4; vector-effect:non-scaling-stroke; cursor:grab;' : 'fill:rgba(255,255,255,0.001); stroke:none; cursor:grab;');
       p.dataset.objet = x.id; p.style.touchAction = 'none';
     });
     if (survol) poly(pctPoly(survol.poly), survol.ok ? 'fill:rgba(60,220,120,.35); stroke:#3cdc78; stroke-width:2; vector-effect:non-scaling-stroke; pointer-events:none;' : 'fill:rgba(220,60,60,.35); stroke:#dc3c3c; stroke-width:2; vector-effect:non-scaling-stroke; pointer-events:none;');
@@ -34692,14 +34719,27 @@ async function ouvrirEditeurKit(){
   /* ----- glisser un objet ----- */
   let glisse = null;
   const versImage = (ev)=>{ const r = pano.scene.getBoundingClientRect(); return { x: (ev.clientX - r.left) / r.width * G.W, y: (ev.clientY - r.top) / r.height * G.H }; };
+  /* v633 : ramener un point dans la zone (pour qu'un glissement ait toujours une cible) */
+  const dansZone = (zone, p)=>{
+    if (zone === 'sol'){ const y = Math.max(G.yA + 1, Math.min(G.yF - 1, p.y)); return { x: Math.max(G.xL(y) + 1, Math.min(G.xR(y) - 1, p.x)), y }; }
+    if (zone === 'plafond'){ const y = Math.max(G.yC + 1, Math.min(G.yT - 1, p.y)); return { x: Math.max(G.xCL(y) + 1, Math.min(G.xCR(y) - 1, p.x)), y }; }
+    if (zone === 'fond') return { x: Math.max(G.xA1 + 1, Math.min(G.xA2 - 1, p.x)), y: Math.max(G.yT + 1, Math.min(G.yA - 1, p.y)) };
+    const xF = zone === 'g' ? G.xF1 : G.xF2, xA = zone === 'g' ? G.xA1 : G.xA2;
+    const x = zone === 'g' ? Math.max(Math.min(xF, xA) + 1, Math.min(xA - 1, p.x)) : Math.max(xA + 1, Math.min(Math.max(xF, xA) - 1, p.x));
+    const yFloor = G.yF + (x - xF) * (G.yA - G.yF) / (xA - xF);
+    return { x, y: Math.max(yFloor - G.nh * G.cellH(yFloor) + 1, Math.min(yFloor - 1, p.y)) };
+  };
   const cibleSous = (o, m, p)=>{
     const { w, d, h } = dimsKit(o, m);
-    for (const zone of zonesPossibles(m)){
-      const cs = caseSous(G, p.x, p.y, zone); if (!cs) continue;
+    const zones = zonesPossibles(m);
+    for (const zone of zones.concat(zones.includes(o.zone) ? [o.zone + '!'] : [zones[0] + '!'])){
+      const force = zone.endsWith('!'), z = force ? zone.slice(0, -1) : zone;
+      const q = force ? dansZone(z, p) : p;
+      const cs = caseSous(G, q.x, q.y, z); if (!cs) continue;
       let cand;
-      if (zone === 'sol' || zone === 'plafond') cand = { zone, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), r: Math.max(0, Math.min(G.ny - d, cs.r - Math.floor(d / 2))) };
-      else if (zone === 'fond') cand = { zone, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
-      else cand = { zone, r: Math.max(0, Math.min(G.ny - w, cs.r - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
+      if (z === 'sol' || z === 'plafond') cand = { zone: z, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), r: Math.max(0, Math.min(G.ny - d, cs.r - Math.floor(d / 2))) };
+      else if (z === 'fond') cand = { zone: z, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
+      else cand = { zone: z, r: Math.max(0, Math.min(G.ny - w, cs.r - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
       return cand;
     }
     return null;
@@ -34709,7 +34749,8 @@ async function ouvrirEditeurKit(){
       const cible = ev.target.closest('[data-objet]'); if (!cible) return;
       const o = objet(cible.dataset.objet); if (!o) return;
       sel = o.id; dessinerCalque(); dessinerSelection();
-      glisse = { o, m: meubleDe(o), x0: ev.clientX, y0: ev.clientY, bouge: false, cand: null };
+      const m = meubleDe(o), cen = boiteDe(emplacementKit(G, o, m).poly), p0 = versImage(ev);
+      glisse = { o, m, x0: ev.clientX, y0: ev.clientY, dx: cen.cx - p0.x, dy: cen.cy - p0.y, bouge: false, cand: null };
       try { svg.setPointerCapture(ev.pointerId); } catch(e){}
       ev.preventDefault();
     });
@@ -34717,7 +34758,7 @@ async function ouvrirEditeurKit(){
       if (!glisse) return;
       if (!glisse.bouge && Math.hypot(ev.clientX - glisse.x0, ev.clientY - glisse.y0) < 6) return;
       glisse.bouge = true;
-      const p = versImage(ev);
+      const p0 = versImage(ev), p = { x: p0.x + glisse.dx, y: p0.y + glisse.dy };   // v633 : on déplace le centre du meuble, pas le doigt
       const cand = cibleSous(glisse.o, glisse.m, p);
       glisse.cand = cand;
       if (cand){
@@ -34734,7 +34775,7 @@ async function ouvrirEditeurKit(){
         delete g.o.c; delete g.o.r; delete g.o.k;
         Object.assign(g.o, g.cand);
         await redessinerImage();
-      } else if (g.bouge && g.cand && !g.ok) showToast('Pas de place ici');
+      } else if (g.bouge && g.cand && !g.ok) showToast('Pas de place ici : il reste où il était');
       dessinerCalque(); dessinerSelection();
     };
     svg.addEventListener('pointerup', fin); svg.addEventListener('pointercancel', fin);
@@ -35095,13 +35136,13 @@ const PROMPT_KIT_CHAMBRE = KIT_TETE_PLANCHE('SIX') + `
 
 ` + KIT_CHARTE_MEUBLES;
 const PROMPT_KIT_SALON3V = KIT_TETE_PLANCHE('SIX') + `
-Ce sont les MÊMES meubles que sur la planche du salon (même forme, mêmes couleurs, même échelle), vus sous d'autres angles :
-1. LE CANAPÉ deux places VU DE DOS : on voit son dossier, de face, rien d'autre.
-2. LE CANAPÉ VU DE PROFIL, son dossier à DROITE de l'image, son assise tournée vers la gauche.
-3. LA TABLE BASSE rectangulaire VUE DE PROFIL (son petit côté face à nous), légèrement d'en haut.
-4. UN FAUTEUIL assorti au canapé, une place, VU DE FACE.
-5. LE MÊME FAUTEUIL VU DE DOS.
-6. LE MÊME FAUTEUIL VU DE PROFIL, dossier à DROITE de l'image, assise tournée vers la gauche.
+Ce sont les MÊMES meubles que sur la planche du salon (même forme, mêmes couleurs, même échelle), mais TOURNÉS. Aucun n'est une planche à plat : chacun est vu de TROIS-QUARTS, avec de la PROFONDEUR, comme un vrai meuble posé contre le mur de DROITE d'une pièce et regardé depuis le milieu de la pièce.
+1. LE CANAPÉ deux places TOURNÉ VERS LA GAUCHE : son dossier est à DROITE, contre le mur invisible ; son assise regarde vers la gauche ; sa longueur FUIT VERS LE FOND (le bout le plus proche de nous est en bas à gauche, le bout le plus loin en haut à droite, plus petit). On voit l'assise, les coussins et un accoudoir de biais.
+2. LE MÊME CANAPÉ VU DE DOS, de trois-quarts : on voit son dossier qui fuit vers le fond, un peu de l'assise par-dessus.
+3. LA TABLE BASSE rectangulaire TOURNÉE : son petit côté vers nous, sa longueur fuit vers le fond, vue légèrement d'en haut.
+4. UN FAUTEUIL une place assorti au canapé, VU DE FACE, légèrement d'en haut.
+5. LE MÊME FAUTEUIL TOURNÉ VERS LA GAUCHE, de trois-quarts : dossier à droite, assise vers la gauche, de la profondeur.
+6. LE MÊME FAUTEUIL VU DE DOS, de trois-quarts.
 
 ` + KIT_CHARTE_MEUBLES;
 const KIT_CHARTE_COQUILLE = `COULEUR D'ACCENT : ocre.
