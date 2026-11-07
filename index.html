@@ -376,6 +376,7 @@
     object-fit:cover; object-position:center;
   }
   #sceneBigImageOverlay img.room-neutre{ display:none; }   /* v627 : la chambre neutre vit dans #chambreNeutreVue */
+  #sceneBigImageOverlay.chambre-neutre{ padding:0; background:#000; }   /* v628 : bord à bord, comme une zone */
   #roomRetour{ display:none; position:fixed; left:14px; bottom:max(14px, env(safe-area-inset-bottom)); width:60px; height:60px; z-index:3; padding:0; border:none; background:none; }
   #roomRetour img{ width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)); }
   #sceneBigImageOverlay .sheet-x{
@@ -1426,7 +1427,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v627</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v628</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8223,6 +8224,13 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
   /* v502 : une action à bord (renvoyer, déplacer, fabrication, équipement) n'a de sens que si
      le personnage est effectivement recruté. */
   if (ch.action && typeof recrueDuPersonnage === 'function' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId && !recrueDuPersonnage(activeCreature)) return false;
+  /* v628 : l'équipe ne propose que ce qui change quelque chose ; décorer, seulement un robot en chambre */
+  if ((ch.action === 'equipeOui' || ch.action === 'equipeNon' || ch.action === 'decorer') && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){
+    const r = recrueDuPersonnage(activeCreature);
+    if (r && ch.action === 'equipeOui' && activeTeamIds.includes(r.id)) return false;
+    if (r && ch.action === 'equipeNon' && !activeTeamIds.includes(r.id)) return false;
+    if (ch.action === 'decorer' && !(r && estRobotEnChambre(r) && chambreNeutrePrete())) return false;
+  }
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
     const st = etatQuete(quetes, ch.questGive.questId);
@@ -8437,9 +8445,21 @@ const ACTIONS_A_BORD = {
   deplacer:    { nom:'🚪 Le changer de porte (déplacer sa pièce)' },
   fabrication: { nom:'🔧 Ouvrir sa fabrication (recettes)' },
   equipement:  { nom:'🎒 Ouvrir son équipement' },
+  /* v628 : les gestes de la chambre d'un robot */
+  stats:       { nom:'📊 Montrer ses stats' },
+  attaques:    { nom:'⚔️ Montrer ses attaques' },
+  decorer:     { nom:'🎨 Décorer sa chambre' },
+  equipeOui:   { nom:'⭐ Le prendre dans l\'équipe (caché s\'il y est)' },
+  equipeNon:   { nom:'👋 Le sortir de l\'équipe (caché s\'il n\'y est pas)' },
 };
 function recrueDuPersonnage(creature){
   if (!creature) return null;
+  /* v628 : la fiche de dialogue d'un modèle parle pour le robot de la chambre ouverte */
+  if (creature.chambreModeleId){
+    const r0 = (typeof roomSheetRecruitId !== 'undefined' && roomSheetRecruitId) ? currentRecruitById(roomSheetRecruitId) : null;
+    if (r0 && r0.robotModeleId === creature.chambreModeleId) return r0;
+    return (recruits || []).find(r=> r && r.robotModeleId === creature.chambreModeleId) || null;
+  }
   const g = groupeDeFiche(creature);
   return (recruits || []).find(r=>{
     if (!r || !r.sourceCreatureId) return false;
@@ -8458,6 +8478,19 @@ function executerActionABord(action, creature){
        dans le couloir à la fermeture du dialogue (une porte qui vient de se refermer). */
     executerRenvoi(r, null);
     if (dansAnnexe) apresFermetureDialogue = ()=> revenirAuVaisseauDepuisAnnexe();
+    /* v628 : renvoyé depuis sa chambre → on en sort à la fermeture du dialogue */
+    if (typeof roomSheetRecruitId !== 'undefined' && roomSheetRecruitId === r.id) apresFermetureDialogue = ()=>{ closeSceneBigImage(); if (!roomOuverteDepuisPorte) openQuarters(); };
+    return;
+  }
+  if (action === 'stats' || action === 'attaques'){
+    document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+    openRecruitSheet(r.id, action === 'stats' ? 'profil' : 'attaques');
+    return;
+  }
+  if (action === 'decorer'){ ouvrirDecoration(r); return; }
+  if (action === 'equipeOui' || action === 'equipeNon'){
+    if (activeTeamIds.includes(r.id) !== (action === 'equipeNon')) return;   // déjà comme il faut
+    toggleRecruitTeam(r);
     return;
   }
   if (action === 'deplacer'){
@@ -11437,11 +11470,13 @@ const CHARTE_BATIMENT = `STYLE MASCOTTO (à respecter à la lettre). Science-fic
 /* v616 : la charte ne garde que l'AIR DE FAMILLE. Les yeux, les mains, les oreilles, la tête,
    ce qui le fait flotter : tout ça appartient à chaque robot (son apparence). Avant, la charte
    imposait les mêmes yeux et les mêmes mains à tous, et ils se ressemblaient tous. */
-const CHARTE_ROBOT = `STYLE DE LA SÉRIE (le seul point commun entre tous les robots) : dessin de jeu vidéo, contours noirs épais, aplats de couleurs nets, ombrage cel en deux tons aux bords tranchés, aucun rendu 3D. Des lumières qui brillent (yeux, cœur, réacteurs, liserés).
+const CHARTE_ROBOT = `STYLE DE LA SÉRIE (le seul point commun entre tous les robots) : dessin de jeu vidéo, contours noirs épais, aplats de couleurs nets, ombrage cel en deux tons aux bords tranchés, aucun rendu 3D. Des lumières qui brillent (yeux, cœur, liserés).
 Proportions de mascotte : une GROSSE tête, presque aussi grande que le corps, posée sur un cou court et bien séparée du corps ; un corps rond qui s'affine vers le bas. PAS DE JAMBES : il flotte.
 Construction symétrique gauche-droite. Aucune lettre, aucun chiffre, aucun logo.
 C'est un compagnon de jeu de monstres : mignon, expressif, plein de caractère, jamais un robot industriel générique.
-TOUT LE RESTE EST PROPRE À CE ROBOT ET SUIT SON APPARENCE À LA LETTRE : la forme de la tête, le visage et les yeux, les oreilles, les bras et les mains, ce qui le fait flotter, la matière, les couleurs. N'ajoute PAS d'yeux, de mains ou d'oreillettes « standard » : ce robot doit avoir un style bien à lui, reconnaissable à sa seule silhouette.`;
+TOUT LE RESTE EST PROPRE À CE ROBOT ET SUIT SON APPARENCE À LA LETTRE : la forme de la tête, le visage et les yeux, les oreilles, les bras et les mains, ce qui le fait flotter, la matière, les couleurs. N'ajoute PAS d'yeux, de mains ou d'oreillettes « standard » : ce robot doit avoir un style bien à lui, reconnaissable à sa seule silhouette.
+CE QUI LE FAIT FLOTTER : exactement et seulement ce que dit son apparence (des pièces qui tournent, une brume, une hélice, un socle…). Il n'a PAS de réacteur ni de tuyère, PAS de flammes sous le corps, sauf si son apparence le demande en toutes lettres.
+SES YEUX : de la couleur et de la forme écrites dans son apparence, et d'aucune autre. Jamais les yeux d'une image de référence.`;
 const STYLE_COMBAT_VICE = {
   avarice:'il accumule sur plusieurs tours puis relâche tout d\'un coup', envie:'il vole à l\'adversaire et retourne ses forces contre lui',
   orgueil:'il frappe très fort', colere:'ses attaques le blessent aussi lui-même', gourmandise:'il soigne et il draine',
@@ -11880,7 +11915,7 @@ Chaque élément décrit dans l'apparence est à la place exacte indiquée ; un 
 
 ${CHARTE_ROBOT}${refs.length ? `
 
-${refs.length > 1 ? 'Les ' + refs.length + ' images jointes (' + refs.join(', ') + ') sont d\'autres robots' : 'L\'image jointe (' + refs[0] + ') est un autre robot'} de la même série : reprends-en UNIQUEMENT le trait de dessin, l'ombrage et la grosseur de la tête par rapport au corps. Tout le reste doit être DIFFÉRENT : ni leurs yeux, ni leurs mains, ni leurs oreilles, ni leurs formes, ni leurs couleurs, ni leurs motifs, ni leur matière.` : ''}
+${refs.length > 1 ? 'Les ' + refs.length + ' images jointes (' + refs.join(', ') + ') sont d\'autres robots' : 'L\'image jointe (' + refs[0] + ') est un autre robot'} de la même série : reprends-en UNIQUEMENT le trait de dessin, l'ombrage et la grosseur de la tête par rapport au corps. Tout le reste doit être DIFFÉRENT : ni leurs yeux (ni leur forme, ni leur couleur), ni leurs mains, ni leurs oreilles, ni ce qui les fait flotter (surtout pas leurs réacteurs ou leurs flammes), ni leurs formes, ni leurs couleurs, ni leurs motifs, ni leur matière.` : ''}
 
 COULEURS : uniquement celles de l'apparence ci-dessus. Les bandes des bras, les oreillettes, les liserés et les accents prennent les couleurs de CE robot, rien d'une image de référence.
 
@@ -11910,7 +11945,7 @@ FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun décor, auc
 function promptPlancheCombat(m, nomsRefs, nomRefDos){
   const refs = nomsRefs || [];
   const lignesRefs = [];
-  if (refs.length) lignesRefs.push((refs.length > 1 ? 'Les ' + refs.length + ' premières images jointes (' + refs.join(', ') + ') sont d\'autres robots' : 'La première image jointe (' + refs[0] + ') est un autre robot') + ' de la même série : reprends-en UNIQUEMENT le trait de dessin, l\'ombrage et la grosseur de la tête par rapport au corps. Tout le reste doit être DIFFÉRENT : ni leurs yeux, ni leurs mains, ni leurs oreilles, ni leurs formes, ni leurs couleurs, ni leurs motifs, ni leur matière.');
+  if (refs.length) lignesRefs.push((refs.length > 1 ? 'Les ' + refs.length + ' premières images jointes (' + refs.join(', ') + ') sont d\'autres robots' : 'La première image jointe (' + refs[0] + ') est un autre robot') + ' de la même série : reprends-en UNIQUEMENT le trait de dessin, l\'ombrage et la grosseur de la tête par rapport au corps. Tout le reste doit être DIFFÉRENT : ni leurs yeux (ni leur forme, ni leur couleur), ni leurs mains, ni leurs oreilles, ni ce qui les fait flotter (surtout pas leurs réacteurs ou leurs flammes), ni leurs formes, ni leurs couleurs, ni leurs motifs, ni leur matière.');
   if (nomRefDos) lignesRefs.push('La DERNIÈRE image jointe (' + nomRefDos + ' vu de dos) montre seulement comment on dessine un robot de la série VU DE DOS : la position des bras et de la tête. N\'en reprends rien d\'autre.');
   return `Dessine UNE SEULE IMAGE, une planche sur fond TRANSPARENT (PNG), avec DEUX dessins du MÊME robot de combat côte à côte :
 - À GAUCHE : le robot VU DE FACE, en pose de combat, tourné vers nous comme vers un adversaire, le regard planté sur nous.
@@ -14281,7 +14316,8 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      jamais la bouche — lui réclamer un buste bloquait l'enregistrement au nom d'un écran qu'il
      ne verra jamais, et obligeait à recopier l'image d'un autre personnage pour s'en sortir. */
   const aUnDialogue = (dialogueSteps || []).some(st=> (st.text && st.text.trim()) || (st.choices || []).length);
-  if (!enTravaux && interactionType !== 'zone' && aUnDialogue && !editBustImageDataUrl && !editBustImagePath && !editBustImageRef){
+  const ficheDeChambre = !!(editingId && ficheParId(editingId) && ficheParId(editingId).chambreModeleId);   // v628 : le buste vient du modèle
+  if (!enTravaux && interactionType !== 'zone' && aUnDialogue && !ficheDeChambre && !editBustImageDataUrl && !editBustImagePath && !editBustImageRef){
     showToast('Il manque l\'image de buste (💬) — c\'est elle qui s\'affiche pendant les dialogues');
     return;
   }
@@ -14352,7 +14388,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      tâches « à finir » apportées par l'import disparaîtraient au premier enregistrement. */
   const ficheAvant = editingId ? ficheParId(editingId) : null;
   if (ficheAvant){
-    ['apparence','aFaire','emplacementPrevu','promptCarte','pose','emplacementPointId'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
+    ['apparence','aFaire','emplacementPrevu','promptCarte','pose','emplacementPointId','chambreModeleId'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
   }
   if (!(await controlerChevauchements(data, enCreation ? null : editingId))) return;
   const op = enCreation ? creatureCol.add({ ...data, createdAt: Date.now() }) : creatureCol.doc(editingId).set(data);
@@ -18878,8 +18914,6 @@ function lireFormRobotModele(){
   f.pirZone = num('rmPirZone', 8, 50, PIRATAGE_DEFAUT.zone);
   f.pirFuite = num('rmPirFuite', 0, 100, PIRATAGE_DEFAUT.fuite);
   f.phraseNaissance = (document.getElementById('rmPhraseNaissance') || {}).value || '';   // v518
-  f.repliques = {};   // v624
-  CLES_REPLIQUES.forEach(({ cle })=>{ const el = document.getElementById('rmRep_' + cle); const t = el ? el.value.trim() : ''; if (t) f.repliques[cle] = t; });
   f.apparence = ((document.getElementById('rmApparence') || {}).value || '').trim();   // v612
   f.fab = { processeur: num('rmFabProcesseur', 0, 20, FABRICATION_DEFAUT.processeur), chassis: num('rmFabChassis', 0, 20, FABRICATION_DEFAUT.chassis),
     articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
@@ -18941,10 +18975,7 @@ function renderRobotModeleForm(){
       <input type="text" id="rmPhraseNaissance" class="field-input" maxlength="120" value="${htmlEsc(f.phraseNaissance || '')}" placeholder="Bonjour, capitaine.">
     </label>
     <p class="meta" style="margin:4px 0 0; font-size:11px;">La phrase de la scène de naissance, quand il sort de l'atelier. Vide : une phrase passe-partout.</p>
-    <details style="margin-top:8px;"><summary class="meta" style="cursor:pointer;">💬 Ses répliques dans sa chambre (${Object.keys(f.repliques || {}).length}/${CLES_REPLIQUES.length})</summary>
-      <p class="meta" style="margin:4px 0; font-size:11px;">Ce qu'il dit quand on vient le voir : sa façon de parler à lui. Vide : une phrase passe-partout.</p>
-      ${CLES_REPLIQUES.map(r=> `<label class="meta" style="display:block; margin-top:4px;">${htmlEsc(r.nom)}<input type="text" id="rmRep_${r.cle}" class="field-input" maxlength="240" value="${htmlEsc(typeof (f.repliques || {})[r.cle] === 'string' ? f.repliques[r.cle] : ((f.repliques || {})[r.cle] || []).join(' / '))}" placeholder="${htmlEsc(r.ex)}"></label>`).join('')}
-    </details>
+    ${editingRobotModeleId ? '<button type="button" class="btn-secondary" id="rmDialogueBtn" style="width:100%; margin-top:8px;">💬 Son dialogue dans sa chambre (fiche PNJ)</button><p class="meta" style="margin:4px 0 0; font-size:11px;">Ce qu\'il dit quand on vient le voir, écrit dans l\'éditeur des PNJ. Les réponses peuvent montrer ses stats, décorer, gérer l\'équipe ou le renvoyer (🚀 Action à bord).</p>' : ''}
     <label class="meta" style="display:block; margin-top:8px;">🎨 Apparence (pour dessiner ses images)
       <textarea id="rmApparence" class="field-input" rows="5" placeholder="Forme, dessus de la tête, ventre, dos, dessous, matière, couleurs…">${htmlEsc(f.apparence || '')}</textarea>
     </label>
@@ -18952,6 +18983,10 @@ function renderRobotModeleForm(){
     ${htmlImageModele('face', 'Combat face', 'Le robot vu de face : c\'est lui qu\'on affronte, et son portrait dans la barre des tours.', f)}
     ${htmlImageModele('dos', 'Combat dos', 'Le robot vu de dos, quand il se bat à tes côtés. Sans image de dos, la face sert des deux côtés.', f)}
     ${htmlApercuCombatModele(f)}
+    ${editingRobotModeleId ? `<div class="field-label">🚶 Ses 5 vues de déplacement</div>
+    <p class="meta" style="margin:0 0 6px; font-size:11px;">Sur la carte quand il sert d'avatar, et dans sa chambre (face, trois-quarts, profil). Touche une vue pour la remplacer.</p>
+    <div id="rmVuesDeplacement" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:4px;">${[['face','Face'],['av34','3/4 avant'],['profil','Profil'],['ar34','3/4 arrière'],['dos','Dos']].map(([k, n])=> `<button type="button" data-rmvue="${k}" style="padding:2px; border-radius:8px; border:1px solid rgba(128,128,128,.35); background:rgba(128,128,128,.08); display:flex; flex-direction:column; align-items:center; gap:2px;"><img data-rmvue-img="${k}" style="width:100%; aspect-ratio:1; object-fit:contain;" alt=""><span class="meta" style="font-size:9px;">${n}</span></button>`).join('')}</div>
+    <button type="button" class="btn-secondary" id="rmPlancheDeplBtn" style="width:100%; margin-top:6px;">📷 Poser une planche des 5 vues</button>` : ''}
     ${htmlImageModele('chambre', '🛏️ Chambre du modèle (v475)', 'Le décor de la chambre qu\'occupe ce robot dans les quartiers. Tous les exemplaires de ce modèle la partagent. Un robot FABRIQUÉ ne vient d\'aucune fiche de PNJ : sans cette image, sa porte reste fermée.', f)}
     <div class="field-label">🎯 Portrait de la barre des tours</div>
     <button type="button" class="btn-secondary" id="rmPortraitCropBtn" style="width:100%;">🎯 Régler le cadrage visage + buste</button>
@@ -19082,7 +19117,7 @@ function cablerFormRobotModele(){
       stats: f.stats ? Object.assign({}, f.stats) : (editingRobotModeleId ? firebase.firestore.FieldValue.delete() : null),   // v526
 
       ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
-      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', repliques: f.repliques || {}, ...images, updatedAt: Date.now() };
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -21112,6 +21147,53 @@ function renderApercuCombatModele(){
   v('rmOffsetDosVal', String(f.offsetDos || 0));
   ['rmEchelle','rmOffsetFace','rmOffsetDos'].forEach((id, i)=>{ const el = document.getElementById(id); const val = [f.imageScale == null ? 100 : f.imageScale, f.offsetFace || 0, f.offsetDos || 0][i]; if (el && +el.value !== val) el.value = val; });
 }
+/* v628 — dans l'éditeur du modèle : ses cinq vues de déplacement, et sa fiche de dialogue */
+function cablerVuesEtDialogueModele(){
+  const id = editingRobotModeleId;
+  const d = document.getElementById('rmDialogueBtn');
+  if (d) d.addEventListener('click', ()=>{ const m = robotsModeles.find(x=> x.id === id); ouvrirFicheDialogueDuModele(m); });
+  const grille = document.getElementById('rmVuesDeplacement');
+  if (!grille || !id) return;
+  const m = ()=> robotsModeles.find(x=> x.id === id) || {};
+  const afficher = ()=> grille.querySelectorAll('[data-rmvue-img]').forEach(im=>{
+    const ref = (m().vuesDeplacement || {})[im.dataset.rmvueImg];
+    if (!ref){ im.removeAttribute('src'); return; }
+    internalizeSceneImage(ref).then(u=>{ if (u) im.src = u; }).catch(()=>{});
+  });
+  const enregistrer = async (vues)=>{
+    await robotsModelesCol.doc(id).set({ vuesDeplacement: vues, updatedAt: Date.now() }, { merge:true });
+    const mm = robotsModeles.find(x=> x.id === id); if (mm) mm.vuesDeplacement = vues;
+    if (rmBrouillon) rmBrouillon.vuesDeplacement = vues;
+    delete avatarModeleCache[id];
+    afficher();
+  };
+  grille.querySelectorAll('[data-rmvue]').forEach(b=> b.addEventListener('click', async ()=>{
+    if (!robotsModelesCol) return;
+    const img = await choisirFichierImage(); if (!img) return;
+    const cadre = cadrerVuesDeplacement([img], 320)[0];
+    const ref = await externalizeSceneImage(encoderImageSousLimite(cadre, 320, true));
+    if (!ref){ showToast('Échec : image non enregistrée'); return; }
+    await enregistrer(Object.assign({}, m().vuesDeplacement || {}, { [b.dataset.rmvue]: ref }));
+    showToast('Vue remplacée ✅');
+  }));
+  const pl = document.getElementById('rmPlancheDeplBtn');
+  if (pl) pl.addEventListener('click', async ()=>{
+    if (!robotsModelesCol) return;
+    const img = await choisirFichierImage(); if (!img) return;
+    const r = decouperPlanche(img, 5);
+    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, vues bien séparées, fond transparent.'); return; }
+    const cadres = cadrerVuesDeplacement(r.vues, 320), vues = {};
+    const cles = ['face','av34','profil','ar34','dos'];
+    for (let i = 0; i < 5; i++){
+      const ref = await externalizeSceneImage(encoderImageSousLimite(cadres[i], 320, true));
+      if (!ref){ showToast('Échec : image non enregistrée'); return; }
+      vues[cles[i]] = ref;
+    }
+    await enregistrer(vues);
+    showToast('Les 5 vues de déplacement sont posées ✅');
+  });
+  afficher();
+}
 function cablerApercuCombatModele(){
   const f = rmBrouillon; if (!f) return;
   const b = (id, fn)=>{ const el = document.getElementById(id); if (el) el.addEventListener('input', (e)=>{ fn(e); renderApercuCombatModele(); }); };
@@ -21120,6 +21202,7 @@ function cablerApercuCombatModele(){
   b('rmOffsetDos', e=>{ f.offsetDos = Math.max(-60, Math.min(60, parseInt(e.target.value, 10) || 0)); });
   const reset = document.getElementById('rmEchelleReset');
   if (reset) reset.addEventListener('click', ()=>{ f.imageScale = 100; f.offsetFace = 0; f.offsetDos = 0; renderApercuCombatModele(); });
+  cablerVuesEtDialogueModele();   // v628
   const crop = document.getElementById('rmPortraitCropBtn');
   if (crop) crop.addEventListener('click', ()=>{
     const face = urlImageModele(f, 'face');
@@ -33858,7 +33941,7 @@ async function montrerChambreNeutre(hab){
   const c = await composerChambre(hab, { sansRobot: true });
   if (!c) return false;
   const vue = document.getElementById('chambreNeutreVue');
-  const pano = monterPanorama(vue, c.toDataURL('image/jpeg', 0.9), '100%');
+  const pano = monterPanorama(vue, c.toDataURL('image/jpeg', 0.9), '100%', { css: 'position:absolute; inset:0; width:auto; height:auto;' });   // v628 : bord à bord
   if (p){ const r = await elementRobotFlottant(hab, p); if (r) pano.calque.appendChild(r); }
   return true;
 }
@@ -33872,66 +33955,97 @@ async function rafraichirChambreNeutre(hab){
 }
 
 /* ---------- 💬 le dialogue, dans la fenêtre des PNJ ---------- */
+/* ---------- 💬 v628 — le dialogue de la chambre vit dans une FICHE PNJ, une par modèle ----------
+   La fiche porte `chambreModeleId` ; elle n'a pas de lieu (en réserve) et s'écrit dans l'éditeur
+   des PNJ comme n'importe quel dialogue (conditions, objets, quêtes…). Les gestes de la chambre
+   sont des « actions à bord » d'une réponse : montrer ses stats, ses attaques, son équipement,
+   décorer, entrer / sortir de l'équipe, le renvoyer. Sans fiche, le jeu prend un dialogue
+   passe-partout construit de la même façon. */
+function ficheDialogueDuModele(m){
+  if (!m) return null;
+  return toutesLesFiches().find(f=> f && f.chambreModeleId === m.id) || null;
+}
+function stepsDialogueChambre(m, rep){
+  const r = rep || (m && m.repliques) || {};
+  const un = (cle, i)=>{ const v = r[cle]; if (Array.isArray(v)) return String(v[i || 0] || v[0] || '').trim(); return (typeof v === 'string' && !i) ? v.trim() : ''; };
+  const dit = (cle)=> un(cle) || REPLIQUES_DEFAUT[cle] || '';
+  const id = ()=> 'c' + Math.random().toString(36).slice(2, 10);
+  const choix = (label, next, action)=> Object.assign({ id: id(), label, next }, action ? { action } : {});
+  const accueilApres = un('accueil', 1);
+  return [
+    Object.assign({ text: dit('accueil'), textVariants: [], choices: [
+      choix('🧐 Fais voir ce que tu sais faire', 1),
+      choix('🎨 Décorons un peu ta chambre', null, 'decorer'),
+      choix('⭐ Viens dans mon équipe', 2, 'equipeOui'),
+      choix('👋 J\'ai plus besoin de toi dans l\'équipe', 3, 'equipeNon'),
+      choix('🚪 Il est temps que tu vives ta propre vie', 4),
+      choix('À plus tard', null),
+    ] }, accueilApres ? { textApres: accueilApres } : {}),
+    { text: dit('montrer'), textVariants: [], choices: [
+      choix('📊 Montre-moi tes stats', 1, 'stats'),
+      choix('⚔️ Montre-moi tes attaques', 1, 'attaques'),
+      choix('🎒 Montre-moi ton équipement', 1, 'equipement'),
+      choix('← Autre chose', 0),
+    ] },
+    { text: dit('equipeOui'), textVariants: [], choices: [ choix('← Autre chose', 0), choix('À plus tard', null) ] },
+    { text: dit('equipeNon'), textVariants: [], choices: [ choix('← Autre chose', 0), choix('À plus tard', null) ] },
+    { text: 'Partir ? Pour de bon ?', textVariants: [], choices: [
+      choix('👋 Oui, adieu (il quitte le vaisseau pour toujours)', 5, 'renvoyer'),
+      choix('↩️ Non, finalement, reste', 0),
+    ] },
+    { text: dit('adieu'), textVariants: [], choices: [ choix('Au revoir', null) ] },
+  ];
+}
+/* crée (ou remet à jour) la fiche de dialogue d'un modèle ; renvoie son identifiant */
+async function ecrireFicheDialogueChambre(m, rep, remplacer){
+  if (!creatureCol || !m) return null;
+  const ex = ficheDialogueDuModele(m);
+  if (ex){
+    if (remplacer) await creatureCol.doc(ex.id).set({ dialogueSteps: stepsDialogueChambre(m, rep), updatedAt: Date.now() }, { merge:true });
+    return ex.id;
+  }
+  const ref = await creatureCol.add({
+    name: m.nom || 'Robot', interactionType: 'dialogue', chambreModeleId: m.id,
+    emoji: (VICES[m.vice] && VICES[m.vice].emoji) || '🤖', fonction: 'Dialogue de sa chambre',
+    dialogueSteps: stepsDialogueChambre(m, rep), enTravaux: false,
+    imageUrl: '', imagePath: null, lat: null, lng: null, mapIconScale: 1, mapIconRotation: 0,
+    timeRanges: [], daysOfWeek: [], startDate: '', endDate: '', createdAt: Date.now(), updatedAt: Date.now(),
+  });
+  return ref.id;
+}
+/* depuis l'éditeur du modèle : ouvre sa fiche de dialogue dans l'éditeur des PNJ */
+async function ouvrirFicheDialogueDuModele(m){
+  if (!m || !m.id){ showToast('Enregistre d\'abord le modèle'); return; }
+  let id;
+  try { id = await ecrireFicheDialogueChambre(m, null, false); } catch(e){ showToast('Échec : ' + e.message); return; }
+  if (!id) return;
+  /* la fiche neuve doit d'abord arriver dans l'instantané des fiches */
+  const debut = Date.now();
+  while (!(latestSnap && latestSnap.docs && latestSnap.docs.find(d=> d.id === id)) && Date.now() - debut < 6000) await new Promise(r=> setTimeout(r, 150));
+  document.querySelectorAll('.overlay.show').forEach(o=> o.classList.remove('show'));
+  ouvrirListeFiches({ cles:['dialogue','shop','combat','concession'] }, 'PNJ');
+  loadForEdit(id); showPnjSection('new'); renderDialogueBuilder();
+}
 let dialogueChambreOuvert = false;
 function fermerDialogueChambre(){
   if (!dialogueChambreOuvert) return;
   dialogueChambreOuvert = false;
-  const ov = document.getElementById('overlay');
-  ov.classList.remove('show'); ov.style.zIndex = '';
+  if (document.getElementById('overlay').classList.contains('show')) fermerDialogue();
 }
 async function ouvrirDialogueRobot(hab){
   const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
-  const nom = hab.name || (m && m.nom) || 'le robot';
-  const faceBrute = await urlFaceModeleAsync(m);
-  let face = faceBrute;
-  if (faceBrute){ try { face = await (m && m.portraitCrop ? buildManualThumb(faceBrute, m.portraitCrop) : buildFaceThumb(faceBrute)); } catch(e){ face = faceBrute; } }
-  const ov = document.getElementById('overlay');
-  const emojiEl = document.getElementById('sheetEmoji'), nomEl = document.getElementById('sheetName'), meta = document.getElementById('sheetMeta'), choix = document.getElementById('sheetChoices');
-  emojiEl.innerHTML = face ? `<img src="${face}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : '🤖';
-  nomEl.textContent = nom;
-  document.getElementById('sheetDist').textContent = '';
-  const dire = (cle)=>{ meta.textContent = repliqueDeModele(m, cle); };
-  const recrue = ()=> currentRecruitById(hab.id) || hab;
-  const bouton = (label, fin, fn)=>{
-    const b = document.createElement('button');
-    b.className = 'choice-btn' + (fin ? ' end' : ''); b.textContent = label;
-    b.addEventListener('click', ()=>{ if (b.disabled) return; b.disabled = true; fn(); });
-    choix.appendChild(b);
-  };
-  const ouvrirFiche = (mode)=>{ document.getElementById('recruitSheetOverlay').style.zIndex = '4700'; openRecruitSheet(recrue().id, mode); };
-  const menu = ()=>{
-    choix.innerHTML = '';
-    const r = recrue(), inTeam = activeTeamIds.includes(r.id);
-    bouton('🧐 Fais voir ce que tu sais faire', false, ()=>{ dire('montrer'); sousMenu(); });
-    if (chambreNeutrePrete()) bouton('🎨 Décorons un peu ta chambre', false, ()=>{ fermerDialogueChambre(); ouvrirDecoration(r); });
-    if (inTeam) bouton('👋 J\'ai plus besoin de toi dans l\'équipe', false, ()=> basculerEquipe());
-    else bouton('⭐ Viens dans mon équipe', false, ()=> basculerEquipe());
-    bouton('🚪 Il est temps que tu vives ta propre vie', false, ()=>{
-      dire('adieu'); choix.innerHTML = '';
-      bouton('👋 Adieu, ' + nom + ' (il quitte le vaisseau pour toujours)', false, ()=>{
-        fermerDialogueChambre();
-        executerRenvoi(recrue(), ()=>{ closeSceneBigImage(); if (!roomOuverteDepuisPorte) openQuarters(); });
-      });
-      bouton('↩️ Finalement, reste', false, ()=>{ dire('accueil'); menu(); });
-    });
-    bouton('À plus tard', true, fermerDialogueChambre);
-  };
-  const basculerEquipe = ()=>{
-    const r = recrue(), avant = activeTeamIds.includes(r.id);
-    toggleRecruitTeam(r, ()=>{ const apres = activeTeamIds.includes(r.id); if (apres !== avant) dire(apres ? 'equipeOui' : 'equipeNon'); menu(); });
-    setTimeout(menu, 600);   // si rien n'a bougé (refus), les boutons reviennent
-  };
-  const sousMenu = ()=>{
-    choix.innerHTML = '';
-    bouton('📊 Montre-moi tes stats', false, ()=>{ ouvrirFiche('profil'); sousMenu(); });
-    bouton('⚔️ Montre-moi tes attaques', false, ()=>{ ouvrirFiche('attaques'); sousMenu(); });
-    bouton('🎒 Montre-moi ton équipement', false, ()=>{ ouvrirFiche('equipement'); sousMenu(); });
-    bouton('← Autre chose', false, ()=>{ dire('accueil'); menu(); });
-  };
-  dire('accueil'); menu();
+  let f = ficheDialogueDuModele(m);
+  f = f ? ficheJouable(f) : null;
+  if (!f) f = { id: 'chambre_' + (m ? m.id : hab.id), name: '', interactionType: 'dialogue', chambreModeleId: m ? m.id : null, dialogueSteps: stepsDialogueChambre(m) };
+  const c = Object.assign({}, f, { name: hab.name || f.name || (m && m.nom) || 'Robot' });
+  /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours */
+  if (!c.bustImagePath && !c.bustImageRef){
+    const brute = await urlFaceModeleAsync(m);
+    if (brute){ try { c.imageUrl = await (m && m.portraitCrop ? buildManualThumb(brute, m.portraitCrop) : buildFaceThumb(brute)); } catch(e){ c.imageUrl = brute; } }
+  }
   dialogueChambreOuvert = true;
-  ov.style.zIndex = '4650';
-  ov.classList.add('show');
+  document.getElementById('overlay').style.zIndex = '4650';
+  openSheet(c);
 }
 
 /* ---------- 📐 ajuster les emplacements (Édition → 🛏️ Chambre des robots) ---------- */
@@ -34613,6 +34727,7 @@ function openSceneBigImage(url, chambre, neutre){
   img.classList.toggle('room-neutre', !!neutre);
   const cn = document.getElementById('chambreNeutreVue');
   cn.style.display = neutre ? 'block' : 'none';   // v627 : la chambre neutre, panoramique
+  document.getElementById('sceneBigImageOverlay').classList.toggle('chambre-neutre', !!neutre);   // v628
   if (url) img.src = url; else img.removeAttribute('src');
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
@@ -34713,6 +34828,7 @@ function closeSceneBigImage(){
   if (wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
   document.getElementById('roomRetour').style.display = 'none';
   const cn = document.getElementById('chambreNeutreVue'); cn.style.display = 'none'; cn.innerHTML = '';
+  document.getElementById('sceneBigImageOverlay').classList.remove('chambre-neutre');
   roomNeutreOuverte = false;
   if (typeof fermerDialogueChambre === 'function') fermerDialogueChambre();
   roomSheetRecruitId = null;
@@ -37904,7 +38020,7 @@ async function importerReglagesAttaques(liste, journal){
 async function importerModelesCombat(liste, journal){
   if (!Array.isArray(liste) || !liste.length) return;
   if (!robotsModelesCol){ journal.push('⚠️ Modèles : base indisponible'); return; }
-  let crees = 0, majs = 0;
+  let crees = 0, majs = 0, dialogues = 0;
   for (const m of liste){
     const id = 'cat_' + m.vice + '_' + slugId(m.nom);
     const existant = robotsModeles.find(x=> x.id === id);
@@ -37930,12 +38046,19 @@ async function importerModelesCombat(liste, journal){
     }
     if (typeof m.apparence === 'string') data.apparence = m.apparence.trim();   // v612 : pour dessiner ses images
     if (typeof m.phraseNaissance === 'string') data.phraseNaissance = m.phraseNaissance.trim();
-    if (m.repliques && typeof m.repliques === 'object') data.repliques = Object.assign({}, (existant && existant.repliques) || {}, repliquesPropres(m.repliques));   // v624
+
     if (!existant){ data.nom = m.nom; data.createdAt = Date.now(); }
     await robotsModelesCol.doc(id).set(data, { merge:true });
     if (existant) majs++; else crees++;
+    /* v628 : des répliques → la fiche de dialogue de sa chambre (créée ou réécrite) */
+    if (m.repliques && typeof m.repliques === 'object'){
+      try {
+        await ecrireFicheDialogueChambre(Object.assign({}, existant || {}, { id, nom: m.nom, vice: data.vice || (existant && existant.vice) || m.vice }), repliquesPropres(m.repliques), true);
+        dialogues++;
+      } catch(e){ journal.push('⚠️ Dialogue de « ' + m.nom + ' » : ' + e.message); }
+    }
   }
-  journal.push('🤖 Modèles de robots : ' + crees + ' créé(s), ' + majs + ' remis à jour');
+  journal.push('🤖 Modèles de robots : ' + crees + ' créé(s), ' + majs + ' remis à jour' + (dialogues ? ' · 💬 ' + dialogues + ' dialogue(s) de chambre écrit(s)' : ''));
 }
 /* v604 — LA VÉRIFICATION APRÈS IMPORT (sa demande : « il faut que ce soit bien fait »).
    On RELIT la base et on compare chiffre par chiffre à ce que le fichier demandait. */
