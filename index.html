@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v631</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v632</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12752,12 +12752,13 @@ async function ouvrirBrouillons(){
   {
     const K = kitBiblio;
     const aCoq = (prefixe)=> (K.coquilles || []).some(c=> c && c.id && c.id.startsWith(prefixe));
-    const aPlanche = (cle)=> PLANCHES_KIT[cle].objets.every(d=> d.cadre ? (fenetresBiblio.cadres || []).some(c=> c.nom === d.nom) : (K.meubles || []).some(m=> m.nom === d.nom));
+    const aPlanche = (cle)=> PLANCHES_KIT[cle].objets.every(d=> d.cadre ? (fenetresBiblio.cadres || []).some(c=> c.nom === d.nom) : d.vueDe ? (K.meubles || []).some(m=> m.nom === d.nom && m.vues && m.vues[d.vueDe]) : (K.meubles || []).some(m=> m.nom === d.nom));
     envois['coq_salon'] = ()=> ({ texte: PROMPT_COQ_SALON, imgs: [] });
     envois['coq_chambre'] = ()=> ({ texte: PROMPT_COQ_CHAMBRE, imgs: [] });
     envois['kit_salon'] = ()=> ({ texte: PROMPT_KIT_SALON, imgs: [] });
     envois['kit_cuisine'] = ()=> ({ texte: PROMPT_KIT_CUISINE, imgs: [] });
     envois['kit_chambre'] = ()=> ({ texte: PROMPT_KIT_CHAMBRE, imgs: [] });
+    envois['kit_salon3v'] = ()=> ({ texte: PROMPT_KIT_SALON3V, imgs: [] });
     let kh = '<div style="font-weight:700; margin:14px 0 6px;">🧩 Pièces en kit</div>'
       + '<p class="meta" style="font-size:12px;">Le test avec la maison de Mado : deux coquilles vides et trois planches de meubles, puis la pièce s\'assemble dans l\'éditeur de scène (🧩 Kit). ' + (K.coquilles || []).length + ' coquille(s) · ' + (K.meubles || []).length + ' meuble(s). Fais d\'abord une coquille et une planche, regarde, puis le reste.</p>';
     const etapes = [
@@ -12766,6 +12767,7 @@ async function ouvrirBrouillons(){
       ['coq_chambre', '🏠 COQUILLE de la chambre (2:3)', 'La petite pièce vide, vue de face.', aCoq('coq_chambre'), 'l\'image'],
       ['kit_cuisine', '🍳 La CUISINE : six meubles', 'Plan de travail, frigo, placard haut, table ronde, chaise, chariot.', aPlanche('kit_cuisine'), 'la planche'],
       ['kit_chambre', '🛏️ La CHAMBRE et les OUVERTURES', 'Lit, chevet, armoire, bureau, la porte (sas) et la baie vitrée (qui rejoint la bibliothèque de fenêtres).', aPlanche('kit_chambre'), 'la planche'],
+      ['kit_salon3v', '🔄 Le SALON sous d\'autres angles', 'Le canapé et la table basse de dos et de profil, un fauteuil sous trois angles : pour tourner les meubles (🔄) vers l\'écran. À faire APRÈS la planche du salon.', aPlanche('kit_salon3v'), 'la planche'],
     ];
     etapes.forEach(([cle, titre, pourquoi, ok, quoi])=>{
       kh += tache(ok, titre, pourquoi,
@@ -33392,11 +33394,24 @@ function elementFenetre(pt, nuit, assombrir){
   el.className = 'scene-point';
   el.dataset.ptid = pt.id; el.dataset.fenetre = '1';
   el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w || 20; el.dataset.pth = pt.h || 25;
-  el.style.cssText = 'position:absolute; background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; transform:' + transformFenetre(pt) + ';';
+  el.style.cssText = 'position:absolute; background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; transform:' + (pt.kitQuad ? 'translate(-50%,-50%)' : transformFenetre(pt)) + ';';
   const im = document.createElement('img');
   im.style.cssText = 'width:100%; height:100%; object-fit:fill; pointer-events:none; display:none;';
   el.appendChild(im);
-  if (pt.cadreId) composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(u=>{ if (u){ im.src = u; im.style.display = ''; } });
+  if (pt.cadreId) composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(async u=>{
+    if (!u) return;
+    if (pt.kitQuad){
+      /* v632 : une fenêtre de pièce en kit sur un mur de côté — dessinée dans son quadrilatère */
+      const src = await chargerImage(u); if (!src) return;
+      const q = pt.kitQuad, x0 = Math.min(q.xB, q.xFr), x1 = Math.max(q.xB, q.xFr), y0 = Math.min(q.hautB, q.hautF), y1 = Math.max(q.basB, q.basF);
+      const cw = Math.max(1, Math.round((x1 - x0) * 12)), ch = Math.max(1, Math.round((y1 - y0) * 12));
+      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+      const sx = cw / (x1 - x0), sy = ch / (y1 - y0);
+      dessinerDansQuad(cv.getContext('2d'), src, { xB: (q.xB - x0) * sx, xFr: (q.xFr - x0) * sx, hautB: (q.hautB - y0) * sy, basB: (q.basB - y0) * sy, hautF: (q.hautF - y0) * sy, basF: (q.basF - y0) * sy });
+      im.src = cv.toDataURL('image/png');
+    } else im.src = u;
+    im.style.display = '';
+  });
   return el;
 }
 
@@ -34354,9 +34369,10 @@ function geoKit(c){
      1,60 m et des cases de 40 cm : nx ≈ 4·Wu par défaut ; la hauteur des murs en découle (même
      rapport). La profondeur, elle, ne se lit pas sur l'image : par défaut une pièce carrée. */
   const Wu = wA / (yA - V.y), Hu = (yA - yT) / (yA - V.y);
-  const nx = Math.max(2, parseInt(c.nx, 10) || Math.round(Wu * 4) || 8);
-  const ny = Math.max(1, parseInt(c.ny, 10) || nx);
-  const nh = Math.max(1, Math.round(nx * Hu / Wu));
+  const nxC = Math.max(2, parseInt(c.nx, 10) || Math.round(Wu * 4) || 8);
+  const nyC = Math.max(1, parseInt(c.ny, 10) || nxC);
+  const nhC = Math.max(1, Math.round(nxC * Hu / Wu));
+  const nx = nxC * KIT_FIN, ny = nyC * KIT_FIN, nh = nhC * KIT_FIN;   // v632 : en demi-cases
   const yAt = (t)=> V.y + 1 / ((1 - t) / (yF - V.y) + t / (yA - V.y));           // t : 0 devant, 1 au fond
   const tAt = (y)=>{ const aF = 1 / (yF - V.y), aA = 1 / (yA - V.y); return (1 / (y - V.y) - aF) / (aA - aF); };
   const xL = (y)=> xF1 + (xA1 - xF1) * (y - yF) / (yA - yF);
@@ -34366,11 +34382,11 @@ function geoKit(c){
   const xCL = (y)=> xC1 + (xA1 - xC1) * (y - yC) / (yT - yC);
   const xCR = (y)=> xC2 + (xA2 - xC2) * (y - yC) / (yT - yC);
   const cellH = (yFloor)=> (yA - yT) / nh * (yFloor - V.y) / (yA - V.y);   // hauteur d'une case de mur à cette profondeur
-  return { W, H, xA1, xA2, yT, yA, xF1, xF2, xC1, xC2, yF, yC, V, wA, wF, nx, ny, nh, yAt, tAt, xL, xR, yCAt, tCAt, xCL, xCR, cellH };
+  return { W, H, xA1, xA2, yT, yA, xF1, xF2, xC1, xC2, yF, yC, V, wA, wF, nx, ny, nh, nxC, nyC, nhC, yAt, tAt, xL, xR, yCAt, tCAt, xCL, xCR, cellH };
 }
 /* le rectangle (ou le quadrilatère) occupé par un objet posé, en pixels de l'image */
 function emplacementKit(G, o, m){
-  const w = Math.max(1, m.w || 1), d = Math.max(1, m.d || 1), h = Math.max(1, m.h || 1);
+  const { w, d, h } = dimsKit(o, m);
   if (o.zone === 'sol'){
     const tB = (G.ny - o.r) / G.ny, tF = (G.ny - o.r - d) / G.ny;
     const yB = G.yAt(tB), yFr = G.yAt(tF);
@@ -34407,34 +34423,53 @@ function boiteDe(poly){
 }
 /* les cases que l'objet occupe, pour les chevauchements */
 function casesDe(G, o, m){
-  const w = Math.max(1, m.w || 1), d = Math.max(1, m.d || 1), h = Math.max(1, m.h || 1), out = [];
+  const { w, d, h } = dimsKit(o, m), out = [];
   if (o.zone === 'sol' || o.zone === 'plafond'){ for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) out.push(o.zone + ':' + (o.c + i) + ':' + (o.r + j)); }
   else if (o.zone === 'fond'){ for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.push('fond:' + (o.c + i) + ':' + (o.k + j)); }
   else { for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.push(o.zone + ':' + (o.r + i) + ':' + (o.k + j)); }
   return out;
 }
 function placementValide(G, objets, o, m, ignorerId){
-  const w = Math.max(1, m.w || 1), d = Math.max(1, m.d || 1), h = Math.max(1, m.h || 1);
+  const { w, d, h } = dimsKit(o, m);
   if (o.zone === 'sol' || o.zone === 'plafond'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r + d > G.ny) return false; }
   else if (o.zone === 'fond'){ if (o.c < 0 || o.k < 0 || o.c + w > G.nx || o.k + h > G.nh) return false; }
   else { if (o.r < 0 || o.k < 0 || o.r + w > G.ny || o.k + h > G.nh) return false; }
+  /* v632 : rien ne dépasse de l'image (le sol et le plafond continuent sous les bords, pas les meubles) */
+  const b = boiteDe(emplacementKit(G, o, m).poly);
+  if (b.x0 < -1 || b.x1 > G.W + 1 || b.y1 > G.H + 1 || b.y0 < -1) return false;
   const prises = new Set();
   objets.forEach(x=>{ if (x.id === ignorerId) return; const mx = meubleParId(x.meubleId) || x.cadre; if (!mx) return; casesDe(G, x, mx).forEach(k=> prises.add(k)); });
   return !casesDe(G, o, m).some(k=> prises.has(k));
 }
 /* zones possibles d'un meuble selon son type */
 function zonesPossibles(m){ return m.type === 'mur' ? ['fond', 'g', 'd'] : [m.type || 'sol']; }
+/* v632 — les tailles sont en CASES de 40 cm dans la bibliothèque, mais la grille travaille en
+   DEMI-CASES (20 cm) pour pouvoir aligner un canapé de 4 sur une table de 3. Un meuble tourné
+   de profil (orientation g/d) échange sa largeur et sa profondeur. */
+const KIT_FIN = 2;
+function dimsKit(o, m){
+  let w = Math.max(1, m.w || 1) * KIT_FIN, d = Math.max(1, m.d || 1) * KIT_FIN, h = Math.max(1, m.h || 1) * KIT_FIN;
+  if (o && (o.orient === 'g' || o.orient === 'd') && m.type !== 'mur'){ const t = w; w = d; d = t; }
+  return { w, d, h };
+}
+/* l'image à dessiner selon l'orientation (face par défaut ; dos ; profil, en miroir pour l'autre côté) */
+function refVueKit(o, m){
+  const v = m.vues || {};
+  if (o.orient === 'dos' && v.dos) return { ref: v.dos, miroir: !!o.miroir };
+  if ((o.orient === 'g' || o.orient === 'd') && v.profil) return { ref: v.profil, miroir: (o.orient === 'd') !== !!o.miroir };
+  return { ref: m.ref, miroir: !!o.miroir };
+}
 /* une première place libre pour un meuble (en balayant), ou null */
 function premierePlaceLibre(G, objets, m){
-  const w = Math.max(1, m.w || 1), d = Math.max(1, m.d || 1), h = Math.max(1, m.h || 1);
+  const { w, d, h } = dimsKit({ zone:'sol' }, m);
   for (const zone of zonesPossibles(m)){
     if (zone === 'sol' || zone === 'plafond'){
       for (let r = 0; r + d <= G.ny; r++) for (let c = 0; c + w <= G.nx; c++){ const o = { zone, c, r }; if (placementValide(G, objets, o, m)) return o; }
     } else if (zone === 'fond'){
-      const k0 = Math.min(Math.max(0, m.kDefaut || 0), Math.max(0, G.nh - h));
+      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h));
       for (let c = 0; c + w <= G.nx; c++){ const o = { zone, c, k: k0 }; if (placementValide(G, objets, o, m)) return o; }
     } else {
-      const k0 = Math.min(Math.max(0, m.kDefaut || 0), Math.max(0, G.nh - h));
+      const k0 = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h));
       for (let r = 0; r + w <= G.ny; r++){ const o = { zone, r, k: k0 }; if (placementValide(G, objets, o, m)) return o; }
     }
   }
@@ -34493,13 +34528,23 @@ async function composerKit(kit, opts){
   const cv = document.createElement('canvas'); cv.width = G.W; cv.height = G.H;
   const ctx = cv.getContext('2d');
   ctx.drawImage(fond, 0, 0, G.W, G.H);
-  const objets = (kit.objets || []).filter(o=> !o.cadreId);   // les fenêtres sont des points, pas des dessins
+  /* les fenêtres sont des points (jour / nuit) : dans l'image finale elles ne sont pas dessinées ;
+     dans l'aperçu de l'éditeur (opts.avecFenetres), si */
+  const objets = (kit.objets || []).filter(o=> !o.cadreId || opts.avecFenetres);
   const ordre = (o)=> o.zone === 'fond' ? 0 : (o.zone === 'g' || o.zone === 'd') ? 1 : o.zone === 'plafond' ? 2 : 3;
   const avecGeo = [];
   for (const o of objets){
+    if (o.cadreId){
+      const u = await composerFenetre(o.cadreId, (o.vueId || (fenetresBiblio.vues.find(v=> v.nuitRef && !v.ciel) || fenetresBiblio.vues[0] || {}).id), false, 0);
+      const img = u ? await chargerImage(u) : null; if (!img) continue;
+      const m = o.cadre || { w: 3, h: 3, type: 'mur' };
+      avecGeo.push({ o: Object.assign({}, o, { miroir: false }), m, img, e: emplacementKit(G, o, m) });
+      continue;
+    }
     const m = meubleParId(o.meubleId); if (!m) continue;
-    const img = await chargerImage(await urlDeRef(m.ref)); if (!img) continue;
-    avecGeo.push({ o, m, img, e: emplacementKit(G, o, m) });
+    const vue = refVueKit(o, m);
+    const img = await chargerImage(await urlDeRef(vue.ref)); if (!img) continue;
+    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img, e: emplacementKit(G, o, m) });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
   for (const { o, m, img, e } of avecGeo){
@@ -34551,8 +34596,10 @@ function synchroniserPointsKit(sc, G){
     if (estFenetre){
       pt.cadreId = o.cadreId;
       if (!pt.vueId) pt.vueId = (fenetresBiblio.vues.find(v=> v.nuitRef && !v.ciel) || fenetresBiblio.vues.find(v=> v.nuitRef) || fenetresBiblio.vues[0] || {}).id || null;
-      pt.perspective = o.zone === 'g' ? 45 : o.zone === 'd' ? -45 : 0;
-      pt.flipped = !!o.miroir;
+      o.vueId = pt.vueId;
+      pt.perspective = 0; pt.flipped = false;
+      /* v632 : sur un mur de côté, la fenêtre épouse exactement la pente du mur (quadrilatère en % de l'image) */
+      pt.kitQuad = e.quad ? { xB: e.quad.xB / G.W * 100, hautB: e.quad.hautB / G.H * 100, basB: e.quad.basB / G.H * 100, xFr: e.quad.xFr / G.W * 100, hautF: e.quad.hautF / G.H * 100, basF: e.quad.basF / G.H * 100 } : null;
     }
     vivants.add(pt.id);
   });
@@ -34593,7 +34640,7 @@ async function ouvrirEditeurKit(){
   const aide = fond.querySelector('[data-aide]'), panneau = fond.querySelector('[data-panneau]'), selBar = fond.querySelector('[data-selection]');
   const panoWrap = fond.querySelector('[data-pano]');
   let pano = null, svg = null;
-  const composer = async ()=>{ const cv = await composerKit(kit); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
+  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
   const objet = (id)=> kit.objets.find(o=> o.id === id);
   const meubleDe = (o)=> meubleParId(o.meubleId) || o.cadre || null;
   const pctPoly = (poly)=> poly.map(p=> (p[0] / G.W * 100).toFixed(2) + ',' + (p[1] / G.H * 100).toFixed(2)).join(' ');
@@ -34646,7 +34693,7 @@ async function ouvrirEditeurKit(){
   let glisse = null;
   const versImage = (ev)=>{ const r = pano.scene.getBoundingClientRect(); return { x: (ev.clientX - r.left) / r.width * G.W, y: (ev.clientY - r.top) / r.height * G.H }; };
   const cibleSous = (o, m, p)=>{
-    const w = Math.max(1, m.w || 1), d = Math.max(1, m.d || 1), h = Math.max(1, m.h || 1);
+    const { w, d, h } = dimsKit(o, m);
     for (const zone of zonesPossibles(m)){
       const cs = caseSous(G, p.x, p.y, zone); if (!cs) continue;
       let cand;
@@ -34700,8 +34747,16 @@ async function ouvrirEditeurKit(){
     selBar.style.display = 'flex';
     const b = (attr, l)=> `<button type="button" class="btn-secondary" ${attr} style="padding:4px 8px; font-size:13px;">${l}</button>`;
     selBar.innerHTML = `<span style="flex:1; min-width:0; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${htmlEsc((m && m.nom) || 'Objet')}</span>`
-      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
-    aide.textContent = 'Glisse-le, ou pousse-le case par case. ' + (o.zone === 'sol' ? '▲▼ : vers le fond / vers toi.' : o.zone === 'fond' || o.zone === 'g' || o.zone === 'd' ? '▲▼ : plus haut / plus bas sur le mur.' : '');
+      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + (m && m.vues && (m.vues.dos || m.vues.profil) ? b('data-tourner', '🔄') : '') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
+    aide.textContent = 'Glisse-le, ou pousse-le d\'une demi-case. ' + (o.zone === 'sol' ? '▲▼ : vers le fond / vers toi.' : o.zone === 'fond' || o.zone === 'g' || o.zone === 'd' ? '▲▼ : plus haut / plus bas sur le mur.' : '') + (m && m.vues && (m.vues.dos || m.vues.profil) ? ' 🔄 le tourne.' : '');
+    const bt = selBar.querySelector('[data-tourner]');
+    if (bt) bt.addEventListener('click', async ()=>{
+      const ordreO = ['face', 'g', 'dos', 'd'].filter(x=> x === 'face' || (x === 'dos' ? m.vues.dos : m.vues.profil));
+      const i = ordreO.indexOf(o.orient || 'face');
+      const test = Object.assign({}, o, { orient: ordreO[(i + 1) % ordreO.length] });
+      if (!placementValide(G, kit.objets, test, m, o.id)){ showToast('Pas la place de le tourner ici'); return; }
+      Object.assign(o, test); await redessinerImage(); dessinerCalque(); dessinerSelection();
+    });
     selBar.querySelectorAll('[data-dep]').forEach(bt=> bt.addEventListener('click', async ()=>{
       const d = bt.dataset.dep, test = Object.assign({}, o);
       if (o.zone === 'sol' || o.zone === 'plafond'){ if (d === 'g') test.c--; if (d === 'd') test.c++; if (d === 'h') test.r--; if (d === 'b') test.r++; }
@@ -34731,7 +34786,7 @@ async function ouvrirEditeurKit(){
         : '<p class="meta" style="font-size:12px;">Rien de posé pour l\'instant.</p>';
     } else {
       h = '<p class="meta" style="font-size:11px; margin:0 0 6px;">La pièce vide. En changer garde les meubles posés quand ils rentrent.</p>'
-        + (kitBiblio.coquilles || []).map(c=> `<div class="editor-list-item" data-coquille="${c.id}" style="cursor:pointer; ${c.id === kit.coquilleId ? 'outline:2px solid var(--accent);' : ''}"><div class="thumb"><img data-coqref="${c.id}" style="width:100%; height:100%; object-fit:cover;"></div><div class="name">${htmlEsc(c.nom || 'Coquille')}<span class="meta" style="display:block; font-size:10px;">${c.W}×${c.H} · ${geoKit(c).nx}×${geoKit(c).ny} cases</span></div></div>`).join('');
+        + (kitBiblio.coquilles || []).map(c=> `<div class="editor-list-item" data-coquille="${c.id}" style="cursor:pointer; ${c.id === kit.coquilleId ? 'outline:2px solid var(--accent);' : ''}"><div class="thumb"><img data-coqref="${c.id}" style="width:100%; height:100%; object-fit:cover;"></div><div class="name">${htmlEsc(c.nom || 'Coquille')}<span class="meta" style="display:block; font-size:10px;">${c.W}×${c.H} · ${geoKit(c).nxC}×${geoKit(c).nyC} cases</span></div></div>`).join('');
     }
     panneau.innerHTML = h;
     panneau.querySelectorAll('[data-mref]').forEach(im=>{ const m = meubleParId(im.dataset.mref); urlDeRef(m && m.ref).then(u=>{ if (u) im.src = u; }); });
@@ -34754,7 +34809,7 @@ async function ouvrirEditeurKit(){
       if (occupe) return; occupe = true;
       try {
         const c = (fenetresBiblio.cadres || []).find(x=> x.id === b.dataset.ajoutCadre); if (!c) return;
-        const faux = { nom: c.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 2 };
+        const faux = { nom: c.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 3 };
         const place = premierePlaceLibre(G, kit.objets, faux);
         if (!place){ showToast('Plus de place sur les murs'); return; }
         const o = Object.assign({ id: 'ko_' + Date.now() + '_' + Math.floor(Math.random() * 1000), cadreId: c.id, cadre: faux, miroir: false }, place);
@@ -34860,9 +34915,9 @@ async function ouvrirReglageCoquille(id){
     const ns = 'http://www.w3.org/2000/svg';
     const ligne = (a, b, st)=>{ const l = document.createElementNS(ns, 'line'); l.setAttribute('x1', a[0] / g.W * 100); l.setAttribute('y1', a[1] / g.H * 100); l.setAttribute('x2', b[0] / g.W * 100); l.setAttribute('y2', b[1] / g.H * 100); l.setAttribute('style', st); svg.appendChild(l); };
     const st = 'stroke:rgba(95,242,255,.6); stroke-width:1; vector-effect:non-scaling-stroke;', st2 = 'stroke:#ffb400; stroke-width:2; vector-effect:non-scaling-stroke;';
-    for (let i = 0; i <= g.ny; i++){ const y = g.yAt(i / g.ny); ligne([g.xL(y), y], [g.xR(y), y], st); }
-    for (let j = 0; j <= g.nx; j++) ligne([g.xL(g.yF) + j / g.nx * g.wF, g.yF], [g.xA1 + j / g.nx * g.wA, g.yA], st);
-    for (let i = 0; i <= g.nh; i++){ const y = g.yA - i * (g.yA - g.yT) / g.nh; ligne([g.xA1, y], [g.xA2, y], st); ligne([g.xL(g.yF), g.yF - i * g.cellH(g.yF)], [g.xA1, y], st); ligne([g.xR(g.yF), g.yF - i * g.cellH(g.yF)], [g.xA2, y], st); }
+    for (let i = 0; i <= g.nyC; i++){ const y = g.yAt(i / g.nyC); ligne([g.xL(y), y], [g.xR(y), y], st); }
+    for (let j = 0; j <= g.nxC; j++) ligne([g.xL(g.yF) + j / g.nxC * g.wF, g.yF], [g.xA1 + j / g.nxC * g.wA, g.yA], st);
+    for (let i = 0; i <= g.nhC; i++){ const y = g.yA - i * (g.yA - g.yT) / g.nhC; ligne([g.xA1, y], [g.xA2, y], st); ligne([g.xL(g.yF), g.yF - i * g.cellH(g.yF) * KIT_FIN], [g.xA1, y], st); ligne([g.xR(g.yF), g.yF - i * g.cellH(g.yF) * KIT_FIN], [g.xA2, y], st); }
     ligne([g.xA1, g.yT], [g.xA2, g.yT], st2); ligne([g.xA1, g.yA], [g.xA2, g.yA], st2); ligne([g.xA1, g.yT], [g.xA1, g.yA], st2); ligne([g.xA2, g.yT], [g.xA2, g.yA], st2);
     ligne([g.xC1, g.yC], [g.xA1, g.yT], st2); ligne([g.xC2, g.yC], [g.xA2, g.yT], st2); ligne([g.xF1, g.yF], [g.xA1, g.yA], st2); ligne([g.xF2, g.yF], [g.xA2, g.yA], st2);
     REPERES.forEach(([nom])=>{
@@ -34872,7 +34927,7 @@ async function ouvrirReglageCoquille(id){
       e.setAttribute('style', 'fill:' + (nom === actif ? '#ff5a00' : '#ffb400') + '; stroke:#000; stroke-width:1; vector-effect:non-scaling-stroke; pointer-events:none;');
       svg.appendChild(e);
     });
-    dims.textContent = '→ ' + g.nx + ' × ' + g.ny + ' cases au sol, murs de ' + g.nh + ' cases';
+    dims.textContent = '→ ' + g.nxC + ' × ' + g.nyC + ' cases au sol, murs de ' + g.nhC + ' cases';
   };
   svg.addEventListener('pointerdown', (ev)=>{
     const r = pano.scene.getBoundingClientRect();
@@ -34915,6 +34970,7 @@ async function ouvrirBiblioKit(){
         <label class="meta">${m.type === 'mur' ? 'H' : 'P'} <input type="number" data-m-dh="${m.id}" min="1" max="20" value="${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}" class="field-input" style="width:52px;"></label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-porte="${m.id}" ${m.porte ? 'checked' : ''} style="width:auto;"> porte</label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-lum="${m.id}" ${m.lumiere ? 'checked' : ''} style="width:auto;"> lumière</label>
+        ${m.vues && (m.vues.dos || m.vues.profil) ? '<span class="meta" style="font-size:10px;">🔄 ' + (m.vues.dos ? 'dos ' : '') + (m.vues.profil ? 'profil' : '') + '</span>' : ''}
         <button type="button" class="btn-secondary" data-m-suppr="${m.id}" style="color:var(--danger);">🗑️</button></div>`).join('') || '<p class="meta">Aucun meuble.</p>'}
       <button type="button" class="btn-primary" data-ok style="width:100%; margin-top:12px;">💾 Enregistrer</button>
     </div>`;
@@ -34956,6 +35012,10 @@ const PLANCHES_KIT = {
   kit_chambre: { titre:'🛏️ La chambre et les ouvertures (6)', objets:[
     { nom:'Lit double', type:'sol', w:4, d:5 }, { nom:'Table de chevet', type:'sol', w:1, d:1, lumiere:true }, { nom:'Armoire', type:'sol', w:3, d:2 },
     { nom:'Bureau', type:'sol', w:3, d:2 }, { nom:'Porte (sas)', type:'mur', w:3, h:5, porte:true, kDefaut:0 }, { nom:'Baie vitrée', cadre:true } ] },
+  /* v632 : les mêmes meubles vus de dos et de profil (pour tourner le canapé vers l'écran) */
+  kit_salon3v: { titre:'🔄 Le salon sous d\'autres angles (6)', objets:[
+    { nom:'Canapé', vueDe:'dos' }, { nom:'Canapé', vueDe:'profil' }, { nom:'Table basse', vueDe:'profil' },
+    { nom:'Fauteuil', type:'sol', w:2, d:2 }, { nom:'Fauteuil', vueDe:'dos' }, { nom:'Fauteuil', vueDe:'profil' } ] },
 };
 async function creerMeublesKit(planche, vues){
   const t = Date.now(); let n = 0, cadres = 0;
@@ -34964,6 +35024,10 @@ async function creerMeublesKit(planche, vues){
     const ref = await externalizeSceneImage(encoderImageSousLimite(vues[i], 520, true));
     if (!ref) throw new Error('image non enregistrée');
     if (def.cadre){ fenetresBiblio.cadres.push({ id: 'cad_' + t + '_' + i, nom: def.nom, ref }); cadres++; continue; }
+    if (def.vueDe){   // v632 : une autre vue d'un meuble déjà là
+      const m = kitBiblio.meubles.find(x=> x.nom === def.nom); if (!m) continue;
+      m.vues = m.vues || {}; m.vues[def.vueDe] = ref; n++; continue;
+    }
     kitBiblio.meubles.push(Object.assign({ id: 'mb_' + t + '_' + i, ref }, def));
     n++;
   }
@@ -35028,6 +35092,16 @@ const PROMPT_KIT_CHAMBRE = KIT_TETE_PLANCHE('SIX') + `
 4. UN BUREAU avec son écran plat et sa chaise devant, vu de face, légèrement d'en haut.
 5. UNE PORTE : un SAS à cadre épais anthracite à pans coupés (profil hexagonal), doublé d'un filet blanc, vantail coulissant sombre, FERMÉ, deux tubes lumineux fins de chaque côté et un petit boîtier de commande ; vu parfaitement de face, SANS mur autour (c'est un objet à poser sur un mur).
 6. UNE BAIE VITRÉE : le cadre seul, fin, anthracite à pans coupés, sans croisillons, SANS mur autour, vu parfaitement de face ; TOUTE LA PARTIE VITRÉE est peinte en MAGENTA PUR #FF00FF, en aplat parfaitement uni, sans reflet ni dégradé.
+
+` + KIT_CHARTE_MEUBLES;
+const PROMPT_KIT_SALON3V = KIT_TETE_PLANCHE('SIX') + `
+Ce sont les MÊMES meubles que sur la planche du salon (même forme, mêmes couleurs, même échelle), vus sous d'autres angles :
+1. LE CANAPÉ deux places VU DE DOS : on voit son dossier, de face, rien d'autre.
+2. LE CANAPÉ VU DE PROFIL, son dossier à DROITE de l'image, son assise tournée vers la gauche.
+3. LA TABLE BASSE rectangulaire VUE DE PROFIL (son petit côté face à nous), légèrement d'en haut.
+4. UN FAUTEUIL assorti au canapé, une place, VU DE FACE.
+5. LE MÊME FAUTEUIL VU DE DOS.
+6. LE MÊME FAUTEUIL VU DE PROFIL, dossier à DROITE de l'image, assise tournée vers la gauche.
 
 ` + KIT_CHARTE_MEUBLES;
 const KIT_CHARTE_COQUILLE = `COULEUR D'ACCENT : ocre.
