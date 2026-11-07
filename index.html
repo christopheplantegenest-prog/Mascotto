@@ -375,7 +375,7 @@
     width:100%; height:auto; aspect-ratio:47 / 100; max-height:100%;
     object-fit:cover; object-position:center;
   }
-  #sceneBigImageOverlay img.room-neutre{ width:auto; height:auto; max-width:100%; max-height:100%; aspect-ratio:auto; object-fit:contain; cursor:pointer; }
+  #sceneBigImageOverlay img.room-neutre{ cursor:pointer; }
   #roomRetour{ display:none; position:fixed; left:14px; bottom:max(14px, env(safe-area-inset-bottom)); width:60px; height:60px; z-index:3; padding:0; border:none; background:none; }
   #roomRetour img{ width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)); }
   #sceneBigImageOverlay .sheet-x{
@@ -1426,7 +1426,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v624</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v625</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -33329,17 +33329,17 @@ const EMPLACEMENTS_CHAMBRE_DEFAUT = [
   { id:'plafond1', type:'plafond', x:50, y:27, w:20, h:18 },
   { id:'plafond2', type:'plafond', x:30, y:30, w:14, h:14 },
   { id:'plafond3', type:'plafond', x:70, y:30, w:14, h:14 },
-  { id:'fen1', type:'fenetre', x:10, y:40, w:12, h:20, perspective:45 },
-  { id:'fen2', type:'fenetre', x:90, y:40, w:12, h:20, perspective:-45 },
+  { id:'fen1', type:'fenetre', x:20, y:40, w:10, h:20, perspective:45 },
+  { id:'fen2', type:'fenetre', x:80, y:40, w:10, h:20, perspective:-45 },
   { id:'couchage1', type:'couchage', x:38, y:55, w:32, h:15 },
   { id:'couchage2', type:'couchage', x:66, y:55, w:28, h:15 },
   { id:'volume1', type:'volume', x:81, y:59, w:11, h:11 },
-  { id:'volume2', type:'volume', x:12, y:77, w:18, h:18 },
+  { id:'volume2', type:'volume', x:22, y:77, w:16, h:18 },
   { id:'volume3', type:'volume', x:23, y:60, w:11, h:11 },
-  { id:'volume4', type:'volume', x:90, y:76, w:16, h:16 },
+  { id:'volume4', type:'volume', x:82, y:84, w:14, h:16 },
   { id:'sol1', type:'sol', x:46, y:71, w:46, h:12 },
   { id:'sol2', type:'sol', x:30, y:85, w:36, h:11 },
-  { id:'robot', type:'robot', x:72, y:74, w:26, h:22 },
+  { id:'robot', type:'robot', x:66, y:74, w:26, h:22 },
 ];
 function emplacementsChambre(){ return (chambreConfig.emplacements && chambreConfig.emplacements.length) ? chambreConfig.emplacements : EMPLACEMENTS_CHAMBRE_DEFAUT; }
 const PALETTE_CHAMBRE = [
@@ -33451,7 +33451,8 @@ async function composerChambre(hab, opts){
   const emps = emplacementsChambre();
   const apres = [];   // ce qui passe par-dessus la pièce éteinte : fenêtres et luminaires
   // l'ordre de dessin : du fond vers l'avant (bas de l'emplacement), le plafond en dernier
-  const bas = (e)=> e.type === 'plafond' ? 1e9 : (e.type === 'mur' || e.type === 'fenetre') ? -1 : (e.y + e.h / 2);
+  /* v625 : un tapis est toujours dessous (on pose des choses dessus) */
+  const bas = (e)=> e.type === 'plafond' ? 1e9 : e.type === 'sol' ? -2 : (e.type === 'mur' || e.type === 'fenetre') ? -1 : (e.y + e.h / 2);
   for (const e of emps.slice().sort((a, b)=> bas(a) - bas(b))){
     if (e.type === 'fenetre'){
       const cadreId = (deco.fenetres || {})[e.id];
@@ -33501,24 +33502,52 @@ async function composerChambre(hab, opts){
     ctx.restore();
   }
   for (const f of apres) await f();
-  return c;
+  return recadrerChambre(c);   // v625 : au cadre commun des pièces
 }
 function chambreNeutrePrete(){ return !!chambreConfig.imageRef; }
+/* v625 — la chambre neutre suit le CADRE COMMUN des pièces (47:100, plein écran, rogné sur les
+   côtés) : la composition est recadrée au centre, et les deux outils (🎨 et 📐) montrent ce même
+   cadre. Les emplacements restent en % de l'image entière ; `rectDansCadre` les convertit. */
+const CADRE_CHAMBRE = 47 / 100;
+function cadreChambre(W, H){
+  let w = W, h = H;
+  if (W / H > CADRE_CHAMBRE) w = Math.round(H * CADRE_CHAMBRE); else h = Math.round(W / CADRE_CHAMBRE);
+  return { x0: Math.round((W - w) / 2), y0: Math.round((H - h) / 2), w, h };
+}
+function recadrerChambre(src){
+  const W = src.naturalWidth || src.width, H = src.naturalHeight || src.height;
+  const c = cadreChambre(W, H);
+  const o = document.createElement('canvas'); o.width = c.w; o.height = c.h;
+  o.getContext('2d').drawImage(src, c.x0, c.y0, c.w, c.h, 0, 0, c.w, c.h);
+  return o;
+}
+function cadrePct(){
+  const G = CHAMBRE_GEO, c = cadreChambre(G.W, G.H);
+  return { l: c.x0 / G.W * 100, t: c.y0 / G.H * 100, w: c.w / G.W * 100, h: c.h / G.H * 100 };
+}
+function rectDansCadre(e){
+  const k = cadrePct();
+  return 'left:' + ((e.x - e.w / 2 - k.l) / k.w * 100).toFixed(2) + '%; top:' + ((e.y - e.h / 2 - k.t) / k.h * 100).toFixed(2) + '%; width:' + (e.w / k.w * 100).toFixed(2) + '%; height:' + (e.h / k.h * 100).toFixed(2) + '%;';
+}
 function estRobotEnChambre(hab){ return !!(hab && hab.recruitType === 'combattant' && hab.robotModeleId); }
 
 /* ---------- 📐 ajuster les emplacements de la chambre (Édition → 🛏️ Chambre des robots) ---------- */
 async function ouvrirEditeurEmplacementsChambre(){
-  const url = await urlDeRef(chambreConfig.imageRef);
-  if (!url){ showToast('Pose d\'abord l\'image de la chambre'); return; }
+  const url0 = await urlDeRef(chambreConfig.imageRef);
+  if (!url0){ showToast('Pose d\'abord l\'image de la chambre'); return; }
+  const base = await chargerImage(url0);
+  if (!base){ showToast('Image de chambre illisible'); return; }
+  const url = recadrerChambre(base).toDataURL('image/jpeg', 0.85);   // v625 : au cadre commun
+  const K = cadrePct();
   let emps = JSON.parse(JSON.stringify(emplacementsChambre()));
   let sel = null;
   const fond = document.createElement('div');
   fond.className = 'overlay show'; fond.style.zIndex = '4800';
   fond.innerHTML = `<div class="sheet" style="max-height:94vh; overflow-y:auto;">
     <div class="sheet-top"><h3 style="margin-top:0;">📐 Emplacements de la chambre</h3><button class="sheet-x" data-x>✕</button></div>
-    <p class="meta" style="margin:0 0 6px; font-size:12px;">Glisse un rectangle pour le déplacer, son coin en bas à droite pour le redimensionner.</p>
-    <div data-scene style="position:relative; width:100%; max-width:420px; margin:0 auto; touch-action:none;">
-      <img src="${url}" style="width:100%; display:block; border-radius:8px; pointer-events:none;">
+    <p class="meta" style="margin:0 0 6px; font-size:11px;">Glisse un rectangle pour le déplacer, son coin en bas à droite pour le redimensionner. C'est le cadre tel qu'on le voit dans la chambre.</p>
+    <div data-scene style="position:relative; width:fit-content; margin:0 auto; touch-action:none;">
+      <img src="${url}" style="height:56vh; max-width:100%; display:block; border-radius:8px; pointer-events:none;">
       <div data-cases style="position:absolute; inset:0;"></div>
     </div>
     <div data-panneau style="margin-top:8px;"></div>
@@ -33528,7 +33557,7 @@ async function ouvrirEditeurEmplacementsChambre(){
   document.body.appendChild(fond);
   const scene = fond.querySelector('[data-scene]'), cases = fond.querySelector('[data-cases]'), panneau = fond.querySelector('[data-panneau]');
   const dessiner = ()=>{
-    cases.innerHTML = emps.map(e=> `<div data-id="${e.id}" style="position:absolute; left:${e.x - e.w / 2}%; top:${e.y - e.h / 2}%; width:${e.w}%; height:${e.h}%; border:2px dashed ${e.id === sel ? 'var(--danger)' : 'rgba(95,242,255,.95)'}; background:rgba(95,242,255,.12); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:14px; ${e.type === 'fenetre' && e.perspective ? 'transform:perspective(420px) rotateY(' + e.perspective + 'deg);' : ''}">${TYPES_DECO[e.type].emoji}<span data-coin style="position:absolute; right:-7px; bottom:-7px; width:16px; height:16px; border-radius:50%; background:${e.id === sel ? 'var(--danger)' : '#5ff2ff'};"></span></div>`).join('');
+    cases.innerHTML = emps.map(e=> `<div data-id="${e.id}" style="position:absolute; ${rectDansCadre(e)} border:2px dashed ${e.id === sel ? 'var(--danger)' : 'rgba(95,242,255,.95)'}; background:rgba(95,242,255,.12); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:14px; ${e.type === 'fenetre' && e.perspective ? 'transform:perspective(420px) rotateY(' + e.perspective + 'deg);' : ''}">${TYPES_DECO[e.type].emoji}<span data-coin style="position:absolute; right:-7px; bottom:-7px; width:16px; height:16px; border-radius:50%; background:${e.id === sel ? 'var(--danger)' : '#5ff2ff'};"></span></div>`).join('');
     const e = emps.find(x=> x.id === sel);
     panneau.innerHTML = e ? `<div style="display:flex; align-items:center; gap:8px;"><b>${TYPES_DECO[e.type].emoji} ${TYPES_DECO[e.type].nom}</b>${e.type === 'robot' ? '' : '<button type="button" class="btn-secondary" data-suppr style="margin-left:auto;">🗑️</button>'}</div>`
       + (e.type === 'fenetre' ? `<div style="display:flex; gap:8px; align-items:center; margin-top:6px;">perspective <input type="range" min="-60" max="60" step="2" value="${e.perspective || 0}" data-persp style="flex:1;"><span>${e.perspective || 0}°</span></div>` : '')
@@ -33547,7 +33576,7 @@ async function ouvrirEditeurEmplacementsChambre(){
   window.addEventListener('pointermove', function bouge(ev){
     if (!fond.isConnected){ window.removeEventListener('pointermove', bouge); return; }
     if (!glisse) return;
-    const dx = (ev.clientX - glisse.x0) / glisse.W * 100, dy = (ev.clientY - glisse.y0) / glisse.H * 100;
+    const dx = (ev.clientX - glisse.x0) / glisse.W * K.w, dy = (ev.clientY - glisse.y0) / glisse.H * K.h;   // v625 : en % de l'image entière
     const e = glisse.e;
     if (glisse.coin){
       e.w = Math.max(3, +(glisse.ew + dx).toFixed(1)); e.h = Math.max(3, +(glisse.eh + dy).toFixed(1));
@@ -33715,12 +33744,14 @@ async function ouvrirDialogueRobot(hab){
   fermerDialogueChambre();
   const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
   const nom = htmlEsc(hab.name || (m && m.nom) || 'le robot');
-  const face = await urlFaceModeleAsync(m);
+  const faceBrute = await urlFaceModeleAsync(m);
+  let face = faceBrute;
+  if (faceBrute){ try { face = await (m && m.portraitCrop ? buildManualThumb(faceBrute, m.portraitCrop) : buildFaceThumb(faceBrute)); } catch(e){ face = faceBrute; } }   // v625 : buste recadré
   const fond = document.createElement('div');
   fond.className = 'overlay show'; fond.style.zIndex = '4650'; fond.style.background = 'rgba(0,0,0,.25)';
   fond.innerHTML = `<div class="sheet" style="max-height:80vh; overflow-y:auto; padding-top:14px;">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
-      ${face ? `<img src="${face}" style="width:64px; height:64px; object-fit:contain; flex:none;">` : '<div class="emoji" style="flex:none;">🤖</div>'}
+      ${face ? `<img src="${face}" style="width:92px; height:92px; object-fit:cover; border-radius:14px; flex:none; background:rgba(128,128,128,.15);">` : '<div class="emoji" style="flex:none;">🤖</div>'}
       <div style="flex:1; min-width:0;"><div style="font-weight:700;">${nom}</div><p data-bulle style="margin:4px 0 0; font-size:14px; line-height:1.4;"></p></div>
       <button class="sheet-x" data-x style="flex:none;">✕</button>
     </div>
@@ -33886,13 +33917,13 @@ async function ouvrirDecoration(hab){
   const fond = document.createElement('div');
   fond.className = 'overlay show';
   fond.style.zIndex = '4800';
-  fond.innerHTML = `<div class="sheet" style="max-height:94vh; overflow-y:auto; padding:12px 14px 12px;">
-    <div class="sheet-top"><h3 style="margin:0;">🎨 Chambre de ${htmlEsc(hab.name || '')}</h3><button class="sheet-x" data-fini>✕</button></div>
-    <div data-scene style="position:relative; width:100%; max-width:420px; margin:6px auto 0;">
-      <img data-vue style="width:100%; display:block; border-radius:8px;">
+  fond.innerHTML = `<div class="sheet" style="max-height:96vh; overflow-y:auto; padding:8px 12px 10px;">
+    <div data-scene style="position:relative; width:fit-content; margin:0 auto;">
+      <img data-vue style="height:52vh; max-width:100%; display:block; border-radius:8px;">
       <div data-cases style="position:absolute; inset:0;"></div>
+      <button class="sheet-x" data-fini style="position:absolute; top:6px; right:6px; background:rgba(0,0,0,.55); color:#fff; border-radius:50%; width:30px; height:30px; font-size:15px; border:1px solid rgba(255,255,255,.35);">✕</button>
     </div>
-    <p class="meta" data-aide style="margin:6px 0 4px; font-size:12px; min-height:16px;"></p>
+    <p class="meta" data-aide style="margin:4px 0 2px; font-size:11px; min-height:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></p>
     <div data-onglets style="display:flex; gap:5px; margin-top:4px;">
       <button type="button" class="btn-secondary" data-onglet="objets" style="flex:1; padding:6px 2px;">🎒 Objets</button>
       <button type="button" class="btn-secondary" data-onglet="fenetres" style="flex:1; padding:6px 2px;">🪟 Fenêtres</button>
@@ -33930,12 +33961,12 @@ async function ouvrirDecoration(hab){
     const ok = compatibles();
     cases.innerHTML = ok.map(e=>{
       const pris = occupant(e);
-      return `<button type="button" data-case="${e.id}" style="position:absolute; left:${e.x - e.w / 2}%; top:${e.y - e.h / 2}%; width:${e.w}%; height:${e.h}%; border:2px dashed ${pris ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)'}; background:${pris ? 'rgba(255,196,80,.14)' : 'rgba(95,242,255,.16)'}; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; font-size:16px;">${enMain.genre === 'reprendre' ? '↩️' : (pris ? '🔁' : TYPES_DECO[e.type].emoji)}</button>`;
+      return `<button type="button" data-case="${e.id}" style="position:absolute; ${rectDansCadre(e)} border:2px dashed ${pris ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)'}; background:${pris ? 'rgba(255,196,80,.14)' : 'rgba(95,242,255,.16)'}; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; font-size:16px;">${enMain.genre === 'reprendre' ? '↩️' : (pris ? '🔁' : TYPES_DECO[e.type].emoji)}</button>`;
     }).join('');
     cases.querySelectorAll('[data-case]').forEach(b=> b.addEventListener('click', ()=> poser(emps().find(e=> e.id === b.dataset.case))));
-    aide.textContent = !enMain ? (onglet === 'objets' || onglet === 'fenetres' ? 'Choisis en bas, puis touche un emplacement qui s\'allume.' : '')
-      : !ok.length ? 'Aucun emplacement pour ça dans la chambre.'
-      : enMain.genre === 'reprendre' ? 'Touche ce que tu veux reprendre dans ton sac.' : 'Touche un emplacement allumé. 🔁 : remplace ce qui y est.';
+    aide.textContent = !enMain ? (onglet === 'objets' || onglet === 'fenetres' ? 'Choisis en bas, puis touche un emplacement allumé.' : '')
+      : !ok.length ? 'Aucun emplacement pour ça.'
+      : enMain.genre === 'reprendre' ? 'Touche ce que tu reprends.' : 'Touche un emplacement allumé (🔁 remplace).';
   };
   const poser = async (e)=>{
     if (!e || !enMain || occupe) return;
@@ -34494,8 +34525,8 @@ function openSceneBigImage(url, chambre, neutre){
   sceneBigImageOpenedAt = Date.now();
   document.getElementById('sceneBigImageCloseBtn').style.display = ''; // rétablie pour une image ordinaire
   const img = document.getElementById('sceneBigImageImg');
-  img.classList.toggle('room-standard', !!chambre && !neutre);
-  img.classList.toggle('room-neutre', !!neutre);
+  img.classList.toggle('room-standard', !!chambre);
+  img.classList.toggle('room-neutre', !!neutre);   // v625 : seulement le curseur (la pièce est déjà au cadre commun)
   img.src = url;
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
@@ -34532,6 +34563,8 @@ function renderRoomActions(recruit){
      tout le reste passe par le dialogue avec le robot (on touche la pièce). */
   const fleche = document.getElementById('roomRetour');
   fleche.querySelector('img').src = exitArrowUrl();
+  const pl = exitArrowPlaceHabituelle();   // v625 : le même sens que dans les zones
+  fleche.querySelector('img').style.transform = 'rotate(' + (pl.rotation || 0) + 'deg)' + (pl.flipped ? ' scaleX(-1)' : '');
   fleche.style.display = 'block';
   if (roomNeutreOuverte){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
   const inTeam = activeTeamIds.includes(recruit.id);
