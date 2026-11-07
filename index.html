@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v637</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v638</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12759,7 +12759,7 @@ async function ouvrirBrouillons(){
     envois['kit_cuisine'] = ()=> ({ texte: PROMPT_KIT_CUISINE, imgs: [] });
     envois['kit_chambre'] = ()=> ({ texte: PROMPT_KIT_CHAMBRE, imgs: [] });
     envois['kit_tournes'] = ()=> ({ texte: PROMPT_KIT_TOURNES, imgs: [fichierPourPartage('gabarit-kit-' + Date.now(), genererGabaritKit('kit_tournes'))] });
-    envois['kit_rot_canape'] = ()=> ({ texte: promptPlancheTournante(PLANCHES_KIT.kit_rot_canape), imgs: [] });
+    envois['kit_rot_canape'] = ()=>{ const m = (K.meubles || []).find(x=> x.nom === PLANCHES_KIT.kit_rot_canape.rot); return { texte: promptPlancheTournante(PLANCHES_KIT.kit_rot_canape), imgs: m && m.ref ? [fichierPourPartage('meuble-' + m.id, urlDeRef(m.ref))] : [] }; };   // v638 : le meuble joint
     let kh = '<div style="font-weight:700; margin:14px 0 6px;">🧩 Pièces en kit</div>'
       + '<p class="meta" style="font-size:12px;">Le test avec la maison de Mado : deux coquilles vides et trois planches de meubles, puis la pièce s\'assemble dans l\'éditeur de scène (🧩 Kit). ' + (K.coquilles || []).length + ' coquille(s) · ' + (K.meubles || []).length + ' meuble(s). Fais d\'abord une coquille et une planche, regarde, puis le reste.</p>';
     const etapes = [
@@ -34443,7 +34443,9 @@ function vueRotationKit(G, o, m){
   alpha = ((alpha % 360) + 540) % 360 - 180;                     // dans (-180, 180]
   const pas = 180 / (n - 1);
   const k = Math.max(0, Math.min(n - 1, Math.round(Math.abs(alpha) / pas)));
-  return { k, miroir: alpha < 0, alpha };
+  /* v638 : la planche tourne le meuble vers SA droite (on découvre son côté gauche) — le sens que prend ChatGPT ;
+     m.rotInverse pour une planche tournée dans l'autre sens */
+  return { k, miroir: (alpha > 0) !== !!m.rotInverse, alpha };
 }
 /* la zone orange pur du dessin, teintée à la couleur de la pièce */
 const teinteCache = {};
@@ -35171,7 +35173,7 @@ async function ouvrirBiblioKit(){
         <label class="meta">${m.type === 'mur' ? 'H' : 'P'} <input type="number" data-m-dh="${m.id}" min="1" max="20" value="${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}" class="field-input" style="width:52px;"></label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-porte="${m.id}" ${m.porte ? 'checked' : ''} style="width:auto;"> porte</label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-lum="${m.id}" ${m.lumiere ? 'checked' : ''} style="width:auto;"> lumière</label>
-        ${m.rot && m.rot.length ? '<span class="meta" style="font-size:10px;">🔄 ' + m.rot.filter(Boolean).length + ' vues</span>' : m.vues && (m.vues.dos || m.vues.tourne) ? '<span class="meta" style="font-size:10px;">🔄 ' + (m.vues.dos ? 'dos ' : '') + (m.vues.tourne ? 'tourné' : '') + '</span>' : ''}
+        ${m.rot && m.rot.length ? '<button type="button" class="btn-secondary" data-m-rotsens="' + m.id + '" style="padding:2px 6px; font-size:10px;">🔄 ' + m.rot.filter(Boolean).length + ' vues · sens ' + (m.rotInverse ? 'B' : 'A') + '</button>' : m.vues && (m.vues.dos || m.vues.tourne) ? '<span class="meta" style="font-size:10px;">🔄 ' + (m.vues.dos ? 'dos ' : '') + (m.vues.tourne ? 'tourné' : '') + '</span>' : ''}
         <button type="button" class="btn-secondary" data-m-suppr="${m.id}" style="color:var(--danger);">🗑️</button></div>`).join('') || '<p class="meta">Aucun meuble.</p>'}
       <button type="button" class="btn-primary" data-ok style="width:100%; margin-top:12px;">💾 Enregistrer</button>
     </div>`;
@@ -35180,6 +35182,7 @@ async function ouvrirBiblioKit(){
     fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
     fond.querySelectorAll('[data-coq-regler]').forEach(b=> b.addEventListener('click', ()=>{ lire(); ouvrirReglageCoquille(b.dataset.coqRegler); }));
     fond.querySelectorAll('[data-coq-suppr]').forEach(b=> b.addEventListener('click', ()=>{ lire(); kitBiblio.coquilles = kitBiblio.coquilles.filter(c=> c.id !== b.dataset.coqSuppr); rendre(); }));
+    fond.querySelectorAll('[data-m-rotsens]').forEach(b=> b.addEventListener('click', ()=>{ lire(); const m = kitBiblio.meubles.find(x=> x.id === b.dataset.mRotsens); if (m){ m.rotInverse = !m.rotInverse; showToast('Sens de la planche inversé : enregistre, puis regarde la pièce'); } rendre(); }));   // v638
     fond.querySelectorAll('[data-m-suppr]').forEach(b=> b.addEventListener('click', ()=>{ lire(); kitBiblio.meubles = kitBiblio.meubles.filter(m=> m.id !== b.dataset.mSuppr); rendre(); }));
     fond.querySelectorAll('[data-m-type]').forEach(s=> s.addEventListener('change', ()=>{ lire(); rendre(); }));
     fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
@@ -35323,14 +35326,14 @@ const promptPlancheTournante = (pl)=> `Dessine UNE SEULE IMAGE : une planche sur
 
 Le meuble : ${pl.desc}.
 
-C'est une PLAQUE TOURNANTE : le même meuble, à la même échelle, à la même distance, avec la même lumière venant de la gauche, mais tourné un peu plus à chaque dessin, de 22,5° à chaque fois, dans le sens inverse des aiguilles d'une montre vu de dessus (il tourne vers SA gauche, donc on découvre peu à peu son côté DROIT) :
+C'est le meuble de l'IMAGE JOINTE (même forme, mêmes couleurs, mêmes détails). C'est une PLAQUE TOURNANTE : le même meuble, à la même échelle, à la même distance, avec la même lumière venant de la gauche, mais tourné un peu plus à chaque dessin, de 22,5° à chaque fois, TOUJOURS DANS LE MÊME SENS : son devant part vers la GAUCHE de l'image, on découvre peu à peu son côté qui est à DROITE de l'image. Les 9 angles doivent être tous différents, régulièrement espacés :
 1. exactement DE FACE.
-2. tourné de 22,5° : on commence à voir son côté droit.
+2. tourné de 22,5° : on commence à voir son côté (à droite de l'image).
 3. tourné de 45° (trois-quarts face).
 4. tourné de 67,5°.
-5. exactement DE PROFIL : son côté droit vers nous, son devant tourné vers la DROITE de l'image.
+5. exactement DE PROFIL, à plat : son côté face à nous, son devant tourné vers la GAUCHE de l'image, on ne voit plus du tout son devant ni son dos.
 6. tourné de 112,5°.
-7. tourné de 135° (trois-quarts dos) : on voit son dos et son côté droit.
+7. tourné de 135° (trois-quarts dos) : on voit son dos et son côté.
 8. tourné de 157,5°.
 9. exactement DE DOS.
 Caméra à hauteur d'homme, légèrement au-dessus (on voit un peu le dessus), posé sur un sol invisible, aucune ombre portée au sol.
