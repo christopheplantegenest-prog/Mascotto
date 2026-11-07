@@ -375,6 +375,9 @@
     width:100%; height:auto; aspect-ratio:47 / 100; max-height:100%;
     object-fit:cover; object-position:center;
   }
+  #sceneBigImageOverlay img.room-neutre{ width:auto; height:auto; max-width:100%; max-height:100%; aspect-ratio:auto; object-fit:contain; cursor:pointer; }
+  #roomRetour{ display:none; position:fixed; left:14px; bottom:max(14px, env(safe-area-inset-bottom)); width:60px; height:60px; z-index:3; padding:0; border:none; background:none; }
+  #roomRetour img{ width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)); }
   #sceneBigImageOverlay .sheet-x{
     position:fixed; top:14px; right:14px; background:rgba(0,0,0,.55); color:#fff; border-radius:50%;
     width:38px; height:38px; font-size:18px; border:1px solid rgba(255,255,255,.35);
@@ -1423,7 +1426,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v623</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v624</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -1753,6 +1756,7 @@
       <button class="btn-capture" id="hubQuestsBtn" style="flex:1 1 45%;">Quêtes &amp; missions</button>
       <button class="btn-capture" id="hubMusicBtn" style="flex:1 1 45%;">🎵 Musiques</button>
       <button class="btn-capture" id="hubRobotsBtn" style="flex:1 1 45%;">🎨 Apparences</button>
+      <button class="btn-capture" id="hubChambreBtn" style="flex:1 1 45%;">🛏️ Chambre des robots</button>
     </div>
     <button class="btn-secondary" id="hubBrouillonsBtn" style="width:100%; margin-bottom:10px;">🧰 À finir · fiches en travaux</button>
 
@@ -3838,6 +3842,7 @@
 <div class="overlay" id="sceneBigImageOverlay">
   <img id="sceneBigImageImg" alt="">
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
+  <button type="button" id="roomRetour" title="Retour"><img alt="Retour"></button>
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
 </div>
 
@@ -12703,12 +12708,15 @@ async function ouvrirBrouillons(){
   /* v623 — 🛏️ LA CHAMBRE DES ROBOTS */
   {
     const C = chambreConfig;
-    const ciel = fenetresBiblio.vues.find(v=> v.id === 'vue_ciel');
+    const ciels = (fenetresBiblio.vues || []).filter(v=> v && v.ciel && v.id !== 'vue_ciel');
+    const cielsAttente = (C.cielsSansNuit || []).length;
+    const cielsComplets = ciels.filter(v=> v.jourRef && v.nuitRef).length;
     const objetsDeco = (typeof items !== 'undefined' ? items : []).filter(i=> i.deco);
     const aEssai = PLANCHE_DECO_ESSAI.every(d=> objetsDeco.some(i=> i.name === d.nom));
     const a2 = PLANCHE_DECO_2.every(d=> objetsDeco.some(i=> i.name === d.nom));
     envois['chneutre'] = ()=> ({ texte: PROMPT_CHAMBRE_NEUTRE, imgs: [] });
     envois['chciel'] = ()=> ({ texte: PROMPT_CIEL_VAISSEAU, imgs: [] });
+    if (C.plancheCielRef) envois['chcielnuit'] = ()=> ({ texte: PROMPT_CIEL_NUIT, imgs: [fichierPourPartage('planche-ciels-jour', urlDeRef(C.plancheCielRef))] });
     envois['chsol'] = ()=> ({ texte: PROMPT_TEXTURES_SOL, imgs: [] });
     if (C.imageRef) envois['chobj2'] = ()=> ({ texte: PROMPT_OBJETS_DECO_2, imgs: [fichierPourPartage('chambre-neutre', urlDeRef(C.imageRef))] });
     let ch = '<div style="font-weight:700; margin:14px 0 6px;">🛏️ Chambre des robots</div>'
@@ -12717,21 +12725,26 @@ async function ouvrirBrouillons(){
       'La pièce vide, vue de face. Celle que tu m\'as montrée le 06/11 est parfaite : pose-la directement.',
       '<b>📷 Choisir l\'image</b>. (Pour en refaire une : 📤 Envoyer à ChatGPT.)',
       bouton('data-poser-chambre="image"', '📷 Choisir l\'image', true) + bouton('data-envoi="chneutre"', '📤 Envoyer à ChatGPT'));
-    if (C.imageRef) ch += '<div style="display:flex; flex-wrap:wrap; gap:5px; margin:-2px 0 8px 22px;">' + bouton('data-chambre-emplacements', '📐 Ajuster les emplacements') + bouton('data-poser-chambre="image"', '📷 Changer l\'image') + '</div>';
-    ch += tache(!!(ciel && ciel.nuitRef), '☁️ Le CIEL vu des fenêtres (jour + nuit)',
-      'Une planche : le ciel de jour à gauche, le même de nuit à droite. C\'est la vue de toutes les fenêtres du vaisseau.',
-      '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.',
+    if (C.imageRef) ch += '<p class="meta" style="margin:-2px 0 8px 22px; font-size:11px;">Les emplacements et l\'image se règlent dans Édition → 🛏️ Chambre des robots.</p>';
+    ch += tache(cielsComplets > 0 && !cielsAttente, '☁️ SIX CIELS de jour',
+      'Ce qu\'on voit par les fenêtres du vaisseau : six ciels neutres (nuages, brume, ciel dégagé…), sans soleil ni direction marquée pour aller sur n\'importe quelle fenêtre. Le ciel change chaque jour.',
+      '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b> : le jeu la coupe en 6.',
       bouton('data-envoi="chciel"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="chciel"', '📋 Copier') + bouton('data-poser-chambre="ciel"', '📷 Choisir la planche'));
+    ch += tache(cielsComplets > 0 && !cielsAttente, '🌃 Les MÊMES CIELS, de nuit',
+      'Les six ciels de la dernière planche, redessinés la nuit, chacun à sa place.',
+      C.plancheCielRef && cielsAttente ? '1. <b>📤 Envoyer à ChatGPT</b> : la planche de jour part avec le prompt.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.' : 'Fais d\'abord la planche des ciels de jour.',
+      C.plancheCielRef && cielsAttente ? bouton('data-envoi="chcielnuit"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="chcielnuit"', '📋 Copier') + bouton('data-poser-chambre="cielnuit"', '📷 Choisir la planche') : '');
+    if (cielsComplets && !cielsAttente) ch += '<div style="display:flex; flex-wrap:wrap; gap:5px; margin:-2px 0 8px 22px;">' + bouton('data-envoi="chciel"', '📤 6 ciels de plus') + bouton('data-poser-chambre="ciel"', '📷 Ajouter des ciels') + '</div>';
     ch += tache((C.textures || []).length > 0, '🟫 TEXTURES DE SOL (6)',
-      'Des sols vus de dessus (parquets, moquette, carrelage…) : le jeu les couche lui-même en perspective.',
+      'Six sols de vaisseau vus de dessus (métal brossé, caillebotis, dalles lumineuses…) : le jeu les couche lui-même en perspective.',
       '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.',
       bouton('data-envoi="chsol"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="chsol"', '📋 Copier') + bouton('data-poser-chambre="textures"', '📷 Choisir la planche'));
     ch += tache(aEssai, '🪴 Ta planche d\'ESSAI (lit, cadre, tapis, plante)',
       'La planche de quatre objets que tu m\'as envoyée : le jeu la coupe et crée les quatre objets de déco.',
       '<b>📷 Choisir la planche</b> (dans l\'ordre : lit, cadre / tapis, plante).',
       bouton('data-poser-chambre="essai"', '📷 Choisir la planche', true));
-    ch += tache(a2, '💡 Six objets de plus (dont deux luminaires)',
-      'Suspension, lampadaire, canapé, poster, tapis rond, statuette. La chambre part avec le prompt, pour garder le même angle.',
+    ch += tache(a2, '💡 Six objets futuristes (dont deux luminaires)',
+      'Anneau lumineux, colonne de lumière, canapé capsule, cadre holographique, tapis à circuit, hologramme. La chambre part avec le prompt, pour garder le même angle.',
       C.imageRef ? '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir la planche</b>.' : 'Pose d\'abord l\'image de la chambre.',
       C.imageRef ? bouton('data-envoi="chobj2"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="chobj2"', '📋 Copier') + bouton('data-poser-chambre="objets2"', '📷 Choisir la planche') : '');
     if (objetsDeco.length) ch += '<div style="margin:0 0 10px 22px;">' + bouton('data-chambre-cadeau', '🎁 M\'en donner un de chaque (pour tester)') + '</div>';
@@ -12793,7 +12806,6 @@ async function ouvrirBrouillons(){
     showToast(oui === '1' ? 'Robot validé ✅' : 'Robot rouvert'); rouvrir();
   });
   /* v623 : la chambre des robots */
-  sur('[data-chambre-emplacements]', ()=> ouvrirEditeurEmplacementsChambre());
   sur('[data-chambre-cadeau]', async ()=>{
     const deco = (typeof items !== 'undefined' ? items : []).filter(i=> i.deco);
     if (!deco.length || !currentUser) return;
@@ -12801,49 +12813,7 @@ async function ouvrirBrouillons(){
     deco.forEach(i=> maj['inventory.' + i.id] = firebase.firestore.FieldValue.increment(1));
     try { await db.collection('players').doc(currentUser.uid).update(maj); showToast(deco.length + ' objet(s) de déco ajoutés à ton sac 🎁'); } catch(e){ showToast('Échec : ' + e.message); }
   });
-  sur('[data-poser-chambre]', async (b)=>{
-    const quoi = b.dataset.poserChambre;
-    if (!chambreDoc()){ showToast('Firebase indisponible ici'); return; }
-    const img = await choisirFichierImage();
-    if (!img) return;
-    const t = Date.now();
-    if (quoi === 'image'){
-      const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1536, false));
-      if (!ref){ showToast('Échec : image non enregistrée'); return; }
-      chambreConfig.imageRef = ref;
-      await enregistrerChambreConfig();
-      showToast('Chambre neutre posée ✅'); rouvrir(); return;
-    }
-    const n = { ciel: 2, textures: 6, essai: 4, objets2: 6 }[quoi];
-    const r = decouperGrille(img, n);
-    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, dessins bien séparés, fond transparent.'); return; }
-    if (quoi === 'ciel'){
-      const refs = [];
-      for (const c of r.vues){ const ref = await externalizeSceneImage(encoderImageSousLimite(c, 700, true)); if (!ref){ showToast('Échec : image non enregistrée'); return; } refs.push(ref); }
-      const v = { id: 'vue_ciel', nom: 'Ciel du vaisseau', jourRef: refs[0], nuitRef: refs[1], ciel: true };
-      const i = fenetresBiblio.vues.findIndex(x=> x.id === 'vue_ciel');
-      if (i >= 0) fenetresBiblio.vues[i] = v; else fenetresBiblio.vues.push(v);
-      Object.keys(compoFenetreCache).forEach(k=> delete compoFenetreCache[k]);
-      await enregistrerFenetresBiblio();
-      showToast('Ciel du vaisseau rangé ✅ (jour et nuit)');
-    } else if (quoi === 'textures'){
-      const NOMS = ['Parquet clair', 'Parquet chevrons', 'Moquette bleu canard', 'Damier', 'Hexagones sauge', 'Métal antidérapant'];
-      for (let i = 0; i < r.vues.length; i++){
-        const v = r.vues[i], m = 4, k = Math.min(v.width, v.height) - 2 * m;
-        const sq = document.createElement('canvas'); sq.width = k; sq.height = k;
-        sq.getContext('2d').drawImage(v, (v.width - k) / 2, (v.height - k) / 2, k, k, 0, 0, k, k);
-        const ref = await externalizeSceneImage(encoderImageSousLimite(sq, 320, false));
-        if (!ref){ showToast('Échec : image non enregistrée'); return; }
-        chambreConfig.textures.push({ id: 'tex_' + t + '_' + i, nom: NOMS[i] || ('Sol ' + (i + 1)), ref });
-      }
-      await enregistrerChambreConfig();
-      showToast('6 textures de sol rangées ✅');
-    } else {
-      const nb = await creerObjetsDeco(quoi === 'essai' ? PLANCHE_DECO_ESSAI : PLANCHE_DECO_2, r.vues);
-      showToast(nb + ' objet(s) de déco créés ✅');
-    }
-    rouvrir();
-  });
+  sur('[data-poser-chambre]', async (b)=>{ if (await poserPlancheChambre(b.dataset.poserChambre)) rouvrir(); });   // v624
   /* v622 : les planches de fenêtres → la bibliothèque */
   sur('[data-poser-fenetres]', async (b)=>{
     const quoi = b.dataset.poserFenetres;
@@ -18907,6 +18877,8 @@ function lireFormRobotModele(){
   f.pirZone = num('rmPirZone', 8, 50, PIRATAGE_DEFAUT.zone);
   f.pirFuite = num('rmPirFuite', 0, 100, PIRATAGE_DEFAUT.fuite);
   f.phraseNaissance = (document.getElementById('rmPhraseNaissance') || {}).value || '';   // v518
+  f.repliques = {};   // v624
+  CLES_REPLIQUES.forEach(({ cle })=>{ const el = document.getElementById('rmRep_' + cle); const t = el ? el.value.trim() : ''; if (t) f.repliques[cle] = t; });
   f.apparence = ((document.getElementById('rmApparence') || {}).value || '').trim();   // v612
   f.fab = { processeur: num('rmFabProcesseur', 0, 20, FABRICATION_DEFAUT.processeur), chassis: num('rmFabChassis', 0, 20, FABRICATION_DEFAUT.chassis),
     articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
@@ -18968,6 +18940,10 @@ function renderRobotModeleForm(){
       <input type="text" id="rmPhraseNaissance" class="field-input" maxlength="120" value="${htmlEsc(f.phraseNaissance || '')}" placeholder="Bonjour, capitaine.">
     </label>
     <p class="meta" style="margin:4px 0 0; font-size:11px;">La phrase de la scène de naissance, quand il sort de l'atelier. Vide : une phrase passe-partout.</p>
+    <details style="margin-top:8px;"><summary class="meta" style="cursor:pointer;">💬 Ses répliques dans sa chambre (${Object.keys(f.repliques || {}).length}/${CLES_REPLIQUES.length})</summary>
+      <p class="meta" style="margin:4px 0; font-size:11px;">Ce qu'il dit quand on vient le voir : sa façon de parler à lui. Vide : une phrase passe-partout.</p>
+      ${CLES_REPLIQUES.map(r=> `<label class="meta" style="display:block; margin-top:4px;">${htmlEsc(r.nom)}<input type="text" id="rmRep_${r.cle}" class="field-input" maxlength="240" value="${htmlEsc(typeof (f.repliques || {})[r.cle] === 'string' ? f.repliques[r.cle] : ((f.repliques || {})[r.cle] || []).join(' / '))}" placeholder="${htmlEsc(r.ex)}"></label>`).join('')}
+    </details>
     <label class="meta" style="display:block; margin-top:8px;">🎨 Apparence (pour dessiner ses images)
       <textarea id="rmApparence" class="field-input" rows="5" placeholder="Forme, dessus de la tête, ventre, dos, dessous, matière, couleurs…">${htmlEsc(f.apparence || '')}</textarea>
     </label>
@@ -19105,7 +19081,7 @@ function cablerFormRobotModele(){
       stats: f.stats ? Object.assign({}, f.stats) : (editingRobotModeleId ? firebase.firestore.FieldValue.delete() : null),   // v526
 
       ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
-      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', ...images, updatedAt: Date.now() };
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', repliques: f.repliques || {}, ...images, updatedAt: Date.now() };
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -19143,7 +19119,7 @@ function renderRobotsModelesList(){
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', stats: statsValides(m.stats), trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
-      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '',   // v612 (la phrase ne se rechargeait pas)
+      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '', repliques: Object.assign({}, m.repliques || {}),   // v612 (la phrase ne se rechargeait pas) · v624 répliques
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
       chambreImagePath:m.chambreImagePath||null, chambreImageRef:m.chambreImageRef||null, chambreImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
@@ -27943,6 +27919,10 @@ function renderMusicEditorFields(){
   editingCustomMusic = (musicConfig.custom || []).map(s=> ({ id: s.id, name: s.name || '', url: s.url || '', loopStart: s.loopStart || null, volume: s.volume != null ? s.volume : 100 }));
   renderCustomMusicList();
 }
+document.getElementById('hubChambreBtn').addEventListener('click', ()=>{   // v624
+  document.getElementById('editHubOverlay').classList.remove('show');
+  ouvrirReglagesChambre();
+});
 document.getElementById('hubRobotsBtn').addEventListener('click', ()=>{
   document.getElementById('editHubOverlay').classList.remove('show');
   document.getElementById('robotEditorOverlay').classList.add('show');
@@ -28931,7 +28911,7 @@ function openRecruitRoom(hab){
   const chambreDuModele = ()=>{
     /* v623 : un robot vit dans la chambre neutre, décorée par le joueur */
     if (estRobotEnChambre(hab) && chambreNeutrePrete()){
-      composerChambre(hab).then(c=>{ if (c) montrerChambre(c.toDataURL('image/jpeg', 0.9)); else pasAmenagee(); }).catch(()=> pasAmenagee());
+      composerChambre(hab).then(c=>{ if (c) montrerChambre(c.toDataURL('image/jpeg', 0.9), false, true); else pasAmenagee(); }).catch(()=> pasAmenagee());
       return;
     }
     const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
@@ -28941,10 +28921,11 @@ function openRecruitRoom(hab){
       .then((u)=>{ if (u) montrerChambre(u); else showToast('Image de chambre illisible'); })
       .catch(()=> showToast('Image de chambre illisible'));
   };
-  const montrerChambre = (url, provisoire)=>{
+  const montrerChambre = (url, provisoire, neutre)=>{
       document.getElementById('quartersOverlay').classList.remove('show');
       showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name + (provisoire ? ' (pas encore aménagée)' : ''));
-      openSceneBigImage(url, true);
+      roomNeutreOuverte = !!neutre;   // v624 : la chambre neutre se vit en dialogue
+      openSceneBigImage(url, true, neutre);
       /* Depuis sa chambre, on accède à sa fiche : équipement, craft, apprentissage. C'est ce qui
          fait de la chambre un lieu utile et pas seulement un décor à regarder. */
       roomSheetRecruitId = hab.id;
@@ -33304,20 +33285,21 @@ function elementFenetre(pt, nuit, assombrir){
      volume, couchage, plafond). Un luminaire reste allumé quand la pièce s'éteint.
    La décoration vit sur le recruté (`deco`). La géométrie (murs, sol) est celle de l'image de
    chambre validée le 06/11 (1024 × 1536, un point de fuite) ; elle suit l'image si sa taille change. */
-let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' } };
+let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: [], plancheCielRef: null };
 const chambreDoc = ()=> (typeof db !== 'undefined' && db) ? db.collection('app_config').doc('chambre_robots') : null;
 setTimeout(()=>{
   try {
     chambreDoc().onSnapshot(doc=>{
       const d = (doc && doc.exists && doc.data()) || {};
       chambreConfig = { imageRef: d.imageRef || null, textures: d.textures || [], emplacements: d.emplacements || null,
-        lumiere: d.lumiere || { extinction: '22:00', allumage: '07:00' } };
+        lumiere: d.lumiere || { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: d.cielsSansNuit || [], plancheCielRef: d.plancheCielRef || null };
     }, ()=>{});
   } catch(e){}
 }, 0);
 async function enregistrerChambreConfig(){
   await chambreDoc().set({ imageRef: chambreConfig.imageRef || null, textures: chambreConfig.textures || [],
-    emplacements: chambreConfig.emplacements || null, lumiere: chambreConfig.lumiere, updatedAt: Date.now() }, { merge:true });
+    emplacements: chambreConfig.emplacements || null, lumiere: chambreConfig.lumiere,
+    cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null, updatedAt: Date.now() }, { merge:true });
 }
 const CHAMBRE_GEO = {
   W: 1024, H: 1536, cx: 512, horizon: 676, fondY: 893,
@@ -33337,17 +33319,26 @@ const TYPES_DECO = {
   fenetre:  { emoji:'🪟', nom:'Fenêtre' },
   robot:    { emoji:'🤖', nom:'Place du robot' },
 };
-/* Placés par Claude sur l'image du 06/11 ; à réajuster dans 🧰 À finir → 📐 Emplacements. */
+/* Placés par Claude sur l'image du 06/11 ; à réajuster dans Édition → 🛏️ Chambre des robots → 📐.
+   v624 : plusieurs places par type, pour que chaque chambre soit différente — on ne voit que
+   celles qui conviennent à l'objet qu'on a en main. */
 const EMPLACEMENTS_CHAMBRE_DEFAUT = [
-  { id:'mur1', type:'mur', x:60, y:36, w:20, h:13 },
-  { id:'mur2', type:'mur', x:30, y:38, w:14, h:12 },
+  { id:'mur1', type:'mur', x:66, y:36, w:16, h:13 },
+  { id:'mur2', type:'mur', x:32, y:38, w:16, h:12 },
+  { id:'mur3', type:'mur', x:50, y:33, w:14, h:11 },
   { id:'plafond1', type:'plafond', x:50, y:27, w:20, h:18 },
+  { id:'plafond2', type:'plafond', x:30, y:30, w:14, h:14 },
+  { id:'plafond3', type:'plafond', x:70, y:30, w:14, h:14 },
   { id:'fen1', type:'fenetre', x:10, y:40, w:12, h:20, perspective:45 },
   { id:'fen2', type:'fenetre', x:90, y:40, w:12, h:20, perspective:-45 },
-  { id:'couchage1', type:'couchage', x:39, y:55, w:32, h:15 },
-  { id:'volume1', type:'volume', x:74, y:58, w:13, h:11 },
-  { id:'sol1', type:'sol', x:46, y:71, w:46, h:12 },
+  { id:'couchage1', type:'couchage', x:38, y:55, w:32, h:15 },
+  { id:'couchage2', type:'couchage', x:66, y:55, w:28, h:15 },
+  { id:'volume1', type:'volume', x:81, y:59, w:11, h:11 },
   { id:'volume2', type:'volume', x:12, y:77, w:18, h:18 },
+  { id:'volume3', type:'volume', x:23, y:60, w:11, h:11 },
+  { id:'volume4', type:'volume', x:90, y:76, w:16, h:16 },
+  { id:'sol1', type:'sol', x:46, y:71, w:46, h:12 },
+  { id:'sol2', type:'sol', x:30, y:85, w:36, h:11 },
   { id:'robot', type:'robot', x:72, y:74, w:26, h:22 },
 ];
 function emplacementsChambre(){ return (chambreConfig.emplacements && chambreConfig.emplacements.length) ? chambreConfig.emplacements : EMPLACEMENTS_CHAMBRE_DEFAUT; }
@@ -33420,6 +33411,10 @@ function caseDeDessin(e, iw, ih, W, H){
   const x = cx - w / 2;
   if (e.type === 'plafond') return { x, y: cy - rh / 2, w, h };
   if (e.type === 'mur' || e.type === 'sol') return { x, y: cy - h / 2, w, h };
+  /* v624 : un couchage est calé contre le mur. La ligne du mur passe à 70 % du rectangle
+     (relevé sur le lit de l'image) ; l'objet est posé pour que ses propres 70 % tombent dessus,
+     donc un canapé moins profond qu'un lit touche quand même le mur. */
+  if (e.type === 'couchage'){ const mur = cy - rh / 2 + rh * 0.7; return { x, y: mur - h * 0.7, w, h }; }
   return { x, y: cy + rh / 2 - h, w, h };   // posé au sol : calé en bas
 }
 function ombreAuSol(ctx, c){
@@ -33462,7 +33457,9 @@ async function composerChambre(hab, opts){
       const cadreId = (deco.fenetres || {})[e.id];
       if (!cadreId) continue;
       apres.push(async ()=>{
-        const u = await composerFenetre(cadreId, 'vue_ciel', nuitDehors, voileA);
+        const vueId = cielDuJour(now);
+        if (!vueId) return;
+        const u = await composerFenetre(cadreId, vueId, nuitDehors, voileA);
         const im = u ? await chargerImage(u) : null;
         if (!im) return;
         const src = document.createElement('canvas'); src.width = im.naturalWidth; src.height = im.naturalHeight;
@@ -33509,123 +33506,7 @@ async function composerChambre(hab, opts){
 function chambreNeutrePrete(){ return !!chambreConfig.imageRef; }
 function estRobotEnChambre(hab){ return !!(hab && hab.recruitType === 'combattant' && hab.robotModeleId); }
 
-/* ---------- 🎨 le mode décoration ---------- */
-async function ouvrirDecoration(hab){
-  if (!chambreNeutrePrete()){ showToast('La chambre neutre n\'a pas encore d\'image (🧰 À finir → 🛏️ Chambre des robots)'); return; }
-  const fond = document.createElement('div');
-  fond.className = 'overlay show';
-  fond.style.zIndex = '4800';
-  fond.innerHTML = `<div class="sheet" style="max-height:94vh; overflow-y:auto; padding-bottom:12px;">
-    <div class="sheet-top"><h3 style="margin-top:0;">🎨 Chambre de ${(hab.name || '').replace(/</g,'&lt;')}</h3><button class="sheet-x" data-fini>✕</button></div>
-    <p class="meta" style="margin:0 0 6px; font-size:12px;">Touche un emplacement en pointillés pour y poser un objet de ton sac. Les murs, le sol et les fenêtres sont gratuits.</p>
-    <div data-scene style="position:relative; width:100%; max-width:420px; margin:0 auto;">
-      <img data-vue style="width:100%; display:block; border-radius:8px;">
-      <div data-cases style="position:absolute; inset:0;"></div>
-    </div>
-    <div data-onglets style="display:flex; gap:6px; margin-top:10px;">
-      <button type="button" class="btn-secondary" data-onglet="murs" style="flex:1;">🧱 Murs</button>
-      <button type="button" class="btn-secondary" data-onglet="sol" style="flex:1;">🟫 Sol</button>
-    </div>
-    <div data-nuancier style="margin-top:8px;"></div>
-    <button type="button" class="btn-primary" data-fini style="width:100%; margin-top:10px;">✓ Terminer</button>
-  </div>`;
-  document.body.appendChild(fond);
-  let onglet = 'murs', occupe = false;
-  const vue = fond.querySelector('[data-vue]'), cases = fond.querySelector('[data-cases]'), nuancier = fond.querySelector('[data-nuancier]');
-  const deco = ()=> (hab.deco = hab.deco || {});
-  const enregistrer = async ()=>{
-    try { await recruitsCol.doc(hab.id).update({ deco: hab.deco || {} }); } catch(e){ showToast('Échec : ' + e.message); }
-  };
-  const redessiner = async ()=>{
-    const c = await composerChambre(hab);
-    if (c) vue.src = c.toDataURL('image/jpeg', 0.88);
-  };
-  const dessinerCases = ()=>{
-    cases.innerHTML = emplacementsChambre().filter(e=> e.type !== 'robot').map(e=>{
-      const pris = e.type === 'fenetre' ? (deco().fenetres || {})[e.id] : (deco().objets || {})[e.id];
-      return `<button type="button" data-case="${e.id}" style="position:absolute; left:${e.x - e.w / 2}%; top:${e.y - e.h / 2}%; width:${e.w}%; height:${e.h}%; border:2px dashed ${pris ? 'rgba(255,255,255,.55)' : 'rgba(95,242,255,.95)'}; background:${pris ? 'transparent' : 'rgba(95,242,255,.12)'}; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; font-size:16px;">${pris ? '' : TYPES_DECO[e.type].emoji}</button>`;
-    }).join('');
-    cases.querySelectorAll('[data-case]').forEach(b=> b.addEventListener('click', ()=> choisirPour(emplacementsChambre().find(e=> e.id === b.dataset.case))));
-  };
-  const dessinerNuancier = ()=>{
-    fond.querySelectorAll('[data-onglet]').forEach(b=> b.style.borderColor = b.dataset.onglet === onglet ? 'var(--accent)' : '');
-    const actuel = onglet === 'murs' ? deco().murs : (deco().solTexture ? null : deco().sol);
-    let h = '<div style="display:flex; flex-wrap:wrap; gap:6px;">' + PALETTE_CHAMBRE.map(p=>
-      `<button type="button" data-teinte="${p.id}" title="${p.nom}" style="width:38px; height:38px; border-radius:50%; border:3px solid ${(actuel || 'origine') === p.id ? 'var(--accent)' : 'rgba(128,128,128,.4)'}; background:${p.c || 'repeating-linear-gradient(45deg,#eee,#eee 5px,#ccc 5px,#ccc 10px)'};"></button>`).join('') + '</div>';
-    if (onglet === 'sol' && (chambreConfig.textures || []).length){
-      h += '<div class="meta" style="margin-top:8px;">Textures</div><div style="display:flex; flex-wrap:wrap; gap:6px;">' + chambreConfig.textures.map(t=>
-        `<button type="button" data-texture="${t.id}" title="${t.nom || ''}" style="width:46px; height:46px; padding:0; border-radius:8px; overflow:hidden; border:3px solid ${deco().solTexture === t.id ? 'var(--accent)' : 'rgba(128,128,128,.4)'};"><img data-tref="${t.id}" style="width:100%; height:100%; object-fit:cover;"></button>`).join('') + '</div>';
-    }
-    nuancier.innerHTML = h;
-    nuancier.querySelectorAll('[data-tref]').forEach(im=>{ const t = chambreConfig.textures.find(x=> x.id === im.dataset.tref); urlDeRef(t && t.ref).then(u=>{ if (u) im.src = u; }); });
-    nuancier.querySelectorAll('[data-teinte]').forEach(b=> b.addEventListener('click', async ()=>{
-      if (occupe) return; occupe = true;
-      const v = b.dataset.teinte === 'origine' ? null : b.dataset.teinte;
-      if (onglet === 'murs') deco().murs = v; else { deco().sol = v; delete deco().solTexture; }
-      dessinerNuancier(); await redessiner(); await enregistrer(); occupe = false;
-    }));
-    nuancier.querySelectorAll('[data-texture]').forEach(b=> b.addEventListener('click', async ()=>{
-      if (occupe) return; occupe = true;
-      deco().solTexture = b.dataset.texture; delete deco().sol;
-      dessinerNuancier(); await redessiner(); await enregistrer(); occupe = false;
-    }));
-  };
-  const choisirPour = (e)=>{
-    if (!e || occupe) return;
-    const ch = document.createElement('div');
-    ch.className = 'overlay show'; ch.style.zIndex = '4900';
-    const inv = (playerSelfData && playerSelfData.inventory) || {};
-    let lignes = '';
-    if (e.type === 'fenetre'){
-      const cadres = (fenetresBiblio.cadres || []);
-      const pris = (deco().fenetres || {})[e.id];
-      lignes = cadres.length ? cadres.map(c=> `<button type="button" data-cadre="${c.id}" style="width:64px; height:64px; padding:2px; margin:3px; border-radius:8px; border:3px solid ${pris === c.id ? 'var(--accent)' : 'rgba(128,128,128,.35)'}; background:rgba(128,128,128,.1);"><img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;"></button>`).join('')
-        : '<p class="meta">La bibliothèque de fenêtres est vide.</p>';
-      if (pris) lignes += '<button type="button" class="btn-secondary" data-cadre="" style="width:100%; margin-top:8px;">✕ Pas de fenêtre ici</button>';
-    } else {
-      const posee = objetDeco((deco().objets || {})[e.id]);
-      const dispo = (typeof items !== 'undefined' ? items : []).filter(i=> i.deco === e.type && (inv[i.id] || 0) > 0);
-      lignes = (posee ? `<p class="meta">Posé ici : <b>${(posee.name || '').replace(/</g,'&lt;')}</b></p><button type="button" class="btn-secondary" data-objet="" style="width:100%; margin-bottom:8px;">↩️ Le reprendre dans mon sac</button>` : '')
-        + (dispo.length ? dispo.map(i=> `<button type="button" data-objet="${i.id}" style="display:flex; align-items:center; gap:8px; width:100%; margin:4px 0; padding:6px; border-radius:8px; border:1px solid rgba(128,128,128,.35); background:rgba(128,128,128,.08); text-align:left;"><img src="${urlImageItem(i)}" style="width:44px; height:44px; object-fit:contain;"><span style="flex:1;">${(i.name || '').replace(/</g,'&lt;')}</span><span class="meta">×${inv[i.id]}</span></button>`).join('')
-          : `<p class="meta">Rien dans ton sac pour cet emplacement (${TYPES_DECO[e.type].nom}).</p>`);
-    }
-    ch.innerHTML = `<div class="sheet" style="max-height:70vh; overflow-y:auto;"><div class="sheet-top"><h3 style="margin-top:0;">${TYPES_DECO[e.type].emoji} ${TYPES_DECO[e.type].nom}</h3><button class="sheet-x" data-x>✕</button></div>${lignes}</div>`;
-    document.body.appendChild(ch);
-    ch.querySelectorAll('[data-cref]').forEach(im=>{ const c = fenetresBiblio.cadres.find(x=> x.id === im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
-    const fermer = ()=> ch.remove();
-    ch.querySelector('[data-x]').addEventListener('click', fermer);
-    ch.addEventListener('click', (ev)=>{ if (ev.target === ch) fermer(); });
-    ch.querySelectorAll('[data-cadre]').forEach(b=> b.addEventListener('click', async ()=>{
-      fermer(); occupe = true;
-      deco().fenetres = deco().fenetres || {};
-      if (b.dataset.cadre) deco().fenetres[e.id] = b.dataset.cadre; else delete deco().fenetres[e.id];
-      await redessiner(); dessinerCases(); await enregistrer(); occupe = false;
-    }));
-    ch.querySelectorAll('[data-objet]').forEach(b=> b.addEventListener('click', async ()=>{
-      fermer(); occupe = true;
-      deco().objets = deco().objets || {};
-      const ancien = deco().objets[e.id] || null, nouveau = b.dataset.objet || null;
-      const maj = {};
-      if (ancien) maj['inventory.' + ancien] = firebase.firestore.FieldValue.increment(1);   // il revient dans le sac
-      if (nouveau) maj['inventory.' + nouveau] = firebase.firestore.FieldValue.increment(-1);
-      if (ancien && nouveau && ancien === nouveau){ occupe = false; return; }
-      try {
-        if (Object.keys(maj).length) await db.collection('players').doc(currentUser.uid).update(maj);
-      } catch(err){ showToast('Échec : ' + err.message); occupe = false; return; }
-      if (nouveau) deco().objets[e.id] = nouveau; else delete deco().objets[e.id];
-      await enregistrer(); await redessiner(); dessinerCases(); occupe = false;
-    }));
-  };
-  fond.querySelectorAll('[data-onglet]').forEach(b=> b.addEventListener('click', ()=>{ onglet = b.dataset.onglet; dessinerNuancier(); }));
-  fond.querySelectorAll('[data-fini]').forEach(b=> b.addEventListener('click', ()=>{
-    fond.remove();
-    // la chambre derrière se remet à jour
-    composerChambre(hab).then(c=>{ if (c){ const im = document.getElementById('sceneBigImageImg'); if (im && roomSheetRecruitId === hab.id) im.src = c.toDataURL('image/jpeg', 0.9); } });
-  }));
-  dessinerNuancier(); dessinerCases(); await redessiner();
-}
-
-/* ---------- 📐 ajuster les emplacements de la chambre (guide) ---------- */
+/* ---------- 📐 ajuster les emplacements de la chambre (Édition → 🛏️ Chambre des robots) ---------- */
 async function ouvrirEditeurEmplacementsChambre(){
   const url = await urlDeRef(chambreConfig.imageRef);
   if (!url){ showToast('Pose d\'abord l\'image de la chambre'); return; }
@@ -33698,12 +33579,12 @@ const PLANCHE_DECO_ESSAI = [
   { nom:'Plante verte', deco:'volume', emoji:'🪴' },
 ];
 const PLANCHE_DECO_2 = [
-  { nom:'Suspension', deco:'plafond', emoji:'💡', lumiere:true },
-  { nom:'Lampadaire', deco:'volume', emoji:'🛋️', lumiere:true },
-  { nom:'Canapé deux places', deco:'couchage', emoji:'🛋️' },
-  { nom:'Poster de robot', deco:'mur', emoji:'🖼️' },
-  { nom:'Tapis rond', deco:'sol', emoji:'⭕' },
-  { nom:'Statuette sur socle', deco:'volume', emoji:'🗿' },
+  { nom:'Anneau lumineux', deco:'plafond', emoji:'💡', lumiere:true },
+  { nom:'Colonne de lumière', deco:'volume', emoji:'🔦', lumiere:true },
+  { nom:'Canapé capsule', deco:'couchage', emoji:'🛋️' },
+  { nom:'Cadre holographique', deco:'mur', emoji:'🖼️' },
+  { nom:'Tapis à circuit', deco:'sol', emoji:'⭕' },
+  { nom:'Hologramme sur socle', deco:'volume', emoji:'🔮' },
 ];
 async function creerObjetsDeco(liste, vues){
   let n = 0;
@@ -33733,42 +33614,416 @@ LA PIÈCE EST TOTALEMENT VIDE : aucun meuble, aucune plante, aucun objet, aucune
 STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet. Murs en grands panneaux lisses blanc cassé à joints fins et quelques rivets, plafond à dalles lumineuses encastrées et treillis anthracite, sol en grandes dalles claires unies. Une pièce NEUTRE : blanc cassé, gris perle, un peu d'anthracite. Aucune couleur vive.
 
 N'écris aucun texte, aucune lettre, aucun numéro.`;
-const PROMPT_CIEL_VAISSEAU = `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec DEUX RECTANGLES pleins au format paysage 4:3, côte à côte, SÉPARÉS PAR UNE LARGE BANDE TRANSPARENTE (rien ne se touche).
+const PROMPT_CIEL_VAISSEAU = `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX RECTANGLES pleins au format paysage 4:3, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
 
-C'est ce qu'on voit par les fenêtres d'un vaisseau qui flotte haut dans le ciel, au-dessus d'une mer de nuages :
-- À GAUCHE, DE JOUR : ciel bleu lumineux, une mer de nuages blancs et moelleux en bas, quelques nuages plus proches.
-- À DROITE, EXACTEMENT LE MÊME CIEL, LA NUIT : même composition, même cadrage, mais ciel bleu nuit profond, lune et étoiles, nuages bleutés éclairés par la lune.
-Aucun sol, aucune terre visible, aucun bâtiment, aucun vaisseau, aucun oiseau.
+Chaque rectangle est ce qu'on voit par une fenêtre d'un vaisseau qui flotte très haut dans le ciel, EN PLEIN JOUR. Six ambiances différentes, toutes NEUTRES : AUCUN soleil visible, aucun rayon, aucune lumière venant d'un côté, aucun horizon marqué — un ciel qu'on peut mettre sur n'importe quelle fenêtre, à gauche comme à droite, sans que ça se voie :
+1. ciel bleu lumineux, mer de nuages blancs et moelleux en bas ;
+2. ciel bleu pâle presque dégagé, trois petits nuages épars ;
+3. brume claire et laiteuse, nuages fondus, tout en douceur ;
+4. ciel couvert, gros nuages gris-bleu serrés, lumière diffuse ;
+5. ciel bleu profond d'altitude, longues traînées de nuages fins et étirés ;
+6. nuages ronds en gros cumulus blancs sur bleu moyen, bien dessinés.
+Aucun sol, aucune terre, aucun bâtiment, aucun vaisseau, aucun oiseau, aucun soleil, aucune lune.
 
 STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé photographique.
 
-FORMAT : une seule image large, PNG, fond TRANSPARENT entre les deux rectangles. Aucun texte, aucun numéro.`;
+FORMAT : une seule image large, PNG, fond TRANSPARENT entre les rectangles. Aucun texte, aucun numéro.`;
+const PROMPT_CIEL_NUIT = `L'image jointe est une planche de SIX CIELS DE JOUR vus par les fenêtres d'un vaisseau. Dessine UNE SEULE IMAGE : la MÊME PLANCHE, LA NUIT — six rectangles paysage 4:3 en 2 rangées de 3, à fond TRANSPARENT entre eux, chacun EXACTEMENT à la même place et avec EXACTEMENT la même composition de nuages que son ciel de jour.
+
+Ce qui change : ciel bleu nuit profond, quelques étoiles, nuages bleutés et sombres. Toujours NEUTRE : AUCUNE lune, aucun soleil, aucune lumière venant d'un côté. Aucun sol, aucun bâtiment, aucun vaisseau.
+
+STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé photographique.
+
+FORMAT : une seule image large, PNG, fond TRANSPARENT entre les rectangles. Aucun texte, aucun numéro.`;
 const PROMPT_TEXTURES_SOL = `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX CARRÉS DE TEXTURE DE SOL, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
 
-Chaque carré est un revêtement de sol VU EXACTEMENT DE DESSUS, parfaitement à plat, SANS AUCUNE PERSPECTIVE, qui remplit tout le carré, et RACCORDABLE : le motif se répète sans couture quand on met plusieurs carrés côte à côte.
-1. parquet clair en lames droites ;
-2. parquet foncé en chevrons ;
-3. moquette bleu canard, unie avec un très léger grain ;
-4. carrelage en damier crème et anthracite ;
-5. dalles hexagonales vert sauge à joints clairs ;
-6. sol en métal gris antidérapant à petits losanges.
+Ce sont les sols des cabines d'un VAISSEAU FUTURISTE : rien de domestique, rien d'ancien, pas de parquet, pas de moquette. Chaque carré est un revêtement VU EXACTEMENT DE DESSUS, parfaitement à plat, SANS AUCUNE PERSPECTIVE, qui remplit tout le carré, et RACCORDABLE : le motif se répète sans couture quand on met plusieurs carrés côte à côte.
+1. grandes dalles de métal brossé gris clair, joints fins, un rivet discret à chaque angle ;
+2. caillebotis anthracite à mailles carrées, sur un fond lumineux cyan très doux qui passe entre les mailles ;
+3. dalles hexagonales blanc cassé à joints LUMINEUX cyan ;
+4. panneaux composites gris moyen traversés de fines lignes lumineuses orange, comme un circuit ;
+5. sol noir mat semé de minuscules points lumineux blancs, comme un ciel étoilé ;
+6. dalles de verre dépoli bleu pâle, légèrement translucides, à joints argentés.
 
 STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, aucun dégradé, aucun reflet, aucune ombre.
 
 FORMAT : une seule image large, PNG à fond TRANSPARENT entre les carrés. Aucun texte, aucun numéro.`;
-const PROMPT_OBJETS_DECO_2 = `L'image jointe est la chambre des robots. Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX OBJETS, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
+const PROMPT_OBJETS_DECO_2 = `L'image jointe est la chambre des robots, à bord d'un VAISSEAU FUTURISTE. Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX OBJETS, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
 
-Chaque objet est dessiné EXACTEMENT comme il apparaîtrait dans cette chambre, avec la même caméra (de face, à hauteur d'homme, un seul point de fuite au centre) et à la même échelle :
-1. UNE SUSPENSION accrochée au plafond : un court câble vers le haut, un abat-jour, l'ampoule allumée dessinée en aplat clair ; vue de face.
-2. UN LAMPADAIRE sur pied, posé au sol, abat-jour allumé en aplat clair ; vu de face.
-3. UN CANAPÉ deux places, contre le mur du fond, parallèle au mur : vu de face, légèrement d'en haut. Coussins ocre, structure anthracite à angles chanfreinés.
-4. UN POSTER ENCADRÉ accroché au mur du fond, vu parfaitement de face : un robot stylisé, joyeux, sans aucune lettre.
-5. UN TAPIS ROND couché au sol, vu en perspective comme le sol de cette pièce (une ellipse aplatie), motif concentrique bleu canard et crème.
-6. UNE STATUETTE sur un socle, posée au sol : une forme abstraite et élégante ; vue de face, légèrement d'en haut.
+Du mobilier de science-fiction, épuré et lumineux — rien de domestique ni d'ancien, pas de bois, pas de tissu à motifs. Chaque objet est dessiné EXACTEMENT comme il apparaîtrait dans cette chambre, avec la même caméra (de face, à hauteur d'homme, un seul point de fuite au centre) et à la même échelle :
+1. UN ANNEAU LUMINEUX accroché au plafond par un court câble : un anneau plat blanc dont le dessous diffuse une lumière douce (aplat clair) ; vu de face.
+2. UNE COLONNE DE LUMIÈRE posée au sol : un cylindre vertical translucide, lumineux, sur un socle métallique fin ; vue de face.
+3. UN CANAPÉ CAPSULE deux places, contre le mur du fond, parallèle au mur : coque extérieure blanche lisse aux angles arrondis, assise gris perle, un fin liseré lumineux cyan ; vu de face, légèrement d'en haut.
+4. UN CADRE HOLOGRAPHIQUE accroché au mur du fond, vu parfaitement de face : un cadre fin métallique dans lequel flotte un robot stylisé et joyeux, dessiné en aplats bleu-cyan lumineux sur fond sombre, sans aucune lettre.
+5. UN TAPIS ROND couché au sol, vu en perspective comme le sol de cette pièce (une ellipse aplatie) : gris anthracite, parcouru de fines lignes lumineuses cyan en motif de circuit.
+6. UN HOLOGRAMME SUR SOCLE posé au sol : un petit socle métallique d'où s'élève une forme abstraite translucide bleu-cyan, légèrement lumineuse ; vu de face, légèrement d'en haut.
 
 Même style que la chambre : trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet.
 
 FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun mur, aucun sol, aucune ombre portée, aucun texte, aucun numéro.`;
+
+/* v624 — LA CHAMBRE EN DIALOGUE, LES EMPLACEMENTS DANS L'ÉDITION, L'OBJET D'ABORD, LES CIELS DU JOUR.
+   • Dans la chambre neutre, plus de colonne de boutons : une flèche de retour en bas à gauche
+     (celle des zones d'exploration) et, en touchant la pièce, un DIALOGUE avec le robot, dans son
+     ton à lui (`repliques` du modèle, importables comme les phrases de naissance).
+   • 🎨 : on choisit d'abord l'objet dans le sac, et seuls les emplacements où il peut aller
+     s'allument — on peut donc avoir beaucoup d'emplacements sans voir tous les rectangles.
+   • Les lits et canapés sont calés contre le mur (ligne du mur à 70 % du rectangle), quelle que
+     soit leur profondeur.
+   • Le ciel vu des fenêtres change chaque jour (six ciels neutres, les mêmes dans tout le vaisseau).
+   • L'outil 📐 des emplacements vit dans Édition → 🛏️ Chambre des robots. */
+
+/* ---------- les répliques d'un robot (par modèle) ---------- */
+const CLES_REPLIQUES = [
+  { cle:'accueil',   nom:'Quand on entre chez lui',        ex:'Capitaine. Tu as besoin de quelque chose ?' },
+  { cle:'montrer',   nom:'« Fais voir ce que tu sais faire »', ex:'Regarde bien, je ne le ferai pas deux fois.' },
+  { cle:'decorer',   nom:'« Décorons un peu ta chambre »',  ex:'Tu veux changer quelque chose ? Vas-y, je regarde.' },
+  { cle:'equipeOui', nom:'« Viens dans mon équipe »',       ex:'Enfin. Je commençais à rouiller.' },
+  { cle:'equipeNon', nom:'« J\'ai plus besoin de toi dans l\'équipe »', ex:'Comme tu veux. Je serai là.' },
+  { cle:'adieu',     nom:'Quand on le renvoie (sa phrase d\'adieu)', ex:'Alors c\'est ici que nos routes se séparent. Prends soin de toi.' },
+];
+const REPLIQUES_DEFAUT = {
+  accueil: 'Bonjour, capitaine. Qu\'est-ce que je peux faire pour toi ?',
+  montrer: 'Regarde. Je n\'ai rien à cacher.',
+  decorer: 'Ma chambre ? Fais comme chez toi… enfin, comme chez moi.',
+  equipeOui: 'Je suis prêt. On y va quand tu veux.',
+  equipeNon: 'Entendu. Je t\'attends ici.',
+  adieu: 'Merci pour tout, capitaine. Je ne t\'oublierai pas.',
+};
+function repliqueDeModele(m, cle){
+  const r = (m && m.repliques && typeof m.repliques === 'object') ? m.repliques : {};
+  const v = r[cle];
+  if (Array.isArray(v) && v.length) return String(v[Math.floor(Math.random() * v.length)]);
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return REPLIQUES_DEFAUT[cle] || '';
+}
+function repliquesPropres(src){
+  const out = {};
+  if (!src || typeof src !== 'object') return out;
+  CLES_REPLIQUES.forEach(({ cle })=>{
+    const v = src[cle];
+    if (Array.isArray(v)){ const l = v.map(x=> String(x || '').trim()).filter(Boolean).slice(0, 6); if (l.length) out[cle] = l.length === 1 ? l[0] : l; }
+    else if (typeof v === 'string' && v.trim()) out[cle] = v.trim().slice(0, 240);
+  });
+  return out;
+}
+
+/* ---------- 💬 le dialogue dans la chambre ---------- */
+let dialogueChambreEl = null;
+function fermerDialogueChambre(){ if (dialogueChambreEl){ dialogueChambreEl.remove(); dialogueChambreEl = null; } }
+async function ouvrirDialogueRobot(hab){
+  fermerDialogueChambre();
+  const m = hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
+  const nom = htmlEsc(hab.name || (m && m.nom) || 'le robot');
+  const face = await urlFaceModeleAsync(m);
+  const fond = document.createElement('div');
+  fond.className = 'overlay show'; fond.style.zIndex = '4650'; fond.style.background = 'rgba(0,0,0,.25)';
+  fond.innerHTML = `<div class="sheet" style="max-height:80vh; overflow-y:auto; padding-top:14px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+      ${face ? `<img src="${face}" style="width:64px; height:64px; object-fit:contain; flex:none;">` : '<div class="emoji" style="flex:none;">🤖</div>'}
+      <div style="flex:1; min-width:0;"><div style="font-weight:700;">${nom}</div><p data-bulle style="margin:4px 0 0; font-size:14px; line-height:1.4;"></p></div>
+      <button class="sheet-x" data-x style="flex:none;">✕</button>
+    </div>
+    <div data-choix></div>
+  </div>`;
+  document.body.appendChild(fond);
+  dialogueChambreEl = fond;
+  const bulle = fond.querySelector('[data-bulle]'), choix = fond.querySelector('[data-choix]');
+  const dire = (cle)=>{ bulle.textContent = repliqueDeModele(m, cle); };
+  const recrue = ()=> currentRecruitById(hab.id) || hab;
+  const btn = (attr, label, fin)=> `<button type="button" class="choice-btn${fin ? ' end' : ''}" ${attr}>${label}</button>`;
+  const menu = ()=>{
+    const r = recrue(), inTeam = activeTeamIds.includes(r.id);
+    choix.innerHTML = btn('data-c="montrer"', '🧐 Fais voir ce que tu sais faire')
+      + (chambreNeutrePrete() ? btn('data-c="decorer"', '🎨 Décorons un peu ta chambre') : '')
+      + (inTeam ? btn('data-c="equipeNon"', '👋 J\'ai plus besoin de toi dans l\'équipe') : btn('data-c="equipeOui"', '⭐ Viens dans mon équipe'))
+      + btn('data-c="partir"', '🚪 Il est temps que tu vives ta propre vie')
+      + btn('data-c="fermer"', 'À plus tard', true);
+    brancher();
+  };
+  const sousMenu = ()=>{
+    choix.innerHTML = btn('data-c="profil"', '📊 Montre-moi tes stats') + btn('data-c="attaques"', '⚔️ Montre-moi tes attaques') + btn('data-c="equipement"', '🎒 Montre-moi ton équipement') + btn('data-c="retour"', '← Autre chose');
+    brancher();
+  };
+  const brancher = ()=> choix.querySelectorAll('[data-c]').forEach(b=> b.addEventListener('click', ()=>{
+    const r = recrue(), c = b.dataset.c;
+    if (c === 'fermer'){ fermerDialogueChambre(); return; }
+    if (c === 'retour'){ dire('accueil'); menu(); return; }
+    if (c === 'montrer'){ dire('montrer'); sousMenu(); return; }
+    if (c === 'profil' || c === 'attaques' || c === 'equipement'){
+      document.getElementById('recruitSheetOverlay').style.zIndex = '4700';
+      openRecruitSheet(r.id, c); return;
+    }
+    if (c === 'decorer'){ dire('decorer'); fermerDialogueChambre(); ouvrirDecoration(r); return; }
+    if (c === 'equipeOui' || c === 'equipeNon'){
+      const avant = activeTeamIds.includes(r.id);
+      toggleRecruitTeam(r, ()=>{ const apres = activeTeamIds.includes(r.id); if (apres !== avant) dire(apres ? 'equipeOui' : 'equipeNon'); menu(); });
+      return;
+    }
+    if (c === 'partir'){
+      dire('adieu');
+      choix.innerHTML = btn('data-c="adieuOk"', '👋 Adieu, ' + nom + ' (il quitte le vaisseau pour toujours)') + btn('data-c="reste"', '↩️ Finalement, reste');
+      brancher(); return;
+    }
+    if (c === 'reste'){ dire('accueil'); menu(); return; }
+    if (c === 'adieuOk'){
+      fermerDialogueChambre();
+      executerRenvoi(r, ()=>{ closeSceneBigImage(); if (!roomOuverteDepuisPorte) openQuarters(); });
+      return;
+    }
+  }));
+  fond.querySelector('[data-x]').addEventListener('click', fermerDialogueChambre);
+  fond.addEventListener('click', (ev)=>{ if (ev.target === fond) fermerDialogueChambre(); });
+  dire('accueil'); menu();
+}
+
+/* ---------- ☁️ le ciel du jour ---------- */
+/* Six ciels neutres (pas de soleil, pas de direction marquée) ; celui du jour est choisi d'après
+   la date, le même pour toutes les fenêtres du vaisseau. L'ancien « vue_ciel » (une seule vue)
+   reste utilisé tant qu'il n'y a pas de ciels complets (jour + nuit). */
+function cielDuJour(now){
+  const B = (typeof fenetresBiblio !== 'undefined' && fenetresBiblio) ? fenetresBiblio : { vues: [] };
+  const complets = (B.vues || []).filter(v=> v && v.ciel && v.jourRef && v.nuitRef && v.id !== 'vue_ciel');
+  if (complets.length){
+    const d = now || new Date();
+    const jour = Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000);
+    return complets[((jour % complets.length) + complets.length) % complets.length].id;
+  }
+  return (B.vues || []).some(v=> v && v.id === 'vue_ciel' && v.nuitRef) ? 'vue_ciel' : null;
+}
+
+/* ---------- 🛏️ Édition → Chambre des robots ---------- */
+async function ouvrirReglagesChambre(){
+  const fond = document.createElement('div');
+  fond.className = 'overlay show'; fond.style.zIndex = '4800';
+  const nb = (l)=> (l || []).length;
+  const ciels = (fenetresBiblio.vues || []).filter(v=> v && v.ciel && v.jourRef && v.nuitRef);
+  const url = chambreConfig.imageRef ? await urlDeRef(chambreConfig.imageRef) : '';
+  const l = chambreConfig.lumiere || {};
+  fond.innerHTML = `<div class="sheet" style="max-height:90vh; overflow-y:auto;">
+    <div class="sheet-top"><h3 style="margin-top:0;">🛏️ Chambre des robots</h3><button class="sheet-x" data-x>✕</button></div>
+    <p class="meta" style="margin:0 0 8px; font-size:12px;">La même chambre neutre pour tous les robots ; chaque joueur décore celle de ses robots. Les planches (ciels, sols, objets) se font dans 🧰 À finir.</p>
+    ${url ? `<img src="${url}" style="width:100%; max-width:220px; display:block; margin:0 auto 8px; border-radius:8px;">` : '<p class="meta">Pas encore d\'image de chambre.</p>'}
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <button type="button" class="btn-secondary" data-img style="flex:1 1 45%;">📷 ${url ? 'Changer l\'image' : 'Poser l\'image'}</button>
+      ${url ? '<button type="button" class="btn-primary" data-emp style="flex:1 1 45%;">📐 Emplacements</button>' : ''}
+    </div>
+    <p class="meta" style="margin:10px 0 4px;">☁️ ${ciels.length} ciel(s) complet(s) · 🟫 ${nb(chambreConfig.textures)} texture(s) de sol · 🪟 ${nb(fenetresBiblio.cadres)} cadre(s) · 🪴 ${(typeof items !== 'undefined' ? items : []).filter(i=> i.deco).length} objet(s) de déco</p>
+    <div class="field-label" style="margin-top:10px;">💡 Lumière de la chambre</div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <label class="meta" style="flex:1;">Éteinte à<input type="time" data-ext class="field-input" value="${htmlEsc(l.extinction || '22:00')}"></label>
+      <label class="meta" style="flex:1;">Rallumée à<input type="time" data-all class="field-input" value="${htmlEsc(l.allumage || '07:00')}"></label>
+    </div>
+    <button type="button" class="btn-primary" data-ok style="width:100%; margin-top:12px;">💾 Enregistrer</button>
+  </div>`;
+  document.body.appendChild(fond);
+  fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
+  fond.querySelector('[data-img]').addEventListener('click', async ()=>{ if (await poserPlancheChambre('image')){ fond.remove(); ouvrirReglagesChambre(); } });
+  const e = fond.querySelector('[data-emp]'); if (e) e.addEventListener('click', ()=> ouvrirEditeurEmplacementsChambre());
+  fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
+    chambreConfig.lumiere = { extinction: fond.querySelector('[data-ext]').value || '22:00', allumage: fond.querySelector('[data-all]').value || '07:00' };
+    try { await enregistrerChambreConfig(); showToast('Enregistré ✅'); fond.remove(); } catch(err){ showToast('Échec : ' + err.message); }
+  });
+}
+
+/* Une planche pour la chambre (image, ciels de jour, mêmes ciels de nuit, textures, objets),
+   depuis le guide ou depuis l'Édition. Renvoie vrai si quelque chose a été rangé. */
+async function poserPlancheChambre(quoi){
+  if (!chambreDoc()){ showToast('Firebase indisponible ici'); return false; }
+  if (quoi === 'cielnuit' && (chambreConfig.cielsSansNuit || []).length !== 6){ showToast('Fais d\'abord la planche des ciels de jour'); return false; }
+  const img = await choisirFichierImage();
+  if (!img) return false;
+  const t = Date.now();
+  if (quoi === 'image'){
+    const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1536, false));
+    if (!ref){ showToast('Échec : image non enregistrée'); return false; }
+    chambreConfig.imageRef = ref;
+    await enregistrerChambreConfig();
+    showToast('Chambre neutre posée ✅'); return true;
+  }
+  const n = { ciel: 6, cielnuit: 6, textures: 6, essai: 4, objets2: 6 }[quoi];
+  const r = decouperGrille(img, n);
+  if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, dessins bien séparés, fond transparent.'); return false; }
+  if (quoi === 'ciel' || quoi === 'cielnuit'){
+    const refs = [];
+    for (const c of r.vues){ const ref = await externalizeSceneImage(encoderImageSousLimite(c, 700, true)); if (!ref){ showToast('Échec : image non enregistrée'); return false; } refs.push(ref); }
+    const B = fenetresBiblio;
+    if (quoi === 'ciel'){
+      const ids = refs.map((ref, i)=> 'ciel_' + t + '_' + i);
+      refs.forEach((ref, i)=> B.vues.push({ id: ids[i], nom: 'Ciel ' + (B.vues.filter(v=> v.ciel).length + 1), jourRef: ref, nuitRef: null, ciel: true }));
+      chambreConfig.plancheCielRef = await externalizeSceneImage(encoderImageSousLimite(img, 1200, true));
+      chambreConfig.cielsSansNuit = ids;
+    } else {
+      chambreConfig.cielsSansNuit.forEach((id, i)=>{ const v = B.vues.find(x=> x.id === id); if (v) v.nuitRef = refs[i]; });
+      chambreConfig.cielsSansNuit = [];
+    }
+    Object.keys(compoFenetreCache).forEach(k=> delete compoFenetreCache[k]);
+    await enregistrerFenetresBiblio();
+    await enregistrerChambreConfig();
+    showToast(quoi === 'ciel' ? '6 ciels de jour rangés ✅ — fais-les de nuit' : '6 ciels de nuit appariés ✅ : le ciel change chaque jour');
+  } else if (quoi === 'textures'){
+    const NOMS = ['Dalles brossées', 'Caillebotis', 'Hexagones lumineux', 'Composite à lignes', 'Nuit étoilée', 'Verre dépoli'];
+    for (let i = 0; i < r.vues.length; i++){
+      const v = r.vues[i], m = 4, k = Math.min(v.width, v.height) - 2 * m;
+      const sq = document.createElement('canvas'); sq.width = k; sq.height = k;
+      sq.getContext('2d').drawImage(v, (v.width - k) / 2, (v.height - k) / 2, k, k, 0, 0, k, k);
+      const ref = await externalizeSceneImage(encoderImageSousLimite(sq, 320, false));
+      if (!ref){ showToast('Échec : image non enregistrée'); return false; }
+      chambreConfig.textures.push({ id: 'tex_' + t + '_' + i, nom: NOMS[i] || ('Sol ' + (i + 1)), ref });
+    }
+    await enregistrerChambreConfig();
+    showToast('6 textures de sol rangées ✅');
+  } else {
+    const nb = await creerObjetsDeco(quoi === 'essai' ? PLANCHE_DECO_ESSAI : PLANCHE_DECO_2, r.vues);
+    showToast(nb + ' objet(s) de déco créés ✅');
+  }
+  return true;
+}
+
+/* ---------- 🎨 le mode décoration : l'objet d'abord ---------- */
+async function ouvrirDecoration(hab){
+  if (!chambreNeutrePrete()){ showToast('La chambre neutre n\'a pas encore d\'image (Édition → 🛏️ Chambre des robots)'); return; }
+  const fond = document.createElement('div');
+  fond.className = 'overlay show';
+  fond.style.zIndex = '4800';
+  fond.innerHTML = `<div class="sheet" style="max-height:94vh; overflow-y:auto; padding:12px 14px 12px;">
+    <div class="sheet-top"><h3 style="margin:0;">🎨 Chambre de ${htmlEsc(hab.name || '')}</h3><button class="sheet-x" data-fini>✕</button></div>
+    <div data-scene style="position:relative; width:100%; max-width:420px; margin:6px auto 0;">
+      <img data-vue style="width:100%; display:block; border-radius:8px;">
+      <div data-cases style="position:absolute; inset:0;"></div>
+    </div>
+    <p class="meta" data-aide style="margin:6px 0 4px; font-size:12px; min-height:16px;"></p>
+    <div data-onglets style="display:flex; gap:5px; margin-top:4px;">
+      <button type="button" class="btn-secondary" data-onglet="objets" style="flex:1; padding:6px 2px;">🎒 Objets</button>
+      <button type="button" class="btn-secondary" data-onglet="fenetres" style="flex:1; padding:6px 2px;">🪟 Fenêtres</button>
+      <button type="button" class="btn-secondary" data-onglet="murs" style="flex:1; padding:6px 2px;">🧱 Murs</button>
+      <button type="button" class="btn-secondary" data-onglet="sol" style="flex:1; padding:6px 2px;">🟫 Sol</button>
+    </div>
+    <div data-panneau style="margin-top:8px;"></div>
+    <button type="button" class="btn-primary" data-fini style="width:100%; margin-top:10px;">✓ Terminer</button>
+  </div>`;
+  document.body.appendChild(fond);
+  let onglet = 'objets', occupe = false;
+  /* ce qui est « en main » : un objet du sac, un cadre, ou la main vide (↩️ reprendre) */
+  let enMain = null;   // { genre:'objet', id } | { genre:'cadre', id } | { genre:'reprendre' }
+  const vue = fond.querySelector('[data-vue]'), cases = fond.querySelector('[data-cases]'), panneau = fond.querySelector('[data-panneau]'), aide = fond.querySelector('[data-aide]');
+  const deco = ()=> (hab.deco = hab.deco || {});
+  const inv = ()=> (playerSelfData && playerSelfData.inventory) || {};
+  const enregistrer = async ()=>{
+    try { await recruitsCol.doc(hab.id).update({ deco: hab.deco || {} }); } catch(e){ showToast('Échec : ' + e.message); }
+  };
+  const redessiner = async ()=>{
+    const c = await composerChambre(hab);
+    if (c) vue.src = c.toDataURL('image/jpeg', 0.88);
+  };
+  const emps = ()=> emplacementsChambre().filter(e=> e.type !== 'robot');
+  const occupant = (e)=> e.type === 'fenetre' ? (deco().fenetres || {})[e.id] : (deco().objets || {})[e.id];
+  /* les emplacements où ce qu'on a en main peut aller */
+  const compatibles = ()=>{
+    if (!enMain) return [];
+    if (enMain.genre === 'reprendre') return emps().filter(e=> occupant(e));
+    if (enMain.genre === 'cadre') return emps().filter(e=> e.type === 'fenetre');
+    const it = objetDeco(enMain.id);
+    return it ? emps().filter(e=> e.type === it.deco) : [];
+  };
+  const dessinerCases = ()=>{
+    const ok = compatibles();
+    cases.innerHTML = ok.map(e=>{
+      const pris = occupant(e);
+      return `<button type="button" data-case="${e.id}" style="position:absolute; left:${e.x - e.w / 2}%; top:${e.y - e.h / 2}%; width:${e.w}%; height:${e.h}%; border:2px dashed ${pris ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)'}; background:${pris ? 'rgba(255,196,80,.14)' : 'rgba(95,242,255,.16)'}; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; font-size:16px;">${enMain.genre === 'reprendre' ? '↩️' : (pris ? '🔁' : TYPES_DECO[e.type].emoji)}</button>`;
+    }).join('');
+    cases.querySelectorAll('[data-case]').forEach(b=> b.addEventListener('click', ()=> poser(emps().find(e=> e.id === b.dataset.case))));
+    aide.textContent = !enMain ? (onglet === 'objets' || onglet === 'fenetres' ? 'Choisis en bas, puis touche un emplacement qui s\'allume.' : '')
+      : !ok.length ? 'Aucun emplacement pour ça dans la chambre.'
+      : enMain.genre === 'reprendre' ? 'Touche ce que tu veux reprendre dans ton sac.' : 'Touche un emplacement allumé. 🔁 : remplace ce qui y est.';
+  };
+  const poser = async (e)=>{
+    if (!e || !enMain || occupe) return;
+    occupe = true;
+    try {
+      if (e.type === 'fenetre'){
+        deco().fenetres = deco().fenetres || {};
+        if (enMain.genre === 'cadre') deco().fenetres[e.id] = enMain.id; else delete deco().fenetres[e.id];
+      } else {
+        deco().objets = deco().objets || {};
+        const ancien = deco().objets[e.id] || null, nouveau = enMain.genre === 'objet' ? enMain.id : null;
+        if (ancien === nouveau){ occupe = false; return; }
+        const maj = {};
+        if (ancien) maj['inventory.' + ancien] = firebase.firestore.FieldValue.increment(1);   // il revient dans le sac
+        if (nouveau) maj['inventory.' + nouveau] = firebase.firestore.FieldValue.increment(-1);
+        try { await db.collection('players').doc(currentUser.uid).update(maj); }
+        catch(err){ showToast('Échec : ' + err.message); occupe = false; return; }
+        if (nouveau) deco().objets[e.id] = nouveau; else delete deco().objets[e.id];
+        /* le sac local suit tout de suite, sans attendre l'instantané */
+        if (playerSelfData){ playerSelfData.inventory = playerSelfData.inventory || {}; if (ancien) playerSelfData.inventory[ancien] = (playerSelfData.inventory[ancien] || 0) + 1; if (nouveau) playerSelfData.inventory[nouveau] = Math.max(0, (playerSelfData.inventory[nouveau] || 0) - 1); }
+      }
+      await enregistrer();
+      /* un objet du sac épuisé : on lâche la main ; un cadre ou ↩️ : on garde la main */
+      if (enMain.genre === 'objet' && (inv()[enMain.id] || 0) <= 0) enMain = null;
+      await redessiner(); dessinerPanneau(); dessinerCases();
+    } finally { occupe = false; }
+  };
+  const vignette = (attr, actif, contenu, titre)=> `<button type="button" ${attr} title="${htmlEsc(titre || '')}" style="width:62px; height:62px; padding:2px; border-radius:10px; border:3px solid ${actif ? 'var(--accent)' : 'rgba(128,128,128,.35)'}; background:rgba(128,128,128,.1); flex:none; position:relative;">${contenu}</button>`;
+  const dessinerPanneau = ()=>{
+    fond.querySelectorAll('[data-onglet]').forEach(b=> b.style.borderColor = b.dataset.onglet === onglet ? 'var(--accent)' : '');
+    let h = '';
+    if (onglet === 'objets'){
+      const sac = (typeof items !== 'undefined' ? items : []).filter(i=> i.deco && (inv()[i.id] || 0) > 0);
+      const poses = Object.values(deco().objets || {}).length;
+      h = '<div style="display:flex; gap:6px; overflow-x:auto; padding:2px 0 4px;">'
+        + sac.map(i=> vignette('data-objet="' + i.id + '"', enMain && enMain.genre === 'objet' && enMain.id === i.id, `<img src="${urlImageItem(i)}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; right:2px; bottom:1px; font-size:10px; background:rgba(0,0,0,.6); color:#fff; border-radius:8px; padding:0 4px;">×${inv()[i.id]}</span>`, i.name)).join('')
+        + (poses ? vignette('data-reprendre', enMain && enMain.genre === 'reprendre', '<span style="font-size:24px;">↩️</span>', 'Reprendre un objet') : '')
+        + '</div>'
+        + (sac.length ? '' : '<p class="meta" style="margin:4px 0 0;">Rien dans ton sac à poser ici. Les objets de déco s\'achètent ou se trouvent en explorant.</p>');
+    } else if (onglet === 'fenetres'){
+      const cadres = fenetresBiblio.cadres || [];
+      const poses = Object.values(deco().fenetres || {}).length;
+      h = '<div style="display:flex; gap:6px; overflow-x:auto; padding:2px 0 4px;">'
+        + cadres.map(c=> vignette('data-cadre="' + c.id + '"', enMain && enMain.genre === 'cadre' && enMain.id === c.id, `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;">`, c.nom)).join('')
+        + (poses ? vignette('data-reprendre', enMain && enMain.genre === 'reprendre', '<span style="font-size:24px;">↩️</span>', 'Enlever une fenêtre') : '')
+        + '</div>'
+        + (cadres.length ? '<p class="meta" style="margin:4px 0 0; font-size:11px;">Dehors, c\'est toujours le ciel du vaisseau : il change chaque jour.</p>' : '<p class="meta">La bibliothèque de fenêtres est vide.</p>');
+    } else {
+      const actuel = onglet === 'murs' ? deco().murs : (deco().solTexture ? null : deco().sol);
+      h = '<div style="display:flex; flex-wrap:wrap; gap:6px;">' + PALETTE_CHAMBRE.map(p=>
+        `<button type="button" data-teinte="${p.id}" title="${p.nom}" style="width:38px; height:38px; border-radius:50%; border:3px solid ${(actuel || 'origine') === p.id ? 'var(--accent)' : 'rgba(128,128,128,.4)'}; background:${p.c || 'repeating-linear-gradient(45deg,#eee,#eee 5px,#ccc 5px,#ccc 10px)'};"></button>`).join('') + '</div>';
+      if (onglet === 'sol' && (chambreConfig.textures || []).length){
+        h += '<div class="meta" style="margin-top:8px;">Textures</div><div style="display:flex; flex-wrap:wrap; gap:6px;">' + chambreConfig.textures.map(t=>
+          `<button type="button" data-texture="${t.id}" title="${htmlEsc(t.nom || '')}" style="width:46px; height:46px; padding:0; border-radius:8px; overflow:hidden; border:3px solid ${deco().solTexture === t.id ? 'var(--accent)' : 'rgba(128,128,128,.4)'};"><img data-tref="${t.id}" style="width:100%; height:100%; object-fit:cover;"></button>`).join('') + '</div>';
+      }
+    }
+    panneau.innerHTML = h;
+    panneau.querySelectorAll('[data-tref]').forEach(im=>{ const t = chambreConfig.textures.find(x=> x.id === im.dataset.tref); urlDeRef(t && t.ref).then(u=>{ if (u) im.src = u; }); });
+    panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = fenetresBiblio.cadres.find(x=> x.id === im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
+    panneau.querySelectorAll('[data-objet]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'objet' && enMain.id === b.dataset.objet) ? null : { genre:'objet', id: b.dataset.objet }; dessinerPanneau(); dessinerCases(); }));
+    panneau.querySelectorAll('[data-cadre]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'cadre' && enMain.id === b.dataset.cadre) ? null : { genre:'cadre', id: b.dataset.cadre }; dessinerPanneau(); dessinerCases(); }));
+    panneau.querySelectorAll('[data-reprendre]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'reprendre') ? null : { genre:'reprendre' }; dessinerPanneau(); dessinerCases(); }));
+    panneau.querySelectorAll('[data-teinte]').forEach(b=> b.addEventListener('click', async ()=>{
+      if (occupe) return; occupe = true;
+      const v = b.dataset.teinte === 'origine' ? null : b.dataset.teinte;
+      if (onglet === 'murs') deco().murs = v; else { deco().sol = v; delete deco().solTexture; }
+      dessinerPanneau(); await redessiner(); await enregistrer(); occupe = false;
+    }));
+    panneau.querySelectorAll('[data-texture]').forEach(b=> b.addEventListener('click', async ()=>{
+      if (occupe) return; occupe = true;
+      deco().solTexture = b.dataset.texture; delete deco().sol;
+      dessinerPanneau(); await redessiner(); await enregistrer(); occupe = false;
+    }));
+  };
+  fond.querySelectorAll('[data-onglet]').forEach(b=> b.addEventListener('click', ()=>{
+    onglet = b.dataset.onglet;
+    /* en changeant d'onglet, on lâche ce qu'on avait en main, sauf ↩️ qui vaut pour les deux */
+    if (enMain && ((onglet === 'objets' && enMain.genre === 'cadre') || (onglet === 'fenetres' && enMain.genre === 'objet') || onglet === 'murs' || onglet === 'sol')) enMain = null;
+    if (enMain && enMain.genre === 'reprendre' && (onglet === 'murs' || onglet === 'sol')) enMain = null;
+    dessinerPanneau(); dessinerCases();
+  }));
+  fond.querySelectorAll('[data-fini]').forEach(b=> b.addEventListener('click', ()=>{
+    fond.remove();
+    // la chambre derrière se remet à jour
+    composerChambre(hab).then(c=>{ if (c){ const im = document.getElementById('sceneBigImageImg'); if (im && roomSheetRecruitId === hab.id) im.src = c.toDataURL('image/jpeg', 0.9); } });
+  }));
+  dessinerPanneau(); dessinerCases(); await redessiner();
+}
 
 const POSITION_PAR_DEFAUT = { lat: 45.86, lng: 0.07 };   // Charente, si le GPS n'a encore rien donné
 function soleilDuJour(date, lat, lng){
@@ -34234,11 +34489,13 @@ async function quitterLaZoneCourante(){
    referme aussitôt. D'où une image qui apparaît puis disparaît dans le même geste.
    On note donc l'instant d'ouverture et on ignore la fermeture au clic pendant un court délai. */
 let sceneBigImageOpenedAt = 0;
-function openSceneBigImage(url, chambre){
+let roomNeutreOuverte = false;   // v624
+function openSceneBigImage(url, chambre, neutre){
   sceneBigImageOpenedAt = Date.now();
   document.getElementById('sceneBigImageCloseBtn').style.display = ''; // rétablie pour une image ordinaire
   const img = document.getElementById('sceneBigImageImg');
-  img.classList.toggle('room-standard', !!chambre);
+  img.classList.toggle('room-standard', !!chambre && !neutre);
+  img.classList.toggle('room-neutre', !!neutre);
   img.src = url;
   document.getElementById('sceneBigImageOverlay').classList.add('show');
 }
@@ -34252,7 +34509,6 @@ let roomSheetRecruitId = null;
    d'artisanat : les métiers sont trop différents pour tenir dans une seule salle, et le système
    de quartiers résout déjà exactement ce problème. */
 const ROOM_ACTIONS = [
-  { id:'retour',     emoji:'↩️', titre:'Retour' },
   { id:'profil',     emoji:'📊', titre:'Profil et statistiques' },
   { id:'equipe',     emoji:'⭐', titre:'Équipe active' },
   { id:'attaques',   emoji:'⚔️', titre:'Attaques' },
@@ -34272,6 +34528,12 @@ function renderRoomActions(recruit){
     ? (a.id !== 'artisanat' && a.id !== 'porte')
     : (a.id !== 'equipe' && a.id !== 'attaques' && a.id !== 'profil'));
   document.getElementById('sceneBigImageCloseBtn').style.display = 'none'; // remplacée par la flèche
+  /* v624 : la flèche de retour en bas à gauche, comme dans les zones ; dans la chambre neutre,
+     tout le reste passe par le dialogue avec le robot (on touche la pièce). */
+  const fleche = document.getElementById('roomRetour');
+  fleche.querySelector('img').src = exitArrowUrl();
+  fleche.style.display = 'block';
+  if (roomNeutreOuverte){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
   const inTeam = activeTeamIds.includes(recruit.id);
   wrap.innerHTML = dispo.map(a=>{
     const actif = (a.id === 'equipe' && inTeam);
@@ -34301,14 +34563,6 @@ function renderRoomActions(recruit){
       const r = recruits.find(x=> x.id === roomSheetRecruitId);
       if (!r) return;
       const quoi = b.dataset.roomAction;
-      if (quoi === 'retour'){
-        /* Revenir d'où l'on vient : au couloir si on est entré par une porte (v480 — avant, ça
-           rouvrait toujours la liste des quartiers), à la liste sinon, pour passer d'une chambre
-           à l'autre sans repasser par la porte des quartiers. */
-        closeSceneBigImage();
-        if (!roomOuverteDepuisPorte) openQuarters();
-        return;
-      }
       if (quoi === 'renvoyer'){ showToast('Reste appuyé pour renvoyer'); return; }
       if (quoi === 'decorer'){ ouvrirDecoration(r); return; }   // v623
       if (quoi === 'porte'){ closeSceneBigImage(); commencerDeplacement(r); return; }   // v479
@@ -34321,9 +34575,26 @@ function renderRoomActions(recruit){
 }
 function currentRecruitById(id){ return recruits.find(r=> r.id === id) || null; }
 
+/* v624 : revenir d'où l'on vient — au couloir si on est entré par une porte (v480), à la liste
+   des quartiers sinon, pour passer d'une chambre à l'autre sans repasser par la porte. */
+document.getElementById('roomRetour').addEventListener('click', ()=>{
+  if (isGhostTap()) return;
+  closeSceneBigImage();
+  if (!roomOuverteDepuisPorte) openQuarters();
+});
+document.getElementById('sceneBigImageImg').addEventListener('click', (e)=>{
+  if (!roomNeutreOuverte || !roomSheetRecruitId || isGhostTap()) return;
+  if (Date.now() - sceneBigImageOpenedAt < 400) return;
+  e.stopPropagation();
+  const r = currentRecruitById(roomSheetRecruitId);
+  if (r) ouvrirDialogueRobot(r);
+});
 function closeSceneBigImage(){
   const wrap = document.getElementById('roomActions');
   if (wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
+  document.getElementById('roomRetour').style.display = 'none';
+  roomNeutreOuverte = false;
+  if (typeof fermerDialogueChambre === 'function') fermerDialogueChambre();
   roomSheetRecruitId = null;
   document.getElementById('sceneBigImageOverlay').classList.remove('show');
   document.getElementById('sceneBigImageImg').removeAttribute('src');
@@ -37548,6 +37819,7 @@ async function importerModelesCombat(liste, journal){
     }
     if (typeof m.apparence === 'string') data.apparence = m.apparence.trim();   // v612 : pour dessiner ses images
     if (typeof m.phraseNaissance === 'string') data.phraseNaissance = m.phraseNaissance.trim();
+    if (m.repliques && typeof m.repliques === 'object') data.repliques = Object.assign({}, (existant && existant.repliques) || {}, repliquesPropres(m.repliques));   // v624
     if (!existant){ data.nom = m.nom; data.createdAt = Date.now(); }
     await robotsModelesCol.doc(id).set(data, { merge:true });
     if (existant) majs++; else crees++;
