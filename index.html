@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v651</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v654</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11522,7 +11522,8 @@ MÉTHODE DE CONCEPTION — à dérouler AVANT toute image ou tout objet (Claude 
 3. Les envois 📤 du jeu joignent ces images d'eux-mêmes. Un prompt donné dans la conversation dit quelles images joindre et où les prendre dans le jeu.
 4. L'ANGLE DES MEUBLES ET OBJETS qu'on pose nous-mêmes avec les 4 coins : vus de trois-quarts LÉGER, caméra à hauteur d'une personne debout à deux ou trois mètres, donc on voit un peu le dessus et un petit côté — jamais parfaitement de face, jamais à plat. L'ajustement fin se fait dans l'éditeur (onglet ◇), et un meuble réglé se garde avec 💾 : la fois suivante il arrive réglé.
 5. Une PIÈCE : Claude dessine le schéma de structure, avec des zones magenta « MUR NU » là où on posera nous-mêmes fenêtres, tableaux, étagères, armoires murales, table basse et tapis ; ChatGPT dessine la pièce meublée et ses portes ; on laisse de l'espace libre devant un canapé pour un personnage assis.
-6. Avant de livrer, Claude vérifie : les images de référence partent bien avec le texte, aucun élément existant n'est nommé sans son image, l'angle du point 4 est écrit dans le prompt.`;
+6. Avant de livrer, Claude vérifie : les images de référence partent bien avec le texte, aucun élément existant n'est nommé sans son image, l'angle du point 4 est écrit dans le prompt.
+7. LA LIVRAISON : une zone ou un personnage conçu part TOUJOURS dans un FICHIER D'IMPORT (dossier imports du dépôt), jamais en prompts à recopier à la main. Le fichier apporte tout d'un coup, en brouillon : la zone et ses pièces avec leur schéma et leur prompt, les points estimés (sorties, portes fermées, récoltes, échanges, coffres, rectangles 🧍), les personnages avec leurs versions, horaires, apparence, pose et dialogues, les adversaires branchés sur leur modèle de robot avec leur butin, les objets, les quêtes, et les fiches de la Bible créées ou mises à jour. Si une partie ne passe que par une mise à jour (rencontres en groupes, lumière), elle part dans un second fichier à importer juste après. L'utilisateur importe, puis le guide 🧰 À finir l'assiste bouton par bouton (📤 prompts avec leurs images jointes, 📷 pose des images, recalage des points) : rien de ce que l'import ou le guide peut faire ne lui est demandé à la main. Claude teste l'import dans une copie du jeu avant de le livrer.`;
 const CHARTE_CONCEPTION_DEFAUT = `CHARTE DE CONCEPTION MASCOTTO — règles à appliquer à toute nouvelle zone, pièce ou personnage.
 
 UNIVERS
@@ -12199,6 +12200,28 @@ function ouvrirSceneGuidee(zoneId, sceneId, texte, action){
    le jeu repère les colonnes vides qui les séparent et rend une image par vue, de gauche à droite.
    Fond opaque (ChatGPT oublie parfois la transparence) : la couleur du bord est effacée par
    remplissage depuis les bords. Renvoie { vues:[canvas…] } ou { erreur:'…' }. */
+/* v654 — un élément de décor rendu par ChatGPT : fond retiré s'il n'est pas déjà transparent
+   (fond blanc ou uni pris aux bords), puis recadré au plus près de ses pixels, pour que ses
+   4 coins dans l'éditeur tombent sur les bords du dessin. */
+function detourerElementDecor(img){
+  return new Promise((resolve)=>{
+    const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+    if (!W || !H){ resolve({ erreur: 'image illisible' }); return; }
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0);
+    let d = ctx.getImageData(0, 0, W, H).data, transp = 0, vus = 0;
+    for (let i = 3; i < d.length; i += 4 * 7){ vus++; if (d[i] < 20) transp++; }
+    if (transp < vus * 0.03){ effacerFondDepuisBords(ctx, W, H, 60); d = ctx.getImageData(0, 0, W, H).data; }
+    let x0 = W, x1 = -1, y0 = H, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 40){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0){ resolve({ erreur: 'image vide (tout est transparent)' }); return; }
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    const S = document.createElement('canvas'); S.width = w; S.height = h;
+    S.getContext('2d').drawImage(cv, x0, y0, w, h, 0, 0, w, h);
+    const out = new Image(); out.onload = ()=> resolve({ img: out }); out.onerror = ()=> resolve({ erreur: 'image illisible' });
+    out.src = S.toDataURL('image/png');
+  });
+}
 function effacerFondDepuisBords(ctx, w, h, tol){
   const im = ctx.getImageData(0, 0, w, h), d = im.data;
   const bords = [];
@@ -12449,7 +12472,7 @@ async function ouvrirBrouillons(){
       if (zonesEnTravaux.some(z=> z.id === d.id)) return;   // déjà affichée
       const fz = toutes.find(x=> x.id === d.id && (x.interactionType || '') === 'zone');
       const scs = d.data().scenes || [];
-      const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && pt.type === 'image' && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
+      const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && (pt.type === 'image' || pt.type === 'decor') && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)));
       if (fz && enAttente){ scenesDe[d.id] = scs; zonesATerminer.push(fz); }
@@ -12649,6 +12672,21 @@ async function ouvrirBrouillons(){
             bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pt="' + z.id + '|' + sc.id + '|' + pt.id + '"', '📷 Choisir l\'image'));
           if (!okPt) envois[cle] = ()=> ({ texte: pt.prompt, imgs: [] });
         });
+        /* v654 : un élément de décor prévu dans une zone magenta « MUR NU » (fenêtre, étagère,
+           panneau…) : Claude le livre comme un point de décor avec son prompt ; le guide le fait
+           dessiner, le pose à sa place, puis on l'ajuste avec les 4 coins. */
+        (sc.points || []).forEach(pt=>{
+          if (!pt || pt.type !== 'decor' || !pt.prompt) return;
+          const okPt = !!(pt.imageRef || pt.imageUrl || pt.imagePath);
+          if (!okPt) manque++;
+          const cle = 'pt|' + z.id + '|' + sc.id + '|' + pt.id;
+          blocs += tache(okPt, '🪑 ' + esc(pt.label || 'Élément de décor') + ' — dans « ' + esc(sc.name) + ' »',
+            'Un élément qu\'on pose nous-mêmes sur une zone magenta du schéma. Il arrive dessiné de face ; c\'est toi qui le mets en perspective avec les 4 coins.',
+            '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b> : le jeu retire le fond, la recadre et la pose à sa place.<br>4. <b>🗺️ Ouvrir la pièce</b>, touche-la et règle ses 4 coins (onglet ◇) pour la coller au mur, puis <b>Enregistrer la scène</b>.',
+            bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPt) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pt="' + z.id + '|' + sc.id + '|' + pt.id + '"', okPt ? '📷 Remplacer l\'image' : '📷 Choisir l\'image')
+            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt));
+          envois[cle] = ()=> ({ texte: pt.prompt, imgs: [] });
+        });
       });
       html += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
         <div style="font-weight:700;">🗺️ ${esc(z.name || '(zone)')} <span class="meta" style="font-weight:400;">— ${publiee ? 'zone publiée' : 'zone en travaux'} · ${manque ? manque + ' chose(s) à faire' : (publiee ? '✅ rien à faire' : '✅ prête à publier')}</span></div>
@@ -12772,7 +12810,7 @@ async function ouvrirBrouillons(){
   {
     const K = kitBiblio;
     const aCoq = (prefixe)=> (K.coquilles || []).some(c=> c && c.id && c.id.startsWith(prefixe));
-    const aPlanche = (cle)=> PLANCHES_KIT[cle].objets.every(d=> d.coffre ? COFFRES.modeles.some(m=> m.nom === d.nom && (m.angles || []).some(a=> (!d.angle || a.nom === d.angle) && (a[d.coffre + 'Ref'] || a[d.coffre + 'Path']))) : d.cadre ? (fenetresBiblio.cadres || []).some(c=> c.nom === d.nom) : d.vueMur ? (K.meubles || []).some(m=> m.nom === d.nom && m.vues && m.vues.mur) : d.vueDe ? (K.meubles || []).some(m=> m.nom === d.nom && m.vues && m.vues[d.vueDe]) : d.vueRot !== undefined ? (K.meubles || []).some(m=> m.nom === d.nom && m.rot && m.rot[d.vueRot]) : (K.meubles || []).some(m=> m.nom === d.nom));
+    const aPlanche = (cle)=> PLANCHES_KIT[cle].objets.every(d=> d.coffre ? COFFRES.modeles.some(m=> m.nom === d.nom && (m.angles || []).some(a=> (!d.angle || a.nom === d.angle) && (a[d.coffre + 'Ref'] || a[d.coffre + 'Path']))) : d.cadre ? (fenetresBiblio.cadres || []).some(c=> c.nom === d.nom) : (K.meubles || []).some(m=> m.nom === d.nom));
     envois['coq_salon'] = ()=> ({ texte: PROMPT_COQ_SALON, imgs: [] });
     envois['coq_chambre'] = ()=> ({ texte: PROMPT_COQ_CHAMBRE, imgs: [] });
     envois['kit_salon'] = ()=> ({ texte: PROMPT_KIT_SALON, imgs: [] });
@@ -12782,15 +12820,10 @@ async function ouvrirBrouillons(){
     envois['kit_armoire_face'] = ()=> ({ texte: PROMPT_KIT_ARMOIRE_FACE, imgs: [] });   // v650
     envois['kit_cuisine'] = ()=> ({ texte: PROMPT_KIT_CUISINE, imgs: [] });
     envois['kit_chambre'] = ()=> ({ texte: PROMPT_KIT_CHAMBRE, imgs: [] });
-    envois['kit_tournes'] = ()=> ({ texte: PROMPT_KIT_TOURNES, imgs: [fichierPourPartage('gabarit-kit-' + Date.now(), genererGabaritKit('kit_tournes'))] });
-    envois['kit_rot_canape'] = ()=>{ const m = (K.meubles || []).find(x=> x.nom === PLANCHES_KIT.kit_rot_canape.rot); return { texte: promptPlancheTournante(PLANCHES_KIT.kit_rot_canape), imgs: m && m.ref ? [fichierPourPartage('meuble-' + m.id, urlDeRef(m.ref))] : [] }; };   // v638 : le meuble joint
-    /* v639 : la vue murale — la coquille avec la boîte cyan est fabriquée par le jeu et jointe */
-    /* v642 : le gabarit (la boîte seule) + le meuble de face, joints */
-    envois['kit_mur_canape'] = ()=>{ const pl = PLANCHES_KIT.kit_mur_canape, m = (K.meubles || []).find(x=> x.nom === pl.mur), c = coquillePourMur(); return { texte: PROMPT_KIT_MUR(pl.desc), imgs: m && c ? [fichierPourPartage('gabarit-mur-' + Date.now(), genererGabaritMur(m, c)), fichierPourPartage('meuble-' + m.id, urlDeRef(m.ref))] : [] }; };
     /* v647 : ce qui part vraiment avec le prompt, dit dans le guide */
     const texteRefsMado = ()=>{ const r = referencesMado(); const q = []; if (r.quoi.includes('mado')) q.push('l\'image de Mado' + (r.quoi.includes('buste') ? ' et son buste' : '')); if (r.modele) q.push('la face du robot « ' + String(r.modele.nom || '').replace(/</g, '&lt;') + ' »'); return q.length ? 'Le 📤 joint ' + q.join(' et ') + '.' : '⚠️ Aucune référence trouvée (pas de fiche « Mado » avec image, pas de modèle de robot avec face).'; };
     let kh = '<div style="font-weight:700; margin:14px 0 6px;">🧩 Pièces en kit</div>'
-      + '<p class="meta" style="font-size:12px;">Le test avec la maison de Mado : deux coquilles vides et trois planches de meubles, puis la pièce s\'assemble dans l\'éditeur de scène (🧩 Kit). ' + (K.coquilles || []).length + ' coquille(s) · ' + (K.meubles || []).length + ' meuble(s). Fais d\'abord une coquille et une planche, regarde, puis le reste.</p>';
+      + '<p class="meta" style="font-size:12px;">Les meubles qu\'on pose nous-mêmes dans les pièces (point Décor → 🧩 Meuble du kit, puis les 4 coins), et l\'assemblage d\'une pièce en kit (éditeur de scène → 🧩 Kit). ' + (K.coquilles || []).length + ' coquille(s) · ' + (K.meubles || []).length + ' meuble(s).</p>';
     const etapes = [
       ['coq_salon', '🏠 COQUILLE du salon-cuisine (carrée)', 'La pièce vide, vue de face, deux écrans de large. Le jeu la meublera.', aCoq('coq_salon'), 'l\'image'],
       ['kit_salon', '🛋️ Le SALON : six meubles', 'Canapé, table basse, écran mural, étagère, plante, lampadaire.', aPlanche('kit_salon'), 'la planche'],
@@ -12801,15 +12834,16 @@ async function ouvrirBrouillons(){
       ['kit_mado_vol', '🗄️ L\'ARMOIRE (coffre), la TABLE BASSE et l\'ÉTAGÈRE DE CÔTÉ (4 cases)', 'Trois-quarts léger, avec de la profondeur. L\'armoire arrive fermée et ouverte : à l\'import elle entre dans le catalogue de coffres (modèle « Armoire de Mado »), et l\'ancienne armoire plate sort du kit. Dans la pièce : point 📦 Coffre → ce modèle, puis les coins (◇). L\'étagère est dessinée pour le mur de GAUCHE ; 🔃 la met au mur de droite.', aPlanche('kit_mado_vol'), 'la planche'],
       ['kit_armoire_face', '🗄️ L\'ARMOIRE DE FACE (2 cases : fermée + ouverte)', 'Un nouvel angle « de face » pour le modèle « Armoire de Mado », catégorie Armoire, à côté du trois-quarts. Rien d\'autre.', aPlanche('kit_armoire_face'), 'la planche'],
       ['kit_mado_refs', '🖼️ Le POSTER et le TABLEAU seuls (2 pièces)', 'Pour refaire seulement ces deux-là : ' + texteRefsMado() + ' À l\'import, elles remplacent le poster et le tableau de la planche précédente. ' + bouton('data-robot-poster', '🤖 Choisir le robot du poster'), aPlanche('kit_mado_refs'), 'la planche'],
-      /* v639 : les planches tournantes et le gabarit (v635-v638) sont abandonnés — remplacés par la vue murale */
-      ['kit_mur_canape', '🛋️ LE CANAPÉ CONTRE LE MUR (gabarit)', 'Le 📤 joint le gabarit (la boîte du canapé seule, au milieu du mur de gauche, dans la perspective de ta coquille) et le canapé de face ; ChatGPT dessine le canapé seul dans la boîte, fond transparent. Le jeu le pose tel quel au milieu du mur de gauche, et en miroir au mur de droite.', aPlanche('kit_mur_canape'), 'l\'image'],
     ];
-    etapes.forEach(([cle, titre, pourquoi, ok, quoi])=>{
+    /* v652 : seules restent les lignes déjà faites (refaisables) et l'armoire de face — les planches jamais
+       lancées sont retirées du guide (leur code reste, pour l'instant) */
+    etapes.filter(e=> e[3] || e[0] === 'kit_armoire_face').forEach(([cle, titre, pourquoi, ok, quoi])=>{
       /* v634 : une planche faite reste refaisable (le prompt a pu changer) */
-      const gab = PLANCHES_KIT[cle] && PLANCHES_KIT[cle].gabarit ? bouton('data-gabarit-kit="' + cle + '"', '📐 Voir le gabarit') : '';
+      const gab = '';
+      const nCases = (PLANCHES_KIT[cle] && PLANCHES_KIT[cle].objets.length) || 0;
       if (ok){ kh += '<div style="display:flex; gap:6px; margin:6px 0; font-size:13px; align-items:center;"><div style="opacity:.55;">✅</div><div style="opacity:.55; flex:1;">' + titre + '</div>' + bouton('data-envoi="' + cle + '"', '📤') + gab + bouton('data-poser-kit="' + cle + '"', '📷 Refaire') + '</div>'; return; }
       kh += tache(ok, titre, pourquoi,
-        '1. <b>📤 Envoyer à ChatGPT</b>, envoie' + (gab ? ' (le gabarit est joint).' : '.') + '<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir ' + quoi + '</b>' + (quoi === 'la planche' ? ' : le jeu la coupe en 6.' : '.'),
+        '1. <b>📤 Envoyer à ChatGPT</b>, envoie' + (gab ? ' (le gabarit est joint).' : '.') + '<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir ' + quoi + '</b>' + (quoi === 'la planche' ? ' : le jeu la coupe en ' + nCases + '.' : '.'),
         bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + gab + bouton('data-poser-kit="' + cle + '"', '📷 Choisir ' + quoi));
     });
     if ((K.coquilles || []).length) kh += '<p class="meta" style="margin:-2px 0 8px 22px; font-size:11px;">Les repères des coquilles (sol, murs) et les tailles des meubles se règlent dans Édition → 🧩 Pièces en kit. Ensuite : éditeur de scène → 🧩 Kit.</p>';
@@ -12880,14 +12914,26 @@ async function ouvrirBrouillons(){
   sur('[data-envoi]', (b)=>{ const e = envoiPrepare[b.dataset.envoi]; if (e) envoyerAChatGPT(e.texte, e.imgs, b); });
   sur('[data-poser-pt]', async (b)=>{
     const [zid, sid, pid] = b.dataset.poserPt.split('|');
-    const img = await choisirFichierImage();
+    let img = await choisirFichierImage();
     if (!img) return;
-    const ref = await externalizeSceneImage(compressPointImageDataUrl(img));
-    if (!ref){ showToast('Échec : image non enregistrée'); return; }
     const doc = await zonesCol.doc(zid).get();
     const scenes = (doc.exists && doc.data().scenes) || [];
     const pt = ((scenes.find(x=> x && x.id === sid) || {}).points || []).find(x=> x && x.id === pid);
     if (!pt){ showToast('Point introuvable'); return; }
+    if (pt.type === 'decor'){
+      /* v654 : un élément de décor — détouré, recadré sur ses pixels, posé seulement dans le décor */
+      const det = await detourerElementDecor(img);
+      if (det.erreur){ showToast('Image refusée : ' + det.erreur); return; }
+      const refD = await externalizeSceneImage(compressPointImageDataUrl(det.img));
+      if (!refD){ showToast('Échec : image non enregistrée'); return; }
+      pt.imageRef = refD; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false;
+      await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+      oublierScenesDeZone(zid);
+      showToast('Image posée ✅ — règle ses 4 coins dans la pièce'); rouvrir();
+      return;
+    }
+    const ref = await externalizeSceneImage(compressPointImageDataUrl(img));
+    if (!ref){ showToast('Échec : image non enregistrée'); return; }
     /* la même image dans le décor et en grand */
     pt.imageRef = ref; pt.bigImageRef = ref;
     pt.imageUrl = ''; pt.bigImageUrl = ''; pt.imagePath = null; pt.bigImagePath = null; pt.hideIcon = false;
@@ -12932,13 +12978,6 @@ async function ouvrirBrouillons(){
     showToast('Robot du poster : ' + (m.nom || ''));
     rouvrir();
   }));
-  sur('[data-gabarit-kit]', async (b)=>{   // v636
-    const u = await genererGabaritKit(b.dataset.gabaritKit);
-    if (!u){ showToast('Pose d\'abord une coquille'); return; }
-    const f = document.createElement('div'); f.className = 'overlay show'; f.style.cssText = 'z-index:4900; align-items:center; justify-content:center; background:rgba(0,0,0,.85);';
-    f.innerHTML = '<div style="max-width:100%; max-height:100%; overflow:auto; text-align:center;"><img src="' + u + '" style="max-width:100%; display:block;"><p class="meta" style="color:#fff; font-size:12px; padding:8px;">Ce que ChatGPT reçoit avec le prompt. Touche pour fermer.</p></div>';
-    f.addEventListener('click', ()=> f.remove()); document.body.appendChild(f);
-  });
   /* v622 : les planches de fenêtres → la bibliothèque */
   sur('[data-poser-fenetres]', async (b)=>{
     const quoi = b.dataset.poserFenetres;
@@ -34761,25 +34800,6 @@ function emplacementKit(G, o, m){
   const poly = [[xB, hautB], [xFr, hautF], [xFr, basF], [xB, basB]];
   return { zone: o.zone, poly, quad: { xB, hautB, basB, xFr, hautF, basF } };
 }
-/* v637 — LA PLANCHE TOURNANTE : quelle vue montrer ? L'angle apparent = (sens du meuble) − (direction
-   caméra → meuble). La caméra est sur la verticale du point de fuite ; sa distance au bord avant se
-   déduit du rapport des largeurs du sol (devant / fond). Angles en degrés, positifs = le meuble tourné
-   vers sa gauche (on voit son côté droit) ; négatifs → la même vue en miroir. */
-function vueRotationKit(G, o, m){
-  const n = (m.rot || []).length; if (!n) return null;
-  const { w, d } = dimsKit(o, m);
-  const colCam = (G.V.x - G.xA1) / G.wA * G.nx;                 // colonne (fine) de la caméra
-  const distDevant = G.ny * G.wA / Math.max(1, G.wF - G.wA);    // distance caméra → bord avant, en demi-cases
-  const x = (o.c + w / 2) - colCam, z = distDevant + (G.ny - (o.r + d / 2));
-  const theta = o.orient === 'd' ? 90 : o.orient === 'dos' ? 180 : o.orient === 'g' ? 270 : 0;
-  let alpha = (270 + theta) - (Math.atan2(-z, -x) * 180 / Math.PI);
-  alpha = ((alpha % 360) + 540) % 360 - 180;                     // dans (-180, 180]
-  const pas = 180 / (n - 1);
-  const k = Math.max(0, Math.min(n - 1, Math.round(Math.abs(alpha) / pas)));
-  /* v638 : la planche tourne le meuble vers SA droite (on découvre son côté gauche) — le sens que prend ChatGPT ;
-     m.rotInverse pour une planche tournée dans l'autre sens */
-  return { k, miroir: (alpha > 0) !== !!m.rotInverse, alpha };
-}
 /* la zone orange pur du dessin, teintée à la couleur de la pièce */
 const teinteCache = {};
 function hexVersHsl(hex){
@@ -34815,180 +34835,6 @@ function teinterOrange(img, hex){
   }
   ctx.putImageData(id, 0, 0);
   teinteCache[cle] = cv; return cv;
-}
-/* v636 — LA BOÎTE d'un meuble tourné (orient g/d) : ses 8 coins projetés dans la pièce. w/d en demi-cases
-   (déjà échangés par dimsKit), h en demi-cases (depuis l'image de face : hauteur / largeur × largeur réelle). */
-function coinsBoiteKit(G, o, m, hFine){
-  const { w, d } = dimsKit(o, m);
-  const xCol = (col, y)=> G.xL(y) + col / G.nx * (G.xR(y) - G.xL(y));
-  const pts = [];
-  [[o.c, o.r], [o.c + w, o.r], [o.c, o.r + d], [o.c + w, o.r + d]].forEach(([col, row])=>{
-    const y = G.yAt((G.ny - row) / G.ny), x = xCol(col, y);
-    pts.push([x, y], [x, y - hFine * G.cellH(y)]);
-  });
-  return pts;
-}
-function hauteurFineKit(m, imgFace){
-  const iw = imgFace ? (imgFace.naturalWidth || imgFace.width) : 0, ih = imgFace ? (imgFace.naturalHeight || imgFace.height) : 0;
-  return (iw && ih ? ih / iw : 0.6) * Math.max(1, m.w || 1) * KIT_FIN;
-}
-/* ═══ v642 — LE MEUBLE COLLÉ AU MUR DE CÔTÉ, PAR GABARIT.
-   (v639-v641 : découpe dans la coquille + reprojection — abandonnées, retirées.)
-   Une place FIXE : au milieu du mur de gauche (et la même en miroir au mur de droite). Le jeu fabrique
-   le GABARIT : la boîte du meuble seule, en fil de fer, dans la perspective exacte de la coquille, sur
-   fond blanc et recadrée autour d'elle. ChatGPT dessine le meuble dedans, seul, fond transparent. Le
-   jeu prend ce dessin tel quel (fond blanc retiré s'il en reste), le recadre sur ses pixels, et le pose
-   dans la boîte : même largeur que la boîte, pieds sur le bas de l'empreinte. Rien n'est découpé ni
-   déformé. ═══ */
-function coquillePourMur(){
-  const cs = kitBiblio.coquilles || [];
-  return cs.find(c=> c && c.id && c.id.startsWith('coq_salon')) || cs[0] || null;
-}
-/* les 8 coins d'une boîte au sol, nommés : m = côté mur, p = côté pièce ; a = arrière (vers le fond),
-   v = avant (vers la caméra) ; T = en haut. Collé au mur de droite (orient g), le mur est à c + w. */
-function coinsNommesKit(G, o, m, h){
-  const P = coinsBoiteKit(G, o, m, h);
-  return o.orient === 'g'
-    ? { pa: P[0], paT: P[1], ma: P[2], maT: P[3], pv: P[4], pvT: P[5], mv: P[6], mvT: P[7] }
-    : { ma: P[0], maT: P[1], pa: P[2], paT: P[3], mv: P[4], mvT: P[5], pv: P[6], pvT: P[7] };
-}
-/* LA place fixe d'un meuble contre un mur de côté : au milieu de la profondeur ; si la boîte sort de
-   l'image (coquille très ouverte), on la recule jusqu'à ce qu'elle tienne */
-function placeMurale(G, m, cote){
-  const o = { zone:'sol', orient: cote === 'd' ? 'g' : 'd', c: 0, r: 0 };
-  const { w, d } = dimsKit(o, m);
-  if (cote === 'd') o.c = G.nx - w;
-  const milieu = Math.max(0, Math.floor((G.ny - d) / 2)), marge = G.W * 0.02;
-  for (let r = milieu; r >= 0; r--){
-    o.r = r;
-    const b = boiteDe(emplacementKit(G, o, m).poly);
-    if (b.x0 >= marge && b.x1 <= G.W - marge && b.y1 <= G.H - marge) return o;
-  }
-  o.r = 0; return o;
-}
-/* le gabarit envoyé à ChatGPT : la boîte seule (mur gauche), fond blanc, recadrée avec de la marge */
-async function genererGabaritMur(m, c){
-  if (!m || !c) return null;
-  const G = geoKit(c);
-  const imgFace = m.ref ? await chargerImage(await urlDeRef(m.ref)) : null;
-  const o = placeMurale(G, m, 'g');
-  const K = coinsNommesKit(G, o, m, hauteurFineKit(m, imgFace));
-  const xs = Object.values(K).map(p=> p[0]), ys = Object.values(K).map(p=> p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const marge = Math.max(x1 - x0, y1 - y0) * 0.25;
-  const s = 900 / Math.max(x1 - x0 + 2 * marge, y1 - y0 + 2 * marge);   // le plus grand côté à ~900 px
-  const W = Math.round((x1 - x0 + 2 * marge) * s), H = Math.round((y1 - y0 + 2 * marge) * s);
-  const T = (n)=> [(K[n][0] - x0 + marge) * s, (K[n][1] - y0 + marge) * s];
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
-  const face = (ns, fill)=>{ ctx.beginPath(); ns.forEach((n, i)=> i ? ctx.lineTo(...T(n)) : ctx.moveTo(...T(n))); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); };
-  face(['ma', 'maT', 'mvT', 'mv'], 'rgba(120,120,120,.35)');   // le mur (le dos du meuble s'y colle)
-  face(['ma', 'pa', 'pv', 'mv'], 'rgba(200,170,120,.30)');     // l'empreinte au sol
-  const ep = Math.max(3, W / 220);
-  const arete = (a, b, cachee)=>{ ctx.beginPath(); ctx.moveTo(...T(a)); ctx.lineTo(...T(b)); ctx.setLineDash(cachee ? [ep * 3, ep * 3] : []); ctx.strokeStyle = cachee ? '#9a9a9a' : '#111'; ctx.lineWidth = cachee ? ep * 0.6 : ep; ctx.stroke(); ctx.setLineDash([]); };
-  arete('ma', 'pa', true); arete('ma', 'mv', true); arete('ma', 'maT', true);
-  arete('pa', 'pv'); arete('mv', 'pv'); arete('pa', 'paT'); arete('mv', 'mvT'); arete('pv', 'pvT');
-  arete('maT', 'paT'); arete('maT', 'mvT'); arete('paT', 'pvT'); arete('mvT', 'pvT');
-  return cv.toDataURL('image/png');
-}
-/* l'import : le dessin de ChatGPT → m.vues.mur = { ref, mode:'gabarit' } (le sprite recadré sur ses pixels) */
-async function importerMeubleMural(m, img){
-  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
-  if (!W || !H) return { erreur: 'image illisible' };
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0);
-  let d = ctx.getImageData(0, 0, W, H).data, transp = 0;
-  for (let i = 3; i < d.length; i += 4 * 7) if (d[i] < 20) transp++;
-  if (transp < (W * H / 7) * 0.03){ effacerFondDepuisBords(ctx, W, H, 60); d = ctx.getImageData(0, 0, W, H).data; }
-  let x0 = W, x1 = -1, y0 = H, y1 = -1;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 40){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-  if (x1 < 0) return { erreur: 'image vide (tout est transparent)' };
-  const w = x1 - x0 + 1, h = y1 - y0 + 1;
-  if (w < W * 0.15 && h < H * 0.15) return { erreur: 'le meuble trouvé est minuscule' };
-  const S = document.createElement('canvas'); S.width = w; S.height = h;
-  S.getContext('2d').drawImage(cv, x0, y0, w, h, 0, 0, w, h);
-  const ref = await externalizeSceneImage(encoderImageSousLimite(S, 700, true));
-  if (!ref) return { erreur: 'image non enregistrée' };
-  m.vues = m.vues || {};
-  m.vues.mur = { ref, mode: 'gabarit', w, h };
-  return { ok: true, w, h };
-}
-/* où se dessine le meuble mural : la largeur de sa boîte, les pieds sur le bas de l'empreinte */
-function caseMuraleKit(G, o, m, iw, ih){
-  const K = coinsNommesKit(G, o, m, 1);
-  const pts = ['ma', 'pa', 'mv', 'pv'].map(n=> K[n]);
-  const x0 = Math.min(...pts.map(p=> p[0])), x1 = Math.max(...pts.map(p=> p[0])), yBas = Math.max(...pts.map(p=> p[1]));
-  const wpx = x1 - x0, hpx = wpx * ih / iw;
-  return { x: x0, y: yBas - hpx, w: wpx, h: hpx, miroir: o.orient === 'g' };
-}
-const PROMPT_KIT_MUR = (nom)=> `À partir du gabarit géométrique fourni (première image jointe), dessine UN SEUL meuble : ${nom}.
-
-CONTRAINTES GÉOMÉTRIQUES IMPÉRATIVES :
-
-- Le gabarit représente le volume maximal occupé par le meuble.
-- Respecte exactement l'orientation, la perspective et les proportions de la boîte.
-- Le meuble doit occuper le volume défini par les huit sommets, sans dépasser ses limites.
-- Ses points de contact avec le sol doivent correspondre à l'empreinte de la boîte (la face beige au sol).
-- La face grisée de la boîte est le MUR : le dos du meuble est collé contre elle, et le meuble est tourné vers la droite, vers l'intérieur de la pièce.
-- Les arêtes et surfaces doivent suivre les directions de perspective du gabarit.
-- Ne modifie pas l'angle de caméra.
-
-CONTRAINTES GRAPHIQUES :
-
-- Style dessin de jeu vidéo.
-- Trait d'encre net et régulier.
-- Aplats de couleurs.
-- Ombrage cel.
-- Apparence cohérente avec les meubles déjà produits : c'est le même meuble que sur la deuxième image jointe (même forme, mêmes couleurs, mêmes détails), seulement vu sous l'angle du gabarit.
-
-LIVRABLE :
-
-- Un seul meuble.
-- Une seule position.
-- Vue correspondant exactement au gabarit.
-- PNG avec fond transparent.
-- Supprime intégralement les huit arêtes de construction et tous les repères (traits, face grisée, face beige).
-- Aucun morceau de fond, de sol ou de mur.
-- Aucun autre objet.
-- Ne représente pas le gabarit dans l'image finale.
-
-Le meuble final doit être isolé et directement utilisable comme sprite dans un jeu mobile.`;
-
-/* l'image-gabarit d'une planche : six boîtes numérotées, le long du mur de gauche de la première coquille */
-async function genererGabaritKit(cle){
-  const planche = PLANCHES_KIT[cle]; const c = (kitBiblio.coquilles || [])[0];
-  if (!planche || !c) return null;
-  const G = geoKit(c);
-  const CW = 1536, CH = 1024, cw = CW / 3, ch = CH / 2;
-  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH; const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, CW, CH);
-  for (let i = 0; i < 6; i++){
-    const def = planche.objets[i]; if (!def) break;
-    const m = (kitBiblio.meubles || []).find(x=> x.nom === def.nom) || { nom: def.nom, w: 3, d: 2 };
-    const imgFace = m.ref ? await chargerImage(await urlDeRef(m.ref)) : null;
-    const hF = hauteurFineKit(m, imgFace);
-    /* tourné vers la droite, dos au mur de gauche : colonne 0, au milieu de la profondeur */
-    const o = { zone:'sol', orient:'d', c: 0, r: 0 };
-    const { d } = dimsKit(o, m); o.r = Math.max(0, Math.floor((G.ny - d) / 2));
-    const P = coinsBoiteKit(G, o, m, hF);   // [0] bas-gauche-devant, [1] haut ; [2],[3] bas/haut droite-devant ; [4],[5] gauche-fond ; [6],[7] droite-fond
-    const xs = P.map(p=> p[0]), ys = P.map(p=> p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const s = Math.min((cw - 90) / (x1 - x0), (ch - 140) / (y1 - y0));
-    const ox = (i % 3) * cw + (cw - (x1 - x0) * s) / 2, oy = Math.floor(i / 3) * ch + 80 + (ch - 140 - (y1 - y0) * s) / 2;
-    const T = (p)=> [ox + (p[0] - x0) * s, oy + (p[1] - y0) * s];
-    const face = (a, b, c2, d2, fill)=>{ ctx.beginPath(); [a, b, c2, d2].forEach((p, k)=> k ? ctx.lineTo(...T(p)) : ctx.moveTo(...T(p))); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); };
-    face(P[4], P[5], P[1], P[0], 'rgba(120,120,120,.35)');   // le mur (face gauche)
-    face(P[0], P[2], P[6], P[4], 'rgba(200,170,120,.25)');   // le sol
-    const arete = (a, b, cachee)=>{ ctx.beginPath(); ctx.moveTo(...T(a)); ctx.lineTo(...T(b)); ctx.setLineDash(cachee ? [8, 8] : []); ctx.strokeStyle = cachee ? '#9a9a9a' : '#111'; ctx.lineWidth = cachee ? 2 : 3; ctx.stroke(); ctx.setLineDash([]); };
-    /* arêtes cachées : celles qui partent du coin bas-gauche-fond (derrière le meuble) */
-    arete(P[0], P[2], true); arete(P[0], P[1], true); arete(P[0], P[4], true);
-    arete(P[4], P[6]); arete(P[4], P[5]); arete(P[2], P[3]); arete(P[1], P[3]); arete(P[2], P[6]); arete(P[3], P[7]); arete(P[6], P[7]); arete(P[5], P[7]); arete(P[5], P[1]);
-    ctx.fillStyle = '#111'; ctx.font = 'bold 44px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(String(i + 1), (i % 3) * cw + 24, Math.floor(i / 3) * ch + 56);
-    ctx.font = '26px sans-serif'; ctx.fillText(m.nom, (i % 3) * cw + 70, Math.floor(i / 3) * ch + 52);
-    ctx.font = 'italic 22px sans-serif'; ctx.fillStyle = '#666'; ctx.fillText('mur', ...(()=>{ const q = T([(P[4][0] + P[1][0]) / 2, (P[5][1] + P[0][1]) / 2]); return [q[0] - 22, q[1]]; })());
-  }
-  return cv.toDataURL('image/png');
 }
 /* v633 : où l'image d'un meuble au sol / au plafond se dessine (largeur = la boîte de son empreinte) */
 function boiteImageKit(e, iw, ih){
@@ -35138,46 +34984,17 @@ async function composerKit(kit, opts){
     const vue = refVueKit(o, m);
     const img = await chargerImage(await urlDeRef(vue.ref)); if (!img) continue;
     const e = emplacementKit(G, o, m);
-    if (o.zone === 'sol' && (o.orient === 'g' || o.orient === 'd') && m.vues && m.vues.mur){   // v642 : le meuble mural, posé dans sa boîte
-      const imgM = await chargerImage(await urlDeRef(m.vues.mur.ref));
-      if (imgM){ const t = teinterOrange(imgM, kit.teinte); avecGeo.push({ o, m, img, e, mural: { img: t, place: caseMuraleKit(G, o, m, imgM.naturalWidth || imgM.width, imgM.naturalHeight || imgM.height) } }); continue; }
-    }
-    /* v641 : la planche tournante (v637) et le gabarit (v636) sont DÉBRANCHÉS — sans vue murale, un meuble
-       tourné reste dessiné de face sur son empreinte */
-    const tourne = false;
-    const imgFace = tourne ? (vue.ref === m.ref ? img : await chargerImage(await urlDeRef(m.ref))) : null;
-    const imgTourne = tourne && m.vues && m.vues.tourne ? await chargerImage(await urlDeRef(m.vues.tourne)) : null;
-    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), imgFace, imgTourne, e });
+    /* v652 : les essais de meubles tournés (gabarit v636, planche tournante v637, vue murale v639-v642) sont
+       retirés ; un meuble est toujours dessiné de face sur son empreinte, réglé ensuite à la main (4 coins). */
+    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), e });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
-  for (const { o, m, img, imgFace, imgTourne, e, mural } of avecGeo){
+  for (const { o, m, img, e } of avecGeo){
     if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth || img.width, ih: img.naturalHeight || img.height };
     if (opts.sauf && opts.sauf === o.id) continue;
     const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
     ctx.save();
-    if (mural){
-      /* v642 : le meuble collé au mur, tel que dessiné par ChatGPT dans le gabarit ; miroir pour le mur de droite */
-      const p = mural.place;
-      if (p.miroir){ ctx.translate(p.x + p.w, p.y); ctx.scale(-1, 1); ctx.drawImage(mural.img, 0, 0, p.w, p.h); }
-      else ctx.drawImage(mural.img, p.x, p.y, p.w, p.h);
-      if (opts.tailles) opts.tailles[o.id] = { boite: { x: p.x, y: p.y, w: p.w, h: p.h } };
-    } else if (imgFace){
-      /* v636 : un meuble tourné = son sprite-gabarit posé dans sa boîte. Le gabarit est dessiné dos au mur
-         de GAUCHE (tourné vers la droite = orient d) ; pour l'autre mur, le même sprite en miroir. */
-      const P = coinsBoiteKit(G, o, m, hauteurFineKit(m, imgFace));
-      const xs = P.map(p=> p[0]), ys = P.map(p=> p[1]);
-      const bx0 = Math.min(...xs), bx1 = Math.max(...xs), by1 = Math.max(...ys);
-      const bb = boiteDe(e.poly);
-      ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(bb.cx, bb.y1 - bb.w * 0.03, bb.w * 0.5, bb.w * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-      const sprite = imgTourne || imgFace;
-      const sw = sprite.naturalWidth || sprite.width, sh = sprite.naturalHeight || sprite.height;
-      const wpx = bx1 - bx0, hpx = wpx * sh / sw, y = by1 - hpx;
-      const versLaDroite = o.orient === 'd';
-      const miroir = (versLaDroite ? false : true) !== !!o.miroir;
-      if (opts.tailles) opts.tailles[o.id] = { boite: { x: bx0, y, w: wpx, h: hpx } };
-      if (miroir){ ctx.translate(bx0 + wpx, y); ctx.scale(-1, 1); ctx.drawImage(sprite, 0, 0, wpx, hpx); }
-      else ctx.drawImage(sprite, bx0, y, wpx, hpx);
-    } else if (e.zone === 'sol' || e.zone === 'plafond'){
+    if (e.zone === 'sol' || e.zone === 'plafond'){
       const { wpx, hpx, x, y } = boiteImageKit(e, iw, ih);
       if (e.zone === 'sol'){
         ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(e.ancre.cx, e.ancre.yBas - wpx * 0.03, wpx * 0.48, wpx * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
@@ -35344,8 +35161,6 @@ async function ouvrirEditeurKit(){
     const yFloor = G.yF + (x - xF) * (G.yA - G.yF) / (xA - xF);
     return { x, y: Math.max(yFloor - G.nh * G.cellH(yFloor) + 1, Math.min(yFloor - 1, p.y)) };
   };
-  /* v642 : un meuble qui a sa vue murale et qui est tourné vers un mur de côté est à sa PLACE FIXE (milieu du mur) */
-  const colleAuMur = (o, m)=> !!(o && m && o.zone === 'sol' && (o.orient === 'g' || o.orient === 'd') && m.vues && m.vues.mur);
   const cibleSous = (o, m, p)=>{
     const { w, d, h } = dimsKit(o, m);
     const zones = zonesPossibles(m);
@@ -35366,7 +35181,6 @@ async function ouvrirEditeurKit(){
       const cible = ev.target.closest('[data-objet]'); if (!cible) return;
       const o = objet(cible.dataset.objet); if (!o) return;
       sel = o.id; dessinerCalque(); dessinerSelection();
-      if (colleAuMur(o, meubleDe(o))){ ev.preventDefault(); return; }   // v642 : place fixe, on ne le glisse pas
       const m = meubleDe(o), cen = boiteDe(emplacementKit(G, o, m).poly), p0 = versImage(ev);
       glisse = { o, m, x0: ev.clientX, y0: ev.clientY, dx: cen.cx - p0.x, dy: cen.cy - p0.y, bouge: false, cand: null };
       try { svg.setPointerCapture(ev.pointerId); } catch(e){}
@@ -35409,31 +35223,22 @@ async function ouvrirEditeurKit(){
     const o = sel ? objet(sel) : null;
     if (!o){ selBar.style.display = 'none'; selBar.innerHTML = ''; aide.textContent = 'Touche un meuble en bas pour le poser, puis glisse-le dans la pièce.'; return; }
     const m = meubleDe(o);
-    const aMur = !!(m && m.vues && m.vues.mur);   // v639
-    const peutTourner = !!(m && m.type !== 'mur' && o.zone === 'sol' && (aMur || (m.vues && m.vues.dos)));
+    /* v652 : plus de rotation ; un meuble tourné par une ancienne version peut être remis de face */
+    const peutTourner = !!(o.orient && o.orient !== 'face');
     selBar.style.display = 'flex';
     const b = (attr, l)=> `<button type="button" class="btn-secondary" ${attr} style="padding:4px 8px; font-size:13px;">${l}</button>`;
     selBar.innerHTML = `<span style="flex:1; min-width:0; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${htmlEsc((m && m.nom) || 'Objet')}</span>`
-      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + (peutTourner ? b('data-tourner', '🔄') : '') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
-    aide.textContent = colleAuMur(o, m) ? 'Collé au milieu du mur (place fixe). 🔄 : de face / mur gauche / mur droit.'
-      : 'Glisse-le, ou pousse-le d\'une demi-case. ' + (o.zone === 'sol' ? '▲▼ : vers le fond / vers toi.' : o.zone === 'fond' || o.zone === 'g' || o.zone === 'd' ? '▲▼ : plus haut / plus bas sur le mur.' : '') + (peutTourner ? ' 🔄 le tourne.' : '');
+      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + (peutTourner ? b('data-tourner', '⟲ De face') : '') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
+    aide.textContent = 'Glisse-le, ou pousse-le d\'une demi-case. ' + (o.zone === 'sol' ? '▲▼ : vers le fond / vers toi.' : o.zone === 'fond' || o.zone === 'g' || o.zone === 'd' ? '▲▼ : plus haut / plus bas sur le mur.' : '');
     const bt = selBar.querySelector('[data-tourner]');
     if (bt) bt.addEventListener('click', async ()=>{
-      /* v639 : on ne tourne que vers des vues qui existent — collé à gauche, collé à droite (vue murale), de dos */
-      const ordreO = ['face'].concat(aMur ? ['d', 'g'] : []).concat(m.vues && m.vues.dos ? ['dos'] : []);
-      const i = ordreO.indexOf(o.orient || 'face');
-      const suiv = ordreO[(i + 1) % ordreO.length];
-      const test = Object.assign({}, o, { orient: suiv });
-      { const { w, d } = dimsKit(test, m);
-        if (aMur && (suiv === 'd' || suiv === 'g')){ const pl = placeMurale(G, m, suiv === 'd' ? 'g' : 'd'); test.c = pl.c; test.r = pl.r; }   // v642 : la place fixe
-        else test.c = Math.max(0, Math.min(G.nx - w, test.c));
-        if (!(aMur && (suiv === 'd' || suiv === 'g'))) test.r = Math.max(0, Math.min(G.ny - d, test.r)); }
+      const test = Object.assign({}, o, { orient: 'face' });
+      { const { w, d } = dimsKit(test, m); test.c = Math.max(0, Math.min(G.nx - w, test.c)); test.r = Math.max(0, Math.min(G.ny - d, test.r)); }
       if (!dansLesLimitesKit(G, test, m)){ showToast('Pas la place de le tourner ici'); return; }
       Object.assign(o, test); signalerChevauchement(o, m); await redessinerImage(); dessinerCalque(); dessinerSelection();
     });
     selBar.querySelectorAll('[data-dep]').forEach(bt=> bt.addEventListener('click', async ()=>{
       const d = bt.dataset.dep, test = Object.assign({}, o);
-      if (colleAuMur(o, m)){ showToast('Place fixe au milieu du mur : 🔄 pour changer'); return; }   // v642
       if (o.zone === 'sol' || o.zone === 'plafond'){ if (d === 'g') test.c--; if (d === 'd') test.c++; if (d === 'h') test.r--; if (d === 'b') test.r++; }
       else if (o.zone === 'fond'){ if (d === 'g') test.c--; if (d === 'd') test.c++; if (d === 'h') test.k++; if (d === 'b') test.k--; }
       else { if (d === 'g') test.r += (o.zone === 'g' ? -1 : 1); if (d === 'd') test.r += (o.zone === 'g' ? 1 : -1); if (d === 'h') test.k++; if (d === 'b') test.k--; }
@@ -35649,8 +35454,6 @@ async function ouvrirBiblioKit(){
         <label class="meta">${m.type === 'mur' ? 'H' : 'P'} <input type="number" data-m-dh="${m.id}" min="1" max="20" value="${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}" class="field-input" style="width:52px;"></label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-porte="${m.id}" ${m.porte ? 'checked' : ''} style="width:auto;"> porte</label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-lum="${m.id}" ${m.lumiere ? 'checked' : ''} style="width:auto;"> lumière</label>
-        ${m.vues && m.vues.mur ? '<span class="meta" style="font-size:10px;">🧱 vue murale</span>' : ''}
-        ${m.rot && m.rot.length ? '<button type="button" class="btn-secondary" data-m-rotsens="' + m.id + '" style="padding:2px 6px; font-size:10px;">🔄 ' + m.rot.filter(Boolean).length + ' vues · sens ' + (m.rotInverse ? 'B' : 'A') + '</button>' : m.vues && (m.vues.dos || m.vues.tourne) ? '<span class="meta" style="font-size:10px;">🔄 ' + (m.vues.dos ? 'dos ' : '') + (m.vues.tourne ? 'tourné' : '') + '</span>' : ''}
         <button type="button" class="btn-secondary" data-m-suppr="${m.id}" style="color:var(--danger);">🗑️</button></div>`).join('') || '<p class="meta">Aucun meuble.</p>'}
       <button type="button" class="btn-primary" data-ok style="width:100%; margin-top:12px;">💾 Enregistrer</button>
     </div>`;
@@ -35659,7 +35462,6 @@ async function ouvrirBiblioKit(){
     fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
     fond.querySelectorAll('[data-coq-regler]').forEach(b=> b.addEventListener('click', ()=>{ lire(); ouvrirReglageCoquille(b.dataset.coqRegler); }));
     fond.querySelectorAll('[data-coq-suppr]').forEach(b=> b.addEventListener('click', ()=>{ lire(); kitBiblio.coquilles = kitBiblio.coquilles.filter(c=> c.id !== b.dataset.coqSuppr); rendre(); }));
-    fond.querySelectorAll('[data-m-rotsens]').forEach(b=> b.addEventListener('click', ()=>{ lire(); const m = kitBiblio.meubles.find(x=> x.id === b.dataset.mRotsens); if (m){ m.rotInverse = !m.rotInverse; showToast('Sens de la planche inversé : enregistre, puis regarde la pièce'); } rendre(); }));   // v638
     fond.querySelectorAll('[data-m-suppr]').forEach(b=> b.addEventListener('click', ()=>{ lire(); kitBiblio.meubles = kitBiblio.meubles.filter(m=> m.id !== b.dataset.mSuppr); rendre(); }));
     fond.querySelectorAll('[data-m-type]').forEach(s=> s.addEventListener('change', ()=>{ lire(); rendre(); }));
     fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
@@ -35693,11 +35495,6 @@ const PLANCHES_KIT = {
   kit_chambre: { titre:'🛏️ La chambre et les ouvertures (6)', objets:[
     { nom:'Lit double', type:'sol', w:4, d:5 }, { nom:'Table de chevet', type:'sol', w:1, d:1, lumiere:true }, { nom:'Armoire', type:'sol', w:3, d:2 },
     { nom:'Bureau', type:'sol', w:3, d:2 }, { nom:'Porte (sas)', type:'mur', w:3, h:5, porte:true, kDefaut:0 }, { nom:'Baie vitrée', cadre:true } ] },
-  /* v632 : les mêmes meubles vus de dos et de profil (pour tourner le canapé vers l'écran) */
-  /* v637 : LA PLANCHE TOURNANTE — un meuble vu sous 9 angles (de face → de dos, par pas de 22,5°, en
-     tournant vers sa gauche) ; l'autre moitié du tour se fait en miroir. Le jeu choisit la vue selon
-     l'endroit où le meuble est posé et le sens où il est tourné. */
-  /* v639 : LA VUE MURALE — le meuble dessiné par ChatGPT dans la coquille, contre le mur de gauche */
   /* v646 : ce que NOUS posons dans les pièces dessinées par ChatGPT (méthode du 08/11) : table basse,
      armoire et étagère murales, poster, tableau, tapis — de face, à poser et régler avec les 4 coins */
   kit_armoire_face: { titre:'🗄️ L\'armoire DE FACE (coffre, angle « de face »)', objets:[   // v650
@@ -35710,13 +35507,6 @@ const PLANCHES_KIT = {
   kit_mado2: { titre:'🪑 Le mobilier de Mado (6)', objets:[
     { nom:'Table basse (plateau)', type:'sol', w:3, d:2 }, { nom:'Armoire murale', type:'sol', w:3, d:2 }, { nom:'Étagère murale', type:'mur', w:3, h:1, kDefaut:3 },
     { nom:'Poster', type:'mur', w:2, h:3, kDefaut:3 }, { nom:'Tableau Néoclean', type:'mur', w:3, h:2, kDefaut:3 }, { nom:'Tapis', type:'sol', w:5, d:3 } ] },
-  kit_mur_canape: { titre:'🛋️ Le canapé contre le mur', mur:'Canapé', desc:'LE CANAPÉ deux places', objets:[ { nom:'Canapé', vueMur:true } ] },
-  kit_rot_canape: { titre:'🔄 Le canapé sous 9 angles', rot:'Canapé', n:9, desc:'LE CANAPÉ deux places de la planche du salon (même forme, mêmes couleurs)', objets: Array.from({ length: 9 }, (_, k)=> ({ nom:'Canapé', vueRot:k })) },
-  /* v636 : les meubles TOURNÉS, dessinés par ChatGPT dans des boîtes-gabarits que le jeu fabrique
-     dans la perspective de la coquille (dos au mur de gauche, tournés vers la droite) */
-  kit_tournes: { titre:'🔄 Les meubles tournés (6)', gabarit:true, objets:[
-    { nom:'Canapé', vueDe:'tourne' }, { nom:'Table basse', vueDe:'tourne' }, { nom:'Étagère basse', vueDe:'tourne' },
-    { nom:'Lit double', vueDe:'tourne' }, { nom:'Bureau', vueDe:'tourne' }, { nom:'Armoire', vueDe:'tourne' } ] },
 };
 async function creerMeublesKit(planche, vues){
   const t = Date.now(); let n = 0, cadres = 0;
@@ -35731,14 +35521,6 @@ async function creerMeublesKit(planche, vues){
       coffres[k][def.coffre] = ref; n++; continue;
     }
     if (def.cadre){ fenetresBiblio.cadres.push({ id: 'cad_' + t + '_' + i, nom: def.nom, ref }); cadres++; continue; }
-    if (def.vueDe){   // v632 : une autre vue d'un meuble déjà là
-      const m = kitBiblio.meubles.find(x=> x.nom === def.nom); if (!m) continue;
-      m.vues = m.vues || {}; m.vues[def.vueDe] = ref; n++; continue;
-    }
-    if (def.vueRot !== undefined){   // v637 : une vue de la planche tournante
-      const m = kitBiblio.meubles.find(x=> x.nom === def.nom); if (!m) continue;
-      m.rot = m.rot || []; m.rot[def.vueRot] = ref; n++; continue;
-    }
     const deja = kitBiblio.meubles.find(x=> x.nom === def.nom);   // v634 : refaire une planche remplace les images, sans doublon
     if (deja) deja.ref = ref; else kitBiblio.meubles.push(Object.assign({ id: 'mb_' + t + '_' + i, ref }, def));
     n++;
@@ -35779,15 +35561,6 @@ async function poserPlancheKit(quoi){
     return true;
   }
   const planche = PLANCHES_KIT[quoi]; if (!planche) return false;
-  if (planche.mur){   // v642 : le meuble mural dessiné dans le gabarit
-    const m = (kitBiblio.meubles || []).find(x=> x.nom === planche.mur);
-    if (!m){ showToast('Il faut d\'abord la planche du salon'); return false; }
-    const r = await importerMeubleMural(m, img);
-    if (r.erreur){ showToast('Image refusée : ' + r.erreur); return false; }
-    await enregistrerKitBiblio();
-    showToast('Canapé mural rangé ✅ — dans le kit, 🔄 sur le canapé');
-    return true;
-  }
   const r = decouperGrille(img, planche.objets.length);
   if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, dessins bien séparés, fond transparent.'); return false; }
   const nb = await creerMeublesKit(planche, r.vues);
@@ -35905,38 +35678,6 @@ const PROMPT_KIT_CHAMBRE = KIT_TETE_PLANCHE('SIX') + `
 6. UNE BAIE VITRÉE : le cadre seul, fin, anthracite à pans coupés, sans croisillons, SANS mur autour, vu parfaitement de face ; TOUTE LA PARTIE VITRÉE est peinte en MAGENTA PUR #FF00FF, en aplat parfaitement uni, sans reflet ni dégradé.
 
 ` + KIT_CHARTE_MEUBLES;
-const PROMPT_KIT_TOURNES = `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX MEUBLES, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
-
-L'image jointe est un GABARIT : six boîtes en fil de fer, numérotées de 1 à 6, vues en perspective. Chaque meuble doit être dessiné DANS sa boîte, à la même place sur la planche que la boîte, en suivant EXACTEMENT ses arêtes : la face grisée de la boîte est le MUR (le dos du meuble est collé contre), le meuble est tourné vers la DROITE, et sa longueur fuit vers le fond comme la boîte. Le meuble remplit sa boîte : il touche le sol de la boîte sur toute sa longueur, et va d'un bout à l'autre. Ne dessine PAS la boîte elle-même, ni le sol, ni le mur : seulement le meuble.
-
-Ce sont les MÊMES meubles que sur les planches précédentes (même forme, mêmes couleurs, même échelle) :
-1. LE CANAPÉ deux places : dossier contre le mur, assise vers la droite.
-2. LA TABLE BASSE rectangulaire, dans le sens de la longueur, légèrement vue d'en haut.
-3. L'ÉTAGÈRE BASSE à casiers, casiers ouverts vers la droite.
-4. LE LIT DOUBLE : la tête de lit contre le mur (la face grisée), le lit s'allonge vers la droite, couette visible.
-5. LE BUREAU avec son écran et sa chaise, tourné vers la droite.
-6. L'ARMOIRE haute, portes vers la droite.
-
-` + KIT_CHARTE_MEUBLES;
-const promptPlancheTournante = (pl)=> `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec ${pl.n} DESSINS du même meuble, en 3 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche). Dans l'ordre de lecture (gauche → droite, puis rangée suivante), SANS numéro ni texte sur l'image.
-
-Le meuble : ${pl.desc}.
-
-C'est le meuble de l'IMAGE JOINTE (même forme, mêmes couleurs, mêmes détails). C'est une PLAQUE TOURNANTE : le même meuble, à la même échelle, à la même distance, avec la même lumière venant de la gauche, mais tourné un peu plus à chaque dessin, de 22,5° à chaque fois, TOUJOURS DANS LE MÊME SENS : son devant part vers la GAUCHE de l'image, on découvre peu à peu son côté qui est à DROITE de l'image. Les 9 angles doivent être tous différents, régulièrement espacés :
-1. exactement DE FACE.
-2. tourné de 22,5° : on commence à voir son côté (à droite de l'image).
-3. tourné de 45° (trois-quarts face).
-4. tourné de 67,5°.
-5. exactement DE PROFIL, à plat : son côté face à nous, son devant tourné vers la GAUCHE de l'image, on ne voit plus du tout son devant ni son dos.
-6. tourné de 112,5°.
-7. tourné de 135° (trois-quarts dos) : on voit son dos et son côté.
-8. tourné de 157,5°.
-9. exactement DE DOS.
-Caméra à hauteur d'homme, légèrement au-dessus (on voit un peu le dessus), posé sur un sol invisible, aucune ombre portée au sol.
-
-COULEUR À TEINTER : les parties colorées du meuble (coussins, tissu) sont en ORANGE PUR #FF8000, en aplat avec un ombrage cel simple dans des oranges plus sombres ; rien d'autre dans le dessin n'est orange. Le jeu recolore cette zone selon la pièce.
-
-` + KIT_CHARTE_MEUBLES.replace("COULEUR D'ACCENT : ocre.", "COULEUR D'ACCENT : ORANGE PUR #FF8000 (c'est la couleur à teinter).");
 const KIT_CHARTE_COQUILLE = `COULEUR D'ACCENT : ocre.
 
 STYLE MASCOTTO (à respecter à la lettre). Science-fiction propre, lumineuse et habitée, dessin de jeu vidéo : trait d'encre net, aplats de couleurs unis, ombrage cel, ombres aux bords tranchés, aucun dégradé, aucun reflet, aucune surface brillante ; la lumière est dessinée en aplats clairs, jamais en halo.
@@ -39656,6 +39397,7 @@ async function importerMiseAJour(sc){
           if (pt.hideIcon || pt.invisible || base.type === 'emplacement') base.hideIcon = true;
           if (pt.text) base.text = pt.text;
           if (pt.prompt) base.prompt = String(pt.prompt);   // v596 : point « image » — son prompt, pour le guide
+          if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
           if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
           return base;
         });
@@ -40186,6 +39928,7 @@ async function importerScenario(sc){
           if (pt.text) base.text = pt.text;
           if (pt.prompt) base.prompt = String(pt.prompt);   // v596 : point « image » — son prompt, pour le guide
           if (pt.nom) base.label = String(pt.nom);   // v594 : nom du point, pour qu'une version y renvoie (emplacement.place)
+          if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
           if (pt.qty) base.qty = parseInt(pt.qty,10) || 1;
           if (pt.resetMode) base.resetMode = pt.resetMode;
           if (pt.resetMinutes) base.resetMinutes = parseInt(pt.resetMinutes,10) || 0;
