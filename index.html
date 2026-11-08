@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v650</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v651</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -39670,7 +39670,75 @@ async function importerMiseAJour(sc){
     }
     scenesMaj[zf.id] = scenes;
   }
+  /* v651 — LES VERSIONS PAR MISE À JOUR.
+     - `cherche: { pose: "yoga" }` : retrouve la version par un mot de sa pose (sans connaître ses horaires).
+     - `raccourcirFin: 60` : la version garde son début et finit 60 min plus tôt ; la tranche coupée
+       est gardée sous le nom du personnage pour la nouvelle version qui suit dans le fichier.
+     - `nouvelleVersion: { depuis: { pose: "yoga" }, prendLaTrancheCoupee: true }` : une version de plus,
+       copiée sur la source (même personnage = même dupeGroup, même pièce, même apparence, même buste),
+       avec ses propres horaires, pose, fonction, dialogue et rectangle (`emplacement.place`). En travaux.
+     - `cle` : une mise à jour déjà appliquée (notée sur la fiche) n'est jamais rejouée — ré-importer le
+       même fichier ne raccourcit pas deux fois et ne crée pas de doublon. */
+  const enMin = (t)=>{ const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim()); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+  const enHeure = (n)=>{ n = ((n % 1440) + 1440) % 1440; return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); };
+  const parPose = (nom, mot)=> fiches.filter(f=> (f.interactionType || '') !== 'zone' && f.name === nom && String(f.pose || '').toLowerCase().includes(String(mot || '').toLowerCase()));
+  const dejaFait = (cle)=> !!cle && fiches.some(f=> Array.isArray(f.majAppliquees) && f.majAppliquees.includes(cle));
+  const tranches = {};
   for (const p of (sc.pnj || [])){
+    if (!p.cherche && !p.nouvelleVersion) continue;
+    const qui = '« ' + p.name + ' »';
+    if (dejaFait(p.cle)){ journal.push('ℹ️ ' + qui + ' : « ' + p.cle + ' » déjà appliqué — rien rejoué'); continue; }
+    if (p.cherche && !p.nouvelleVersion){
+      const vs = parPose(p.name, p.cherche.pose);
+      if (vs.length !== 1){ journal.push('⚠️ ' + qui + ' : ' + vs.length + ' version(s) dont la pose contient « ' + p.cherche.pose + ' » — il en faut une seule, rien changé'); continue; }
+      const f = vs[0], maj = {}, quoi = [];
+      if (p.raccourcirFin){
+        const cr = normaliserCreneaux(f).map(c=> ({ ...c }));
+        const der = cr[cr.length - 1], a = der && enMin(der.start), b = der && enMin(der.end);
+        const duree = (a == null || b == null) ? 0 : ((b - a + 1440) % 1440 || 1440);
+        if (duree <= p.raccourcirFin){ journal.push('⚠️ ' + qui + ' (' + p.cherche.pose + ') : créneau trop court ou sans heures — rien changé'); continue; }
+        const fin = enHeure(b - p.raccourcirFin);
+        tranches[p.name] = { start: fin, end: der.end };
+        der.end = fin; maj.timeRanges = cr; quoi.push('finit à ' + fin + ' (au lieu de ' + tranches[p.name].end + ')');
+      }
+      ['apparence', 'pose', 'fonction'].forEach(k=>{ if (typeof p[k] === 'string'){ maj[k] = p[k]; quoi.push(k); } });
+      if (p.cle) maj.majAppliquees = (f.majAppliquees || []).concat([p.cle]);
+      await creatureCol.doc(f.id).set({ ...maj, updatedAt: Date.now() }, { merge:true });
+      journal.push('♻️ ' + qui + ' (' + p.cherche.pose + ') : ' + (quoi.join(', ') || 'rien'));
+      continue;
+    }
+    const nv = p.nouvelleVersion;
+    const srcs = parPose(p.name, (nv.depuis || {}).pose);
+    if (srcs.length !== 1){ journal.push('⚠️ ' + qui + ' : version source introuvable (pose « ' + ((nv.depuis || {}).pose || '?') + ' », ' + srcs.length + ' trouvée(s)) — nouvelle version non créée'); continue; }
+    const src = srcs[0];
+    let creneaux = Array.isArray(p.timeRanges) ? p.timeRanges : null;
+    if (!creneaux && nv.prendLaTrancheCoupee) creneaux = tranches[p.name] ? [tranches[p.name]] : null;
+    if (!creneaux){ journal.push('⚠️ ' + qui + ' : pas d\'horaires pour la nouvelle version (la version source n\'a pas été raccourcie dans ce fichier) — non créée'); continue; }
+    const PAS_COPIE = ['id', 'createdAt', 'updatedAt', 'timeRanges', 'startTime', 'endTime', 'pose', 'fonction', 'emplacementPointId', 'imageUrl', 'imagePath', 'imageRef',
+      'dialogueSteps', 'versionPubliee', 'majAppliquees', 'enTravaux', 'aFaire', 'aFaireFait', 'dupeGroup'];
+    const data = {};
+    Object.keys(src).forEach(k=>{ if (!PAS_COPIE.includes(k) && src[k] !== undefined && !(typeof src[k] === 'string' && src[k].startsWith('data:'))) data[k] = src[k]; });
+    Object.assign(data, {
+      dupeGroup: src.dupeGroup || src.id, enTravaux: true, imageUrl: '', imagePath: null,
+      timeRanges: creneaux, startTime: '', endTime: '',
+      pose: p.pose || '', fonction: typeof p.fonction === 'string' ? p.fonction : (src.fonction || ''),
+      dialogueSteps: Array.isArray(p.dialogueSteps) ? p.dialogueSteps : [],
+      majAppliquees: p.cle ? [p.cle] : [], createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    if (typeof p.apparence === 'string') data.apparence = p.apparence;
+    /* son rectangle à elle : retrouvé par son nom, sinon un lien « à poser » → le guide 🧰 le fait poser */
+    if (p.emplacement && p.emplacement.place && src.pieceCommune){
+      const scn = await zonesCol.doc(src.pieceCommune.zoneId).get().then(d=> ((d.exists && d.data().scenes) || []).find(x=> x && x.id === src.pieceCommune.sceneId)).catch(()=> null);
+      const pl = scn && (scn.points || []).find(pt=> pt && pt.type === 'emplacement' && pt.label === p.emplacement.place);
+      data.emplacementPointId = pl ? pl.id : 'a-poser:' + p.emplacement.place;
+    }
+    const ref = await creatureCol.add(data);
+    if (!src.dupeGroup) await creatureCol.doc(src.id).set({ dupeGroup: src.id, updatedAt: Date.now() }, { merge:true }).catch(()=>{});
+    journal.push('➕ ' + qui + ' : nouvelle version « ' + (p.pose || '').split(/[,.;]/)[0] + ' » ' + creneaux.map(c=> c.start + '-' + c.end).join(', ') + ' — en travaux 🚧' + (data.emplacementPointId && data.emplacementPointId.startsWith('a-poser') ? ' ; son rectangle 🧍 est à poser (🧰 À finir)' : ''));
+    void ref;
+  }
+  for (const p of (sc.pnj || [])){
+    if (p.cherche || p.nouvelleVersion) continue;   // v651 : déjà traités ci-dessus
     const memes = fiches.filter(f=> (f.interactionType || '') !== 'zone' && f.name === p.name);
     const debut = (Array.isArray(p.timeRanges) && p.timeRanges[0] && p.timeRanges[0].start) || null;
     const f = memes.length > 1 && debut ? memes.find(x=> Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut) : memes[0];
