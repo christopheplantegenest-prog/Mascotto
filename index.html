@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v657</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v658</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -30341,7 +30341,11 @@ let sceneEditorPrevImageDataUrl = null; // image juste avant le dernier changeme
 let sceneEditorPoints = [];         // miroir de la scène (ou variante) courante
 let sceneEditorSelectedPointId = null;
 
-function genSceneId(){ return 'scene_' + Date.now() + '_' + Math.floor(Math.random()*1000); }
+/* v658 : un compteur en plus — trois pièces créées dans la même milliseconde pouvaient tirer le même
+   nombre (1 chance sur 1000 par paire) et partager un identifiant : la réserve de l'usine affichait
+   l'image du hall et passait pour une deuxième pièce de départ. */
+let compteurScenes = 0;
+function genSceneId(){ return 'scene_' + Date.now() + '_' + (++compteurScenes) + '_' + Math.floor(Math.random()*1e6); }
 
 /* Convertit l'ancien format à scène unique (mascotto-v60/v61/v62) vers le format multi-scènes, sans rien perdre */
 function normalizeZoneScenes(d){
@@ -39501,6 +39505,30 @@ async function importerMiseAJour(sc){
     const doc = await zonesCol.doc(zf.id).get();
     const scenes = (doc.exists && doc.data().scenes) || [];
     let touche = false;
+    /* v658 — `reparerScenesEnDouble: true` : deux pièces de la zone partagent un identifiant. La
+       première garde le sien, les suivantes en reçoivent un neuf. Les sorties qui visaient
+       l'identifiant partagé sont redirigées d'après `sorties: [{ dans, verrouillee, vers }]`
+       (la sortie de la pièce « dans », fermée à clé ou non, mène à la pièce « vers »). */
+    if (z.reparerScenesEnDouble){
+      const vus = new Map(), doublons = new Set();
+      scenes.forEach(sc=>{
+        if (!sc || !sc.id) return;
+        if (vus.has(sc.id)){ doublons.add(sc.id); const ancien = sc.id; sc.id = genSceneId(); journal.push('🩺 « ' + zf.name + ' » : la pièce « ' + sc.name + ' » partageait son identifiant avec « ' + vus.get(ancien) + ' » — nouvel identifiant'); }
+        else vus.set(sc.id, sc.name);
+      });
+      const parNom = (n)=> scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(n || '').trim().toLowerCase());
+      (z.sorties || []).forEach(r=>{
+        const dans = parNom(r.dans), vers = parNom(r.vers);
+        if (!dans || !vers){ journal.push('⚠️ « ' + zf.name + ' » : sortie « ' + r.dans + ' → ' + r.vers + ' » — pièce introuvable'); return; }
+        const pts = (dans.points || []).filter(pt=> pt && pt.type === 'sortie' && (r.verrouillee === undefined || !!(pt.lockItemId || pt.lockType === "code") === !!r.verrouillee));
+        if (!pts.length){ journal.push('⚠️ « ' + zf.name + ' » : aucune sortie ' + (r.verrouillee ? 'fermée à clé ' : '') + 'dans « ' + dans.name + ' »'); return; }
+        pts.forEach(pt=>{ pt.targetSceneId = vers.id; });
+        journal.push('🚪 « ' + dans.name + ' » : sortie' + (r.verrouillee ? ' fermée à clé' : '') + ' → « ' + vers.name + ' »');
+      });
+      if (doublons.size && z.depart){ const dep = parNom(z.depart); if (dep) await zonesCol.doc(zf.id).set({ startSceneId: dep.id }, { merge:true }); }
+      if (!doublons.size) journal.push('✅ « ' + zf.name + ' » : aucune pièce en double');
+      touche = true;
+    }
     for (const s of (z.scenes || [])){
       const scn = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.name || '').trim().toLowerCase());
       if (!scn){ journal.push('⚠️ « ' + z.name + ' » : scène « ' + s.name + ' » introuvable'); continue; }
