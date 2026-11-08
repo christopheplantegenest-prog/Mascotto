@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v644</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v645</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -31184,6 +31184,7 @@ function renderSceneDetailAppearance(pt){
         ${(pt.imageUrl || pt.useExitArrow) ? `<button type="button" class="btn-secondary" data-point-img-clear style="flex:1; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer</button>` : ''}
       </div>
       <button type="button" class="btn-secondary" data-point-img-github style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">📁 Image hébergée</button>
+      <button type="button" class="btn-secondary" data-point-img-kit style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">🧩 Meuble du kit</button>
       ${(pt.type === 'sortie' || pt.type === 'sortie_zone') && !pt.useExitArrow ? `<button type="button" class="btn-secondary" data-point-img-arrow style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">⬆️ Flèche de sortie du jeu</button>` : ''}
       ${pt.useExitArrow ? `<p class="meta" style="margin:6px 0 0;">Utilise la flèche de sortie du jeu. Elle se remplace pour tout le jeu dans Édition → Outils de test → 🗺️ Zones et exploration.</p>
       <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
@@ -31256,6 +31257,16 @@ function renderSceneDetailAppearance(pt){
       renderSceneDetailAppearance(pt);
     });
   });
+  /* v645 : l'image d'un point prise dans la bibliothèque des meubles du kit (déjà rangés, sans fichier) */
+  const kitBtn = appWrap.querySelector('[data-point-img-kit]');
+  if (kitBtn) kitBtn.addEventListener('click', ()=> choisirMeubleDuKit(async (m)=>{
+    const u = await urlDeRef(m.ref);
+    if (!u){ showToast('Image du meuble introuvable'); return; }
+    pt.imageUrl = u; pt.imageRef = m.ref; pt.imagePath = null;
+    pt.coffreModele = null; pt.coffreAngle = null; pt.useExitArrow = false;
+    renderSceneEditorPoints();
+    renderSceneDetailAppearance(pt);
+  }));
   const arrowBtn = appWrap.querySelector('[data-point-img-arrow]');
   if (arrowBtn) arrowBtn.addEventListener('click', ()=>{
     pt.useExitArrow = true;
@@ -34109,6 +34120,22 @@ const rectPct = (e)=> 'left:' + (e.x - e.w / 2) + '%; top:' + (e.y - e.h / 2) + 
    `calque` est le bloc absolu (inset 0) où poser des choses en % de l'image. */
 /* v644 : une image de scène glisse sur les côtés seulement si elle fait au moins ~2 fois la largeur
    de l'écran à hauteur égale (le but : deux écrans côte à côte, pas un carré qui bouge à peine) */
+/* v645 : la fenêtre de choix d'un meuble de la bibliothèque du kit (vignettes) */
+function choisirMeubleDuKit(quandChoisi){
+  const ms = (kitBiblio.meubles || []).filter(m=> m && m.ref);
+  if (!ms.length){ showToast('La bibliothèque du kit est vide'); return; }
+  const fond = document.createElement('div');
+  fond.style.cssText = 'position:fixed; inset:0; z-index:5000; background:rgba(0,0,0,.78); display:flex; flex-direction:column; padding:14px; overflow:auto;';
+  fond.innerHTML = `<div style="display:flex; align-items:center; gap:8px; color:#fff; margin-bottom:10px;"><b style="flex:1;">🧩 Meuble du kit</b><button type="button" class="btn-secondary" data-fermer>✕</button></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px;">${ms.map(m=> `<button type="button" data-mid="${m.id}" style="background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.3); border-radius:8px; padding:6px; color:#fff; display:flex; flex-direction:column; align-items:center; gap:4px;"><img data-vref style="width:84px; height:64px; object-fit:contain;"><span style="font-size:11px;">${(m.nom || '').replace(/</g,'&lt;')}</span></button>`).join('')}</div>`;
+  document.body.appendChild(fond);
+  fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+  fond.querySelectorAll('[data-mid]').forEach(b=>{
+    const m = ms.find(x=> x.id === b.dataset.mid);
+    urlDeRef(m.ref).then(u=>{ if (u) b.querySelector('img').src = u; });
+    b.addEventListener('click', ()=>{ fond.remove(); quandChoisi(m); });
+  });
+}
 function estPanoramique(img, wrap){
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   const ww = (wrap && wrap.clientWidth) || window.innerWidth, wh = (wrap && wrap.clientHeight) || window.innerHeight;
