@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v642</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v643</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -30786,7 +30786,8 @@ function renderSceneEditorPoints(){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
-      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none; -webkit-touch-callout:none;">`;
+      if (coinsActifs(pt)){ el.innerHTML = ''; poserImageEnCoins(el, url, pt); }   // v643
+      else el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none; -webkit-touch-callout:none;">`;
     } else if (pt.hideIcon){
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:rgba(255,255,255,.08); border:1px dashed rgba(255,255,255,.5); box-shadow:none; border-radius:6px; pointer-events:none;`;
@@ -30919,15 +30920,31 @@ function renderSceneEditorDpad(){
   const estEmpl = pt.type === 'emplacement';
   const cands = estEmpl ? candidatsApercu() : [];
   const occ = estEmpl ? (cands.find(f=> f.id === apercuFicheId) || cands[0]) : null;
+  /* v643 : trois onglets — ✥ placer, ⤢ taille, ◇ coins (la perspective, pour un objet qui a une image) */
+  const aCoins = !estEmpl && (pt.type === 'fenetre' || !!pointEffectiveImageUrl(pt));
+  const onglet = (etat.onglet === 'coins' && !aCoins) ? 'placer' : (etat.onglet || 'placer');
+  const coinSel = etat.coin || 'tl';
+  const ong = (k, l)=> `<button type="button" data-ong="${k}" style="flex:1; border:none; border-radius:7px; padding:5px 0; font-size:13px; color:#fff; background:${onglet === k ? 'rgba(95,242,255,.38)' : 'rgba(255,255,255,.1)'};">${l}</button>`;
+  const ongletsPal = `<div style="display:flex; gap:3px; padding:6px 6px 0;">${ong('placer', '✥')}${ong('taille', '⤢')}${aCoins ? ong('coins', '◇') : ''}</div>`;
+  const vide = '<span></span>';
+  const bAct = (id, l, extra, titre)=> `<button type="button" id="${id}" style="${b}${extra || ''}"${titre ? ' title="' + titre + '"' : ''}>${l}</button>`;
+  const bCoin = (k, l)=> `<button type="button" data-coin="${k}" style="${b}${k === coinSel ? ' background:rgba(255,120,120,.55);' : ''}">${l}</button>`;
+  const grillePal = onglet === 'taille'
+    ? bAct('scDpadWUp', '↔＋', small) + bAct('scDpadSizeUp', '＋') + bAct('scDpadHUp', '↕＋', small)
+      + bAct('scDpadWDown', '↔－', small) + bAct('scDpadSizeDown', '－') + bAct('scDpadHDown', '↕－', small)
+    : onglet === 'coins'
+    ? bCoin('tl', '◤') + bAct('scCoinUp', '▲') + bCoin('tr', '◥')
+      + bAct('scCoinLeft', '◀') + bAct('scCoinReset', '⟲', small, 'Remettre à plat') + bAct('scCoinRight', '▶')
+      + bCoin('bl', '◣') + bAct('scCoinDown', '▼') + bCoin('br', '◢')
+    : vide + bAct('scDpadUp', '▲') + vide
+      + bAct('scDpadLeft', '◀') + bAct('scDpadFlip', '🔃', small + (pt.flipped ? ' background:rgba(95,242,255,.35);' : ''), 'Miroir') + bAct('scDpadRight', '▶')
+      + vide + bAct('scDpadDown', '▼') + (estEmpl ? `<button type="button" id="scDpadApercu" style="${b}${small}" title="Aperçu : personnage suivant">${cands.length ? '👤' + (cands.length > 1 ? '⟳' : '') : '👤·'}</button>` : vide);
   pal.innerHTML = etat.replie
     ? `<div data-poignee style="display:flex; align-items:center; gap:4px; padding:6px 8px; cursor:move;"><span style="font-size:14px;">🎛️</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▸</button></div>`
     : `<div data-poignee style="display:flex; align-items:center; gap:6px; padding:5px 8px; border-bottom:1px solid rgba(255,255,255,.18); cursor:move;"><span style="font-size:12px; opacity:.85; flex:1 1 auto;">⋮⋮ ${estEmpl ? '🧍 rectangle' : 'point'}</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▾</button></div>
+      ${ongletsPal}
       <div style="padding:6px; display:grid; grid-template-columns:repeat(3, 44px); gap:4px;">
-        <button type="button" id="scDpadWUp" style="${b}${small}">↔＋</button><button type="button" id="scDpadUp" style="${b}">▲</button><button type="button" id="scDpadHUp" style="${b}${small}">↕＋</button>
-        <button type="button" id="scDpadLeft" style="${b}">◀</button><button type="button" id="scDpadSizeUp" style="${b}">＋</button><button type="button" id="scDpadRight" style="${b}">▶</button>
-        <button type="button" id="scDpadWDown" style="${b}${small}">↔－</button><button type="button" id="scDpadDown" style="${b}">▼</button><button type="button" id="scDpadHDown" style="${b}${small}">↕－</button>
-        <button type="button" id="scDpadSizeDown" style="${b}">－</button><button type="button" id="scDpadFlip" style="${b}${small}${pt.flipped ? ' background:rgba(95,242,255,.35);' : ''}" title="Miroir">🔃</button>
-        ${estEmpl ? `<button type="button" id="scDpadApercu" style="${b}${small}" title="Aperçu : personnage suivant">${cands.length ? '👤' + (cands.length > 1 ? '⟳' : '') : '👤·'}</button>` : '<span></span>'}
+        ${grillePal}
       </div>
       ${estEmpl ? `<div style="padding:0 8px 6px; font-size:11px; opacity:.85; max-width:150px;">${occ ? 'Aperçu : ' + (occ.emoji || '') + ' ' + (occ.name || '').replace(/</g,'&lt;') + (cands.length > 1 ? ' (' + cands.length + ' ici)' : '') : 'Aucun personnage marqué sur cette scène'}</div>` : ''}`;
   const poignee = pal.querySelector('[data-poignee]');
@@ -30938,19 +30955,33 @@ function renderSceneEditorDpad(){
   const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
   const step = 2;
   const after = ()=>{ renderSceneEditorPoints(); renderSceneEditorDpad(); renderSceneEditorDetails(); };
-  document.getElementById('scDpadUp').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
-  document.getElementById('scDpadDown').addEventListener('click', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
-  document.getElementById('scDpadLeft').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
-  document.getElementById('scDpadRight').addEventListener('click', ()=>{ pt.x = clamp((pt.x||0)+step,0,100); after(); });
-  document.getElementById('scDpadSizeUp').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); pt.h = clamp((pt.h||8)+step,4,95); after(); });
-  document.getElementById('scDpadSizeDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); pt.h = clamp((pt.h||8)-step,4,95); after(); });
+  const sur = (id, f)=>{ const e = document.getElementById(id); if (e) e.addEventListener('click', f); };   // v643 : seul l'onglet ouvert a ses boutons
+  pal.querySelectorAll('[data-ong]').forEach(bt=> bt.addEventListener('click', ()=>{ etat.onglet = bt.dataset.ong; garderPalette(); renderSceneEditorDpad(); }));
+  pal.querySelectorAll('[data-coin]').forEach(bt=> bt.addEventListener('click', ()=>{ etat.coin = bt.dataset.coin; garderPalette(); renderSceneEditorDpad(); }));
+  const bougerCoin = (dx, dy)=>{
+    pt.coins = pt.coins || {};
+    const c = pt.coins[coinSel] || [0, 0];
+    pt.coins[coinSel] = [clamp(c[0] + dx, -60, 60), clamp(c[1] + dy, -60, 60)];
+    if (pt.type === 'fenetre') pt.perspective = 0;   // les coins remplacent l'ancienne perspective
+    after();
+  };
+  const pasCoin = 1.5;
+  sur('scCoinUp', ()=> bougerCoin(0, -pasCoin)); sur('scCoinDown', ()=> bougerCoin(0, pasCoin));
+  sur('scCoinLeft', ()=> bougerCoin(-pasCoin, 0)); sur('scCoinRight', ()=> bougerCoin(pasCoin, 0));
+  sur('scCoinReset', ()=>{ delete pt.coins; after(); });
+  sur('scDpadUp', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
+  sur('scDpadDown', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
+  sur('scDpadLeft', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
+  sur('scDpadRight', ()=>{ pt.x = clamp((pt.x||0)+step,0,100); after(); });
+  sur('scDpadSizeUp', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); pt.h = clamp((pt.h||8)+step,4,95); after(); });
+  sur('scDpadSizeDown', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); pt.h = clamp((pt.h||8)-step,4,95); after(); });
   /* v508 : largeur seule et hauteur seule — pour que le rectangle touchable épouse la forme de
      l'objet. L'image du point garde ses proportions (object-fit:contain), seul le rectangle change. */
-  document.getElementById('scDpadWUp').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); after(); });
-  document.getElementById('scDpadWDown').addEventListener('click', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); after(); });
-  document.getElementById('scDpadHUp').addEventListener('click', ()=>{ pt.h = clamp((pt.h||8)+step,4,95); after(); });
-  document.getElementById('scDpadHDown').addEventListener('click', ()=>{ pt.h = clamp((pt.h||8)-step,4,95); after(); });
-  document.getElementById('scDpadFlip').addEventListener('click', ()=>{ pt.flipped = !pt.flipped; after(); });
+  sur('scDpadWUp', ()=>{ pt.w = clamp((pt.w||8)+step,4,95); after(); });
+  sur('scDpadWDown', ()=>{ pt.w = clamp((pt.w||8)-step,4,95); after(); });
+  sur('scDpadHUp', ()=>{ pt.h = clamp((pt.h||8)+step,4,95); after(); });
+  sur('scDpadHDown', ()=>{ pt.h = clamp((pt.h||8)-step,4,95); after(); });
+  sur('scDpadFlip', ()=>{ pt.flipped = !pt.flipped; after(); });
   const ap = document.getElementById('scDpadApercu');
   if (ap) ap.addEventListener('click', ()=>{
     if (!cands.length){ showToast('Aucun personnage n\'est marqué sur cette scène'); return; }
@@ -31297,15 +31328,15 @@ function renderSceneDetailTypeSpecific(pt){
       <div>${B.cadres.map(c=> vignette('data-fen-cadre', c.id, c.id === pt.cadreId, c.nom || '')).join('')}</div>
       <div class="meta" style="color:rgba(255,255,255,.8); margin-top:6px;">Vue dehors (de jour ; la nuit vient toute seule)</div>
       <div>${B.vues.map(v=> vignette('data-fen-vue', v.id, v.id === pt.vueId, (v.nom || '') + (v.nuitRef ? '' : ' (pas encore de nuit)'))).join('')}</div>
-      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">perspective <input type="range" min="-60" max="60" step="2" value="${p}" data-fen-persp style="flex:1;"><span data-fen-pval style="width:40px; text-align:right;">${p}°</span></div>
-      <button type="button" class="btn-secondary" data-fen-face style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">↺ De face (0°)</button>
-      <p class="meta" style="color:rgba(255,255,255,.7); margin:6px 0 0;">La perspective raccourcit un côté, pour une fenêtre sur un mur de biais. Pour voir la nuit : 💡 Lumière → 🌙 Voir la scène de nuit.</p>
+      ${p && !coinsActifs(pt) ? `<div style="display:flex; gap:8px; align-items:center; margin-top:8px;">ancienne perspective <input type="range" min="-60" max="60" step="2" value="${p}" data-fen-persp style="flex:1;"><span data-fen-pval style="width:40px; text-align:right;">${p}°</span></div>` : ''}
+      <button type="button" class="btn-secondary" data-fen-face style="width:100%; margin-top:6px; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;">↺ Remettre à plat</button>
+      <p class="meta" style="color:rgba(255,255,255,.7); margin:6px 0 0;">Pour une fenêtre sur un mur de biais : palette 🎛️ → onglet ◇, choisis un coin et pousse-le avec les flèches. Pour voir la nuit : 💡 Lumière → 🌙 Voir la scène de nuit.</p>
     </div>`;
     typeWrap.querySelectorAll('[data-fen-cadre]').forEach(b=>{ const c = B.cadres.find(x=> x.id === b.dataset.fenCadre); urlDeRef(c && c.ref).then(u=>{ if (u) b.querySelector('img').src = u; }); b.addEventListener('click', ()=>{ pt.cadreId = b.dataset.fenCadre; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); }); });
     typeWrap.querySelectorAll('[data-fen-vue]').forEach(b=>{ const v = B.vues.find(x=> x.id === b.dataset.fenVue); urlDeRef(v && v.jourRef).then(u=>{ if (u) b.querySelector('img').src = u; }); b.addEventListener('click', ()=>{ pt.vueId = b.dataset.fenVue; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); }); });
     const r = typeWrap.querySelector('[data-fen-persp]');
-    r.addEventListener('input', ()=>{ pt.perspective = parseInt(r.value, 10) || 0; typeWrap.querySelector('[data-fen-pval]').textContent = pt.perspective + '°'; renderSceneEditorPoints(); });
-    typeWrap.querySelector('[data-fen-face]').addEventListener('click', ()=>{ pt.perspective = 0; renderSceneEditorPoints(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); });
+    if (r) r.addEventListener('input', ()=>{ pt.perspective = parseInt(r.value, 10) || 0; typeWrap.querySelector('[data-fen-pval]').textContent = pt.perspective + '°'; renderSceneEditorPoints(); });
+    typeWrap.querySelector('[data-fen-face]').addEventListener('click', ()=>{ pt.perspective = 0; delete pt.coins; renderSceneEditorPoints(); renderSceneEditorDpad(); renderSceneDetailTypeSpecific(pt); appliquerRubriquePoint(); });
     return;
   }
   if (pt.type === 'sortie_zone'){
@@ -32938,7 +32969,8 @@ async function renderSceneViewCurrentScene(){
     if (url){
       ensurePointPixelCache(url);
       el.style.cssText = `position:absolute; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
-      el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
+      if (coinsActifs(pt)) poserImageEnCoins(el, url, pt);   // v643 : déformé dans ses 4 coins
+      else el.innerHTML = `<img src="${url}" style="width:100%; height:100%; object-fit:contain; transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
     } else if (pt.hideIcon){
       el.style.cssText = `position:absolute; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; pointer-events:none;`;
     } else {
@@ -33399,6 +33431,105 @@ function composerFenetre(cadreId, vueId, nuit, assombrir){
   })();
   return compoFenetreCache[cle];
 }
+/* ═══ v643 — LES 4 COINS D'UN OBJET POSÉ (fenêtre, écran, tableau, porte, décor…).
+   pt.coins = { tl:[dx,dy], tr:[dx,dy], br:[dx,dy], bl:[dx,dy] } : le déplacement de chaque coin, en %
+   de la largeur / hauteur du point. L'image est déformée EXACTEMENT dans ces 4 coins (homographie),
+   dessinée dans un canvas en coordonnées relatives au point : elle suit le point quelle que soit la
+   taille de l'écran. Tant qu'aucun coin n'a bougé, rien ne change (ancien affichage). ═══ */
+const COINS_ORDRE = ['tl', 'tr', 'br', 'bl'];
+function coinsActifs(pt){
+  const c = pt && pt.coins; if (!c) return false;
+  return COINS_ORDRE.some(k=> c[k] && (c[k][0] || c[k][1]));
+}
+/* les 4 coins en unités du rectangle du point (0..1), décalages compris */
+function coinsUnite(pt){
+  const c = (pt && pt.coins) || {};
+  const g = (k, x, y)=>{ const d = c[k] || [0, 0]; return [x + (d[0] || 0) / 100, y + (d[1] || 0) / 100]; };
+  return { tl: g('tl', 0, 0), tr: g('tr', 1, 0), br: g('br', 1, 1), bl: g('bl', 0, 1) };
+}
+/* H telle que (u,v) = H·(x,y), pour 4 paires de points (élimination de Gauss, 8 inconnues) */
+function homographie4(src, dst){
+  const A = [], B = [];
+  for (let i = 0; i < 4; i++){
+    const [x, y] = src[i], [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v);
+  }
+  for (let c = 0; c < 8; c++){
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [B[c], B[p]] = [B[p], B[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++){ if (r === c) continue; const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; B[r] -= f * B[c]; }
+  }
+  const h = B.map((b, i)=> b / A[i][i]); h.push(1); return h;
+}
+const coinsCache = new Map();
+/* l'image déformée : { url, x0, y0, w, h } — x0..h en unités du rectangle du point */
+function imageEnCoins(url, pt){
+  const q = coinsUnite(pt);
+  const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(q) + '|' + (pt.flipped ? 1 : 0);
+  if (coinsCache.has(cle)) return coinsCache.get(cle);
+  const pr = chargerImage(url).then(img=>{
+    if (!img) return null;
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return null;
+    const pts = COINS_ORDRE.map(k=> q[k]);
+    const x0 = Math.min(...pts.map(p=> p[0])), x1 = Math.max(...pts.map(p=> p[0]));
+    const y0 = Math.min(...pts.map(p=> p[1])), y1 = Math.max(...pts.map(p=> p[1]));
+    /* résolution : celle de l'image source, bornée */
+    let s = 1; const W0 = (x1 - x0) * iw, H0 = (y1 - y0) * ih;
+    if (Math.max(W0, H0) > 1100) s = 1100 / Math.max(W0, H0);
+    const cw = Math.max(2, Math.round(W0 * s)), ch = Math.max(2, Math.round(H0 * s));
+    const versCanvas = (p)=> [(p[0] - x0) * iw * s, (p[1] - y0) * ih * s];
+    const cible = pts.map(versCanvas);
+    /* le coin haut-gauche de l'image va en tl ; en miroir, c'est son coin haut-droit */
+    const src = pt.flipped ? [[iw, 0], [0, 0], [0, ih], [iw, ih]] : [[0, 0], [iw, 0], [iw, ih], [0, ih]];
+    const H = homographie4(cible, src); if (!H) return null;
+    const sc = document.createElement('canvas'); sc.width = iw; sc.height = ih;
+    const sctx = sc.getContext('2d', { willReadFrequently: true }); sctx.drawImage(img, 0, 0);
+    let sd; try { sd = sctx.getImageData(0, 0, iw, ih).data; } catch(e){ return null; }
+    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    const ctx = cv.getContext('2d'); const id = ctx.createImageData(cw, ch); const od = id.data;
+    for (let y = 0; y < ch; y++){
+      const py = y + 0.5;
+      for (let x = 0; x < cw; x++){
+        const px = x + 0.5, w = H[6] * px + H[7] * py + H[8];
+        if (Math.abs(w) < 1e-9) continue;
+        const u = (H[0] * px + H[1] * py + H[2]) / w - 0.5, v = (H[3] * px + H[4] * py + H[5]) / w - 0.5;
+        if (u < -0.5 || v < -0.5 || u > iw - 0.5 || v > ih - 0.5) continue;
+        const ux = Math.max(0, Math.min(iw - 1, Math.floor(u))), vy = Math.max(0, Math.min(ih - 1, Math.floor(v)));
+        const ux2 = Math.min(iw - 1, ux + 1), vy2 = Math.min(ih - 1, vy + 1);
+        const fx = Math.max(0, Math.min(1, u - ux)), fy = Math.max(0, Math.min(1, v - vy));
+        const i00 = (vy * iw + ux) * 4, i10 = (vy * iw + ux2) * 4, i01 = (vy2 * iw + ux) * 4, i11 = (vy2 * iw + ux2) * 4;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+        const a00 = sd[i00 + 3] * w00, a10 = sd[i10 + 3] * w10, a01 = sd[i01 + 3] * w01, a11 = sd[i11 + 3] * w11;
+        const a = a00 + a10 + a01 + a11; if (a < 1) continue;
+        const o = (y * cw + x) * 4;
+        for (let k = 0; k < 3; k++) od[o + k] = (sd[i00 + k] * a00 + sd[i10 + k] * a10 + sd[i01 + k] * a01 + sd[i11 + k] * a11) / a;
+        od[o + 3] = a;
+      }
+    }
+    ctx.putImageData(id, 0, 0);
+    return { url: cv.toDataURL('image/png'), x0, y0, w: x1 - x0, h: y1 - y0 };
+  }).catch(()=> null);
+  if (coinsCache.size > 60) coinsCache.delete(coinsCache.keys().next().value);
+  coinsCache.set(cle, pr);
+  return pr;
+}
+/* pose dans `el` (le rectangle du point) l'image déformée dans ses 4 coins */
+function poserImageEnCoins(el, url, pt){
+  const im = document.createElement('img');
+  im.style.cssText = 'position:absolute; pointer-events:none; -webkit-touch-callout:none; display:none; max-width:none; max-height:none;';
+  el.appendChild(im);
+  imageEnCoins(url, pt).then(r=>{
+    if (!r) return;
+    im.style.left = (r.x0 * 100) + '%'; im.style.top = (r.y0 * 100) + '%';
+    im.style.width = (r.w * 100) + '%'; im.style.height = (r.h * 100) + '%';
+    im.src = r.url; im.style.display = '';
+  });
+  return im;
+}
+
 function transformFenetre(pt){
   const p = Number(pt.perspective) || 0;
   return 'translate(-50%,-50%) perspective(420px) rotateY(' + p + 'deg)' + (pt.flipped ? ' scaleX(-1)' : '');
@@ -33409,12 +33540,14 @@ function elementFenetre(pt, nuit, assombrir){
   el.className = 'scene-point';
   el.dataset.ptid = pt.id; el.dataset.fenetre = '1';
   el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w || 20; el.dataset.pth = pt.h || 25;
-  el.style.cssText = 'position:absolute; background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; transform:' + (pt.kitQuad ? 'translate(-50%,-50%)' : transformFenetre(pt)) + ';';
+  const enCoins = coinsActifs(pt);   // v643 : les 4 coins l'emportent sur l'ancienne perspective
+  el.style.cssText = 'position:absolute; background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; transform:' + (pt.kitQuad || enCoins ? 'translate(-50%,-50%)' : transformFenetre(pt)) + ';';
   const im = document.createElement('img');
   im.style.cssText = 'width:100%; height:100%; object-fit:fill; pointer-events:none; display:none;';
   el.appendChild(im);
   if (pt.cadreId) composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(async u=>{
     if (!u) return;
+    if (enCoins){ im.remove(); poserImageEnCoins(el, u, pt); return; }
     if (pt.kitQuad){
       /* v632 : une fenêtre de pièce en kit sur un mur de côté — dessinée dans son quadrilatère */
       const src = await chargerImage(u); if (!src) return;
