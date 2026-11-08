@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v654</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v655</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12647,7 +12647,7 @@ async function ouvrirBrouillons(){
         blocs += tache(ok, '🖼️ Image de la pièce « ' + esc(sc.name) + ' »' + (encoreStructure ? ' — encore le dessin de structure' : ''),
           encoreStructure ? 'Le dessin de structure de Claude est en place : la pièce est jouable, mais c\'est un schéma. Remplace-le par le dessin de ChatGPT, fait à partir de ce schéma.' : (aImage ? '' : 'Sans image, la pièce est vide.'),
           sc.prompt ? '1. <b>📤 Envoyer à ChatGPT</b> : le dessin de structure de cette pièce part avec le prompt. Choisis ChatGPT, envoie.<br>2. Enregistre l\'image obtenue sur ton téléphone.<br>3. <b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, choisis-la, puis <b>Enregistrer la scène</b>. Les points sont déjà posés.' : '<b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, puis <b>Enregistrer la scène</b>.',
-          (sc.prompt ? bouton('data-envoi="scene|' + z.id + '|' + sc.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="scene|' + z.id + '|' + sc.id + '"', '📋 Copier') : '') + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce'), encoreStructure);
+          (sc.prompt ? bouton('data-envoi="scene|' + z.id + '|' + sc.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="scene|' + z.id + '|' + sc.id + '"', '📋 Copier') : '') + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce') + bouton('data-recup-img="' + z.id + '|' + sc.id + '"', '🛟 Images récentes'), encoreStructure);
         if (sc.prompt && !ok) envois['scene|' + z.id + '|' + sc.id] = ()=> ({ texte: avecCharte(sc.prompt), imgs: sc.structureRef ? [fichierPourPartage('structure-' + sc.id, internalizeSceneImage(sc.structureRef))] : [] });
         /* v598 : une fois la VRAIE image posée, tous les points se recalent à l'œil — mes positions
            sont estimées sur le schéma (rectangles, objets, coffres, sorties, photo). */
@@ -12684,7 +12684,7 @@ async function ouvrirBrouillons(){
             'Un élément qu\'on pose nous-mêmes sur une zone magenta du schéma. Il arrive dessiné de face ; c\'est toi qui le mets en perspective avec les 4 coins.',
             '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b> : le jeu retire le fond, la recadre et la pose à sa place.<br>4. <b>🗺️ Ouvrir la pièce</b>, touche-la et règle ses 4 coins (onglet ◇) pour la coller au mur, puis <b>Enregistrer la scène</b>.',
             bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPt) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pt="' + z.id + '|' + sc.id + '|' + pt.id + '"', okPt ? '📷 Remplacer l\'image' : '📷 Choisir l\'image')
-            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt));
+            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt) + bouton('data-recup-img="' + z.id + '|' + sc.id + '|' + pt.id + '"', '🛟 Images récentes'));
           envois[cle] = ()=> ({ texte: pt.prompt, imgs: [] });
         });
       });
@@ -12940,6 +12940,50 @@ async function ouvrirBrouillons(){
     await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(zid);
     showToast('Image posée ✅'); rouvrir();
+  });
+  /* v655 — 🛟 IMAGES RÉCENTES. Le jeu n'efface jamais une image enregistrée (scene_images) : une
+     image de pièce ou de décor débranchée (réimport, fausse manœuvre) y est toujours. On montre les
+     dernières enregistrées ; celle qu'on touche reprend sa place. */
+  sur('[data-recup-img]', async (b)=>{
+    const [zid, sid, pid] = b.dataset.recupImg.split('|');
+    if (!scImagesCol){ showToast('Base indisponible'); return; }
+    showToast('Je cherche les images récentes…');
+    let docs = [];
+    try { const snap = await scImagesCol.orderBy('updatedAt', 'desc').limit(16).get(); snap.forEach(d=> docs.push({ ref: d.id, url: (d.data() || {}).dataUrl || '', quand: (d.data() || {}).updatedAt || 0 })); }
+    catch(e){ showToast('Lecture impossible : ' + e.message); return; }
+    docs = docs.filter(d=> d.url);
+    if (!docs.length){ showToast('Aucune image récente trouvée'); return; }
+    const fond = document.createElement('div');
+    fond.className = 'sheet-backdrop show';
+    fond.style.cssText = 'position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center;';
+    const heure = (t)=> t ? new Date(t).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+    fond.innerHTML = '<div class="sheet" style="max-height:85vh; overflow:auto; width:100%; max-width:560px; padding:14px; background:var(--card, #1d1f24); border-radius:14px 14px 0 0;">'
+      + '<div style="display:flex; justify-content:space-between; align-items:center;"><b>🛟 Touche la bonne image</b><button type="button" class="sheet-x" data-fermer>✕</button></div>'
+      + '<p class="meta" style="font-size:12px;">Les dernières images enregistrées dans le jeu, la plus récente en premier.</p>'
+      + '<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">'
+      + docs.map((d, i)=> '<button type="button" data-pick="' + i + '" style="padding:4px; border-radius:8px; border:1px solid rgba(128,128,128,.4); background:rgba(0,0,0,.25);"><img src="' + d.url + '" style="width:100%; aspect-ratio:2/3; object-fit:contain;"><div class="meta" style="font-size:10px;">' + heure(d.quand) + '</div></button>').join('')
+      + '</div></div>';
+    document.body.appendChild(fond);
+    fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
+    fond.addEventListener('click', (ev)=>{ if (ev.target === fond) fond.remove(); });
+    fond.querySelectorAll('[data-pick]').forEach(btn=> btn.addEventListener('click', async ()=>{
+      const d = docs[+btn.dataset.pick];
+      const doc = await zonesCol.doc(zid).get();
+      const scenes = (doc.exists && doc.data().scenes) || [];
+      const sc = scenes.find(x=> x && x.id === sid);
+      if (!sc){ showToast('Pièce introuvable'); return; }
+      if (pid){
+        const pt = (sc.points || []).find(x=> x && x.id === pid);
+        if (!pt){ showToast('Point introuvable'); return; }
+        pt.imageRef = d.ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false;
+      } else {
+        sc.imageRef = d.ref; sc.imageUrl = ''; sc.imagePath = null;
+      }
+      await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+      oublierScenesDeZone(zid);
+      fond.remove();
+      showToast('Image remise en place ✅'); rouvrir();
+    }));
   });
   sur('[data-ajuste]', async (b)=>{
     const [zid, sid] = b.dataset.ajuste.split('|');
@@ -39483,8 +39527,24 @@ async function importerMiseAJour(sc){
     if (p.cherche || p.nouvelleVersion) continue;   // v651 : déjà traités ci-dessus
     const memes = fiches.filter(f=> (f.interactionType || '') !== 'zone' && f.name === p.name);
     const debut = (Array.isArray(p.timeRanges) && p.timeRanges[0] && p.timeRanges[0].start) || null;
-    const f = memes.length > 1 && debut ? memes.find(x=> Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut) : memes[0];
+    let f = memes.length > 1 && debut ? memes.find(x=> Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut) : memes[0];
     const qui = '« ' + p.name + ' »' + (debut ? ' (' + debut + ')' : '');
+    /* v655 — `dedoublonner: true` : plusieurs fiches de ce nom commencent à la même heure (une version
+       ajoutée deux fois par un réimport). On garde celle qui est dans le groupe du personnage et qui a
+       son image, on supprime les autres. */
+    if (p.dedoublonner && f){
+      const pareilles = memes.filter(x=> !debut || (Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut));
+      if (pareilles.length > 1){
+        const note = (x)=> (x.dupeGroup ? 2 : 0) + ((x.imageUrl || x.imagePath || x.imageRef) ? 1 : 0);
+        pareilles.sort((a, b)=> note(b) - note(a) || (a.createdAt || 0) - (b.createdAt || 0));
+        f = pareilles[0];
+        for (const x of pareilles.slice(1)){
+          await creatureCol.doc(x.id).delete();
+          journal.push('🗑️ ' + qui + ' : doublon supprimé');
+        }
+        if (typeof creatures !== 'undefined' && Array.isArray(creatures)){ const ids = new Set(pareilles.slice(1).map(x=> x.id)); for (let i = creatures.length - 1; i >= 0; i--) if (ids.has(creatures[i].id)) creatures.splice(i, 1); }
+      }
+    }
     if (!f){ journal.push('⚠️ ' + qui + ' introuvable' + (memes.length > 1 ? ' : ' + memes.length + ' versions, aucune ne commence à ' + debut : '') + ' — rien changé'); continue; }
     const maj = {}; const quoi = [];
     ['apparence', 'pose', 'fonction'].forEach(k=>{ if (typeof p[k] === 'string'){ maj[k] = p[k]; quoi.push(k); } });
@@ -39495,7 +39555,22 @@ async function importerMiseAJour(sc){
       if (aResoudre) journal.push('⚠️ ' + qui + ' : dialogue avec des renvois (quête, métier, personnage) — non appliqué');
       else { maj.dialogueSteps = p.dialogueSteps; quoi.push('dialogue'); }
     }
-    if (p.emplacement && p.emplacement.place){
+    if (p.emplacement && p.emplacement.place && p.emplacement.zone && p.emplacement.scene){
+      /* v655 : zone et scène désignées par leur nom → on rebranche la fiche sur la pièce actuelle
+         (après un réimport, l'ancienne pièce n'existe plus) */
+      const zf = fiches.find(x=> (x.interactionType || '') === 'zone' && x.name === p.emplacement.zone);
+      const scenesZ = zf ? (scenesMaj[zf.id] || await zonesCol.doc(zf.id).get().then(d=> (d.exists && d.data().scenes) || []).catch(()=> [])) : [];
+      const scn = scenesZ.find(x=> x && String(x.name || '').trim().toLowerCase() === String(p.emplacement.scene).trim().toLowerCase());
+      const pl = scn && (scn.points || []).find(pt=> pt && pt.type === 'emplacement' && pt.label === p.emplacement.place);
+      if (!zf) journal.push('⚠️ ' + qui + ' : zone « ' + p.emplacement.zone + ' » introuvable');
+      else if (!scn) journal.push('⚠️ ' + qui + ' : pièce « ' + p.emplacement.scene + ' » introuvable');
+      else {
+        maj.pieceCommune = { zoneId: zf.id, sceneId: scn.id, nom: zf.name + ' · ' + scn.name };
+        maj.assignedZoneId = null; maj.lat = null; maj.lng = null;
+        if (pl){ maj.emplacementPointId = pl.id; quoi.push('rebranché sur « ' + scn.name + ' » (rectangle « ' + p.emplacement.place + ' »)'); }
+        else { quoi.push('rebranché sur « ' + scn.name + ' »'); journal.push('⚠️ ' + qui + ' : rectangle « ' + p.emplacement.place + ' » introuvable'); }
+      }
+    } else if (p.emplacement && p.emplacement.place){
       const pc = f.pieceCommune;
       const scenes = pc && (scenesMaj[pc.zoneId] || await zonesCol.doc(pc.zoneId).get().then(d=> (d.exists && d.data().scenes) || []).catch(()=> []));
       const scn = scenes && scenes.find(x=> x && x.id === pc.sceneId);
@@ -39893,6 +39968,32 @@ async function importerScenario(sc){
     /* v585 : deuxième version d'un personnage de CE fichier (même nom, même `groupe`) → pas de
        question « existe déjà », elle est ajoutée telle quelle ; la passe 9 la rattache au groupe. */
     const versionDuFichier = !!p.groupe && (sc.pnj||[]).some(q=> q !== p && q.name === p.name && q.groupe === p.groupe && cles.pnj[q.cle || q.name]);
+    /* v655 : un personnage à plusieurs versions (`groupe`) déjà en jeu : chaque version est
+       retrouvée par son nom ET le début de son premier créneau — avant, la recherche par le seul nom
+       tombait sur n'importe quelle version, et les suivantes étaient ajoutées en double. Si la
+       première version vient d'être gardée, les autres le sont aussi, sans reposer la question. */
+    if (p.groupe){
+      const debut = (Array.isArray(p.timeRanges) && p.timeRanges[0] && p.timeRanges[0].start) || p.startTime || '';
+      const existe = debut && toutesLesFiches().find(x=> x.name === p.name && !importCrees.has(x.id) && (x.interactionType || 'dialogue') !== 'zone'
+        && Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut);
+      if (existe){
+        const premiereGardee = (sc.pnj||[]).some(q=> q !== p && q.name === p.name && q.groupe === p.groupe && cles.pnj[q.cle || q.name] && importIgnores.has(cles.pnj[q.cle || q.name]));
+        const choix = premiereGardee ? 'ignorer' : await importConflitDemande('PNJ', p.name + ' (' + debut + ')');
+        if (choix === 'ignorer'){
+          importIgnores.add(existe.id); noter(cles.pnj, p, existe.id);
+          journal.push('⏭️ PNJ « ' + p.name + ' » (' + debut + ') : existant conservé');
+          continue;
+        }
+        if (choix === 'ecraser'){
+          const fusion = { ...fabriquerFichePnj(p), updatedAt: Date.now() };
+          delete fusion.imageUrl; delete fusion.imagePath;
+          await creatureCol.doc(existe.id).set(fusion, { merge:true });
+          noter(cles.pnj, p, existe.id);
+          journal.push('♻️ PNJ « ' + p.name + ' » (' + debut + ') écrasé (image conservée)');
+          continue;
+        }
+      }
+    }
     noter(cles.pnj, p, await importEcrireDoc(creatureCol, p.name, fabriquerFichePnj(p), 'PNJ', journal, versionDuFichier));
   }
 
@@ -39905,8 +40006,18 @@ async function importerScenario(sc){
     const zoneId = await importEcrireDoc(creatureCol, z.name, fiche, 'Zone', journal);
     noter(cles.zones, z, zoneId);
 
+    /* v655 : une zone que l'utilisateur a choisi de GARDER n'est pas touchée du tout — avant, ses
+       pièces étaient réécrites quand même (vraies images remplacées par les schémas, personnages
+       débranchés). Une zone écrasée garde les identifiants de ses pièces et de ses points nommés. */
+    if (importIgnores.has(zoneId)){ journal.push('⏭️ Zone « ' + z.name + ' » : pièces non touchées'); continue; }
+    let anciennesScenes = [];
+    try { const a = await zonesCol.doc(zoneId).get(); anciennesScenes = a.exists ? (a.data().scenes || []) : []; } catch(e){}
+    const nomMin = (t)=> String(t || '').trim().toLowerCase();
     const idScene = {};
-    (z.scenes||[]).forEach(s=>{ idScene[s.cle || s.name] = genSceneId(); });
+    (z.scenes||[]).forEach(s=>{
+      const a = anciennesScenes.find(x=> x && x.id && nomMin(x.name) === nomMin(s.name));
+      idScene[s.cle || s.name] = a ? a.id : genSceneId();
+    });
 
     const scenes = (z.scenes||[]).map(s=>({
       id: idScene[s.cle || s.name],
@@ -40020,7 +40131,23 @@ async function importerScenario(sc){
           scenes.forEach(s=>{
             const a = ancScenes.find(x=> x.name === s.name);
             if (!a) return;
-            if (s.imageUrl || s.imagePath) return;   // v592 : le fichier apporte sa propre image, on la garde
+            ['rencontres', 'lumiere', 'kit'].forEach(k=>{ if (a[k] !== undefined && s[k] === undefined) s[k] = a[k]; });   // v655 : réglages posés à la main
+            /* v655 : les points nommés (rectangles 🧍, décors) gardent leur identifiant, leur place
+               recalée et leur image : un personnage posé dessus reste branché. */
+            (s.points || []).forEach(pt=>{
+              if (!pt.label) return;
+              const ap = (a.points || []).find(x=> x && x.type === pt.type && x.label === pt.label);
+              if (!ap) return;
+              pt.id = ap.id;
+              if (a.pointsAjustes) ['x', 'y', 'w', 'h', 'rotation', 'flipped', 'coins', 'pied'].forEach(k=>{ if (ap[k] !== undefined) pt[k] = ap[k]; });
+              ['imageRef', 'imageUrl', 'imagePath'].forEach(k=>{ if (ap[k]) pt[k] = ap[k]; });
+              if (ap.imageRef || ap.imageUrl || ap.imagePath) pt.hideIcon = false;
+            });
+            /* v655 : une VRAIE image déjà posée (pas le schéma d'un import précédent) passe avant le
+               schéma que le fichier apporte ; avant, elle était remplacée par lui. */
+            const vraieImage = (a.imageUrl || a.imagePath || a.imageRef) && !(a.structureRef && a.imageRef === a.structureRef);
+            if ((s.imageUrl || s.imagePath) && !vraieImage) return;   // v592 : le fichier apporte sa propre image, on la garde
+            if (vraieImage){ s.imageUrl = ''; s.imagePath = null; s._garderImage = true; if (a.structureRef) s._structureAncienne = a.structureRef; }
             ['imageUrl','imagePath','imageRef'].forEach(champ=>{
               if (a[champ]){ s[champ] = a[champ]; }
             });
@@ -40044,7 +40171,10 @@ async function importerScenario(sc){
       const scenesAEcrire = await externalizeScenesForSave(scenes);   // v592 : images en data: → scene_images
       /* le dessin de structure est repéré par sa référence : le guide saura quand il a été remplacé */
       /* v593 : `definitive: true` sur une scène = l'image du fichier est l'image finale (dessin de Claude), pas un schéma */
-      scenesAEcrire.forEach(sc=>{ if (sc.imageRef && (z.scenes || []).some(x=> (x.cle || x.name) && idScene[x.cle || x.name] === sc.id && typeof x.image === 'string' && x.image.startsWith('data:') && !x.definitive)) sc.structureRef = sc.imageRef; });
+      scenesAEcrire.forEach(sc=>{
+        if (sc._garderImage){ if (sc._structureAncienne) sc.structureRef = sc._structureAncienne; delete sc._garderImage; delete sc._structureAncienne; return; }   // v655
+        if (sc.imageRef && (z.scenes || []).some(x=> (x.cle || x.name) && idScene[x.cle || x.name] === sc.id && typeof x.image === 'string' && x.image.startsWith('data:') && !x.definitive)) sc.structureRef = sc.imageRef;
+      });
       await zonesCol.doc(zoneId).set({
         scenes: scenesAEcrire,
         startSceneId: idScene[z.sceneDepart] || scenes[0].id,
