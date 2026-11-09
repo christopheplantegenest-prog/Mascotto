@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v661</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v662</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -33345,6 +33345,11 @@ async function renderSceneViewCurrentScene(){
 
   const pano = estPanoramique(img, wrap);   // v644 : seulement une image vraiment large
   wrap.classList.toggle('pano', pano);
+  /* v662 : la pièce reste invisible tant que TOUTES ses images (fond, décors, occupants des
+     rectangles, fenêtres) ne sont pas prêtes, puis apparaît d'un bloc. Filet : 5 s au plus. */
+  wrap.style.visibility = 'hidden';
+  const jetonRendu = (renderSceneViewCurrentScene._jeton = (renderSceneViewCurrentScene._jeton || 0) + 1);
+  setTimeout(()=>{ if (renderSceneViewCurrentScene._jeton === jetonRendu) wrap.style.visibility = ''; }, 5000);
   wrap.insertBefore(img, wrap.firstChild);
   if (pano) wrap.scrollLeft = Math.max(0, (img.offsetWidth - wrap.clientWidth) / 2);
 
@@ -33675,6 +33680,23 @@ async function renderSceneViewCurrentScene(){
   bacsSceneCourante = { points: sc.points || [], sceneId: scRaw.id };   // v495
   armerMinuterieBacs(sc.points, scRaw.id);   // v492
   declencherAgressions(sc, wrapPointActions);
+  await attendreImagesDe(wrap, 4500);   // v662
+  if (renderSceneViewCurrentScene._jeton === jetonRendu) wrap.style.visibility = '';
+}
+/* v662 — attend que chaque <img> d'un bloc soit chargée ET posée (les occupants des rectangles 🧍
+   restent cachés tant qu'ils ne sont pas calés) ; jamais plus de `maxMs`. */
+function attendreImagesDe(el, maxMs){
+  const imgs = Array.from(el.querySelectorAll('img')).filter(im=> im.getAttribute('src'));
+  const une = (im)=> new Promise(res=>{
+    const fini = ()=>{
+      if (!im.classList.contains('pnj-emplace') || im.dataset.cale === '1' || !im.isConnected) return res();
+      let n = 0; const t = ()=> (im.dataset.cale === '1' || ++n > 60) ? res() : requestAnimationFrame(t); t();
+    };
+    if (im.complete && im.naturalWidth) return fini();
+    im.addEventListener('load', fini, { once: true });
+    im.addEventListener('error', ()=> res(), { once: true });
+  });
+  return Promise.race([Promise.all(imgs.map(une)), new Promise(r=> setTimeout(r, maxMs))]);
 }
 
 /* Agression : un personnage marqué « vient au joueur dès l'entrée » n'attend pas qu'on le
