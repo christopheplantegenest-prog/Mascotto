@@ -1466,7 +1466,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v669</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v670</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -7941,6 +7941,11 @@ function modelesDeVaisseauAchetables(){
     .sort((a,b)=> prixDuVaisseau(a) - prixDuVaisseau(b) || (a.vaisseau.nom || a.name || '').localeCompare(b.vaisseau.nom || b.name || '', 'fr'));
 }
 /* Le bilan d'un modèle face au joueur : prix net après reprise, matériaux qu'il a / qu'il faut. */
+function inventaireABordDe(doc){
+  const d = (doc && doc.exists && doc.data()) || {}, inv = Object.assign({}, d.inventory || {});
+  Object.keys(d.rangement || {}).forEach(id=>{ inv[id] = (inv[id] || 0) + (d.rangement[id] || 0); });
+  return inv;
+}
 function bilanVaisseau(f, coins, inv){
   const v = (f && f.vaisseau) || {};
   const prix = prixDuVaisseau(f);
@@ -7982,7 +7987,7 @@ function renderConcession(){
   db.collection('players').doc(currentUser.uid).get().then((doc)=>{
     if (activeConcessionCreature !== c) return;
     const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
-    const inv = (doc.exists && doc.data().inventory) || {};
+    const inv = inventaireABordDe(doc);   // v670 : compartiment + rangement
     playerCoins = coins;
     document.getElementById('concessionCoinsLabel').textContent = '💰 ' + coins;
     const actuel = shipZoneId ? ficheParId(shipZoneId) : null;
@@ -8026,7 +8031,7 @@ async function acheterVaisseau(zoneId){
   try {
     const doc = await ref.get();
     const coins = (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
-    const inv = (doc.exists && doc.data().inventory) || {};
+    const inv = inventaireABordDe(doc);   // v670 : compartiment + rangement
     const b = bilanVaisseau(f, coins, inv);
     if (!b.argentOk){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${b.net})`); return; }
     if (!b.materiauxOk){ showToast('Il manque des matériaux'); return; }
@@ -8038,13 +8043,17 @@ async function acheterVaisseau(zoneId){
       showToast(`Ce vaisseau n'a que ${portesNeuves.length} porte${portesNeuves.length > 1 ? 's' : ''} pour ${habitants.length} habitants — renvoie-en d'abord`);
       return;
     }
-    const inventory = {};
-    b.lignes.forEach(l=> { inventory[l.itemId] = firebase.firestore.FieldValue.increment(-l.besoin); });
+    /* v670 : les matériaux se prennent d'abord dans le compartiment, puis au rangement */
+    baseResources = Object.assign({}, (doc.exists && doc.data().inventory) || {});
+    baseRangement = Object.assign({}, (doc.exists && doc.data().rangement) || {});
+    const conso = {};
+    b.lignes.forEach(l=> { conso[l.itemId] = (conso[l.itemId] || 0) + l.besoin; });
+    const prelev = prelevementABord(conso);
     const ancien = shipZoneId || null;
     const maj = { coins: firebase.firestore.FieldValue.increment(-b.net), vaisseauId: zoneId,
       vaisseauAchats: firebase.firestore.FieldValue.arrayUnion({ zoneId, ancien, prix: b.prix, reprise: b.reprise, net: b.net, date: Date.now() }) };
-    if (b.lignes.length) maj.inventory = inventory;
     await ref.set(maj, { merge:true });
+    if (Object.keys(prelev).length) await ref.update(prelev);
     if (habitants.length && recruitsCol){
       const batch = db.batch();
       habitants.forEach((h, i)=>{
@@ -8054,7 +8063,6 @@ async function acheterVaisseau(zoneId){
       });
       await batch.commit().catch((err)=> showToast('Portes non réaffectées : ' + err.message));
     }
-    b.lignes.forEach(l=> { baseResources[l.itemId] = Math.max(0, (baseResources[l.itemId] || 0) - l.besoin); });
     journal('vaisseau', 'achat', b.nom + ' pour 💰 ' + b.net + (b.reprise ? ' (reprise ' + b.reprise + ')' : ''), true);
     showToast('🚀 Bienvenue à bord : ' + b.nom);
     renderConcession();
@@ -16257,11 +16265,11 @@ function commandesObjet(it){
   if (it.type !== 'quete') c.push('jeter');
   return c;
 }
-function fenetreSac(html){
+function fenetreSac(html, bloquante){
   const f = document.createElement('div');
   f.className = 'overlay show';
   f.innerHTML = '<div class="sheet" style="max-height:85vh; overflow-y:auto;">' + html + '</div>';
-  f.addEventListener('click', (e)=>{ if (e.target === f) f.remove(); });
+  if (!bloquante) f.addEventListener('click', (e)=>{ if (e.target === f) f.remove(); });
   document.body.appendChild(f);
   if (typeof assurerAuDessus === 'function') assurerAuDessus(f);
   f.querySelectorAll('[data-fermer]').forEach(b=> b.addEventListener('click', ()=> f.remove()));
@@ -16420,9 +16428,9 @@ function ouvrirRobotsPourObjet(itemId, mode){
 /* ═══ v669 — LA FENÊTRE DU RANGEMENT : le rangement en haut, le compartiment en bas. On touche un
    objet, il passe de l'autre côté (pour une pile, on choisit combien). Les objets de quête restent
    dans leur poche. Le rangement est illimité pour l'instant. ═══ */
-function choisirQuantite(it, max, verbe){
+function choisirQuantite(it, max, verbe, depart){
   return new Promise((res)=>{
-    let n = max, fini = false;
+    let n = Math.max(1, Math.min(max, depart || max)), fini = false;
     const f = fenetreSac(enteteObjetSac(it, max) + `
       <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:14px 0 12px;">
         <button class="btn-secondary" data-moins style="flex:none; width:48px; height:48px; font-size:22px;">−</button>
@@ -16470,8 +16478,16 @@ function ouvrirRangement(){
   const deplacer = async (id, versRangement)=>{
     if (occupe) return;
     const it = items.find(i=> i.id === id) || null;
-    const max = versRangement ? (baseResources[id] || 0) : (baseRangement[id] || 0);
+    let max = versRangement ? (baseResources[id] || 0) : (baseRangement[id] || 0);
     if (max <= 0) return;
+    if (!versRangement){   // v670 : on ne prend que ce qui tient dans le compartiment
+      const pd = poidsObjet(it), libre = CHARGE_MAX - chargeDe(baseResources);
+      if (pd > 0){
+        const cap = Math.floor(libre / pd + 1e-6);
+        if (cap <= 0){ showToast('Compartiment plein (charge ' + fmtPoids(chargeDe(baseResources)) + ' / ' + CHARGE_MAX + ')'); return; }
+        max = Math.min(max, cap);
+      }
+    }
     const n = max === 1 ? 1 : await choisirQuantite(it, max, versRangement ? '🗄️ Ranger' : '🎒 Prendre');
     if (!n) return;
     occupe = true;
@@ -16485,6 +16501,110 @@ function ouvrirRangement(){
     dessiner();
     if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventoryList();
   };
+  dessiner();
+}
+
+/* ═══ v670 — LA LIMITE DE CHARGE. Toute arrivée d'objet (coffre, récolte, combat, quête, achat…)
+   passe par la fiche joueur : on surveille donc la charge à chaque mise à jour. Si elle dépasse
+   20 ET qu'elle vient d'augmenter, une fenêtre de tri s'ouvre — jamais en plein combat ni en
+   plein dialogue, à la fin de l'action (dans l'écran de victoire pour un combat). On n'en sort
+   qu'une fois revenu sous la limite, ou sous la charge d'avant si l'on était déjà au-dessus :
+   un compartiment déjà trop plein n'oblige pas à tout jeter, il ne peut juste plus grossir.
+   À bord, on range au lieu de jeter. ═══ */
+function chargeDe(inv){
+  let t = 0;
+  Object.keys(inv || {}).forEach(id=>{ const q = inv[id] || 0; if (q > 0) t += poidsObjet(items.find(i=> i.id === id)) * q; });
+  return t;
+}
+let chargeConnue = null, inventaireConnu = null, triEnAttente = null, triOuvert = false;
+function surveillerCharge(inv){
+  if (typeof items === 'undefined' || !items.length){ chargeConnue = null; return; }
+  const ch = chargeDe(inv);
+  if (chargeConnue != null && ch > CHARGE_MAX + 0.05 && ch > chargeConnue + 0.05){
+    const nouveaux = triEnAttente ? triEnAttente.nouveaux : {};
+    Object.keys(inv).forEach(id=>{
+      const d = (inv[id] || 0) - ((inventaireConnu || {})[id] || 0);
+      if (d > 0 && poidsObjet(items.find(i=> i.id === id)) > 0) nouveaux[id] = (nouveaux[id] || 0) + d;
+    });
+    triEnAttente = { cible: triEnAttente ? triEnAttente.cible : Math.max(CHARGE_MAX, chargeConnue), nouveaux };
+  }
+  chargeConnue = ch; inventaireConnu = Object.assign({}, inv);
+}
+function aBordMaintenant(){
+  const full = document.getElementById('sceneViewFull');
+  return !!(full && full.classList.contains('show') && typeof sceneViewCreature !== 'undefined' && sceneViewCreature && typeof zoneEstABord === 'function' && zoneEstABord(sceneViewCreature.id));
+}
+setInterval(()=>{
+  if (!triEnAttente || triOuvert) return;
+  if (typeof combatState !== 'undefined' && combatState && !combatState.finished) return;   // pas en plein combat
+  const dial = document.getElementById('overlay');
+  if (dial && dial.classList.contains('show') && !(typeof combatState !== 'undefined' && combatState && combatState.finished)) return;   // pas en plein dialogue
+  if (chargeDe(baseResources) <= triEnAttente.cible + 0.05){ triEnAttente = null; return; }
+  ouvrirTri();
+}, 700);
+function ouvrirTri(){
+  triOuvert = true;
+  const t = triEnAttente;
+  const aBord = aBordMaintenant();
+  const f = fenetreSac(`<div class="sheet-top"><h3 style="margin-top:0;">⚖️ Trop chargé</h3></div>
+    <div class="comp-titre-bloc"><span data-consigne style="font-weight:400; font-size:13px;"></span><span class="comp-charge trop" data-charge></span></div>
+    <div data-nouveaux></div>
+    <div class="comp-titre-bloc" style="margin-top:10px;"><span>Ton compartiment</span></div>
+    <div data-tout style="max-height:36vh; overflow-y:auto; padding:2px;"></div>
+    <button class="btn-capture" data-fini style="width:100%; margin-top:12px;">✓ C'est bon</button>`, true);
+  f.querySelector('.sheet').classList.add('comp-sheet');
+  let occupe = false;
+  const entrees = (m, filtre)=> Object.keys(m || {}).filter(id=> (m[id] || 0) > 0 && (!filtre || filtre[id]))
+    .map(id=> ({ itemId:id, qty: filtre ? Math.min(filtre[id], m[id]) : m[id], it: items.find(i=> i.id === id) }))
+    .filter(e=> e.it && e.it.type !== 'quete');
+  const dessiner = ()=>{
+    if (!document.body.contains(f)) return;
+    const ch = chargeDe(baseResources), ok = ch <= t.cible + 0.05;
+    const el = f.querySelector('[data-charge]');
+    el.textContent = 'Charge ' + fmtPoids(ch) + ' / ' + CHARGE_MAX;
+    el.classList.toggle('trop', !ok);
+    f.querySelector('[data-consigne]').textContent = ok ? 'C\'est bon, tout tient.' : (aBord ? 'Range' : 'Jette') + ' de quoi revenir à ' + fmtPoids(t.cible) + '.';
+    const nv = entrees(baseResources, t.nouveaux);
+    f.querySelector('[data-nouveaux]').innerHTML = nv.length ? '<div class="comp-titre-bloc"><span>Ce que tu viens de recevoir</span>'
+      + '<button class="btn-secondary" data-laisser style="flex:none; padding:5px 10px; font-size:12px;">' + (aBord ? '🗄️ Tout ranger' : '🗑️ Tout laisser') + '</button></div>'
+      + grilleObjetsHtml(nv, 'data-tri', 0) : '';
+    f.querySelector('[data-tout]').innerHTML = grilleObjetsHtml(entrees(baseResources), 'data-tri', 5);
+    const fini = f.querySelector('[data-fini]');
+    fini.disabled = !ok; fini.style.opacity = ok ? '' : '.45';
+    f.querySelectorAll('[data-tri]').forEach(b=> b.addEventListener('click', ()=> retirer(b.dataset.tri)));
+    const l = f.querySelector('[data-laisser]');
+    if (l) l.addEventListener('click', ()=> retirerPlusieurs(Object.fromEntries(nv.map(e=> [e.itemId, e.qty]))));
+  };
+  const ecrire = async (conso)=>{
+    const inc = firebase.firestore.FieldValue.increment, maj = {};
+    Object.keys(conso).forEach(id=>{ const n = conso[id]; if (n > 0){ maj['inventory.' + id] = inc(-n); if (aBord) maj['rangement.' + id] = inc(n); } });
+    if (!Object.keys(maj).length) return;
+    await playerDocRef.update(maj);
+    Object.keys(conso).forEach(id=>{
+      baseResources[id] = Math.max(0, (baseResources[id] || 0) - conso[id]);
+      if (aBord) baseRangement[id] = (baseRangement[id] || 0) + conso[id];
+      if (t.nouveaux[id]) t.nouveaux[id] = Math.max(0, t.nouveaux[id] - conso[id]);
+    });
+    inventoryEntriesCache = Object.entries(baseResources).filter(([,q])=> q > 0);
+  };
+  const retirerPlusieurs = async (conso)=>{
+    if (occupe) return; occupe = true;
+    try { await ecrire(conso); } catch(err){ showToast('Échec : ' + err.message); }
+    occupe = false; dessiner();
+  };
+  const retirer = async (id)=>{
+    if (occupe) return;
+    const it = items.find(i=> i.id === id), max = baseResources[id] || 0;
+    if (!it || max <= 0) return;
+    const pd = poidsObjet(it), besoin = Math.max(1, Math.ceil((chargeDe(baseResources) - t.cible - 1e-6) / (pd || 1)));
+    const n = max === 1 ? 1 : await choisirQuantite(it, max, aBord ? '🗄️ Ranger' : '🗑️ Jeter', besoin);
+    if (n) await retirerPlusieurs({ [id]: n });
+  };
+  f.querySelector('[data-fini]').addEventListener('click', ()=>{
+    if (chargeDe(baseResources) > t.cible + 0.05) return;
+    f.remove(); triOuvert = false; triEnAttente = null;
+    if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventory();
+  });
   dessiner();
 }
 
@@ -16582,6 +16702,9 @@ function proposerRangerObjet(hab, e){
          <button class="btn-capture" data-ranger style="flex:1;">🎒 Ranger dans le sac</button>
        </div>`);
   f.querySelector('[data-ranger]').addEventListener('click', async ()=>{
+    if (chargeDe(baseResources) + poidsObjet(it) > CHARGE_MAX + 0.05){   // v670
+      showToast('Compartiment plein : fais de la place avant de reprendre cet objet'); return;
+    }
     f.remove();
     const avant = modePose;
     modePose = { genre:'chambre', itemId, reprendre:true };
@@ -24731,6 +24854,7 @@ function watchPlayerInventoryForBase(){
   playerDocRef.onSnapshot((doc)=>{ mesurerEcoute('ma fiche joueur', doc, ()=>{
     baseResources = (doc.exists && doc.data().inventory) || {};
     baseRangement = (doc.exists && doc.data().rangement) || {};   // v669
+    surveillerCharge(baseResources);   // v670 : la limite de charge
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
     playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
