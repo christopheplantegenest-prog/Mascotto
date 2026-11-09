@@ -381,8 +381,8 @@
   /* v666 : poser / planter depuis le sac — les places possibles s'allument */
   .cible-pose{ outline:3px dashed rgba(95,242,255,.95) !important; outline-offset:2px; background:rgba(95,242,255,.16) !important; animation:pulseCible .9s ease-in-out infinite alternate; }
   @keyframes pulseCible{ from{ outline-color:rgba(95,242,255,.95); } to{ outline-color:rgba(95,242,255,.35); } }
-  #barreDePose{ position:fixed; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom, 0px)); z-index:4990;
-    display:flex; align-items:center; gap:8px; max-width:calc(100vw - 24px); padding:8px 10px 8px 14px; border-radius:22px;
+  #barreDePose{ position:fixed; left:10px; right:10px; bottom:calc(14px + env(safe-area-inset-bottom, 0px)); z-index:4990;
+    display:flex; align-items:center; gap:8px; padding:8px 10px 8px 14px; border-radius:22px;
     background:rgba(0,0,0,.78); color:#fff; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.45); }
   #barreDePose button{ flex:none; border:1px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; border-radius:16px; padding:5px 10px; font-size:12px; }
   #roomSac{ display:none; position:fixed; right:14px; bottom:max(14px, env(safe-area-inset-bottom)); z-index:3; width:50px; height:50px; border-radius:50%;
@@ -1441,7 +1441,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v666</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v667</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -16362,7 +16362,7 @@ let modePose = null;   // { genre:'chambre'|'bac', itemId, reprendre }
 function barreDePose(texte, boutons){
   let b = document.getElementById('barreDePose');
   if (!b){ b = document.createElement('div'); b.id = 'barreDePose'; document.body.appendChild(b); }
-  b.innerHTML = '<span style="flex:1; min-width:0;">' + texte + '</span>' + (boutons || []).map((x, i)=> '<button type="button" data-bp="' + i + '">' + x.libelle + '</button>').join('');
+  b.innerHTML = '<span style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + texte + '</span>' + (boutons || []).map((x, i)=> '<button type="button" data-bp="' + i + '">' + x.libelle + '</button>').join('');
   (boutons || []).forEach((x, i)=> b.querySelector('[data-bp="' + i + '"]').addEventListener('click', (e)=>{ e.stopPropagation(); x.faire(); }));
 }
 function finirModePose(){
@@ -16398,12 +16398,9 @@ function dessinerCasesChambre(){
   }).join(''));
   calque.querySelectorAll('[data-case-pose]').forEach(b=> b.addEventListener('click', (ev)=>{ ev.stopPropagation(); poserDansChambre(hab, b.dataset.casePose); }));
   const reste = qteAuSac(modePose.itemId) || ((playerSelfData && playerSelfData.inventory) || {})[modePose.itemId] || 0;
-  const aReprendre = emps.some(e=> objets[e.id]);
-  barreDePose(modePose.reprendre ? (ok.length ? '↩️ Touche l\'objet à reprendre' : 'Rien à reprendre')
-      : !ok.length ? 'Aucune place pour cet objet dans la chambre'
-      : '🪑 ' + escSac(it ? it.name : 'Objet') + ' (' + reste + ') — touche une place allumée',
-    [ ...(aReprendre ? [{ libelle: modePose.reprendre ? '🪑 Poser' : '↩️ Reprendre', faire: ()=>{ modePose.reprendre = !modePose.reprendre; dessinerCasesChambre(); } }] : []),
-      { libelle:'✕ Fini', faire: finirModePose } ]);
+  barreDePose(!ok.length ? 'Aucune place pour cet objet dans la chambre'
+      : '🪑 ' + escSac(it ? it.name : 'Objet') + ' ×' + reste + ' · touche une place',
+    [{ libelle:'✕ Fini', faire: finirModePose }]);
 }
 let poseEnCours = false;
 async function poserDansChambre(hab, empId){
@@ -16432,6 +16429,62 @@ async function poserDansChambre(hab, empId){
     } else dessinerCasesChambre();
   } finally { poseEnCours = false; }
 }
+/* v667 : RANGER un objet posé — appui long dessus dans la chambre, une petite fenêtre demande
+   s'il retourne dans le sac. L'objet est dessiné dans l'image de la chambre : on retrouve
+   l'emplacement sous le doigt. */
+function emplacementSousLeDoigt(hab, x, y){
+  const calque = calqueChambre(); if (!calque) return null;
+  const r = calque.getBoundingClientRect(); if (!r.width || !r.height) return null;
+  const px = (x - r.left) / r.width * 100, py = (y - r.top) / r.height * 100;
+  const objets = decoDeChambre(hab).objets || {};
+  const sous = emplacementsChambre().filter(e=> objets[e.id] && Math.abs(px - e.x) <= e.w / 2 && Math.abs(py - e.y) <= e.h / 2)
+    .sort((a, b)=> a.w * a.h - b.w * b.h);
+  return sous[0] || null;
+}
+function proposerRangerObjet(hab, e){
+  const itemId = (decoDeChambre(hab).objets || {})[e.id];
+  const it = objetDeco(itemId);
+  if (!it) return;
+  if (navigator.vibrate) try { navigator.vibrate(30); } catch(err){}
+  const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId)).replace(/<div class="meta"[^>]*data-reste>[^<]*<\/div>/, '<div class="meta" style="font-size:12px;">Posé dans la chambre</div>')
+    + `<div style="display:flex; gap:8px; margin-top:14px;">
+         <button class="btn-secondary" data-fermer style="flex:1;">Laisser</button>
+         <button class="btn-capture" data-ranger style="flex:1;">🎒 Ranger dans le sac</button>
+       </div>`);
+  f.querySelector('[data-ranger]').addEventListener('click', async ()=>{
+    f.remove();
+    const avant = modePose;
+    modePose = { genre:'chambre', itemId, reprendre:true };
+    await poserDansChambre(hab, e.id);
+    modePose = avant;
+    if (modePose) dessinerCasesChambre(); else finirModePose();
+    showToast('🎒 ' + it.name + ' rangé dans le sac');
+  });
+}
+let appuiLongChambre = null, appuiLongFait = 0;
+(function(){
+  const vue = document.getElementById('chambreNeutreVue');
+  if (!vue) return;
+  vue.style.webkitTouchCallout = 'none'; vue.style.userSelect = 'none';
+  const stop = ()=>{ if (appuiLongChambre){ clearTimeout(appuiLongChambre.t); appuiLongChambre = null; } };
+  vue.addEventListener('pointerdown', (ev)=>{
+    stop();
+    if (!roomNeutreOuverte || !roomSheetRecruitId) return;
+    const x = ev.clientX, y = ev.clientY;
+    appuiLongChambre = { x, y, t: setTimeout(()=>{
+      appuiLongChambre = null;
+      const hab = currentRecruitById(roomSheetRecruitId);
+      const e = hab && emplacementSousLeDoigt(hab, x, y);
+      if (!e) return;
+      appuiLongFait = Date.now();
+      proposerRangerObjet(hab, e);
+    }, 550) };
+  });
+  vue.addEventListener('pointermove', (ev)=>{ if (appuiLongChambre && Math.hypot(ev.clientX - appuiLongChambre.x, ev.clientY - appuiLongChambre.y) > 10) stop(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n=> vue.addEventListener(n, stop));
+  vue.addEventListener('contextmenu', (ev)=> ev.preventDefault());
+})();
+
 /* les bacs libres de la pièce affichée */
 function bacsLibres(){
   const full = document.getElementById('sceneViewFull');
@@ -16452,7 +16505,7 @@ function dessinerBacsLibres(){
   const it = items.find(i=> i.id === modePose.itemId);
   const reste = baseResources[modePose.itemId] || 0;
   if (!libres.length || reste <= 0){ finirModePose(); showToast(reste <= 0 ? 'Plus de graines' : 'Plus aucun bac libre'); return; }
-  barreDePose('🌱 ' + escSac(it ? it.name : 'Graine') + ' (' + reste + ') — touche un bac libre', [{ libelle:'✕ Fini', faire: finirModePose }]);
+  barreDePose('🌱 ' + escSac(it ? it.name : 'Graine') + ' ×' + reste + ' · touche un bac', [{ libelle:'✕ Fini', faire: finirModePose }]);
 }
 
 /* Un objet consommable réglé en soin ou en réanimation peut servir hors combat */
@@ -35306,7 +35359,6 @@ async function ouvrirDecoration(hab){
         <button type="button" class="btn-primary" data-fini style="flex:none; padding:5px 12px;">✓ Terminer</button>
       </div>
       <div data-onglets style="display:flex; gap:4px; margin-top:6px; flex:none;">
-        <button type="button" class="btn-secondary" data-onglet="objets" style="flex:1; padding:5px 2px; font-size:12px;">🎒 Objets</button>
         <button type="button" class="btn-secondary" data-onglet="fenetres" style="flex:1; padding:5px 2px; font-size:12px;">🪟 Fenêtres</button>
         <button type="button" class="btn-secondary" data-onglet="murs" style="flex:1; padding:5px 2px; font-size:12px;">🧱 Murs</button>
         <button type="button" class="btn-secondary" data-onglet="sol" style="flex:1; padding:5px 2px; font-size:12px;">🟫 Sol</button>
@@ -35315,7 +35367,7 @@ async function ouvrirDecoration(hab){
     </div>
   </div>`;
   document.body.appendChild(fond);
-  let onglet = 'objets', occupe = false;
+  let onglet = 'fenetres', occupe = false;   // v667 : les objets se posent et se rangent depuis la chambre (sac / appui long)
   let enMain = null;   // { genre:'objet', id } | { genre:'cadre', id } | { genre:'reprendre' }
   const panneau = fond.querySelector('[data-panneau]'), aide = fond.querySelector('[data-aide]');
   let deco0 = decoDeChambre(hab);
@@ -37028,6 +37080,7 @@ document.getElementById('roomSac').addEventListener('click', ()=>{
 });
 document.getElementById('chambreNeutreVue').addEventListener('click', (e)=>{
   if (modePose) return;   // v666 : en train de poser un objet, on ne parle pas au robot
+  if (Date.now() - appuiLongFait < 800) return;   // v667 : l'appui long ouvre « ranger », pas le dialogue
   if (!roomNeutreOuverte || !roomSheetRecruitId || isGhostTap()) return;
   if (Date.now() - sceneBigImageOpenedAt < 400) return;
   e.stopPropagation();
