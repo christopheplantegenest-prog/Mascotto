@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v676</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v677</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12387,8 +12387,15 @@ function decorQuiNeSeVoitPas(pt){
 const memeNomDecor = (a, b)=> String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 function meubleDuMemeNom(nom){
   if (!nom) return null;
-  const l = (kitBiblio.meubles || []).filter(x=> x && x.ref && memeNomDecor(x.nom, nom));
+  const l = meublesKitParAngle().filter(x=> x && x.ref && memeNomDecor(x.nom, nom));
   return l.find(x=> (x.angle || 'face') === 'face') || l[0] || null;
+}
+/* v677 : le meuble (fiche + angle) dont vient l'image d'un point de décor */
+function meubleDuPointDecor(pt){
+  if (!pt) return null;
+  if (pt.ficheId){ const m = meubleParId('fi_' + pt.ficheId + '|' + (pt.ficheAngle || 'face')); if (m) return m; }
+  const ref = pt.imageRef || (pt.imagePath ? 'path:' + pt.imagePath : null);
+  return ref ? (meublesKitParAngle().find(x=> x.ref === ref) || null) : null;
 }
 async function poserPlancheDecor(zid, pid){
   const doc = await zonesCol.doc(zid).get();
@@ -13185,9 +13192,13 @@ async function ouvrirBrouillons(){
   };
   sur('[data-decor-biblio]', async (b)=>{
     const [zid, sid, pid, mid] = b.dataset.decorBiblio.split('|');
-    const mb = (kitBiblio.meubles || []).find(x=> x && x.id === mid);
+    const mb = meubleParId(mid);   // v677 : une fiche (et son angle) ou un ancien meuble
     if (!mb || !mb.ref){ showToast('Image introuvable dans la bibliothèque'); return; }
-    if (await corrigerDecor(zid, sid, pid, (pt)=>{ pt.imageRef = mb.ref; pt.imageUrl = ''; pt.imagePath = null; })){ showToast('Décor posé ✅'); rouvrir(); }
+    if (await corrigerDecor(zid, sid, pid, (pt)=>{
+      if (String(mb.ref).startsWith('path:')){ pt.imagePath = mb.ref.slice(5); pt.imageRef = null; } else { pt.imageRef = mb.ref; pt.imagePath = null; }
+      pt.imageUrl = '';
+      if (mb.ficheId){ pt.ficheId = mb.ficheId; pt.ficheAngle = mb.angle || 'face'; }
+    })){ showToast('Décor posé ✅'); rouvrir(); }
   });
   sur('[data-decor-afficher]', async (b)=>{
     const [zid, sid, pid] = b.dataset.decorAfficher.split('|');
@@ -15819,6 +15830,7 @@ function lireBlocMob(){
   m.ouvrable = document.getElementById('itemMobOuvrable').checked;
   m.lumiere = document.getElementById('itemMobLumiere').checked;
   m.fenetre = document.getElementById('itemMobFenetre').checked;
+  m.porte = m.categorie === 'Porte';   // v677 : une porte posée dans le kit crée sa sortie
   Object.keys(m.vues || {}).forEach(a=>{ const v = m.vues[a]; if (!v || !(v.ref || v.path || v.refOuvert || v.pathOuvert)) delete m.vues[a]; });
   return m;
 }
@@ -32153,7 +32165,7 @@ function nomDuPointScene(pt, i){
   if (pt.type === 'pnj' && pt.linkedPnjName) return pt.linkedPnjName;
   if (pt.type === 'fenetre') return 'Fenêtre ' + (i + 1);
   if (pt.type === 'emplacement') return 'Emplacement ' + (i + 1);
-  const m = pt.imageRef && ((kitBiblio && kitBiblio.meubles) || []).find(x=> x.ref === pt.imageRef);
+  const m = meubleDuPointDecor(pt);
   if (m) return m.nom;
   if (pt.coffreModele) return 'Coffre ' + pt.coffreModele;
   if (pt.itemId && typeof items !== 'undefined'){ const it = (items || []).find(x=> x.id === pt.itemId); if (it && it.name) return it.name; }
@@ -32276,7 +32288,7 @@ function renderSceneEditorDpad(){
   const bAct = (id, l, extra, titre)=> `<button type="button" id="${id}" style="${b}${extra || ''}"${titre ? ' title="' + titre + '"' : ''}>${l}</button>`;
   const bCoin = (k, l)=> `<button type="button" data-coin="${k}" style="${b}${k === coinSel ? ' background:rgba(255,120,120,.55);' : ''}">${l}</button>`;
   /* v647 : le meuble du kit dont vient l'image du point — s'il y en a un, on peut GARDER son réglage */
-  const meubleKit = !estEmpl && pt.imageRef && typeof kitBiblio !== 'undefined' ? (kitBiblio.meubles || []).find(x=> x.ref === pt.imageRef) : null;
+  const meubleKit = !estEmpl ? meubleDuPointDecor(pt) : null;   // v677
   const bGarder = meubleKit && (onglet === 'taille' || onglet === 'coins') ? vide + bAct('scKitGarder', '💾', small, 'Garder taille et coins comme réglage de ce meuble') + vide : '';
   const grillePal = onglet === 'liste' ? listePal
     : onglet === 'taille'
@@ -32316,8 +32328,16 @@ function renderSceneEditorDpad(){
      modèle, on l'ajuste une fois, et ce réglage devient celui du meuble. */
   sur('scKitGarder', async ()=>{
     if (!meubleKit) return;
-    meubleKit.reglage = { w: pt.w, h: pt.h, coins: pt.coins ? JSON.parse(JSON.stringify(pt.coins)) : null, flipped: !!pt.flipped, pied: !!pt.pied };
-    try { await enregistrerKitBiblio(); showToast('Réglage gardé pour « ' + meubleKit.nom + ' »'); }
+    const reglage = { w: pt.w, h: pt.h, coins: pt.coins ? JSON.parse(JSON.stringify(pt.coins)) : null, flipped: !!pt.flipped, pied: !!pt.pied };
+    try {
+      if (meubleKit.ficheId){   // v677 : le réglage va dans la fiche, pour cet angle
+        await itemsCol.doc(meubleKit.ficheId).set({ mob: { reglages: { [meubleKit.angle || 'face']: reglage } } }, { merge:true });
+      } else {
+        const l = (kitBiblio.meubles || []).find(x=> x.id === meubleKit.id); if (l) l.reglage = reglage;
+        await enregistrerKitBiblio();
+      }
+      showToast('Réglage gardé pour « ' + meubleKit.nom + ' »');
+    }
     catch(e){ showToast('Réglage non enregistré : ' + (e && e.message || e)); }
   });
   const bougerCoin = (dx, dy)=>{
@@ -32626,7 +32646,9 @@ function renderSceneDetailAppearance(pt){
   if (kitBtn) kitBtn.addEventListener('click', ()=> choisirMeubleDuKit(async (m)=>{
     const u = await urlDeRef(m.ref);
     if (!u){ showToast('Image du meuble introuvable'); return; }
-    pt.imageUrl = u; pt.imageRef = m.ref; pt.imagePath = null;
+    if (String(m.ref).startsWith('path:')){ pt.imagePath = m.ref.slice(5); pt.imageRef = null; pt.imageUrl = u; }
+    else { pt.imageUrl = u; pt.imageRef = m.ref; pt.imagePath = null; }
+    if (m.ficheId){ pt.ficheId = m.ficheId; pt.ficheAngle = m.angle || 'face'; } else { delete pt.ficheId; delete pt.ficheAngle; }   // v677
     pt.coffreModele = null; pt.coffreAngle = null; pt.useExitArrow = false;
     appliquerReglageMeuble(pt, m);   // v647
     renderSceneEditorPoints();
@@ -34974,6 +34996,7 @@ async function enregistrerFenetresBiblio(){
 const refImageCache = {};
 function urlDeRef(ref){
   if (!ref) return Promise.resolve('');
+  if (typeof ref === 'string' && ref.startsWith('path:')) return Promise.resolve(resolveMediaPath(ref.slice(5)));   // v677 : image hébergée d'une fiche
   if (!refImageCache[ref]) refImageCache[ref] = internalizeSceneImage(ref).then(u=> u || '').catch(()=> '');
   return refImageCache[ref];
 }
@@ -35727,8 +35750,8 @@ const rectPct = (e)=> 'left:' + (e.x - e.w / 2) + '%; top:' + (e.y - e.h / 2) + 
    de l'écran à hauteur égale (le but : deux écrans côte à côte, pas un carré qui bouge à peine) */
 /* v645 : la fenêtre de choix d'un meuble de la bibliothèque du kit (vignettes) */
 function choisirMeubleDuKit(quandChoisi){
-  const tous = (kitBiblio.meubles || []).filter(m=> m && m.ref);
-  if (!tous.length){ showToast('La bibliothèque du kit est vide'); return; }
+  const tous = meublesKitParAngle().filter(m=> m && m.ref);   // v677 : les fiches de la bibliothèque, une vignette par angle
+  if (!tous.length){ showToast('Aucun meuble : crée des fiches de mobilier dans Édition → Objets'); return; }
   /* v657 : rangés par type d'objet, avec un bouton par type pour filtrer */
   const types = Array.from(new Set(tous.map(categorieDecor))).sort((a, b)=> a.localeCompare(b, 'fr'));
   let filtre = (choisirMeubleDuKit._dernier && types.includes(choisirMeubleDuKit._dernier)) ? choisirMeubleDuKit._dernier : '';
@@ -35737,7 +35760,7 @@ function choisirMeubleDuKit(quandChoisi){
   fond.style.cssText = 'position:fixed; inset:0; z-index:5000; background:rgba(0,0,0,.78); display:flex; flex-direction:column; padding:14px; overflow:auto;';
   const chip = (t, lib)=> `<button type="button" data-filtre="${htmlEsc(t)}" style="padding:4px 10px; border-radius:14px; border:1px solid rgba(255,255,255,.4); background:${filtre === t ? 'rgba(255,255,255,.85); color:#111' : 'rgba(255,255,255,.08); color:#fff'}; font-size:12px;">${htmlEsc(lib)}</button>`;
   const vignette = (m)=> `<button type="button" data-mid="${m.id}" style="background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.3); border-radius:8px; padding:6px; color:#fff; display:flex; flex-direction:column; align-items:center; gap:4px;"><img data-vref style="width:84px; height:64px; object-fit:contain;"><span style="font-size:11px;">${(m.nom || '').replace(/</g,'&lt;')}</span></button>`;
-  fond.innerHTML = `<div style="display:flex; align-items:center; gap:8px; color:#fff; margin-bottom:8px;"><b style="flex:1;">🧩 Meuble du kit</b><button type="button" class="btn-secondary" data-fermer>✕</button></div>
+  fond.innerHTML = `<div style="display:flex; align-items:center; gap:8px; color:#fff; margin-bottom:8px;"><b style="flex:1;">📚 Meuble de la bibliothèque</b><button type="button" class="btn-secondary" data-fermer>✕</button></div>
     <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">${chip('', 'Tout')}${types.map(t=> chip(t, t)).join('')}</div>
     <div data-grille></div>`;
   const remplir = ()=>{
@@ -36167,7 +36190,76 @@ const TYPES_KIT = {
   plafond: { emoji:'💡', nom:'Au plafond', dims:'largeur × profondeur' },
 };
 const coquilleParId = (id)=> (kitBiblio.coquilles || []).find(c=> c && c.id === id) || null;
-const meubleParId = (id)=> (kitBiblio.meubles || []).find(m=> m && m.id === id) || null;
+/* v677 — LES MEUBLES DU KIT VIENNENT DES FICHES de la bibliothèque d'objets (Édition → Objets).
+   Un meuble « fi_<fiche> » porte ses trois images d'angle (refs.face / gauche / droite) ; un ancien
+   meuble du kit déjà rassemblé dans une fiche est servi par elle (même image d'angle qu'avant), et
+   seuls les meubles pas encore rassemblés restent lus dans app_config/kit. */
+const refDeVue = (v, ouvert)=> !v ? null : ouvert ? (v.refOuvert || (v.pathOuvert ? 'path:' + v.pathOuvert : null)) : (v.ref || (v.path ? 'path:' + v.path : null));
+function meubleDeFiche(it){
+  const mob = it && it.mob; if (!mob || mob.fenetre) return null;
+  const vues = mob.vues || {};
+  const refs = { face: refDeVue(vues.face), gauche: refDeVue(vues.gauche), droite: refDeVue(vues.droite) };
+  const ref = refs.face || refs.gauche || refs.droite; if (!ref) return null;
+  const mur = mob.pose === 'mur', p = Math.max(1, mob.p || 1);
+  /* les réglages (taille, coins) gardés pour chaque angle ; à défaut, ceux des anciens meubles du kit */
+  const reglages = Object.assign({}, mob.reglages || {});
+  ((mob.sources && mob.sources.kit) || []).forEach(id=>{ const l = (kitBiblio.meubles || []).find(x=> x && x.id === id);
+    const a = l && (ANGLES_MOBILIER[l.angle] ? l.angle : 'face'); if (l && l.reglage && !reglages[a]) reglages[a] = l.reglage; });
+  return { id: 'fi_' + it.id, ficheId: it.id, nom: it.name || 'Meuble', categorie: mob.categorie || null,
+    type: mur ? 'mur' : mob.pose === 'plafond' ? 'plafond' : 'sol', w: Math.max(1, mob.w || 1), d: mur ? 1 : p, h: mur ? p : 1,
+    ref, refs, angle: refs.face ? 'face' : refs.gauche ? 'gauche' : 'droite', reglage: reglages[refs.face ? 'face' : refs.gauche ? 'gauche' : 'droite'] || null, reglages,
+    porte: !!mob.porte || mob.categorie === 'Porte', lumiere: !!mob.lumiere, kDefaut: mob.kDefaut != null ? mob.kDefaut : null };
+}
+function ficheDuMeubleKit(idAncien){
+  return (typeof items !== 'undefined' ? items : []).find(i=> i && i.mob && i.mob.sources && (i.mob.sources.kit || []).includes(idAncien)) || null;
+}
+/* tous les meubles posables : les fiches, puis les anciens meubles pas encore rassemblés */
+function meublesKit(){
+  const out = [];
+  (typeof items !== 'undefined' ? items : []).forEach(it=>{ const m = meubleDeFiche(it); if (m) out.push(m); });
+  (kitBiblio.meubles || []).forEach(m=>{ if (m && m.id && !ficheDuMeubleKit(m.id)) out.push(m); });
+  return out;
+}
+/* une ligne par image d'angle (pour choisir une image de décor) */
+function meublesKitParAngle(){
+  const out = [];
+  meublesKit().forEach(m=>{
+    if (!m.refs){ out.push(m); return; }
+    Object.keys(ANGLES_MOBILIER).forEach(a=>{ if (m.refs[a]) out.push(Object.assign({}, m, { id: m.id + '|' + a, ref: m.refs[a], angle: a, reglage: m.reglages[a] || null,
+      nom: m.nom + (a === 'face' ? '' : a === 'gauche' ? ' (mur de gauche)' : ' (mur de droite)') })); });
+  });
+  return out;
+}
+const meubleParId = (id)=>{
+  if (!id) return null;
+  if (String(id).startsWith('fi_')){
+    const [base, a] = String(id).split('|');
+    const it = (typeof items !== 'undefined' ? items : []).find(i=> i && 'fi_' + i.id === base);
+    const m = it ? meubleDeFiche(it) : null;
+    if (m && a && m.refs[a]) return Object.assign({}, m, { id, ref: m.refs[a], angle: a, reglage: m.reglages[a] || null });
+    return m;
+  }
+  const ancien = (kitBiblio.meubles || []).find(m=> m && m.id === id) || null;
+  const fiche = ficheDuMeubleKit(id);
+  const m = fiche ? meubleDeFiche(fiche) : null;
+  if (!m) return ancien;
+  /* un meuble posé avant le rassemblement garde son angle d'origine (sauf si on le change) */
+  const a = ancien && ANGLES_MOBILIER[ancien.angle] ? ancien.angle : 'face';
+  return Object.assign({}, m, { id, ref: m.refs[a] || m.ref, angle: a, angleOrigine: a });
+};
+/* l'angle à montrer : celui choisi à la main (o.angle), sinon selon le mur ou le bord de la pièce */
+function angleAutoKit(o, m, G){
+  if (o.angle) return o.angle;
+  if (m && m.angleOrigine) return m.angleOrigine;
+  if (o.zone === 'g') return 'gauche';
+  if (o.zone === 'd') return 'droite';
+  if (o.zone === 'sol' && G && m){
+    const { w } = dimsKit(o, m);
+    if (o.c <= 0) return 'gauche';
+    if (o.c + w >= G.nx) return 'droite';
+  }
+  return 'face';
+}
 
 /* ---------- la géométrie d'une coquille ----------
    Six repères posés sur l'image (en pixels de l'image) : le mur du fond est le rectangle
@@ -36328,7 +36420,14 @@ function dimsKit(o, m){
   return { w, d, h };
 }
 /* l'image à dessiner selon l'orientation (face par défaut ; dos ; profil, en miroir pour l'autre côté) */
-function refVueKit(o, m){
+function refVueKit(o, m, G){
+  if (m && m.refs){   // v677 : un meuble de fiche — l'image de son angle ; l'autre côté en miroir s'il manque
+    const a = angleAutoKit(o, m, G), r = m.refs;
+    if (r[a]) return { ref: r[a], miroir: !!o.miroir };
+    if (a === 'gauche' && r.droite) return { ref: r.droite, miroir: !o.miroir };
+    if (a === 'droite' && r.gauche) return { ref: r.gauche, miroir: !o.miroir };
+    return { ref: r.face || m.ref, miroir: !!o.miroir };
+  }
   const v = m.vues || {};
   if (o.orient === 'dos' && v.dos) return { ref: v.dos, miroir: !!o.miroir };
   if ((o.orient === 'g' || o.orient === 'd') && v.profil) return { ref: v.profil, miroir: (o.orient === 'd') !== !!o.miroir };
@@ -36422,7 +36521,7 @@ async function composerKit(kit, opts){
       continue;
     }
     const m = meubleParId(o.meubleId); if (!m) continue;
-    const vue = refVueKit(o, m);
+    const vue = refVueKit(o, m, G);
     const img = await chargerImage(await urlDeRef(vue.ref)); if (!img) continue;
     const e = emplacementKit(G, o, m);
     /* v652 : les essais de meubles tournés (gabarit v636, planche tournante v637, vue murale v639-v642) sont
@@ -36669,7 +36768,7 @@ async function ouvrirEditeurKit(){
     selBar.style.display = 'flex';
     const b = (attr, l)=> `<button type="button" class="btn-secondary" ${attr} style="padding:4px 8px; font-size:13px;">${l}</button>`;
     selBar.innerHTML = `<span style="flex:1; min-width:0; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${htmlEsc((m && m.nom) || 'Objet')}</span>`
-      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + (peutTourner ? b('data-tourner', '⟲ De face') : '') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
+      + b('data-dep="g"', '◀') + b('data-dep="d"', '▶') + b('data-dep="h"', '▲') + b('data-dep="b"', '▼') + (peutTourner ? b('data-tourner', '⟲ De face') : '') + (m && m.refs && Object.values(m.refs).filter(Boolean).length > 1 ? b('data-angle', '∠ ' + ({ face:'face', gauche:'gauche', droite:'droite' })[angleAutoKit(o, m, G)] + (o.angle ? '' : ' (auto)')) : '') + b('data-miroir', '↔️') + b('data-suppr', '🗑️');
     aide.textContent = 'Glisse-le, ou pousse-le d\'une demi-case. ' + (o.zone === 'sol' ? '▲▼ : vers le fond / vers toi.' : o.zone === 'fond' || o.zone === 'g' || o.zone === 'd' ? '▲▼ : plus haut / plus bas sur le mur.' : '');
     const bt = selBar.querySelector('[data-tourner]');
     if (bt) bt.addEventListener('click', async ()=>{
@@ -36688,6 +36787,13 @@ async function ouvrirEditeurKit(){
       Object.assign(o, test); signalerChevauchement(o, m); await redessinerImage(); dessinerCalque();
     }));
     selBar.querySelector('[data-miroir]').addEventListener('click', async ()=>{ o.miroir = !o.miroir; await redessinerImage(); });
+    const bAngle = selBar.querySelector('[data-angle]');   // v677 : auto (selon le mur) → face → gauche → droite → auto
+    if (bAngle) bAngle.addEventListener('click', async ()=>{
+      const cycle = [null, 'face', 'gauche', 'droite'];
+      o.angle = cycle[(cycle.indexOf(o.angle || null) + 1) % cycle.length];
+      if (!o.angle) delete o.angle;
+      await redessinerImage(); dessinerSelection(); dessinerPanneau();
+    });
     selBar.querySelector('[data-suppr]').addEventListener('click', async ()=>{ kit.objets = kit.objets.filter(x=> x.id !== o.id); sel = null; await redessinerImage(); dessinerCalque(); dessinerSelection(); dessinerPanneau(); });
   };
   /* ----- la bande du bas ----- */
@@ -36696,12 +36802,12 @@ async function ouvrirEditeurKit(){
     fond.querySelectorAll('[data-onglet]').forEach(b=> b.style.borderColor = b.dataset.onglet === onglet ? 'var(--accent)' : '');
     let h = '';
     if (onglet === 'meubles'){
-      const ms = kitBiblio.meubles || [];
+      const ms = meublesKit();   // v677 : les fiches de la bibliothèque
       h = '<div style="display:flex; flex-wrap:wrap; gap:6px; padding:2px 0 4px;">'
         + ms.map(m=> vignette('data-ajout="' + m.id + '"', `<img data-mref="${m.id}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; left:2px; bottom:1px; font-size:9px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; padding:0 3px;">${TYPES_KIT[m.type] ? TYPES_KIT[m.type].emoji : ''} ${m.w || 1}×${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}</span>`, m.nom)).join('')
         + (fenetresBiblio.cadres || []).map(c=> vignette('data-ajout-cadre="' + c.id + '"', `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; left:2px; bottom:1px; font-size:9px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; padding:0 3px;">🪟</span>`, c.nom)).join('')
         + '</div>'
-        + (ms.length ? '' : '<p class="meta" style="font-size:12px;">Aucun meuble : pose des planches dans 🧰 À finir → 🧩 Pièces en kit.</p>');
+        + (ms.length ? '' : '<p class="meta" style="font-size:12px;">Aucun meuble : crée des fiches de mobilier dans Édition → Objets → 📚 Bibliothèque.</p>');
     } else if (onglet === 'poses'){
       h = kit.objets.length ? kit.objets.map(o=>{ const m = meubleDe(o); return `<div class="editor-list-item" data-choisir="${o.id}" style="cursor:pointer; ${o.id === sel ? 'outline:2px solid var(--accent);' : ''}"><div class="thumb"><img data-oref="${o.id}" style="width:100%; height:100%; object-fit:contain;"></div><div class="name">${htmlEsc((m && m.nom) || '?')}<span class="meta" style="display:block; font-size:10px;">${o.zone === 'sol' ? 'au sol' : o.zone === 'plafond' ? 'au plafond' : o.zone === 'fond' ? 'mur du fond' : o.zone === 'g' ? 'mur de gauche' : 'mur de droite'}${o.miroir ? ' · miroir' : ''}</span></div></div>`; }).join('')
         : '<p class="meta" style="font-size:12px;">Rien de posé pour l\'instant.</p>';
@@ -36713,7 +36819,7 @@ async function ouvrirEditeurKit(){
     panneau.innerHTML = h;
     panneau.querySelectorAll('[data-mref]').forEach(im=>{ const m = meubleParId(im.dataset.mref); urlDeRef(m && m.ref).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = (fenetresBiblio.cadres || []).find(x=> x.id === im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
-    panneau.querySelectorAll('[data-oref]').forEach(im=>{ const o = objet(im.dataset.oref); const m = o && meubleDe(o); urlDeRef(m && m.ref).then(u=>{ if (u) im.src = u; }); });
+    panneau.querySelectorAll('[data-oref]').forEach(im=>{ const o = objet(im.dataset.oref); const m = o && meubleDe(o); urlDeRef(m && (o.cadreId ? m.ref : refVueKit(o, m, G).ref)).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-coqref]').forEach(im=>{ const c = coquilleParId(im.dataset.coqref); urlDeRef(c && c.ref || c && c.imageRef).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-ajout]').forEach(b=> b.addEventListener('click', async ()=>{
       if (occupe) return; occupe = true;
@@ -36881,13 +36987,13 @@ async function ouvrirBiblioKit(){
   fond.className = 'overlay show'; fond.style.zIndex = '4800';
   document.body.appendChild(fond);
   const rendre = ()=>{
-    const coqs = kitBiblio.coquilles || [], ms = kitBiblio.meubles || [];
+    const coqs = kitBiblio.coquilles || [], ms = (kitBiblio.meubles || []).filter(m=> m && !ficheDuMeubleKit(m.id));   // v677
     fond.innerHTML = `<div class="sheet" style="max-height:92vh; overflow-y:auto;">
       <div class="sheet-top"><h3 style="margin-top:0;">🧩 Pièces en kit</h3><button class="sheet-x" data-x>✕</button></div>
-      <p class="meta" style="margin:0 0 8px; font-size:12px;">Les coquilles (pièces vides) et les meubles. Les images se posent dans 🧰 À finir → 🧩 Pièces en kit ; ici on règle. Une case = 40 cm.</p>
+      <p class="meta" style="margin:0 0 8px; font-size:12px;">Les coquilles (pièces vides). Les images se posent dans 🧰 À finir → 🧩 Pièces en kit ; ici on règle. Une case = 40 cm.<br>🪑 <b>Les meubles se règlent maintenant dans leur fiche : Édition → Objets → 📚 Bibliothèque.</b></p>
       <div class="field-label">🏠 Coquilles (${coqs.length})</div>
       ${coqs.map(c=> `<div class="editor-list-item" style="flex-wrap:wrap;"><div class="thumb"><img data-coqref="${c.id}" style="width:100%; height:100%; object-fit:cover;"></div><input type="text" data-coq-nom="${c.id}" class="field-input" value="${htmlEsc(c.nom || '')}" style="flex:1; min-width:100px;"><button type="button" class="btn-secondary" data-coq-regler="${c.id}">📐</button><button type="button" class="btn-secondary" data-coq-suppr="${c.id}" style="color:var(--danger);">🗑️</button></div>`).join('') || '<p class="meta">Aucune coquille.</p>'}
-      <div class="field-label" style="margin-top:10px;">🪑 Meubles et objets de décor (${ms.length}) — rangés par type</div>
+      ${ms.length ? `<div class="field-label" style="margin-top:10px;">🪑 Anciens meubles pas encore rassemblés (${ms.length})</div><p class="meta" style="font-size:11px; margin:0 0 6px;">Appuie sur 🔄 Rassembler dans Édition → Objets → 📚 Bibliothèque : ils deviendront des fiches.</p>` : ''}
       <datalist id="kitCategories">${Array.from(new Set(CATEGORIES_DECOR.concat(ms.map(m=> m.categorie).filter(Boolean)))).map(c=> `<option value="${htmlEsc(c)}">`).join('')}</datalist>
       ${ms.slice().sort((a, b)=> categorieDecor(a).localeCompare(categorieDecor(b), 'fr') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr')).map((m, i, arr)=> (i === 0 || categorieDecor(arr[i - 1]) !== categorieDecor(m) ? `<div class="meta" style="margin:10px 0 4px; font-weight:700;">📁 ${htmlEsc(categorieDecor(m))}</div>` : '') + `<div class="editor-list-item" style="flex-wrap:wrap; gap:6px;"><div class="thumb"><img data-mref="${m.id}" style="width:100%; height:100%; object-fit:contain;"></div>
         <input type="text" data-m-nom="${m.id}" class="field-input" value="${htmlEsc(m.nom || '')}" style="flex:1; min-width:90px;">
@@ -36898,7 +37004,7 @@ async function ouvrirBiblioKit(){
         <label class="meta">${m.type === 'mur' ? 'H' : 'P'} <input type="number" data-m-dh="${m.id}" min="1" max="20" value="${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}" class="field-input" style="width:52px;"></label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-porte="${m.id}" ${m.porte ? 'checked' : ''} style="width:auto;"> porte</label>
         <label class="meta" style="display:flex; align-items:center; gap:3px;"><input type="checkbox" data-m-lum="${m.id}" ${m.lumiere ? 'checked' : ''} style="width:auto;"> lumière</label>
-        <button type="button" class="btn-secondary" data-m-suppr="${m.id}" style="color:var(--danger);">🗑️</button></div>`).join('') || '<p class="meta">Aucun meuble.</p>'}
+        <button type="button" class="btn-secondary" data-m-suppr="${m.id}" style="color:var(--danger);">🗑️</button></div>`).join('')}
       <button type="button" class="btn-primary" data-ok style="width:100%; margin-top:12px;">💾 Enregistrer</button>
     </div>`;
     fond.querySelectorAll('[data-coqref]').forEach(im=>{ const c = coquilleParId(im.dataset.coqref); urlDeRef(c && c.imageRef).then(u=>{ if (u) im.src = u; }); });
