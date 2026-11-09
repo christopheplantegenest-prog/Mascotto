@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v664</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v665</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -16141,62 +16141,199 @@ function renderInventoryList(){
   if (inventoryPage < 0) inventoryPage = 0;
   const pageEntries = entries.slice(inventoryPage*INVENTORY_PAGE_SIZE, (inventoryPage+1)*INVENTORY_PAGE_SIZE);
 
+  /* v665 : une ligne par objet ; on la touche, ses commandes s'ouvrent (voir ouvrirMenuObjet) */
   listEl.innerHTML = '';
   pageEntries.forEach(({itemId, qty, it})=>{
-    const thumbHtml = it ? `<img src="${it.imageUrl || ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;">` : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;">`;
     const row = document.createElement('div');
     row.className = 'editor-list-item';
+    row.style.cursor = 'pointer';
     row.innerHTML = `
-      <div class="thumb">${thumbHtml}</div>
-      <div class="name">${it ? it.name : '(objet supprimé)'}<div class="meta" style="font-size:11px;">× ${qty}</div></div>
-      <input type="number" min="1" max="${qty}" value="1" class="field-input" data-discard-qty="${itemId}" style="width:56px; margin:0; flex:none;">
-      <button class="btn-secondary" data-discard="${itemId}" style="flex:none; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">Jeter</button>
-    `;
+      <div class="thumb"><img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" style="width:100%;height:100%;object-fit:contain;"></div>
+      <div class="name">${it ? escSac(it.name) : '(objet supprimé)'}<div class="meta" style="font-size:11px;">× ${qty}${it && it.type === 'quete' ? ' · objet de quête' : ''}</div></div>
+      <div style="flex:none; font-size:20px; opacity:.5; padding:0 4px;">›</div>`;
+    row.addEventListener('click', ()=> ouvrirMenuObjet(itemId));
     listEl.appendChild(row);
-    // Objet de soin ou de réanimation : utilisable directement sur un combattant, hors combat
-    if (it && isCareItem(it)){
-      const useBtn = document.createElement('button');
-      useBtn.className = 'btn-secondary';
-      useBtn.style.cssText = 'width:100%; margin:-4px 0 8px; font-size:12px;';
-      useBtn.textContent = (it.combatUse.mode === 'revive') ? '✨ Réanimer un combattant' : (it.combatUse.mode === 'mana') ? '🔷 Recharger un combattant' : '🧪 Soigner un combattant';
-      const targets = document.createElement('div');
-      targets.style.cssText = 'display:none; margin:-4px 0 10px;';
-      useBtn.addEventListener('click', ()=>{
-        if (targets.style.display === 'block'){ targets.style.display = 'none'; return; }
-        targets.innerHTML = careTargetsHtml(it);
-        targets.style.display = 'block';
-        targets.querySelectorAll('[data-care-target]').forEach(tb=>{
-          tb.addEventListener('click', ()=>{
-            const r = recruits.find(x=> x.id === tb.dataset.careTarget);
-            if (r) useHealingItemOnRecruit(r, it);
-          });
-        });
-      });
-      listEl.appendChild(useBtn);
-      listEl.appendChild(targets);
-    }
-  });
-  listEl.querySelectorAll('button[data-discard]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const itemId = btn.dataset.discard;
-      const qtyInput = listEl.querySelector(`input[data-discard-qty="${itemId}"]`);
-      const qtyToDiscard = parseInt(qtyInput.value, 10) || 1;
-      const entry = inventoryEntriesCache.find(([id])=>id===itemId);
-      const maxQty = entry ? entry[1] : 0;
-      if (qtyToDiscard > maxQty){ showToast('Tu n\'en as que ' + maxQty); return; }
-      db.collection('players').doc(currentUser.uid).set({
-        inventory: { [itemId]: firebase.firestore.FieldValue.increment(-qtyToDiscard) }
-      }, { merge:true }).then(()=>{
-        showToast(`${qtyToDiscard} jeté(s)`);
-        renderInventory();
-      }).catch((err)=> showToast('Échec : ' + err.message));
-    });
   });
 
   document.getElementById('inventoryPager').style.display = 'flex';
   document.getElementById('inventoryPageLabel').textContent = `${inventoryPage+1}/${totalPages}`;
   document.getElementById('inventoryPrevBtn').disabled = inventoryPage === 0;
   document.getElementById('inventoryNextBtn').disabled = inventoryPage >= totalPages - 1;
+}
+
+/* ═══ v665 — LE SAC. On touche un objet : une petite fenêtre propose SEULEMENT les commandes qui
+   ont un sens pour lui. Utiliser et Équiper ouvrent une deuxième fenêtre, l'objet en haut et les
+   robots en dessous (PV, charge, état, équipement) : elle reste ouverte, on enchaîne les potions
+   ou les essais d'équipement sans repasser par l'objet. Jeter choisit la quantité (− / +).
+   Un objet de quête ne se jette pas : il ne doit jamais pouvoir bloquer une quête.
+   À venir : Poser (meuble, dans la chambre) et Planter (graine, sur un bac). ═══ */
+const escSac = (t)=> String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+const TYPES_OBJET_SAC = { ressource:'Ressource', quete:'Objet de quête', consommable:'Consommable', apprentissage:'Manuel',
+  equipement:'Équipement', composant:'Composant de robot', graine:'Graine à planter' };
+function qteAuSac(itemId){ const e = inventoryEntriesCache.find(([id])=> id === itemId); return e ? e[1] : 0; }
+function majQteAuSac(itemId, delta){
+  const e = inventoryEntriesCache.find(([id])=> id === itemId);
+  if (e) e[1] = Math.max(0, e[1] + delta);
+  inventoryEntriesCache = inventoryEntriesCache.filter(([,q])=> q > 0);
+  if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventoryList();
+}
+function commandesObjet(it){
+  if (!it) return ['jeter'];
+  const c = [];
+  if (isCareItem(it)) c.push('utiliser');
+  if (it.equippable) c.push('equiper');
+  c.push('observer');
+  if (it.type !== 'quete') c.push('jeter');
+  return c;
+}
+function fenetreSac(html){
+  const f = document.createElement('div');
+  f.className = 'overlay show';
+  f.innerHTML = '<div class="sheet" style="max-height:85vh; overflow-y:auto;">' + html + '</div>';
+  f.addEventListener('click', (e)=>{ if (e.target === f) f.remove(); });
+  document.body.appendChild(f);
+  if (typeof assurerAuDessus === 'function') assurerAuDessus(f);
+  f.querySelectorAll('[data-fermer]').forEach(b=> b.addEventListener('click', ()=> f.remove()));
+  return f;
+}
+function enteteObjetSac(it, qte, grand){
+  const t = grand ? 64 : 44;
+  return `<div style="display:flex; gap:10px; align-items:center;">
+    <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" style="width:${t}px; height:${t}px; object-fit:contain; flex:none;">
+    <div style="flex:1; min-width:0;">
+      <div style="font-weight:700;">${it ? escSac(it.name) : '(objet supprimé)'}</div>
+      <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? 'Dans ton sac : ' + qte : 'Il ne t\'en reste plus'}</div>
+    </div>
+    <button class="sheet-x" data-fermer>✕</button>
+  </div>`;
+}
+function ouvrirMenuObjet(itemId){
+  const it = items.find(i=> i.id === itemId) || null;
+  const LIB = { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
+    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter' };
+  const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId))
+    + '<div style="display:flex; flex-direction:column; gap:6px; margin-top:12px;">'
+    + commandesObjet(it).map(c=> `<button class="${c === 'jeter' ? 'btn-secondary' : 'btn-capture'}" data-cmd="${c}" style="width:100%;${c === 'jeter' ? ' color:var(--danger); border-color:rgba(192,57,43,.4) !important;' : ''}">${LIB[c]}</button>`).join('')
+    + '</div>');
+  f.querySelectorAll('[data-cmd]').forEach(b=> b.addEventListener('click', ()=>{
+    f.remove();
+    const c = b.dataset.cmd;
+    if (c === 'utiliser' || c === 'equiper') ouvrirRobotsPourObjet(itemId, c);
+    else if (c === 'observer') observerObjet(it);
+    else if (c === 'jeter') jeterObjetSac(itemId);
+  }));
+}
+function observerObjet(it){
+  if (!it) return;
+  const effet = (it.equippable || it.combatUse) && typeof itemEffectSummary === 'function' ? itemEffectSummary(it) : '';
+  fenetreSac(`<div style="display:flex; justify-content:flex-end;"><button class="sheet-x" data-fermer>✕</button></div>
+    <div style="text-align:center;">
+      <img src="${urlImageItem(it) || ITEM_PLACEHOLDER_IMG}" style="width:min(70vw, 260px); height:min(70vw, 260px); object-fit:contain;">
+      <h3 style="margin:8px 0 2px;">${escSac(it.name)}</h3>
+      <div class="meta" style="font-size:12px;">${it.deco ? 'Décoration de chambre' : (TYPES_OBJET_SAC[it.type] || 'Objet')}</div>
+    </div>
+    ${it.description ? '<p style="margin:12px 0 0; line-height:1.45;">' + escSac(it.description) + '</p>' : ''}
+    ${effet ? '<p class="meta" style="margin:8px 0 0;">' + escSac(effet) + '</p>' : ''}`);
+}
+function jeterObjetSac(itemId){
+  const it = items.find(i=> i.id === itemId) || null;
+  const max = qteAuSac(itemId);
+  if (!max) return;
+  let n = 1;
+  const f = fenetreSac(enteteObjetSac(it, max) + `
+    <div class="field-label" style="margin-top:14px;">Combien en jeter ?</div>
+    <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:6px 0 12px;">
+      <button class="btn-secondary" data-moins style="flex:none; width:48px; height:48px; font-size:22px;">−</button>
+      <div data-n style="min-width:48px; text-align:center; font-size:24px; font-weight:700;">1</div>
+      <button class="btn-secondary" data-plus style="flex:none; width:48px; height:48px; font-size:22px;">+</button>
+      <button class="btn-secondary" data-tout style="flex:none; font-size:12px;">Tout (${max})</button>
+    </div>
+    <button class="btn-capture" data-ok style="width:100%; background:var(--danger);">🗑️ Jeter 1</button>`);
+  const maj = ()=>{ f.querySelector('[data-n]').textContent = n; f.querySelector('[data-ok]').textContent = '🗑️ Jeter ' + n;
+    f.querySelector('[data-moins]').disabled = n <= 1; f.querySelector('[data-plus]').disabled = n >= max; };
+  f.querySelector('[data-moins]').addEventListener('click', ()=>{ n = Math.max(1, n - 1); maj(); });
+  f.querySelector('[data-plus]').addEventListener('click', ()=>{ n = Math.min(max, n + 1); maj(); });
+  f.querySelector('[data-tout]').addEventListener('click', ()=>{ n = max; maj(); });
+  maj();
+  f.querySelector('[data-ok]').addEventListener('click', ()=>{
+    if (!currentUser || !db) return;
+    f.querySelector('[data-ok]').disabled = true;
+    db.collection('players').doc(currentUser.uid).set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(-n) } }, { merge:true })
+      .then(()=>{ f.remove(); showToast(n + ' jeté' + (n > 1 ? 's' : '')); majQteAuSac(itemId, -n); renderInventory(); })
+      .catch((err)=>{ f.querySelector('[data-ok]').disabled = false; showToast('Échec : ' + err.message); });
+  });
+}
+function imageRecrueSac(r, quandPrete){
+  if (r.imageUrl) return r.imageUrl;
+  if (r.imagePath) return resolveMediaPath(r.imagePath);
+  const m = r.robotModeleId && typeof ctModele === 'function' ? ctModele(r.robotModeleId) : null;
+  return m ? urlFaceModele(m, quandPrete) : '';
+}
+/* la fenêtre des robots, pour Utiliser (soin, réanimation, recharge) ou Équiper */
+function ouvrirRobotsPourObjet(itemId, mode){
+  const it = items.find(i=> i.id === itemId);
+  if (!it) return;
+  const cat = it.equipCategory || 'accessoire';
+  const slot = EQUIP_SLOTS.find(x=> x.id === cat) || EQUIP_SLOTS[2];
+  const f = fenetreSac('<div data-haut></div><div class="field-label" style="margin-top:12px;">' + (mode === 'equiper' ? 'Sur quel robot ? (' + slot.emoji + ' ' + slot.label + ')' : 'Sur quel robot ?') + '</div><div data-robots></div>');
+  const etat = (r)=>{
+    const hp = recruitEffectiveHp(r), max = recruitMaxHp(r), maxM = recruitMaxMana(r);
+    const pct = max ? Math.round(100 * hp / max) : 0;
+    const coul = hp <= 0 ? 'var(--danger)' : pct < 35 ? '#e67e22' : '#27ae60';
+    return `<div style="height:6px; border-radius:3px; background:rgba(128,128,128,.25); overflow:hidden; margin-top:3px;"><div style="height:100%; width:${pct}%; background:${coul};"></div></div>
+      <div class="meta" style="font-size:11px; margin-top:2px;">${hp <= 0 ? '💀 K.O.' : '❤️ ' + hp + '/' + max + ' PV'}${maxM ? ' · 🔷 ' + recruitEffectiveMana(r) + '/' + maxM : ''}${r.restingSince ? ' · 💤 au repos' : ''}${(activeTeamIds || []).includes(r.id) ? ' · ⭐ équipe' : ''}</div>`;
+  };
+  const dessiner = ()=>{
+    if (!document.body.contains(f)) return;
+    const reste = qteAuSac(itemId);
+    f.querySelector('[data-haut]').innerHTML = enteteObjetSac(it, reste)
+      + '<div class="meta" style="font-size:12px; margin-top:6px;">' + escSac(mode === 'equiper' ? itemEffectSummary(it) : (it.combatUse.mode === 'revive' ? 'Réanime un robot K.O.' : it.combatUse.mode === 'mana' ? 'Recharge la charge 🔷 d\'un robot' : 'Rend des PV à un robot blessé')) + '</div>';
+    f.querySelectorAll('[data-fermer]').forEach(b=> b.onclick = ()=> f.remove());
+    const robots = (recruits || []).filter(r=> r.recruitType === 'combattant')
+      .sort((a, b)=> ((activeTeamIds || []).includes(b.id) - (activeTeamIds || []).includes(a.id)) || String(a.name).localeCompare(String(b.name), 'fr'));
+    if (!robots.length){ f.querySelector('[data-robots]').innerHTML = '<p class="meta">Tu n\'as encore aucun robot.</p>'; return; }
+    f.querySelector('[data-robots]').innerHTML = robots.map(r=>{
+      let ok = reste > 0, libelle = '', note = '';
+      if (mode === 'utiliser'){
+        const cu = it.combatUse, hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
+        if (cu.mode === 'revive'){ libelle = '✨ Réanimer'; if (hp > 0){ ok = false; note = 'pas K.O.'; } }
+        else if (cu.mode === 'mana'){ libelle = '🔷 Recharger'; if (hp <= 0){ ok = false; note = 'K.O.'; } else if (!recruitMaxMana(r)){ ok = false; note = 'sans charge'; } else if (recruitEffectiveMana(r) >= recruitMaxMana(r)){ ok = false; note = 'déjà plein'; } }
+        else { libelle = '🧪 Soigner'; if (hp <= 0){ ok = false; note = 'K.O. : il faut réanimer'; } else if (hp >= max){ ok = false; note = 'PV pleins'; } }
+      } else {
+        const actuel = items.find(i=> i.id === recruitEquipSlots(r)[cat]);
+        note = actuel ? slot.emoji + ' ' + escSac(actuel.name) : slot.emoji + ' rien';
+        if (actuel && actuel.id === it.id){ ok = false; libelle = 'Équipé'; }
+        else libelle = actuel ? '🔁 Remplacer' : '🛡️ Équiper';
+        if (it.effectMetiers && it.effectMetiers.length && !it.effectMetiers.includes(r.metierId)){ ok = false; note = 'pas pour ce robot'; }
+      }
+      return `<div style="display:flex; gap:8px; align-items:center; padding:8px 0; border-top:1px solid rgba(128,128,128,.2);">
+        <img data-img-recrue="${r.id}" src="${imageRecrueSac(r) || ITEM_PLACEHOLDER_IMG}" style="width:44px; height:44px; object-fit:contain; flex:none;">
+        <div style="flex:1; min-width:0;"><div style="font-weight:600; font-size:14px;">${escSac(r.name)}</div>${etat(r)}${note ? '<div class="meta" style="font-size:11px;">' + note + '</div>' : ''}</div>
+        <button class="${ok ? 'btn-capture' : 'btn-secondary'}" data-recrue="${r.id}" ${ok ? '' : 'disabled'} style="flex:none; padding:8px 10px; font-size:12px;${ok ? '' : ' opacity:.5;'}">${libelle}</button>
+      </div>`;
+    }).join('');
+    robots.forEach(r=>{ if (!r.imageUrl && !r.imagePath) imageRecrueSac(r, (u)=>{ const im = f.querySelector('[data-img-recrue="' + r.id + '"]'); if (im) im.src = u; }); });
+    f.querySelectorAll('[data-recrue]').forEach(b=> b.addEventListener('click', ()=>{
+      const r = recruits.find(x=> x.id === b.dataset.recrue);
+      if (!r || qteAuSac(itemId) <= 0) return;
+      b.disabled = true;
+      if (mode === 'utiliser'){ useHealingItemOnRecruit(r, it); majQteAuSac(itemId, -1); dessiner(); return; }
+      const slots = recruitEquipSlots(r), prev = slots[cat];
+      playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
+        if (prev) returnItemToStock(prev);   // l'objet qu'il portait revient au sac
+        const neuf = Object.assign({}, slots, { [cat]: itemId });
+        r.equippedItemIds = neuf;
+        return recruitsCol.doc(r.id).update({ equippedItemIds: neuf });
+      }).then(()=>{
+        majQteAuSac(itemId, -1);
+        if (prev){ const e = inventoryEntriesCache.find(([id])=> id === prev); if (e) e[1]++; else inventoryEntriesCache.push([prev, 1]); }
+        showToast(escSac(r.name) + ' : ' + it.name + ' équipé');
+        if (activeRecruitId === r.id && typeof renderRecruitSheet === 'function') renderRecruitSheet();
+        dessiner(); renderInventory();
+      }).catch((err)=>{ showToast('Échec : ' + err.message); dessiner(); });
+    }));
+  };
+  dessiner();
 }
 
 /* Un objet consommable réglé en soin ou en réanimation peut servir hors combat */
