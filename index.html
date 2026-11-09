@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v663</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v664</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12279,6 +12279,20 @@ LIVRABLE : une seule image, PNG à fond TRANSPARENT. Aucun mur, aucun sol, aucun
 }
 /* la planche posée : découpée, chaque objet rangé dans la bibliothèque (avec son type et son angle)
    et posé sur son point dans la pièce */
+/* v664 : un point de décor qui ne montre rien au joueur, hors de ceux qui attendent leur dessin
+   (prompt, sans image : ils ont déjà leur tâche 🪑). */
+function decorQuiNeSeVoitPas(pt){
+  if (!pt || pt.type !== 'decor') return false;
+  const aImg = !!(pt.imageRef || pt.imageUrl || pt.imagePath);
+  if (!aImg && pt.prompt) return false;
+  return !aImg || !!pt.hideIcon;
+}
+const memeNomDecor = (a, b)=> String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+function meubleDuMemeNom(nom){
+  if (!nom) return null;
+  const l = (kitBiblio.meubles || []).filter(x=> x && x.ref && memeNomDecor(x.nom, nom));
+  return l.find(x=> (x.angle || 'face') === 'face') || l[0] || null;
+}
 async function poserPlancheDecor(zid, pid){
   const doc = await zonesCol.doc(zid).get();
   const data = (doc.exists && doc.data()) || {};
@@ -12302,6 +12316,8 @@ async function poserPlancheDecor(zid, pid){
     const sc = scenes.find(x=> x && x.id === o.sceneId);
     let pt = sc && (sc.points || []).find(x=> x && x.id === o.pointId);
     if (!pt) for (const s2 of scenes){ pt = (s2 && s2.points || []).find(x=> x && x.id === o.pointId); if (pt){ o.sceneId = s2.id; break; } }
+    /* v664 : point recréé entre-temps (nouvel identifiant) : on le retrouve par son nom */
+    if (!pt) for (const s2 of scenes){ pt = (s2 && s2.points || []).find(x=> x && x.type === 'decor' && memeNomDecor(x.label, o.nom)); if (pt){ o.sceneId = s2.id; o.pointId = pt.id; break; } }
     if (pt){ pt.imageRef = ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; poses++; }
   }
   await zonesCol.doc(zid).set({ scenes, planchesDecor: data.planchesDecor, updatedAt: Date.now() }, { merge:true });
@@ -12552,6 +12568,7 @@ async function ouvrirBrouillons(){
       const fz = toutes.find(x=> x.id === d.id && (x.interactionType || '') === 'zone');
       const scs = d.data().scenes || [];
       const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && (pt.type === 'image' || pt.type === 'decor') && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
+        || (sc.points || []).some(pt=> decorQuiNeSeVoitPas(pt, sc.points))   // v664
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)));
       if (fz && enAttente){ scenesDe[d.id] = scs; planchesDe[d.id] = d.data().planchesDecor || []; zonesATerminer.push(fz); }
@@ -12808,6 +12825,25 @@ async function ouvrirBrouillons(){
             + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt) + bouton('data-recup-img="' + z.id + '|' + sc.id + '|' + pt.id + '"', '🛟 Images récentes'));
           envois[cle] = ()=> ({ texte: pt.prompt, imgs: [] });
         });
+        /* v664 : un décor qui ne se voit pas en jeu (pas d'image, ou image masquée) et qui n'a pas sa
+           tâche ci-dessus — typiquement un objet de planche que la pose n'a pas retrouvé. S'il est
+           rangé dans la bibliothèque sous le même nom, un seul bouton le pose. */
+        (sc.points || []).forEach(pt=>{
+          if (!decorQuiNeSeVoitPas(pt, sc.points)) return;
+          manque++;
+          const aImg = !!(pt.imageRef || pt.imageUrl || pt.imagePath);
+          const mb = meubleDuMemeNom(pt.label);
+          const id3 = z.id + '|' + sc.id + '|' + pt.id;
+          blocs += tache(false, '🪑 ' + esc(pt.label || 'Élément de décor') + ' — dans « ' + esc(sc.name) + ' » ne s\'affiche pas',
+            aImg ? 'Il a son image, mais elle est masquée : le joueur ne voit rien.'
+              : (mb ? 'Son image est rangée dans la bibliothèque des décors, mais elle n\'a pas été posée sur ce point.' : 'Ce point de décor n\'a pas d\'image.'),
+            aImg ? '<b>👁 L\'afficher</b>, puis vérifie-le dans la pièce.'
+              : (mb ? '<b>🪑 Poser depuis la bibliothèque</b>, puis <b>🗺️ Ouvrir la pièce</b> pour l\'ajuster si besoin.' : '<b>🛟 Images récentes</b> si tu l\'as déjà faite, sinon <b>📷 Choisir l\'image</b>.'),
+            (aImg ? bouton('data-decor-afficher="' + id3 + '"', '👁 L\'afficher', true)
+              : mb ? bouton('data-decor-biblio="' + id3 + '|' + mb.id + '"', '🪑 Poser depuis la bibliothèque', true)
+              : bouton('data-recup-img="' + id3 + '"', '🛟 Images récentes', true) + bouton('data-poser-pt="' + id3 + '"', '📷 Choisir l\'image'))
+            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce'));
+        });
       });
       html += `<div style="padding:10px; margin-bottom:10px; border:1px solid rgba(128,128,128,.35); border-radius:10px;">
         <div style="font-weight:700;">🗺️ ${esc(z.name || '(zone)')} <span class="meta" style="font-weight:400;">— ${publiee ? 'zone publiée' : 'zone en travaux'} · ${manque ? manque + ' chose(s) à faire' : (publiee ? '✅ rien à faire' : '✅ prête à publier')}</span></div>
@@ -13033,6 +13069,27 @@ async function ouvrirBrouillons(){
   const envoiPrepare = {};
   Object.keys(envois).forEach(cle=>{ try { envoiPrepare[cle] = envois[cle](); } catch(e){} });
   sur('[data-envoi]', (b)=>{ const e = envoiPrepare[b.dataset.envoi]; if (e) envoyerAChatGPT(e.texte, e.imgs, b); });
+  /* v664 : poser sur un point de décor l'image rangée dans la bibliothèque, ou démasquer son image */
+  const corrigerDecor = async (zid, sid, pid, faire)=>{
+    const doc = await zonesCol.doc(zid).get();
+    const scenes = (doc.exists && doc.data().scenes) || [];
+    const pt = ((scenes.find(x=> x && x.id === sid) || {}).points || []).find(x=> x && x.id === pid);
+    if (!pt){ showToast('Point introuvable'); return false; }
+    faire(pt); pt.hideIcon = false;
+    await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+    oublierScenesDeZone(zid);
+    return true;
+  };
+  sur('[data-decor-biblio]', async (b)=>{
+    const [zid, sid, pid, mid] = b.dataset.decorBiblio.split('|');
+    const mb = (kitBiblio.meubles || []).find(x=> x && x.id === mid);
+    if (!mb || !mb.ref){ showToast('Image introuvable dans la bibliothèque'); return; }
+    if (await corrigerDecor(zid, sid, pid, (pt)=>{ pt.imageRef = mb.ref; pt.imageUrl = ''; pt.imagePath = null; })){ showToast('Décor posé ✅'); rouvrir(); }
+  });
+  sur('[data-decor-afficher]', async (b)=>{
+    const [zid, sid, pid] = b.dataset.decorAfficher.split('|');
+    if (await corrigerDecor(zid, sid, pid, ()=>{})){ showToast('Décor affiché ✅'); rouvrir(); }
+  });
   sur('[data-poser-pt]', async (b)=>{
     const [zid, sid, pid] = b.dataset.poserPt.split('|');
     let img = await choisirFichierImage();
@@ -32816,11 +32873,13 @@ async function enregistrerSceneCourante(fermerApres){
     const cleanScenes = await externalizeScenesForSave(sceneEditorScenes);
     let nPhotos = 0;
     try { nPhotos = await figerPhotosDesScenes(cleanScenes, sceneEditorScenes); } catch(e){}   // v663 : jamais bloquant
+    /* v664 : { merge } — sans lui, chaque enregistrement effaçait le reste du document de la zone
+       (planches de décor, état partagé des points). */
     await zonesCol.doc(sceneEditorZoneId).set({
       scenes: cleanScenes,
       startSceneId: sceneEditorStartSceneId,
       updatedAt: Date.now(),
-    });
+    }, { merge: true });
     oublierScenesDeZone(sceneEditorZoneId); // v464
     showToast('Scène enregistrée' + (nPhotos ? ' · 📸 ' + nPhotos + ' photo' + (nPhotos > 1 ? 's' : '') + ' de pièce' : ''));
     /* Le point de comparaison suit l'enregistrement, sinon la zone resterait « modifiée » juste
