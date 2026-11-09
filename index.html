@@ -378,6 +378,15 @@
   #sceneBigImageOverlay img.room-neutre{ display:none; }   /* v627 : la chambre neutre vit dans #chambreNeutreVue */
   #sceneBigImageOverlay.chambre-neutre{ padding:0; background:#000; }   /* v628 : bord à bord, comme une zone */
   #roomRetour{ display:none; position:fixed; left:14px; bottom:max(14px, env(safe-area-inset-bottom)); width:60px; height:60px; z-index:3; padding:0; border:none; background:none; }
+  /* v666 : poser / planter depuis le sac — les places possibles s'allument */
+  .cible-pose{ outline:3px dashed rgba(95,242,255,.95) !important; outline-offset:2px; background:rgba(95,242,255,.16) !important; animation:pulseCible .9s ease-in-out infinite alternate; }
+  @keyframes pulseCible{ from{ outline-color:rgba(95,242,255,.95); } to{ outline-color:rgba(95,242,255,.35); } }
+  #barreDePose{ position:fixed; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom, 0px)); z-index:4990;
+    display:flex; align-items:center; gap:8px; max-width:calc(100vw - 24px); padding:8px 10px 8px 14px; border-radius:22px;
+    background:rgba(0,0,0,.78); color:#fff; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.45); }
+  #barreDePose button{ flex:none; border:1px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; border-radius:16px; padding:5px 10px; font-size:12px; }
+  #roomSac{ display:none; position:fixed; right:14px; bottom:max(14px, env(safe-area-inset-bottom)); z-index:3; width:50px; height:50px; border-radius:50%;
+    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.35); font-size:22px; box-shadow:0 4px 12px rgba(0,0,0,.45); }
   #roomRetour img{ width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)); }
   #sceneBigImageOverlay .sheet-x{
     position:fixed; top:14px; right:14px; background:rgba(0,0,0,.55); color:#fff; border-radius:50%;
@@ -1432,7 +1441,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v665</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v666</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3852,6 +3861,7 @@
   <button class="sheet-x" id="sceneBigImageCloseBtn">✕</button>
   <div id="chambreNeutreVue" style="display:none; position:absolute; inset:0;"></div>
   <button type="button" id="roomRetour" title="Retour"><img alt="Retour"></button>
+  <button type="button" id="roomSac" title="Sac">🎒</button>
   <div id="roomActions" style="display:none; position:fixed; right:12px; top:50%; transform:translateY(-50%); flex-direction:column; gap:10px; z-index:2;"></div>
 </div>
 
@@ -16182,6 +16192,8 @@ function commandesObjet(it){
   const c = [];
   if (isCareItem(it)) c.push('utiliser');
   if (it.equippable) c.push('equiper');
+  if (it.deco) c.push('poser');
+  if (it.type === 'graine' && cultureDeLaGraine(it.id)) c.push('planter');
   c.push('observer');
   if (it.type !== 'quete') c.push('jeter');
   return c;
@@ -16210,16 +16222,22 @@ function enteteObjetSac(it, qte, grand){
 function ouvrirMenuObjet(itemId){
   const it = items.find(i=> i.id === itemId) || null;
   const LIB = { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
-    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter' };
+    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter' };
+  /* Poser et Planter ne marchent qu'au bon endroit : ailleurs, le bouton dit où aller */
+  const horsDePlace = { poser: chambrePourPoser() ? '' : 'dans la chambre d\'un robot', planter: bacsLibres().length ? '' : 'devant un bac libre' };
   const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId))
     + '<div style="display:flex; flex-direction:column; gap:6px; margin-top:12px;">'
-    + commandesObjet(it).map(c=> `<button class="${c === 'jeter' ? 'btn-secondary' : 'btn-capture'}" data-cmd="${c}" style="width:100%;${c === 'jeter' ? ' color:var(--danger); border-color:rgba(192,57,43,.4) !important;' : ''}">${LIB[c]}</button>`).join('')
+    + commandesObjet(it).map(c=> horsDePlace[c]
+        ? `<button class="btn-secondary" disabled style="width:100%; opacity:.6;">${LIB[c]} <span style="font-weight:400; font-size:11px;">— ${horsDePlace[c]}</span></button>`
+        : `<button class="${c === 'jeter' ? 'btn-secondary' : 'btn-capture'}" data-cmd="${c}" style="width:100%;${c === 'jeter' ? ' color:var(--danger); border-color:rgba(192,57,43,.4) !important;' : ''}">${LIB[c]}</button>`).join('')
     + '</div>');
   f.querySelectorAll('[data-cmd]').forEach(b=> b.addEventListener('click', ()=>{
     f.remove();
     const c = b.dataset.cmd;
     if (c === 'utiliser' || c === 'equiper') ouvrirRobotsPourObjet(itemId, c);
     else if (c === 'observer') observerObjet(it);
+    else if (c === 'poser'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPoseChambre(itemId); }
+    else if (c === 'planter'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPlantation(itemId); }
     else if (c === 'jeter') jeterObjetSac(itemId);
   }));
 }
@@ -16334,6 +16352,107 @@ function ouvrirRobotsPourObjet(itemId, mode){
     }));
   };
   dessiner();
+}
+
+/* ═══ v666 — POSER ET PLANTER DEPUIS LE SAC. On choisit l'objet dans le sac ; le sac se ferme et
+   les places possibles s'allument là où l'on est (emplacements de la chambre, bacs libres de la
+   pièce). Une barre en bas rappelle ce qu'on fait et permet d'arrêter. Le mode reste actif tant
+   qu'il reste des objets et des places : on pose ou plante plusieurs fois d'affilée. ═══ */
+let modePose = null;   // { genre:'chambre'|'bac', itemId, reprendre }
+function barreDePose(texte, boutons){
+  let b = document.getElementById('barreDePose');
+  if (!b){ b = document.createElement('div'); b.id = 'barreDePose'; document.body.appendChild(b); }
+  b.innerHTML = '<span style="flex:1; min-width:0;">' + texte + '</span>' + (boutons || []).map((x, i)=> '<button type="button" data-bp="' + i + '">' + x.libelle + '</button>').join('');
+  (boutons || []).forEach((x, i)=> b.querySelector('[data-bp="' + i + '"]').addEventListener('click', (e)=>{ e.stopPropagation(); x.faire(); }));
+}
+function finirModePose(){
+  modePose = null;
+  const b = document.getElementById('barreDePose'); if (b) b.remove();
+  document.querySelectorAll('[data-case-pose]').forEach(x=> x.remove());
+  document.querySelectorAll('.cible-pose').forEach(x=> x.classList.remove('cible-pose'));
+}
+function chambrePourPoser(){
+  return !!(roomNeutreOuverte && roomSheetRecruitId && document.getElementById('sceneBigImageOverlay').classList.contains('show') && calqueChambre());
+}
+function calqueChambre(){
+  const sc = document.querySelector('#chambreNeutreVue > div');
+  return sc && sc.children[1] ? sc.children[1] : null;
+}
+function commencerPoseChambre(itemId){
+  finirModePose();
+  modePose = { genre:'chambre', itemId, reprendre:false };
+  dessinerCasesChambre();
+}
+function dessinerCasesChambre(){
+  if (!modePose || modePose.genre !== 'chambre') return;
+  const hab = currentRecruitById(roomSheetRecruitId), calque = calqueChambre();
+  if (!hab || !calque){ finirModePose(); return; }
+  const deco = decoDeChambre(hab), objets = deco.objets || {};
+  const it = objetDeco(modePose.itemId);
+  const emps = emplacementsChambre().filter(e=> e.type !== 'robot' && e.type !== 'fenetre');
+  const ok = modePose.reprendre ? emps.filter(e=> objets[e.id]) : (it ? emps.filter(e=> e.type === it.deco) : []);
+  calque.querySelectorAll('[data-case-pose]').forEach(x=> x.remove());
+  calque.insertAdjacentHTML('beforeend', ok.map(e=>{
+    const pris = objets[e.id];
+    return `<button type="button" data-case-pose="${e.id}" style="position:absolute; ${rectPct(e)} border:2px dashed ${pris ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)'}; background:${pris ? 'rgba(255,196,80,.14)' : 'rgba(95,242,255,.16)'}; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; font-size:16px; z-index:2;">${modePose.reprendre ? '↩️' : (pris ? '🔁' : TYPES_DECO[e.type].emoji)}</button>`;
+  }).join(''));
+  calque.querySelectorAll('[data-case-pose]').forEach(b=> b.addEventListener('click', (ev)=>{ ev.stopPropagation(); poserDansChambre(hab, b.dataset.casePose); }));
+  const reste = qteAuSac(modePose.itemId) || ((playerSelfData && playerSelfData.inventory) || {})[modePose.itemId] || 0;
+  const aReprendre = emps.some(e=> objets[e.id]);
+  barreDePose(modePose.reprendre ? (ok.length ? '↩️ Touche l\'objet à reprendre' : 'Rien à reprendre')
+      : !ok.length ? 'Aucune place pour cet objet dans la chambre'
+      : '🪑 ' + escSac(it ? it.name : 'Objet') + ' (' + reste + ') — touche une place allumée',
+    [ ...(aReprendre ? [{ libelle: modePose.reprendre ? '🪑 Poser' : '↩️ Reprendre', faire: ()=>{ modePose.reprendre = !modePose.reprendre; dessinerCasesChambre(); } }] : []),
+      { libelle:'✕ Fini', faire: finirModePose } ]);
+}
+let poseEnCours = false;
+async function poserDansChambre(hab, empId){
+  if (!modePose || poseEnCours) return;
+  poseEnCours = true;
+  try {
+    const deco = decoDeChambre(hab);
+    deco.objets = deco.objets || {};
+    const ancien = deco.objets[empId] || null, nouveau = modePose.reprendre ? null : modePose.itemId;
+    if (ancien === nouveau) return;
+    if (nouveau && (qteAuSac(nouveau) || ((playerSelfData && playerSelfData.inventory) || {})[nouveau] || 0) <= 0){ showToast('Tu n\'en as plus'); finirModePose(); return; }
+    const maj = {};
+    if (ancien) maj['inventory.' + ancien] = firebase.firestore.FieldValue.increment(1);
+    if (nouveau) maj['inventory.' + nouveau] = firebase.firestore.FieldValue.increment(-1);
+    try { await db.collection('players').doc(currentUser.uid).update(maj); }
+    catch(err){ showToast('Échec : ' + err.message); return; }
+    if (nouveau) deco.objets[empId] = nouveau; else delete deco.objets[empId];
+    if (playerSelfData){ const inv = playerSelfData.inventory = playerSelfData.inventory || {};
+      if (ancien) inv[ancien] = (inv[ancien] || 0) + 1; if (nouveau) inv[nouveau] = Math.max(0, (inv[nouveau] || 0) - 1); }
+    if (nouveau) majQteAuSac(nouveau, -1);
+    if (ancien){ const e = inventoryEntriesCache.find(([id])=> id === ancien); if (e) e[1]++; else inventoryEntriesCache.push([ancien, 1]); }
+    await enregistrerDecoChambre(hab, deco);
+    await rafraichirChambreNeutre(hab);
+    if (!modePose.reprendre && (qteAuSac(modePose.itemId) || ((playerSelfData && playerSelfData.inventory) || {})[modePose.itemId] || 0) <= 0){
+      finirModePose(); showToast('Posé ✅');
+    } else dessinerCasesChambre();
+  } finally { poseEnCours = false; }
+}
+/* les bacs libres de la pièce affichée */
+function bacsLibres(){
+  const full = document.getElementById('sceneViewFull');
+  if (!(full && full.classList.contains('show'))) return [];
+  const wrap = document.getElementById('sceneViewImgWrap');
+  return (bacsSceneCourante.points || []).filter(pt=> pt && pt.type === 'bac' && !etatDuBac(pt) && wrap && wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]'));
+}
+function commencerPlantation(itemId){
+  finirModePose();
+  modePose = { genre:'bac', itemId };
+  dessinerBacsLibres();
+}
+function dessinerBacsLibres(){
+  if (!modePose || modePose.genre !== 'bac') return;
+  document.querySelectorAll('.cible-pose').forEach(x=> x.classList.remove('cible-pose'));
+  const libres = bacsLibres(), wrap = document.getElementById('sceneViewImgWrap');
+  libres.forEach(pt=>{ const el = wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]'); if (el) el.classList.add('cible-pose'); });
+  const it = items.find(i=> i.id === modePose.itemId);
+  const reste = baseResources[modePose.itemId] || 0;
+  if (!libres.length || reste <= 0){ finirModePose(); showToast(reste <= 0 ? 'Plus de graines' : 'Plus aucun bac libre'); return; }
+  barreDePose('🌱 ' + escSac(it ? it.name : 'Graine') + ' (' + reste + ') — touche un bac libre', [{ libelle:'✕ Fini', faire: finirModePose }]);
 }
 
 /* Un objet consommable réglé en soin ou en réanimation peut servir hors combat */
@@ -33173,6 +33292,13 @@ function grainesDuSac(){
 }
 function toucherBac(pt){
   const etat = etatDuBac(pt);
+  if (modePose && modePose.genre === 'bac'){   // v666 : on plante la graine choisie dans le sac
+    if (etat){ showToast('Ce bac est occupé'); return; }
+    planterDansLeBac(pt, modePose.itemId);
+    majQteAuSac(modePose.itemId, -1);
+    dessinerBacsLibres();
+    return;
+  }
   if (!etat){
     const rec = plantationDuPoint(pt);
     if (rec){ ecrirePlantation(pt, null); rafraichirBacs(); }   // graine supprimée depuis
@@ -33660,6 +33786,7 @@ function resolveSceneContent(sc){
 }
 
 async function renderSceneViewCurrentScene(){
+  if (modePose && modePose.genre === 'bac') finirModePose();   // v666 : on change de pièce
   const wrap = document.getElementById('sceneViewImgWrap');
   const empty = document.getElementById('sceneViewEmpty');
   wrap.querySelectorAll('img, .scene-point').forEach(el=> el.remove());
@@ -35251,13 +35378,13 @@ async function ouvrirDecoration(hab){
     fond.querySelectorAll('[data-onglet]').forEach(b=> b.style.borderColor = b.dataset.onglet === onglet ? 'var(--accent)' : '');
     let h = '';
     if (onglet === 'objets'){
-      const sac = (typeof items !== 'undefined' ? items : []).filter(i=> i.deco && (inv()[i.id] || 0) > 0);
+      const sac = [];   // v666 : on pose depuis le sac (🎒 → l'objet → 🪑 Poser), plus d'ici
       const poses = Object.values(deco().objets || {}).length;
       h = '<div style="display:flex; flex-wrap:wrap; gap:6px; padding:2px 0 4px;">'
         + sac.map(i=> vignette('data-objet="' + i.id + '"', enMain && enMain.genre === 'objet' && enMain.id === i.id, `<img src="${urlImageItem(i)}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; right:2px; bottom:1px; font-size:10px; background:rgba(0,0,0,.6); color:#fff; border-radius:8px; padding:0 4px;">×${inv()[i.id]}</span>`, i.name)).join('')
         + (poses ? vignette('data-reprendre', enMain && enMain.genre === 'reprendre', '<span style="font-size:24px;">↩️</span>', 'Reprendre un objet') : '')
         + '</div>'
-        + (sac.length ? '' : '<p class="meta" style="margin:4px 0 0; font-size:12px;">Rien dans ton sac à poser ici. Les objets de déco s\'achètent ou se trouvent en explorant.</p>');
+        + '<p class="meta" style="margin:4px 0 0; font-size:12px;">Pour poser un objet : dans la chambre, ouvre ton sac 🎒, touche l\'objet, puis <b>🪑 Poser</b>.' + (poses ? ' Ici, ↩️ reprend un objet posé.' : '') + '</p>';
     } else if (onglet === 'fenetres'){
       const cadres = fenetresBiblio.cadres || [];
       const poses = Object.values(deco().fenetres || {}).length;
@@ -36842,6 +36969,7 @@ function renderRoomActions(recruit){
   const pl = exitArrowPlaceHabituelle();   // v625 : le même sens que dans les zones
   fleche.querySelector('img').style.transform = 'rotate(' + (pl.rotation || 0) + 'deg)' + (pl.flipped ? ' scaleX(-1)' : '');
   fleche.style.display = 'block';
+  document.getElementById('roomSac').style.display = roomNeutreOuverte ? 'block' : 'none';   // v666 : poser depuis le sac
   if (roomNeutreOuverte){ wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
   const inTeam = activeTeamIds.includes(recruit.id);
   wrap.innerHTML = dispo.map(a=>{
@@ -36891,7 +37019,15 @@ document.getElementById('roomRetour').addEventListener('click', ()=>{
   closeSceneBigImage();
   if (!roomOuverteDepuisPorte) openQuarters();
 });
+document.getElementById('roomSac').addEventListener('click', ()=>{
+  if (isGhostTap()) return;
+  inventoryPage = 0;
+  document.getElementById('inventorySearch').value = '';
+  renderInventory();
+  document.getElementById('inventoryOverlay').classList.add('show');
+});
 document.getElementById('chambreNeutreVue').addEventListener('click', (e)=>{
+  if (modePose) return;   // v666 : en train de poser un objet, on ne parle pas au robot
   if (!roomNeutreOuverte || !roomSheetRecruitId || isGhostTap()) return;
   if (Date.now() - sceneBigImageOpenedAt < 400) return;
   e.stopPropagation();
@@ -36902,6 +37038,8 @@ function closeSceneBigImage(){
   const wrap = document.getElementById('roomActions');
   if (wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
   document.getElementById('roomRetour').style.display = 'none';
+  document.getElementById('roomSac').style.display = 'none';
+  finirModePose();   // v666
   const cn = document.getElementById('chambreNeutreVue'); cn.style.display = 'none'; cn.innerHTML = '';
   document.getElementById('sceneBigImageOverlay').classList.remove('chambre-neutre');
   roomNeutreOuverte = false;
