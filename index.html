@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v660</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v661</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -33232,7 +33232,10 @@ function openSceneView(creature, resumeSceneId, opts){
   Promise.all([zoneGet, playerGet]).then(async ([zoneDoc, playerDoc])=>{
     const d = zoneDoc.exists ? zoneDoc.data() : null;
     const norm = normalizeZoneScenes(d);
+    const chargement = afficherChargementZone(creature);   // v661
     await resolveImageRefsInScenes(norm.scenes);
+    await prechargerImagesDeZone(creature.id, norm.scenes);   // v661 : TOUT avant d'entrer
+    chargement.remove();
     const hasContent = norm.scenes.some(s=>s.imageUrl);
     if (!hasContent){
       empty.style.display = 'block';
@@ -33269,6 +33272,43 @@ function openSceneView(creature, resumeSceneId, opts){
   }).catch(()=>{ empty.style.display = 'block'; });
 }
 
+/* v661 — ENTRER DANS UNE ZONE, C'EST TOUT CHARGER D'ABORD. Avant, une pièce s'affichait puis ses
+   occupants arrivaient après coup (le Geôlier n'apparaissait qu'au rendu suivant : la face de son
+   modèle n'était pas encore lue). Maintenant, à l'entrée : les fonds de toutes les pièces, les
+   images de tous les points, et les faces des robots posés dans la zone sont lus et décodés ; le
+   passage d'une pièce à l'autre est ensuite immédiat. */
+function afficherChargementZone(zone){
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed; inset:0; z-index:4700; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); color:#fff; font-weight:700; font-size:15px; pointer-events:none;';
+  el.textContent = 'Chargement de « ' + ((zone && (zone.name || zone.nom)) || 'la zone') + ' »…';
+  document.body.appendChild(el);
+  return el;
+}
+async function prechargerImagesDeZone(zoneId, scenes){
+  const urls = new Set();
+  (scenes || []).forEach(sc=>{
+    if (sc.imageUrl) urls.add(sc.imageUrl);
+    (sc.variants || []).forEach(v=>{ if (v.imageUrl) urls.add(v.imageUrl); (v.points || []).forEach(pt=>{ if (pt.imageUrl) urls.add(pt.imageUrl); }); });
+    (sc.points || []).forEach(pt=>{ if (pt.imageUrl) urls.add(pt.imageUrl); if (pt.openImageUrl) urls.add(pt.openImageUrl); });
+  });
+  /* les occupants des rectangles 🧍 de cette zone : leur image, ou la face de leur modèle */
+  const faces = [];
+  try {
+    toutesLesFiches().forEach(f=>{
+      if (!f || !f.pieceCommune || f.pieceCommune.zoneId !== zoneId) return;
+      const propre = f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+      if (propre){ urls.add(propre); return; }
+      const m = modeleDeFiche(f);
+      if (m && m.faceImageRef && typeof faceModeleCache[m.faceImageRef] !== 'string'){
+        urlFaceModele(m);
+        faces.push(Promise.resolve(faceModeleCache[m.faceImageRef]).then(u=>{ if (u) urls.add(u); }));
+      } else { const u = urlFaceModele(m); if (u) urls.add(u); }
+    });
+  } catch(e){}
+  await Promise.race([Promise.all(faces), new Promise(r=> setTimeout(r, 8000))]);
+  const decoder = (u)=> new Promise(res=>{ const im = new Image(); im.onload = ()=>{ (im.decode ? im.decode().catch(()=>{}) : Promise.resolve()).then(res); }; im.onerror = res; im.src = u; });
+  await Promise.race([Promise.all(Array.from(urls).map(decoder)), new Promise(r=> setTimeout(r, 12000))]);   // jamais bloqué plus de 12 s
+}
 function resolveSceneContent(sc){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
   for (const v of variants){
@@ -34670,7 +34710,10 @@ async function ouvrirDialogueRobot(hab){
   f = f ? ficheJouable(f) : null;
   if (!f) f = { id: 'chambre_' + (m ? m.id : hab.id), name: '', interactionType: 'dialogue', chambreModeleId: m ? m.id : null, dialogueSteps: stepsDialogueChambre(m) };
   const c = Object.assign({}, f, { name: hab.name || f.name || (m && m.nom) || 'Robot' });
-  /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours */
+  /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours.
+     v661 : le recadrage réglé dans le MODÈLE passe devant le buste de la fiche de dialogue — c'est
+     là que l'utilisateur le règle (avant, un buste de fiche le masquait). */
+  if (m && m.portraitCrop){ c.bustImagePath = null; c.bustImageRef = null; }
   if (!c.bustImagePath && !c.bustImageRef){
     const brute = await urlFaceModeleAsync(m);
     if (brute){ try { c.imageUrl = await (m && m.portraitCrop ? buildManualThumb(brute, m.portraitCrop) : buildFaceThumb(brute)); } catch(e){ c.imageUrl = brute; } }
@@ -39758,9 +39801,31 @@ async function importerMiseAJour(sc){
     if (Array.isArray(p.dialogueSteps)){
       /* La mise à jour ne résout aucune référence : un dialogue qui renvoie à une quête, un métier
          ou un autre personnage passe par l'import normal. */
-      const aResoudre = p.dialogueSteps.some(st=> (st.textVariants || []).some(v=> v && v.pnj) || (st.choices || []).some(ch=> ch && (typeof ch.questGive === 'string' || typeof ch.questValidate === 'string' || (ch.showIf && ch.showIf.questName) || ch.recruit === true || typeof ch.recruit === 'string' || (ch.showIfList || []).some(c=> c && c.pnj))));
-      if (aResoudre) journal.push('⚠️ ' + qui + ' : dialogue avec des renvois (quête, métier, personnage) — non appliqué');
-      else { maj.dialogueSteps = p.dialogueSteps; quoi.push('dialogue'); }
+      /* v661 : la mise à jour RÉSOUT maintenant les renvois d'un dialogue — quêtes par leur nom
+         (questGive, questValidate, conditions { kind:'quest', questName, state }), personnages par
+         leur identifiant ou leur nom (conditions et variantes { pnj }). Avant, un tel dialogue
+         était refusé et il fallait passer par l'import normal (avec ses questions de conflit). */
+      const rien = [];
+      const queteId = (nom)=>{ const q = (quests || []).find(x=> x.id === nom || x.name === nom); if (!q) rien.push('quête « ' + nom + ' »'); return q ? q.id : null; };
+      const ficheId = (ref)=>{ const f = fiches.find(x=> x.id === ref) || fiches.find(x=> x.name === ref && (x.interactionType || 'dialogue') !== 'zone'); if (!f) rien.push('personnage « ' + ref + ' »'); return f ? f.id : null; };
+      const cond = (c)=>{
+        if (!c) return c;
+        if (c.pnj){ c.creatureId = ficheId(c.pnj); delete c.pnj; }
+        if (c.questName){ c.questId = queteId(c.questName); c.kind = c.kind || 'quest'; delete c.questName; }
+        return c;
+      };
+      const steps = JSON.parse(JSON.stringify(p.dialogueSteps));
+      steps.forEach(st=>{
+        (st.textVariants || []).forEach(cond);
+        (st.choices || []).forEach(ch=>{
+          if (typeof ch.questGive === 'string'){ const id = queteId(ch.questGive); ch.questGive = id ? { questId: id } : null; }
+          if (typeof ch.questValidate === 'string'){ const id = queteId(ch.questValidate); ch.questValidate = id ? { questId: id } : null; }
+          if (ch.showIf && ch.showIf.questName){ const id = queteId(ch.showIf.questName); ch.showIf = id ? { kind:'quest', questId: id, state: ch.showIf.state || 'completed' } : null; }
+          (ch.showIfList || []).forEach(cond);
+        });
+      });
+      if (rien.length) journal.push('⚠️ ' + qui + ' : introuvable dans le dialogue — ' + Array.from(new Set(rien)).join(', ') + ' (dialogue non appliqué)');
+      else { maj.dialogueSteps = steps; quoi.push('dialogue'); }
     }
     if (p.emplacement && p.emplacement.place && p.emplacement.zone && p.emplacement.scene){
       /* v655 : zone et scène désignées par leur nom → on rebranche la fiche sur la pièce actuelle
