@@ -1432,7 +1432,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v662</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v663</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -30180,7 +30180,9 @@ async function resolveImageRefsInScenes(scenesArr, pourEditeur){
       if (v.imagePath) v.imageUrl = resolveMediaPath(v.imagePath);
       else if (!v.imageUrl && v.imageRef) jobs.push(internalizeSceneImage(v.imageRef).then(u=>{ v.imageUrl = u; }));
       (v.points||[]).forEach(pt=> resolvePointImageRefJobs(pt, jobs));
+      if (!pourEditeur && v.photo && v.photo.ref) jobs.push(internalizeSceneImage(v.photo.ref));   // v663
     });
+    if (!pourEditeur && sc.photo && sc.photo.ref) jobs.push(internalizeSceneImage(sc.photo.ref));   // v663 : reste dans scImageCache
   });
   await Promise.all(jobs);
 }
@@ -32812,13 +32814,15 @@ async function enregistrerSceneCourante(fermerApres){
   syncCurrentVariantFromEditorState();
   try {
     const cleanScenes = await externalizeScenesForSave(sceneEditorScenes);
+    let nPhotos = 0;
+    try { nPhotos = await figerPhotosDesScenes(cleanScenes, sceneEditorScenes); } catch(e){}   // v663 : jamais bloquant
     await zonesCol.doc(sceneEditorZoneId).set({
       scenes: cleanScenes,
       startSceneId: sceneEditorStartSceneId,
       updatedAt: Date.now(),
     });
     oublierScenesDeZone(sceneEditorZoneId); // v464
-    showToast('Scène enregistrée');
+    showToast('Scène enregistrée' + (nPhotos ? ' · 📸 ' + nPhotos + ' photo' + (nPhotos > 1 ? 's' : '') + ' de pièce' : ''));
     /* Le point de comparaison suit l'enregistrement, sinon la zone resterait « modifiée » juste
        après avoir été sauvée et la croix redemanderait quoi faire pour rien. */
     poserEmpreinteZone();
@@ -33306,15 +33310,157 @@ async function prechargerImagesDeZone(zoneId, scenes){
     });
   } catch(e){}
   await Promise.race([Promise.all(faces), new Promise(r=> setTimeout(r, 8000))]);
+  /* v663 : la photo de chaque pièce si elle est à jour ; sinon on fabrique d'avance ses décors en
+     perspective. Les fenêtres sont composées d'avance (jour ou nuit selon l'heure). */
+  const fabriques = [];
+  try {
+    (scenes || []).forEach(scRaw=>{
+      const c = resolveSceneContent(scRaw);
+      const ph = photoValide(c.fond, c.points, c.photo);
+      if (ph){ urls.add(ph.url); urls.delete(c.imageUrl); }
+      const n = etatDeNuit(scRaw);
+      (c.points || []).forEach(pt=>{
+        if (!pt || (ph && ph.ids.has(pt.id))) return;
+        if (pt.type === 'fenetre' && pt.cadreId){
+          fabriques.push(composerFenetre(pt.cadreId, pt.vueId, n.fenetres, n.piece ? intensitePiece(scRaw) / 100 * 0.92 : 0)
+            .then(u=> (u && coinsActifs(pt)) ? imageEnCoins(u, pt) : null));
+        } else if (!pt.hideIcon && coinsActifs(pt)){
+          const u = pointEffectiveImageUrl(pt); if (u) fabriques.push(imageEnCoins(u, pt));
+        }
+      });
+    });
+  } catch(e){}
   const decoder = (u)=> new Promise(res=>{ const im = new Image(); im.onload = ()=>{ (im.decode ? im.decode().catch(()=>{}) : Promise.resolve()).then(res); }; im.onerror = res; im.src = u; });
-  await Promise.race([Promise.all(Array.from(urls).map(decoder)), new Promise(r=> setTimeout(r, 12000))]);   // jamais bloqué plus de 12 s
+  await Promise.race([Promise.all(Array.from(urls).map(decoder).concat(fabriques.map(p=> Promise.resolve(p).catch(()=>{})))), new Promise(r=> setTimeout(r, 12000))]);   // jamais bloqué plus de 12 s
+}
+/* ═══ v663 — LA PHOTO DE LA PIÈCE.
+   Un décor posé en perspective (ses 4 coins) est redessiné pixel par pixel à chaque affichage : à
+   la première visite, il arrivait après la pièce. À l'enregistrement dans l'éditeur, on prend donc
+   une PHOTO de la pièce montée : le fond avec ces décors déjà dessus, une seule image rangée avec
+   les autres (scene_images). En jeu, la pièce affiche la photo et ne pose plus ces décors.
+   Reste à part, par-dessus : tout ce qui change (personnages, coffres, objets, fenêtres jour/nuit,
+   voile de nuit). Un décor n'entre dans la photo que si aucun point posé AVANT lui (donc dessous) ne
+   le chevauche : le ramener au fond changerait l'ordre d'empilement. La photo porte une signature (fond +
+   décors figés) : si on modifie un décor sans réenregistrer, elle est ignorée et la pièce se
+   monte comme avant. ═══ */
+let attentesImagesScene = null;
+function pointFigeable(pt){ return !!pt && pt.type === 'decor' && !pt.hideIcon && coinsActifs(pt) && !!(pt.imageRef || pt.imagePath || pt.imageUrl); }
+function boitePointPct(pt){
+  const w = parseFloat(pt.w) || 8, h = parseFloat(pt.h) || 8;
+  const x0 = (parseFloat(pt.x) || 0) - w / 2, y0 = (parseFloat(pt.y) || 0) - h / 2;
+  let b = { x0, y0, x1: x0 + w, y1: y0 + h };
+  if (coinsActifs(pt)){
+    const q = coinsUnite(pt), xs = COINS_ORDRE.map(k=> q[k][0]), ys = COINS_ORDRE.map(k=> q[k][1]);
+    b = { x0: x0 + Math.min(...xs) * w, x1: x0 + Math.max(...xs) * w, y0: y0 + Math.min(...ys) * h, y1: y0 + Math.max(...ys) * h };
+  }
+  /* une plante sur son bac, un panneau holo, un occupant : ils dépassent vers le haut */
+  if (['bac', 'habitant', 'emplacement'].includes(pt.type)) b.y0 -= h;
+  return b;
+}
+function choisirPointsFiges(points){
+  const figes = [], dessous = [];
+  (points || []).forEach(pt=>{
+    if (!pt || pt.type === 'nuit') return;
+    if (pointFigeable(pt)){
+      const b = boitePointPct(pt);
+      if (!dessous.some(o=> o.x0 < b.x1 && b.x0 < o.x1 && o.y0 < b.y1 && b.y0 < o.y1)){ figes.push(pt); return; }
+    }
+    dessous.push(boitePointPct(pt));   // prudent : tout autre point compte comme visible
+  });
+  return figes;
+}
+function idImageScene(o){
+  if (!o) return '';
+  if (o.imageRef) return o.imageRef;
+  if (o.imagePath) return o.imagePath;
+  return o.imageUrl ? 'u' + o.imageUrl.length + o.imageUrl.slice(-40) : '';
+}
+function signaturePhoto(fond, pts){
+  return hashImageString(JSON.stringify([idImageScene(fond), (pts || []).map(p=> [p.id, idImageScene(p), +p.x || 0, +p.y || 0, +p.w || 8, +p.h || 8, p.coins || null, !!p.flipped])]));
+}
+function photoValide(fond, points, photo){
+  if (!photo || !photo.ref || !photo.sig || !Array.isArray(photo.ids) || !photo.ids.length) return null;
+  const url = scImageCache[photo.ref]; if (!url) return null;
+  const figes = photo.ids.map(id=> (points || []).find(p=> p && p.id === id));
+  if (figes.some(p=> !p)) return null;
+  if (signaturePhoto(fond, figes) !== photo.sig) return null;
+  return { url, ids: new Set(photo.ids) };
+}
+async function urlImageDeObjetScene(o){
+  if (!o) return '';
+  if (o.imageUrl) return o.imageUrl;
+  if (o.imagePath) return resolveMediaPath(o.imagePath);
+  if (o.imageRef) return await internalizeSceneImage(o.imageRef);
+  return '';
+}
+/* le fond à sa taille réelle, et chaque décor figé déformé dans ses 4 coins, exactement comme à l'écran */
+async function composerPhotoPiece(fondUrl, pts){
+  const fond = await chargerImage(fondUrl); if (!fond) return null;
+  const W = fond.naturalWidth, H = fond.naturalHeight; if (!W || !H) return null;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'); ctx.drawImage(fond, 0, 0);
+  for (const pt of pts){
+    const u = await urlImageDeObjetScene(pt); if (!u) return null;
+    const r = await imageEnCoins(u, pt); if (!r) return null;
+    const im = await chargerImage(r.url); if (!im) return null;
+    const w = (parseFloat(pt.w) || 8) / 100 * W, h = (parseFloat(pt.h) || 8) / 100 * H;
+    const ex = (parseFloat(pt.x) || 0) / 100 * W - w / 2, ey = (parseFloat(pt.y) || 0) / 100 * H - h / 2;
+    ctx.drawImage(im, ex + r.x0 * w, ey + r.y0 * h, r.w * w, r.h * h);
+  }
+  return cv;
+}
+function photoEnJpegSousLimite(cv){
+  let c = cv;
+  for (let essai = 0; essai < 4; essai++){
+    for (const q of [0.88, 0.8, 0.7]){
+      let d; try { d = c.toDataURL('image/jpeg', q); } catch(e){ return null; }   // image d'une autre origine : pas de photo
+      if (d.length < 950000) return d;
+    }
+    const r = document.createElement('canvas'); r.width = Math.round(c.width * 0.8); r.height = Math.round(c.height * 0.8);
+    r.getContext('2d').drawImage(c, 0, 0, r.width, r.height); c = r;
+  }
+  return null;
+}
+async function figerUnePhoto(cible, cibleLive, fondC, fondL, ptsC, ptsL){
+  const oublier = ()=>{ delete cible.photo; if (cibleLive) delete cibleLive.photo; return 0; };
+  const figes = choisirPointsFiges(ptsC);
+  if (!figes.length) return oublier();
+  const sig = signaturePhoto(fondC, figes);
+  if (cible.photo && cible.photo.sig === sig && cible.photo.ref) return 0;   // déjà à jour
+  const ids = figes.map(p=> p.id);
+  const ptsLive = ids.map(id=> (ptsL || []).find(p=> p && p.id === id));
+  if (ptsLive.some(p=> !p)) return oublier();
+  const cv = await composerPhotoPiece(await urlImageDeObjetScene(fondL), ptsLive);
+  if (!cv) return oublier();
+  const data = photoEnJpegSousLimite(cv); if (!data) return oublier();
+  const ref = await externalizeSceneImage(data); if (!ref) return oublier();
+  cible.photo = { ref, sig, ids };
+  if (cibleLive) cibleLive.photo = { ref, sig, ids: ids.slice() };
+  return 1;
+}
+/* clean : la copie prête pour Firestore (références) ; live : les scènes de l'éditeur (images lisibles) */
+async function figerPhotosDesScenes(clean, live){
+  let n = 0;
+  for (let i = 0; i < clean.length; i++){
+    const c = clean[i], l = live[i]; if (!c || !l) continue;
+    n += await figerUnePhoto(c, l, c, l, c.points, l.points);
+    const cvs = c.variants || [], lvs = l.variants || [];
+    for (let j = 0; j < cvs.length; j++){
+      const cv = cvs[j], lv = lvs[j]; if (!cv || !lv) continue;
+      const aSonFond = !!(cv.imageRef || cv.imagePath || cv.imageUrl);
+      const sesPoints = !!(cv.points && cv.points.length);
+      n += await figerUnePhoto(cv, lv, aSonFond ? cv : c, aSonFond ? lv : l, sesPoints ? cv.points : c.points, sesPoints ? lv.points : l.points);
+    }
+  }
+  return n;
 }
 function resolveSceneContent(sc){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
   for (const v of variants){
-    if (isActiveNow(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points };
+    if (isActiveNow(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points,
+      fond: (v.imageRef || v.imagePath || v.imageUrl) ? v : sc, photo: v.photo || null };   // v663
   }
-  return { imageUrl: sc.imageUrl, points: sc.points };
+  return { imageUrl: sc.imageUrl, points: sc.points, fond: sc, photo: sc.photo || null };
 }
 
 async function renderSceneViewCurrentScene(){
@@ -33329,6 +33475,9 @@ async function renderSceneViewCurrentScene(){
   }
   const sc = resolveSceneContent(scRaw);
   empty.style.display = 'none';
+  /* v663 : la photo de la pièce (fond + décors fixes déjà posés), prise à l'enregistrement dans
+     l'éditeur. Valable seulement si rien n'a bougé depuis ; sinon on monte la pièce comme avant. */
+  const photo = photoValide(sc.fond, sc.points, sc.photo);
 
   // On prépare tout (image de fond + vérification des PNJ déjà recrutés) AVANT d'afficher quoi que ce
   // soit, pour que le fond et les PNJ apparaissent ensemble d'un coup, plutôt que le fond seul puis les
@@ -33337,7 +33486,7 @@ async function renderSceneViewCurrentScene(){
     const im = new Image();
     im.onload = ()=> resolve(im);
     im.onerror = ()=> resolve(im);
-    im.src = sc.imageUrl;
+    im.src = photo ? photo.url : sc.imageUrl;
   });
   const [img, infoPnj] = await Promise.all([imgReady, getScenePnjInfo(sc)]);
   sceneViewPnjFiches = infoPnj.fiches;
@@ -33349,7 +33498,7 @@ async function renderSceneViewCurrentScene(){
      rectangles, fenêtres) ne sont pas prêtes, puis apparaît d'un bloc. Filet : 5 s au plus. */
   wrap.style.visibility = 'hidden';
   const jetonRendu = (renderSceneViewCurrentScene._jeton = (renderSceneViewCurrentScene._jeton || 0) + 1);
-  setTimeout(()=>{ if (renderSceneViewCurrentScene._jeton === jetonRendu) wrap.style.visibility = ''; }, 5000);
+  setTimeout(()=>{ if (renderSceneViewCurrentScene._jeton === jetonRendu) wrap.style.visibility = ''; }, 9000);
   wrap.insertBefore(img, wrap.firstChild);
   if (pano) wrap.scrollLeft = Math.max(0, (img.offsetWidth - wrap.clientWidth) / 2);
 
@@ -33359,8 +33508,10 @@ async function renderSceneViewCurrentScene(){
   const attribution = attribuerEmplacements(sc, scRaw.id);
   emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
   const nuitIci = etatDeNuit(scRaw);   // v620
+  attentesImagesScene = [];   // v663 : les images que le jeu fabrique (décors en perspective, fenêtres)
   (sc.points || []).forEach(pt=>{
     if (pt.type === 'nuit') return;   // v622 : les anciens rectangles 🌙 ne servent plus
+    if (photo && photo.ids.has(pt.id)) return;   // v663 : déjà dans la photo de la pièce
     /* v622 : une fenêtre 🪟 — vue de nuit quand le soleil est couché ; pièce éteinte : son cadre
        s'assombrit mais la vue dehors garde sa lumière (elle passe par-dessus le voile). */
     if (pt.type === 'fenetre'){
@@ -33673,6 +33824,7 @@ async function renderSceneViewCurrentScene(){
 
     wrap.appendChild(el);
   });
+  const attentes = attentesImagesScene || []; attentesImagesScene = null;   // v663
 
   poserVoilesDeNuit(wrap, scRaw, sc);   // v620 : par-dessus tout
   if (nuitIci.piece) wrap.querySelectorAll('[data-fenetre]').forEach(e=> wrap.appendChild(e));   // v622 : la vue dehors reste visible
@@ -33680,12 +33832,16 @@ async function renderSceneViewCurrentScene(){
   bacsSceneCourante = { points: sc.points || [], sceneId: scRaw.id };   // v495
   armerMinuterieBacs(sc.points, scRaw.id);   // v492
   declencherAgressions(sc, wrapPointActions);
-  await attendreImagesDe(wrap, 4500);   // v662
+  await attendreImagesDe(wrap, 8000, attentes);   // v662 → v663 : aussi les images fabriquées
   if (renderSceneViewCurrentScene._jeton === jetonRendu) wrap.style.visibility = '';
 }
 /* v662 — attend que chaque <img> d'un bloc soit chargée ET posée (les occupants des rectangles 🧍
    restent cachés tant qu'ils ne sont pas calés) ; jamais plus de `maxMs`. */
-function attendreImagesDe(el, maxMs){
+async function attendreImagesDe(el, maxMs, attentes){
+  const fin = Date.now() + maxMs;
+  const delai = ()=> new Promise(r=> setTimeout(r, Math.max(0, fin - Date.now())));
+  /* v663 : d'abord les images que le jeu fabrique lui-même — leur <img> n'a pas encore de src */
+  if (attentes && attentes.length) await Promise.race([Promise.all(attentes.map(p=> Promise.resolve(p).catch(()=>{}))), delai()]);
   const imgs = Array.from(el.querySelectorAll('img')).filter(im=> im.getAttribute('src'));
   const une = (im)=> new Promise(res=>{
     const fini = ()=>{
@@ -33696,7 +33852,7 @@ function attendreImagesDe(el, maxMs){
     im.addEventListener('load', fini, { once: true });
     im.addEventListener('error', ()=> res(), { once: true });
   });
-  return Promise.race([Promise.all(imgs.map(une)), new Promise(r=> setTimeout(r, maxMs))]);
+  return Promise.race([Promise.all(imgs.map(une)), delai()]);
 }
 
 /* Agression : un personnage marqué « vient au joueur dès l'entrée » n'attend pas qu'on le
@@ -33958,12 +34114,13 @@ function poserImageEnCoins(el, url, pt){
   const im = document.createElement('img');
   im.style.cssText = 'position:absolute; pointer-events:none; -webkit-touch-callout:none; display:none; max-width:none; max-height:none;';
   el.appendChild(im);
-  imageEnCoins(url, pt).then(r=>{
+  im._pret = imageEnCoins(url, pt).then(r=>{
     if (!r) return;
     im.style.left = (r.x0 * 100) + '%'; im.style.top = (r.y0 * 100) + '%';
     im.style.width = (r.w * 100) + '%'; im.style.height = (r.h * 100) + '%';
     im.src = r.url; im.style.display = '';
   });
+  if (attentesImagesScene) attentesImagesScene.push(im._pret);   // v663
   return im;
 }
 
@@ -33982,9 +34139,9 @@ function elementFenetre(pt, nuit, assombrir){
   const im = document.createElement('img');
   im.style.cssText = 'width:100%; height:100%; object-fit:fill; pointer-events:none; display:none;';
   el.appendChild(im);
-  if (pt.cadreId) composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(async u=>{
+  if (pt.cadreId){ const pret = composerFenetre(pt.cadreId, pt.vueId, nuit, assombrir).then(async u=>{
     if (!u) return;
-    if (enCoins){ im.remove(); poserImageEnCoins(el, u, pt); return; }
+    if (enCoins){ im.remove(); return poserImageEnCoins(el, u, pt)._pret; }
     if (pt.kitQuad){
       /* v632 : une fenêtre de pièce en kit sur un mur de côté — dessinée dans son quadrilatère */
       const src = await chargerImage(u); if (!src) return;
@@ -33997,6 +34154,7 @@ function elementFenetre(pt, nuit, assombrir){
     } else im.src = u;
     im.style.display = '';
   });
+  if (attentesImagesScene) attentesImagesScene.push(pret); }   // v663
   return el;
 }
 
