@@ -400,6 +400,8 @@
   .comp-case .poids i{ width:5px; height:5px; border-radius:50%; background:rgba(18,36,26,.35); }
   .comp-case.vide{ background:var(--bg); border-style:dashed; box-shadow:none; opacity:.55; pointer-events:none; }
   .comp-vide{ text-align:center; color:var(--muted); font-size:13px; margin:6px 0 10px; }
+  .comp-titre-bloc{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:4px 0 8px; font-weight:700; font-size:14px; }
+  .comp-separe{ text-align:center; font-size:11px; color:var(--muted); margin:12px 0 8px; padding-top:10px; border-top:1px dashed var(--line); }
   .comp-test{ display:block; margin:14px auto 0; border:none; background:none; color:var(--muted); font-size:11px; text-decoration:underline; opacity:.7; }
   /* v666 : poser / planter depuis le sac — les places possibles s'allument */
   .cible-pose{ outline:3px dashed rgba(95,242,255,.95) !important; outline-offset:2px; background:rgba(95,242,255,.16) !important; animation:pulseCible .9s ease-in-out infinite alternate; }
@@ -1464,7 +1466,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v668</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v669</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2844,7 +2846,10 @@
 
       <div class="field-label">Poids dans le compartiment</div>
       <select id="itemPoids" class="field-input">
-        <option value="1">1 — léger (par défaut)</option>
+        <option value="">Automatique (selon le type : graine 0,1 · ressource 0,5 · composant 1 · équipement 2 · meuble 3)</option>
+        <option value="0.1">0,1 — minuscule</option>
+        <option value="0.5">0,5 — petit</option>
+        <option value="1">1 — léger</option>
         <option value="2">2 — moyen</option>
         <option value="3">3 — lourd</option>
       </select>
@@ -15707,7 +15712,7 @@ function loadItemForEdit(id){
   majBlocComposant();
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
-  document.getElementById('itemPoids').value = String([1, 2, 3].includes(+it.poids) ? +it.poids : 1);   // v668
+  document.getElementById('itemPoids').value = [0.1, 0.5, 1, 2, 3].includes(+it.poids) ? String(+it.poids) : '';   // v669
   const equippable = !!it.equippable;
   const isEquipType = (it.type || 'ressource') === 'equipement';
   document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
@@ -15770,7 +15775,7 @@ function resetItemForm(){
   renderGraineStages(); renderGraineLoot();
   majBlocComposant();
   document.getElementById('itemDescription').value = '';
-  document.getElementById('itemPoids').value = '1';   // v668
+  document.getElementById('itemPoids').value = '';   // v669 : automatique
   document.getElementById('itemEquippableRow').style.display = 'flex';
   document.getElementById('itemEquippable').checked = false;
   document.getElementById('itemEffectWrap').style.display = 'none';
@@ -15850,7 +15855,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', ()=>{
     };
     if (culture.stages.length < 2){ showToast('Une graine demande au moins deux stades'); return; }
   }
-  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, poids: parseInt(document.getElementById('itemPoids').value, 10) || 1, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, poids: parseFloat(document.getElementById('itemPoids').value) || null, updatedAt: Date.now() };
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -16178,10 +16183,28 @@ function renderInventory(){
    charge est un chiffre, pas une jauge. Pour l'instant elle s'affiche seulement : rien ne bloque. */
 const CHARGE_MAX = 20;
 let pocheCompartiment = 'objets';
+/* v669 : un poids par défaut selon le type (une graine ne pèse presque rien, un meuble beaucoup) ;
+   le champ de la fiche le remplace pour un objet précis. */
+const POIDS_PAR_TYPE = { graine:0.1, ressource:0.5, consommable:0.5, apprentissage:0.5, composant:1, equipement:2 };
 function poidsObjet(it){
   if (!it || it.type === 'quete') return 0;
-  const p = parseInt(it.poids, 10);
-  return p >= 1 && p <= 3 ? p : 1;
+  const p = parseFloat(it.poids);
+  if (p > 0) return p;
+  if (it.deco) return 3;
+  return POIDS_PAR_TYPE[it.type] != null ? POIDS_PAR_TYPE[it.type] : 1;
+}
+const fmtPoids = (x)=> (Math.round(x * 10) / 10).toLocaleString('fr-FR');
+/* une grille de cases (compartiment, rangement) ; `attr` porte l'id de l'objet touché */
+function grilleObjetsHtml(liste, attr, minimum){
+  const total = Math.max(minimum || 0, Math.ceil(liste.length / 5) * 5);
+  return '<div class="comp-grille">' + liste.map(({ itemId, qty, it })=>{
+    const pts = Math.round(poidsObjet(it));
+    return `<button type="button" class="comp-case" ${attr}="${itemId}" aria-label="${it ? escSac(it.name) : 'objet'}">
+      <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" alt="">
+      ${pts >= 2 ? '<span class="poids">' + '<i></i>'.repeat(Math.min(3, pts)) + '</span>' : ''}
+      ${qty > 1 ? '<span class="qte">' + qty + '</span>' : ''}
+    </button>`;
+  }).join('') + '<div class="comp-case vide"></div>'.repeat(total - liste.length) + '</div>';
 }
 function chargeDuCompartiment(){
   return inventoryEntriesCache.reduce((t, [id, q])=> t + poidsObjet(items.find(i=> i.id === id)) * q, 0);
@@ -16197,21 +16220,12 @@ function renderInventoryList(){
     b.innerHTML = (b.dataset.poche === 'quete' ? 'Quête' : 'Objets') + (n ? '<span class="n">' + n + '</span>' : '');
   });
   const charge = chargeDuCompartiment(), ch = document.getElementById('compCharge');
-  ch.textContent = pocheCompartiment === 'quete' ? 'ne pèse rien' : 'Charge ' + charge + ' / ' + CHARGE_MAX;
-  ch.classList.toggle('plein', pocheCompartiment !== 'quete' && charge === CHARGE_MAX);
-  ch.classList.toggle('trop', pocheCompartiment !== 'quete' && charge > CHARGE_MAX);
+  ch.textContent = pocheCompartiment === 'quete' ? 'ne pèse rien' : 'Charge ' + fmtPoids(charge) + ' / ' + CHARGE_MAX;
+  ch.classList.toggle('plein', pocheCompartiment !== 'quete' && Math.abs(charge - CHARGE_MAX) < 0.05);
+  ch.classList.toggle('trop', pocheCompartiment !== 'quete' && charge > CHARGE_MAX + 0.05);
   const liste = pocheCompartiment === 'quete' ? quete : objets;
-  const total = Math.max(15, Math.ceil(liste.length / 5) * 5);
-  let h = liste.length ? '' : '<p class="comp-vide">' + (pocheCompartiment === 'quete' ? 'Aucun objet de quête pour l\'instant.' : 'Ton compartiment est vide.') + '</p>';
-  h += '<div class="comp-grille">' + liste.map(({ itemId, qty, it })=>{
-    const p = poidsObjet(it);
-    return `<button type="button" class="comp-case" data-objet-sac="${itemId}" aria-label="${it ? escSac(it.name) : 'objet'}">
-      <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" alt="">
-      ${p > 1 ? '<span class="poids">' + '<i></i>'.repeat(p) + '</span>' : ''}
-      ${qty > 1 ? '<span class="qte">' + qty + '</span>' : ''}
-    </button>`;
-  }).join('') + '<div class="comp-case vide"></div>'.repeat(total - liste.length) + '</div>';
-  listEl.innerHTML = h;
+  listEl.innerHTML = (liste.length ? '' : '<p class="comp-vide">' + (pocheCompartiment === 'quete' ? 'Aucun objet de quête pour l\'instant.' : 'Ton compartiment est vide.') + '</p>')
+    + grilleObjetsHtml(liste, 'data-objet-sac', 15);
   listEl.querySelectorAll('[data-objet-sac]').forEach(b=> b.addEventListener('click', ()=> ouvrirMenuObjet(b.dataset.objetSac)));
 }
 document.querySelectorAll('.comp-poche').forEach(b=> b.addEventListener('click', ()=>{ pocheCompartiment = b.dataset.poche; renderInventoryList(); }));
@@ -16259,7 +16273,7 @@ function enteteObjetSac(it, qte, grand){
     <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" style="width:${t}px; height:${t}px; object-fit:contain; flex:none;">
     <div style="flex:1; min-width:0;">
       <div style="font-weight:700;">${it ? escSac(it.name) : '(objet supprimé)'}</div>
-      <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? '×' + qte + (it && it.type !== 'quete' ? ' · poids ' + poidsObjet(it) + (qte > 1 ? ' (' + poidsObjet(it) * qte + ' en tout)' : '') : '') : 'Il ne t\'en reste plus'}</div>
+      <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? '×' + qte + (it && it.type !== 'quete' ? ' · poids ' + fmtPoids(poidsObjet(it)) + (qte > 1 ? ' (' + fmtPoids(poidsObjet(it) * qte) + ' en tout)' : '') : '') : 'Il ne t\'en reste plus'}</div>
     </div>
     <button class="sheet-x" data-fermer>✕</button>
   </div>`;
@@ -16403,6 +16417,77 @@ function ouvrirRobotsPourObjet(itemId, mode){
    les places possibles s'allument là où l'on est (emplacements de la chambre, bacs libres de la
    pièce). Une barre en bas rappelle ce qu'on fait et permet d'arrêter. Le mode reste actif tant
    qu'il reste des objets et des places : on pose ou plante plusieurs fois d'affilée. ═══ */
+/* ═══ v669 — LA FENÊTRE DU RANGEMENT : le rangement en haut, le compartiment en bas. On touche un
+   objet, il passe de l'autre côté (pour une pile, on choisit combien). Les objets de quête restent
+   dans leur poche. Le rangement est illimité pour l'instant. ═══ */
+function choisirQuantite(it, max, verbe){
+  return new Promise((res)=>{
+    let n = max, fini = false;
+    const f = fenetreSac(enteteObjetSac(it, max) + `
+      <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:14px 0 12px;">
+        <button class="btn-secondary" data-moins style="flex:none; width:48px; height:48px; font-size:22px;">−</button>
+        <div data-n style="min-width:48px; text-align:center; font-size:24px; font-weight:700;"></div>
+        <button class="btn-secondary" data-plus style="flex:none; width:48px; height:48px; font-size:22px;">+</button>
+      </div>
+      <button class="btn-capture" data-ok style="width:100%;"></button>`);
+    const maj = ()=>{ f.querySelector('[data-n]').textContent = n; f.querySelector('[data-ok]').textContent = verbe + ' ' + n;
+      f.querySelector('[data-moins]').disabled = n <= 1; f.querySelector('[data-plus]').disabled = n >= max; };
+    const finir = (v)=>{ if (fini) return; fini = true; f.remove(); res(v); };
+    f.querySelector('[data-moins]').addEventListener('click', ()=>{ n = Math.max(1, n - 1); maj(); });
+    f.querySelector('[data-plus]').addEventListener('click', ()=>{ n = Math.min(max, n + 1); maj(); });
+    f.querySelector('[data-ok]').addEventListener('click', ()=> finir(n));
+    f.querySelectorAll('[data-fermer]').forEach(b=> b.addEventListener('click', ()=> finir(null)));
+    f.addEventListener('click', (e)=>{ if (e.target === f) finir(null); });
+    maj();
+  });
+}
+function ouvrirRangement(){
+  if (!playerDocRef){ showToast('Connexion requise'); return; }
+  const f = fenetreSac(`<div class="sheet-top"><h3 style="margin-top:0;">🗄️ Rangement</h3><button class="sheet-x" data-fermer>✕</button></div>
+    <div class="comp-titre-bloc"><span data-titre-r></span></div>
+    <div data-rangement style="max-height:32vh; overflow-y:auto; padding:2px;"></div>
+    <div class="comp-separe">⇅ touche un objet pour le faire passer</div>
+    <div class="comp-titre-bloc"><span>Compartiment</span><span class="comp-charge" data-charge></span></div>
+    <div data-compartiment style="max-height:32vh; overflow-y:auto; padding:2px;"></div>`);
+  f.querySelector('.sheet').classList.add('comp-sheet');
+  let occupe = false;
+  const entrees = (m)=> Object.keys(m || {}).filter(id=> (m[id] || 0) > 0).map(id=> ({ itemId:id, qty:m[id], it: items.find(i=> i.id === id) }))
+    .filter(e=> !(e.it && e.it.type === 'quete'))
+    .sort((a, b)=> ((a.it && a.it.type) || '').localeCompare((b.it && b.it.type) || '') || (a.it ? a.it.name : '').localeCompare(b.it ? b.it.name : '', 'fr'));
+  const dessiner = ()=>{
+    if (!document.body.contains(f)) return;
+    const r = entrees(baseRangement), c = entrees(baseResources);
+    f.querySelector('[data-titre-r]').textContent = 'Dans le rangement' + (r.length ? ' · ' + r.length : '');
+    f.querySelector('[data-rangement]').innerHTML = (r.length ? '' : '<p class="comp-vide">Rien de rangé pour l\'instant.</p>') + grilleObjetsHtml(r, 'data-vers-sac', 5);
+    inventoryEntriesCache = Object.entries(baseResources).filter(([,q])=> q > 0);
+    const ch = chargeDuCompartiment(), el = f.querySelector('[data-charge]');
+    el.textContent = 'Charge ' + fmtPoids(ch) + ' / ' + CHARGE_MAX;
+    el.classList.toggle('plein', Math.abs(ch - CHARGE_MAX) < 0.05); el.classList.toggle('trop', ch > CHARGE_MAX + 0.05);
+    f.querySelector('[data-compartiment]').innerHTML = (c.length ? '' : '<p class="comp-vide">Ton compartiment est vide.</p>') + grilleObjetsHtml(c, 'data-vers-rangement', 5);
+    f.querySelectorAll('[data-vers-sac]').forEach(b=> b.addEventListener('click', ()=> deplacer(b.dataset.versSac, false)));
+    f.querySelectorAll('[data-vers-rangement]').forEach(b=> b.addEventListener('click', ()=> deplacer(b.dataset.versRangement, true)));
+  };
+  const deplacer = async (id, versRangement)=>{
+    if (occupe) return;
+    const it = items.find(i=> i.id === id) || null;
+    const max = versRangement ? (baseResources[id] || 0) : (baseRangement[id] || 0);
+    if (max <= 0) return;
+    const n = max === 1 ? 1 : await choisirQuantite(it, max, versRangement ? '🗄️ Ranger' : '🎒 Prendre');
+    if (!n) return;
+    occupe = true;
+    const inc = firebase.firestore.FieldValue.increment;
+    try {
+      await playerDocRef.update({ ['inventory.' + id]: inc(versRangement ? -n : n), ['rangement.' + id]: inc(versRangement ? n : -n) });
+      baseResources[id] = (baseResources[id] || 0) + (versRangement ? -n : n);
+      baseRangement[id] = (baseRangement[id] || 0) + (versRangement ? n : -n);
+    } catch(err){ showToast('Échec : ' + err.message); }
+    occupe = false;
+    dessiner();
+    if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventoryList();
+  };
+  dessiner();
+}
+
 let modePose = null;   // { genre:'chambre'|'bac', itemId, reprendre }
 function barreDePose(texte, boutons){
   let b = document.getElementById('barreDePose');
@@ -24623,12 +24708,29 @@ document.getElementById('catalogueProtoBtn').addEventListener('click', importerC
 
 /* ---------- Base : ressources = ton vrai inventaire joueur ---------- */
 let baseResources = {};
+/* v669 — LE RANGEMENT DU VAISSEAU : ce qu'on y a posé (players.rangement). Les artisans et
+   l'atelier y puisent comme dans le compartiment — on est à bord dans les deux cas. */
+let baseRangement = {};
+function stockABord(id){ return (baseResources[id] || 0) + (baseRangement[id] || 0); }
+/* Ce qu'on consomme pour une fabrication : d'abord dans le compartiment, le reste au rangement.
+   Renvoie des champs à points pour update(). Met aussi à jour les copies locales. */
+function prelevementABord(conso){
+  const maj = {};
+  Object.keys(conso).forEach(id=>{
+    const n = conso[id] || 0; if (n <= 0) return;
+    const duSac = Math.min(n, baseResources[id] || 0), duRangement = n - duSac;
+    if (duSac){ maj['inventory.' + id] = firebase.firestore.FieldValue.increment(-duSac); baseResources[id] = (baseResources[id] || 0) - duSac; }
+    if (duRangement > 0){ maj['rangement.' + id] = firebase.firestore.FieldValue.increment(-duRangement); baseRangement[id] = Math.max(0, (baseRangement[id] || 0) - duRangement); }
+  });
+  return maj;
+}
 let playerDocRef = null;
 function watchPlayerInventoryForBase(){
   if (!currentUser || playerDocRef) return;
   playerDocRef = db.collection('players').doc(currentUser.uid);
   playerDocRef.onSnapshot((doc)=>{ mesurerEcoute('ma fiche joueur', doc, ()=>{
     baseResources = (doc.exists && doc.data().inventory) || {};
+    baseRangement = (doc.exists && doc.data().rangement) || {};   // v669
     activeTeamIds = (doc.exists && doc.data().activeTeamIds) || [];
     playerMissionRuns = (doc.exists && doc.data().missionRuns) || {};
     playerDailyMissions = (doc.exists && doc.data().dailyMissions) || { date:null, ids:[], done:[] };
@@ -26493,7 +26595,7 @@ function renderRecruitSheet(){
     craftEl.innerHTML = `<p class="meta">Aucune recette ne correspond à ce métier pour l'instant.</p>`;
   } else {
     craftEl.innerHTML = `<div class="field-label">Recettes disponibles</div>` + eligibleRecipes.map(r=>{
-      const canAfford = (r.inputs||[]).every(inp => (baseResources[inp.itemId]||0) >= inp.qty);
+      const canAfford = (r.inputs||[]).every(inp => stockABord(inp.itemId) >= inp.qty);   // v669 : compartiment + rangement
       const inputsLabel = (r.inputs||[]).map(inp=>{
         const it = items.find(i=>i.id===inp.itemId);
         const thumb = it ? itemThumbHtml(it, 14) : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:14px; height:14px; object-fit:contain; vertical-align:middle;">`;
@@ -26575,11 +26677,11 @@ function formatDuration(totalSeconds){
 function launchRecruitCraft(recruit, recipeId){
   const recipe = recipes.find(r=>r.id===recipeId);
   if (!recipe || !playerDocRef) return;
-  const missing = (recipe.inputs||[]).find(inp => (baseResources[inp.itemId]||0) < inp.qty);
+  const missing = (recipe.inputs||[]).find(inp => stockABord(inp.itemId) < inp.qty);
   if (missing){ showToast('Ressources insuffisantes'); return; }
-  const inc = {};
-  (recipe.inputs||[]).forEach(inp=>{ inc[inp.itemId] = firebase.firestore.FieldValue.increment(-inp.qty); });
-  playerDocRef.set({ inventory: inc }, { merge:true }).then(()=>{
+  const conso = {};
+  (recipe.inputs||[]).forEach(inp=>{ conso[inp.itemId] = (conso[inp.itemId] || 0) + inp.qty; });
+  playerDocRef.update(prelevementABord(conso)).then(()=>{   // v669 : compartiment puis rangement
     const duration = recruitEffectiveDuration(recruit, recipe.duration*1000);
     recruitsCol.doc(recruit.id).update({ craftingRecipeId: recipeId, craftingStartedAt: Date.now(), craftingDuration: duration });
   });
@@ -30241,6 +30343,7 @@ const SCENE_POINT_TYPES = [
   { id:'emplacement', label:'🧍 Emplacement de PNJ (pièce commune)' },   // v497
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
   { id:'fenetre', label:'🪟 Fenêtre (jour / nuit)' },   // v622
+  { id:'rangement', label:'🗄️ Rangement (vaisseau)' },   // v669
 ];
 
 /* Flèche de sortie fournie par le jeu : une image SVG légère, embarquée dans le code.
@@ -32306,6 +32409,11 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'rangement'){   // v669
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Pose ce point sur une armoire ou des étagères du décor. En le touchant, le joueur voit son rangement et son compartiment l'un au-dessus de l'autre, et fait passer ses objets de l'un à l'autre. Tous les points 🗄️ ouvrent le même rangement. Rien à régler ici.</p>`;
+    return;
+  }
+
   if (pt.type === 'plans'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre l'étagère à plans : tous les plans volés en combat, groupés par modèle de robot, avec leurs stats côte à côte pour les comparer. Rien à régler ici.</p>`;
     return;
@@ -34060,6 +34168,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openEtagerePlans();
     } else if (pt.type === 'atelier'){
       wrapPointActions[pt.id] = ()=> openAtelier();
+    } else if (pt.type === 'rangement'){
+      wrapPointActions[pt.id] = ()=> ouvrirRangement();   // v669
     } else if (pt.type === 'bac'){
       wrapPointActions[pt.id] = ()=> toucherBac(pt);   // v491
     } else if (pt.type === 'emplacement'){
@@ -38060,7 +38170,7 @@ function composantsDuSac(){
   const out = { processeur:[], chassis:[], articulation:[], noyau:[] };
   items.forEach(it=>{
     if (it.type !== 'composant' || !it.composant) return;
-    const q = baseResources[it.id] || 0;
+    const q = stockABord(it.id);   // v669 : compartiment + rangement
     if (q <= 0) return;
     const fam = it.composant.famille;
     if (out[fam]) out[fam].push({ item: it, qty: q, vice: it.composant.vice || null });
@@ -38117,15 +38227,13 @@ async function lancerFabrication(plan){
   const bilan = bilanRecette(plan);
   if (!bilan || !bilan.complet || !playerDocRef) return;
   const conso = prelevementComposants(bilan);
-  const inventory = {};
-  Object.keys(conso).forEach(id=> inventory[id] = firebase.firestore.FieldValue.increment(-conso[id]));
+  const prelev = prelevementABord(conso);   // v669 : compartiment puis rangement
   const job = { id: 'fab_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), plan, modeleId: plan.modeleId, nom: plan.modele,
     dureeMs: dureeFabricationMs(plan), startedAt: playerAtelierFile.length ? null : Date.now(), createdAt: Date.now() };
   playerPlans = playerPlans.filter(p=> p.id !== plan.id);
   playerAtelierFile = playerAtelierFile.concat([job]);
-  Object.keys(conso).forEach(id=> baseResources[id] = Math.max(0, (baseResources[id] || 0) - conso[id]));
   try {
-    await playerDocRef.set({ inventory, plans: firebase.firestore.FieldValue.arrayRemove(plan), atelierFile: playerAtelierFile }, { merge:true });
+    await playerDocRef.update(Object.assign({}, prelev, { plans: firebase.firestore.FieldValue.arrayRemove(plan), atelierFile: playerAtelierFile }));
     showToast(job.startedAt ? 'Fabrication lancée : ' + plan.modele : 'Ajouté à la file : ' + plan.modele);
   } catch(err){ showToast('Fabrication non lancée : ' + err.message); }
 }
@@ -41324,7 +41432,7 @@ document.getElementById('scenarioImportDepotBtn').addEventListener('click', ()=>
    ===================================================================================== */
 const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
 const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
-const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli','bac'];   // points du vaisseau : hors scénario
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli','bac','rangement'];   // points du vaisseau : hors scénario
 
 function ctrlEtapesDe(f){
   return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
