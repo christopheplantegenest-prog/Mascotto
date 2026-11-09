@@ -1466,7 +1466,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v672</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v673</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -40759,6 +40759,14 @@ async function importerReglagesAttaques(liste, journal){
    Chaque modèle a un identifiant fixe (cat_<péché>_<nom>) : réimporter le même fichier le remet à jour
    au lieu de le dupliquer. Les images, le nom changé à la main, la fabrication et le piratage posés
    ensuite dans l'éditeur ne sont PAS écrasés (on n'écrit que les champs de combat). */
+function apparenceAvecVol(base, vol){
+  let v = String(vol || '').trim().replace(/^Vol\s*:\s*/i, '');
+  if (!/[.!]$/.test(v)) v += '.';
+  const ligne = 'Vol : ' + v;
+  const re = /(?:Ce qui le fait (?:flotter|voler)|Vol)\s*:[^.\n]*\.?/i;
+  base = String(base || '').trim();
+  return re.test(base) ? base.replace(re, ligne) : (base ? base + '\n' : '') + ligne;
+}
 async function importerModelesCombat(liste, journal){
   if (!Array.isArray(liste) || !liste.length) return;
   if (!robotsModelesCol){ journal.push('⚠️ Modèles : base indisponible'); return; }
@@ -40787,6 +40795,12 @@ async function importerModelesCombat(liste, journal){
       if (m.catalogue) data.catalogue = m.catalogue;
     }
     if (typeof m.apparence === 'string') data.apparence = m.apparence.trim();   // v612 : pour dessiner ses images
+    /* v673 : `vol` remplace seulement la phrase qui dit comment il vole (« Ce qui le fait flotter : … »
+       ou « Vol : … ») dans l'apparence existante ; le reste de l'apparence n'est pas touché. */
+    if (typeof m.vol === 'string' && m.vol.trim()){
+      const base = typeof data.apparence === 'string' ? data.apparence : String((existant && existant.apparence) || '');
+      data.apparence = apparenceAvecVol(base, m.vol);
+    }
     if (typeof m.phraseNaissance === 'string') data.phraseNaissance = m.phraseNaissance.trim();
 
     if (!existant){ data.nom = m.nom; data.createdAt = Date.now(); }
@@ -40834,6 +40848,7 @@ async function verifierImportCombat(sc, journal){
       if (main.length !== 4 || (m.attaques || []).some(n=> !noms.includes(String(n).split('|')[0]))) ecarts.push('« ' + m.nom + ' » : attaques ' + noms.join(', '));
       else if (attendu && (!st || CLES_STATS.some(k=> st[k] !== attendu[k]))) ecarts.push('« ' + m.nom + ' » : stats différentes');
       else if (typeof m.apparence === 'string' && String(d.apparence || '') !== m.apparence.trim()) ecarts.push('« ' + m.nom + ' » : apparence non enregistrée');
+      else if (typeof m.vol === 'string' && !String(d.apparence || '').includes('Vol : ' + m.vol.trim().replace(/^Vol\s*:\s*/i, '').replace(/[.!]$/, ''))) ecarts.push('« ' + m.nom + ' » : vol non enregistré');
       else okM++;
     });
   }
