@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v680</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v681</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2833,6 +2833,7 @@
         <p class="meta" style="margin:0 0 6px;">Un objet plat n'a besoin que de l'image de face : le jeu la colle lui-même sur un mur de côté. Un objet en relief a une image par mur.</p>
         <div id="itemMobVues"></div>
         <div id="itemMobDessiner"></div>
+        <button type="button" class="btn-secondary" id="itemMobPlacer" style="width:100%; margin-top:10px; display:none;">🛏️ Placer dans la chambre des robots</button>
         <p class="meta" id="itemMobFabrique" style="margin:8px 0 0;"></p>
       </div>
       <div id="itemComposantBlock" style="display:none;">
@@ -15844,6 +15845,8 @@ function dessinerVuesMob(){
     dessinerVuesMob();
   });
   dessinerBlocADessiner();   // v680
+  const bp = document.getElementById('itemMobPlacer');   // v681
+  if (bp){ bp.style.display = editingItemId ? 'block' : 'none'; bp.onclick = ()=> ouvrirPlacementChambre(editingItemId); }
 }
 /* v680 — ✏️ FAIRE DESSINER UNE FICHE : une seule planche avec toutes les vues qui manquent
    (rangée du haut : fermé, rangée du bas : ouvert ; une colonne par angle), la chambre des robots
@@ -17141,7 +17144,7 @@ function dessinerCasesChambre(){
   const deco = decoDeChambre(hab), objets = deco.objets || {};
   const it = objetDeco(modePose.itemId);
   const emps = emplacementsChambre().filter(e=> e.type !== 'robot' && e.type !== 'fenetre');
-  const ok = modePose.reprendre ? emps.filter(e=> objets[e.id]) : (it ? emps.filter(e=> e.type === it.deco) : []);
+  const ok = modePose.reprendre ? emps.filter(e=> objets[e.id]) : (it ? emps.filter(e=> accepteObjetChambre(e, it)) : []);   // v681
   calque.querySelectorAll('[data-case-pose]').forEach(x=> x.remove());
   calque.insertAdjacentHTML('beforeend', ok.map(e=>{
     const pris = objets[e.id];
@@ -35342,21 +35345,48 @@ function elementFenetre(pt, nuit, assombrir){
      volume, couchage, plafond). Un luminaire reste allumé quand la pièce s'éteint.
    La décoration vit sur le recruté (`deco`). La géométrie (murs, sol) est celle de l'image de
    chambre validée le 06/11 (1024 × 1536, un point de fuite) ; elle suit l'image si sa taille change. */
-let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: [], plancheCielRef: null };
+let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: [], plancheCielRef: null, placements: {} };
 const chambreDoc = ()=> (typeof db !== 'undefined' && db) ? db.collection('app_config').doc('chambre_robots') : null;
 setTimeout(()=>{
   try {
     chambreDoc().onSnapshot(doc=>{
       const d = (doc && doc.exists && doc.data()) || {};
       chambreConfig = { imageRef: d.imageRef || null, textures: d.textures || [], emplacements: d.emplacements || null,
-        lumiere: d.lumiere || { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: d.cielsSansNuit || [], plancheCielRef: d.plancheCielRef || null };
+        lumiere: d.lumiere || { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: d.cielsSansNuit || [], plancheCielRef: d.plancheCielRef || null,
+        placements: d.placements || {} };   // v681 : le réglage de chaque objet sur chaque emplacement
     }, ()=>{});
   } catch(e){}
 }, 0);
 async function enregistrerChambreConfig(){
   await chambreDoc().set({ imageRef: chambreConfig.imageRef || null, textures: chambreConfig.textures || [],
     emplacements: chambreConfig.emplacements || null, lumiere: chambreConfig.lumiere,
-    cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null, updatedAt: Date.now() }, { merge:true });
+    cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null,
+    placements: chambreConfig.placements || {}, updatedAt: Date.now() }, { merge:true });
+}
+/* v681 — LE PLACEMENT D'UN OBJET DANS LA CHAMBRE. Chaque emplacement accepte des catégories de la
+   bibliothèque (e.categories, vide = toutes) ; chaque objet a, pour chaque emplacement, son réglage
+   chambreConfig.placements[objet][emplacement] = { s: taille (1 = calé dans le rectangle),
+   dx, dy : décalage en % de l'image, angle : forcé (sinon celui de l'emplacement) }. Sans réglage
+   sur cet emplacement, celui d'un autre emplacement du même angle sert de taille de base. */
+function accepteObjetChambre(e, it){
+  if (!e || !it || e.type !== it.deco) return false;
+  const cats = Array.isArray(e.categories) ? e.categories : [];
+  return !cats.length || cats.includes(categorieMobilier(it.mob && it.mob.categorie, it.name));
+}
+function reglagePlacement(itemId, e){
+  const P = (chambreConfig.placements || {})[itemId] || {};
+  if (P[e.id]) return P[e.id];
+  const a = angleEmplacementChambre(e);
+  const autre = Object.keys(P).map(k=> ({ k, g: P[k], e2: emplacementsChambre().find(x=> x.id === k) }))
+    .find(o=> o.e2 && o.e2.type === e.type && (o.g.angle || angleEmplacementChambre(o.e2)) === a);
+  return autre ? { s: autre.g.s || 1 } : null;
+}
+function rectObjetChambre(e, iw, ih, W, H, g){
+  const r = caseDeDessin(e, iw, ih, W, H);
+  if (!g) return r;
+  const k = Math.max(0.2, Math.min(5, +g.s || 1)), w = r.w * k, h = r.h * k;
+  const bas = e.type === 'volume' || e.type === 'couchage';
+  return { x: r.x + r.w / 2 - w / 2 + (+g.dx || 0) / 100 * W, y: (bas ? r.y + r.h - h : r.y + r.h / 2 - h / 2) + (+g.dy || 0) / 100 * H, w, h };
 }
 const CHAMBRE_GEO = {
   W: 1024, H: 1536, cx: 512, horizon: 676, fondY: 893,
@@ -35553,7 +35583,7 @@ async function composerChambre(hab, opts){
       });
       continue;
     }
-    let url = '', lampe = false, miroirObjet = false;
+    let url = '', lampe = false, miroirObjet = false, reglage = null;
     if (e.type === 'robot'){
       /* v627 : une seule des places du robot, celle tirée pour cette visite, avec sa vue */
       if (opts.sansRobot || !hab || !hab.robotModeleId) continue;
@@ -35563,12 +35593,13 @@ async function composerChambre(hab, opts){
     } else {
       const it = objetDeco((deco.objets || {})[e.id]);
       if (!it) continue;
-      const vo = await imageObjetChambre(it, angleEmplacementChambre(e));   // v679 : l'image de l'angle du mur
+      reglage = reglagePlacement(it.id, e);   // v681 : la taille et la place réglées pour cet objet
+      const vo = await imageObjetChambre(it, (reglage && reglage.angle) || angleEmplacementChambre(e));   // v679 : l'image de l'angle du mur
       url = vo.url; miroirObjet = vo.miroir; lampe = !!it.lumiere;
     }
     const im = url ? await chargerImage(url) : null;
     if (!im) continue;
-    const r = caseDeDessin(e, im.naturalWidth, im.naturalHeight, W, H);
+    const r = rectObjetChambre(e, im.naturalWidth, im.naturalHeight, W, H, reglage);
     const dessiner = ()=>{
       if (e.type === 'volume' || e.type === 'couchage' || e.type === 'robot') ombreAuSol(ctx, r);
       if (miroirObjet || (e.type === 'robot' && positionsRobot[hab.id] && positionsRobot[hab.id].miroir)){
@@ -36115,18 +36146,111 @@ async function ouvrirDialogueRobot(hab){
   openSheet(c);
 }
 
+/* ---------- 🛏️ v681 : placer UN objet dans la chambre (depuis sa fiche) ----------
+   Seuls les emplacements qui acceptent l'objet sont montrés ; l'objet y est dessiné avec le même
+   calcul que l'image finale (rectObjetChambre), en pourcentages de l'image : ce qu'on voit est ce
+   que le joueur verra. Le réglage vaut pour toutes les chambres (elles sont identiques). */
+async function ouvrirPlacementChambre(itemId){
+  const it = (typeof items !== 'undefined' ? items : []).find(i=> i.id === itemId);
+  if (!it || !it.deco){ showToast('Coche « 🎒 Se ramasse » et enregistre la fiche d\'abord'); return; }
+  const url = await urlDeRef(chambreConfig.imageRef);
+  const base = url ? await chargerImage(url) : null;
+  if (!base){ showToast('Pose d\'abord l\'image de la chambre (Édition → 🛏️ Chambre des robots)'); return; }
+  const W = base.naturalWidth, H = base.naturalHeight;
+  const emps = emplacementsChambre().filter(e=> accepteObjetChambre(e, it));
+  if (!emps.length){ showToast('Aucun emplacement n\'accepte cet objet : ajoute-en un avec 📐 (Édition → 🛏️ Chambre des robots)'); return; }
+  const P = JSON.parse(JSON.stringify((chambreConfig.placements || {})[itemId] || {}));
+  let sel = emps[0].id, img = null, glisse = null;
+  const libAngle = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
+  const regl = (e)=>{
+    if (P[e.id]) return P[e.id];
+    const a = angleEmplacementChambre(e);
+    const k = Object.keys(P).find(id=>{ const e2 = emps.find(x=> x.id === id); return e2 && e2.type === e.type && (P[id].angle || angleEmplacementChambre(e2)) === a; });
+    return { s: k ? (P[k].s || 1) : 1, dx: 0, dy: 0 };
+  };
+  const toucher = (e)=>{ if (!P[e.id]) P[e.id] = Object.assign({}, regl(e)); return P[e.id]; };
+  const fond = document.createElement('div');
+  fond.className = 'overlay show'; fond.style.cssText = 'z-index:4800; align-items:stretch; padding:0;';
+  fond.innerHTML = `<div style="width:100%; height:100%; display:flex; flex-direction:column; background:var(--panel);">
+    <div data-pano style="flex:none;"></div>
+    <div style="flex:1; overflow-y:auto; padding:8px 12px max(12px, env(safe-area-inset-bottom));">
+      <div style="font-weight:700; font-size:13px; margin-bottom:4px;">🛏️ ${htmlEsc(it.name || 'Objet')} dans la chambre</div>
+      <p class="meta" style="margin:0 0 6px; font-size:11px;">Choisis un emplacement, puis glisse l'objet pour le placer et règle sa taille. Le réglage vaut pour toutes les chambres.</p>
+      <div data-emps style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+      <div data-reglage style="margin-top:8px;"></div>
+      <div style="display:flex; gap:6px; margin-top:10px;"><button type="button" class="btn-secondary" data-zero style="flex:1;">↺ Par défaut</button><button type="button" class="btn-primary" data-ok style="flex:1;">💾 Enregistrer</button><button type="button" class="btn-secondary" data-x>✕</button></div>
+    </div>
+  </div>`;
+  document.body.appendChild(fond);
+  const pano = monterPanorama(fond.querySelector('[data-pano]'), url, 'min(150vw, 64vh)');
+  const calque = pano.calque;
+  const chargerObjet = async ()=>{
+    const e = emps.find(x=> x.id === sel), g = regl(e);
+    const vo = await imageObjetChambre(it, g.angle || angleEmplacementChambre(e));
+    const im = vo.url ? await chargerImage(vo.url) : null;
+    img = im ? { im, url: vo.url, miroir: vo.miroir } : null;
+  };
+  const dessiner = ()=>{
+    const e = emps.find(x=> x.id === sel), g = regl(e);
+    let h = emps.map(x=> `<div data-emp="${x.id}" style="position:absolute; ${rectPct(x)} border:2px dashed ${x.id === sel ? 'var(--danger)' : 'rgba(95,242,255,.8)'}; border-radius:4px; pointer-events:${x.id === sel ? 'none' : 'auto'};"></div>`).join('');
+    if (img){
+      const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g);
+      h += `<img data-objet src="${img.url}" style="position:absolute; left:${r.x / W * 100}%; top:${r.y / H * 100}%; width:${r.w / W * 100}%; height:${r.h / H * 100}%; ${img.miroir ? 'transform:scaleX(-1);' : ''} touch-action:none; cursor:move; outline:1px solid rgba(255,80,80,.6);">`;
+    }
+    calque.innerHTML = h;
+    calque.querySelectorAll('[data-emp]').forEach(d=> d.onclick = async ()=>{ sel = d.dataset.emp; await chargerObjet(); dessiner(); });
+    const ze = fond.querySelector('[data-emps]');
+    ze.innerHTML = emps.map((x, i)=> `<button type="button" class="${x.id === sel ? 'btn-primary' : 'btn-secondary'}" data-choix="${x.id}" style="padding:4px 8px; font-size:11px;">${TYPES_DECO[x.type].emoji} ${i + 1} · ${libAngle[(P[x.id] && P[x.id].angle) || angleEmplacementChambre(x)]}${P[x.id] ? ' ✓' : ''}</button>`).join('');
+    ze.querySelectorAll('[data-choix]').forEach(b=> b.onclick = async ()=>{ sel = b.dataset.choix; await chargerObjet(); dessiner(); });
+    const zr = fond.querySelector('[data-reglage]');
+    zr.innerHTML = `<div style="display:flex; gap:8px; align-items:center;">Taille <input type="range" min="0.3" max="3" step="0.05" value="${g.s || 1}" data-taille style="flex:1;"><span data-tval>×${(+g.s || 1).toFixed(2)}</span></div>
+      <div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Angle :</span>${[['', 'auto (' + libAngle[angleEmplacementChambre(e)] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(g.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-ang="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>`;
+    const t = zr.querySelector('[data-taille]');
+    t.oninput = ()=>{ toucher(e).s = +t.value; zr.querySelector('[data-tval]').textContent = '×' + (+t.value).toFixed(2); dessinerObjetSeul(); };
+    zr.querySelectorAll('[data-ang]').forEach(b=> b.onclick = async ()=>{ const gg = toucher(e); if (b.dataset.ang) gg.angle = b.dataset.ang; else delete gg.angle; await chargerObjet(); dessiner(); });
+  };
+  const dessinerObjetSeul = ()=>{
+    const o = calque.querySelector('[data-objet]'); if (!o || !img) return;
+    const e = emps.find(x=> x.id === sel), r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, regl(e));
+    o.style.left = r.x / W * 100 + '%'; o.style.top = r.y / H * 100 + '%'; o.style.width = r.w / W * 100 + '%'; o.style.height = r.h / H * 100 + '%';
+  };
+  calque.addEventListener('pointerdown', (ev)=>{
+    if (!ev.target.closest('[data-objet]')) return;
+    const e = emps.find(x=> x.id === sel), g = toucher(e), rr = pano.scene.getBoundingClientRect();
+    glisse = { g, x0: ev.clientX, y0: ev.clientY, dx: +g.dx || 0, dy: +g.dy || 0, Wp: rr.width, Hp: rr.height };
+    try { ev.target.setPointerCapture(ev.pointerId); } catch(err){}
+    ev.preventDefault();
+  });
+  window.addEventListener('pointermove', function bouge(ev){
+    if (!fond.isConnected){ window.removeEventListener('pointermove', bouge); return; }
+    if (!glisse) return;
+    glisse.g.dx = +(glisse.dx + (ev.clientX - glisse.x0) / glisse.Wp * 100).toFixed(2);
+    glisse.g.dy = +(glisse.dy + (ev.clientY - glisse.y0) / glisse.Hp * 100).toFixed(2);
+    dessinerObjetSeul();
+  });
+  window.addEventListener('pointerup', ()=>{ if (glisse){ glisse = null; dessiner(); } });
+  fond.querySelector('[data-x]').onclick = ()=> fond.remove();
+  fond.querySelector('[data-zero]').onclick = async ()=>{ delete P[sel]; await chargerObjet(); dessiner(); };
+  fond.querySelector('[data-ok]').onclick = async ()=>{
+    chambreConfig.placements = Object.assign({}, chambreConfig.placements || {}, { [itemId]: P });
+    try { await enregistrerChambreConfig(); showToast('Placement enregistré ✅'); fond.remove(); } catch(e){ showToast('Échec : ' + e.message); }
+  };
+  await chargerObjet(); dessiner();
+}
+
 /* ---------- 📐 ajuster les emplacements (Édition → 🛏️ Chambre des robots) ---------- */
 async function ouvrirEditeurEmplacementsChambre(){
   const url = await urlDeRef(chambreConfig.imageRef);
   if (!url){ showToast('Pose d\'abord l\'image de la chambre'); return; }
   let emps = JSON.parse(JSON.stringify(emplacementsChambre()));
-  let sel = null;
+  let sel = null, filtre = null;   // v681 : un seul type de rectangle affiché à la fois
   const fond = document.createElement('div');
   fond.className = 'overlay show'; fond.style.cssText = 'z-index:4800; align-items:stretch; padding:0;';
   fond.innerHTML = `<div style="width:100%; height:100%; display:flex; flex-direction:column; background:var(--panel);">
     <div data-pano style="flex:none;"></div>
     <div style="flex:1; overflow-y:auto; padding:8px 12px max(12px, env(safe-area-inset-bottom));">
       <p class="meta" style="margin:0 0 6px; font-size:11px;">Glisse l'image pour voir les côtés. Glisse un rectangle pour le déplacer, son coin en bas à droite pour le redimensionner.</p>
+      <div data-filtres style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;"></div>
       <div data-panneau></div>
       <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">${Object.keys(TYPES_DECO).map(t=> `<button type="button" class="btn-secondary" data-ajout="${t}" style="padding:6px 8px;">➕ ${TYPES_DECO[t].emoji}</button>`).join('')}</div>
       <div style="display:flex; gap:6px; margin-top:10px;"><button type="button" class="btn-secondary" data-origine style="flex:1;">↺ Positions de Claude</button><button type="button" class="btn-primary" data-ok style="flex:1;">💾 Enregistrer</button><button type="button" class="btn-secondary" data-x>✕</button></div>
@@ -36136,15 +36260,26 @@ async function ouvrirEditeurEmplacementsChambre(){
   const pano = monterPanorama(fond.querySelector('[data-pano]'), url, 'min(150vw, 64vh)');
   const cases = pano.calque, panneau = fond.querySelector('[data-panneau]');
   const dessiner = ()=>{
-    cases.innerHTML = emps.map(e=> `<div data-id="${e.id}" style="position:absolute; ${rectPct(e)} border:2px dashed ${e.id === sel ? 'var(--danger)' : (e.type === 'robot' ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)')}; background:rgba(95,242,255,.12); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:14px; touch-action:none; ${e.type === 'fenetre' && e.perspective ? 'transform:perspective(420px) rotateY(' + e.perspective + 'deg);' : ''}">${TYPES_DECO[e.type].emoji}<span data-coin style="position:absolute; right:-7px; bottom:-7px; width:16px; height:16px; border-radius:50%; background:${e.id === sel ? 'var(--danger)' : '#5ff2ff'};"></span></div>`).join('');
+    const fz = fond.querySelector('[data-filtres]');
+    fz.innerHTML = [[null, 'Tous']].concat(Object.keys(TYPES_DECO).map(t=> [t, TYPES_DECO[t].emoji + ' ' + emps.filter(x=> x.type === t).length])).map(([t, l])=>
+      `<button type="button" class="${filtre === t ? 'btn-primary' : 'btn-secondary'}" data-filtre="${t || ''}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('');
+    fz.querySelectorAll('[data-filtre]').forEach(b=> b.onclick = ()=>{ filtre = b.dataset.filtre || null; if (sel && filtre && (emps.find(x=> x.id === sel) || {}).type !== filtre) sel = null; dessiner(); });
+    cases.innerHTML = emps.filter(e=> !filtre || e.type === filtre || e.id === sel).map(e=> `<div data-id="${e.id}" style="position:absolute; ${rectPct(e)} border:2px dashed ${e.id === sel ? 'var(--danger)' : (e.type === 'robot' ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)')}; background:rgba(95,242,255,.12); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:14px; touch-action:none; ${e.type === 'fenetre' && e.perspective ? 'transform:perspective(420px) rotateY(' + e.perspective + 'deg);' : ''}">${TYPES_DECO[e.type].emoji}<span data-coin style="position:absolute; right:-7px; bottom:-7px; width:16px; height:16px; border-radius:50%; background:${e.id === sel ? 'var(--danger)' : '#5ff2ff'};"></span></div>`).join('');
     const e = emps.find(x=> x.id === sel);
     panneau.innerHTML = e ? `<div style="display:flex; align-items:center; gap:8px;"><b>${TYPES_DECO[e.type].emoji} ${TYPES_DECO[e.type].nom}</b>${(e.type === 'robot' && emps.filter(x=> x.type === 'robot').length < 2) ? '' : '<button type="button" class="btn-secondary" data-suppr style="margin-left:auto;">🗑️</button>'}</div>`
       + (['mur', 'volume', 'couchage'].includes(e.type) ? `<div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Angle des objets :</span>${[['', 'auto (' + ({ face:'face', gauche:'gauche', droite:'droite' })[angleEmplacementChambre(Object.assign({}, e, { angle: null }))] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(e.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-angle-emp="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>` : '')
+      + (!['fenetre', 'robot'].includes(e.type) ? `<div style="margin-top:6px;"><span class="meta" style="font-size:11px;">Accepte : ${(e.categories || []).length ? '' : '<b>toutes les catégories</b> (touche pour limiter)'}</span><div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">${CATEGORIES_MOBILIER.filter(c=> !['Porte', 'Fenêtre'].includes(c)).map(c=> `<button type="button" class="${(e.categories || []).includes(c) ? 'btn-primary' : 'btn-secondary'}" data-cat-emp="${htmlEsc(c)}" style="padding:3px 7px; font-size:10.5px;">${htmlEsc(c)}</button>`).join('')}</div></div>` : '')
       + (e.type === 'fenetre' ? `<div style="display:flex; gap:8px; align-items:center; margin-top:6px;">perspective <input type="range" min="-60" max="60" step="2" value="${e.perspective || 0}" data-persp style="flex:1;"><span>${e.perspective || 0}°</span></div>` : '')
       : '<p class="meta" style="margin:0; font-size:11px;">Touche un rectangle pour le choisir. 🤖 : les places du robot (il en prend une au hasard à chaque visite).</p>';
     const s = panneau.querySelector('[data-suppr]'); if (s) s.addEventListener('click', ()=>{ emps = emps.filter(x=> x.id !== sel); sel = null; dessiner(); });
     const p = panneau.querySelector('[data-persp]'); if (p) p.addEventListener('input', ()=>{ e.perspective = parseInt(p.value, 10) || 0; dessiner(); });
     panneau.querySelectorAll('[data-angle-emp]').forEach(b=> b.addEventListener('click', ()=>{ if (b.dataset.angleEmp) e.angle = b.dataset.angleEmp; else delete e.angle; dessiner(); }));   // v679
+    panneau.querySelectorAll('[data-cat-emp]').forEach(b=> b.addEventListener('click', ()=>{   // v681
+      const c = b.dataset.catEmp, l = new Set(e.categories || []);
+      if (l.has(c)) l.delete(c); else l.add(c);
+      if (l.size) e.categories = [...l]; else delete e.categories;
+      dessiner();
+    }));
   };
   let glisse = null;
   cases.addEventListener('pointerdown', (ev)=>{
@@ -36171,7 +36306,7 @@ async function ouvrirEditeurEmplacementsChambre(){
     const t = b.dataset.ajout;
     const e = { id: t + '_' + Date.now(), type: t, x: 50, y: 50, w: t === 'sol' ? 40 : (t === 'robot' ? 24 : 16), h: t === 'sol' ? 10 : (t === 'robot' ? 20 : 14) };
     if (t === 'fenetre') e.perspective = 0;
-    emps.push(e); sel = e.id; dessiner();
+    emps.push(e); sel = e.id; filtre = t; dessiner();
   }));
   fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-origine]').addEventListener('click', ()=>{ emps = JSON.parse(JSON.stringify(EMPLACEMENTS_CHAMBRE_DEFAUT)); sel = null; dessiner(); });
@@ -36225,7 +36360,7 @@ async function ouvrirDecoration(hab){
     if (enMain.genre === 'reprendre') return emps().filter(e=> occupant(e));
     if (enMain.genre === 'cadre') return emps().filter(e=> e.type === 'fenetre');
     const it = objetDeco(enMain.id);
-    return it ? emps().filter(e=> e.type === it.deco) : [];
+    return it ? emps().filter(e=> accepteObjetChambre(e, it)) : [];   // v681
   };
   const dessinerCases = ()=>{
     const ok = compatibles();
