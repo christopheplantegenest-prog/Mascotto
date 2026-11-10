@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v684</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v685</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -32278,13 +32278,36 @@ function renderSceneEditorPoints(){
 
 /* v647 : un meuble posé depuis le kit arrive avec le réglage gardé (💾) : taille, coins, miroir,
    pied. Sans réglage gardé, il est au moins posé par le pied. */
+/* v685 — LA CHAMBRE SERT DE BASE DANS LES SCÈNES. Un meuble posé comme point de décor, sans réglage
+   gardé (💾), reprend celui de la chambre des robots pour le même angle : même part de la hauteur
+   de l'image, mêmes proportions, mêmes coins et même pli (en % de son rectangle, donc transposables). */
+async function reglageDepuisChambre(m){
+  if (!m || !m.ficheId) return null;
+  const P = (chambreConfig.placements || {})[m.ficheId]; if (!P) return null;
+  const a = m.angle || 'face', emps = emplacementsChambre();
+  const ent = Object.keys(P).map(id=> ({ g: P[id], e: emps.find(x=> x.id === id) }))
+    .find(o=> o.e && (o.g.angle || angleEmplacementChambre(o.e)) === a);
+  if (!ent) return null;
+  const [fond, im] = await Promise.all([chargerImage(await urlDeRef(chambreConfig.imageRef)), chargerImage(await urlDeRef(m.ref))]);
+  if (!fond || !im) return null;
+  const W = fond.naturalWidth, H = fond.naturalHeight;
+  const r = rectObjetChambre(ent.e, im.naturalWidth, im.naturalHeight, W, H, ent.g);
+  const wrap = document.getElementById('sceneEditorImgWrap');
+  const ratio = wrap && wrap.clientWidth && wrap.clientHeight ? wrap.clientHeight / wrap.clientWidth : (window.innerHeight / window.innerWidth);
+  const h = +(r.h / H * 100).toFixed(1), w = +(h * (r.w / r.h) * ratio).toFixed(1);
+  const out = { w: Math.max(2, w), h: Math.max(2, h), pied: ent.e.type !== 'mur' && ent.e.type !== 'plafond', flipped: false };
+  if (ent.g.coins) out.coins = JSON.parse(JSON.stringify(ent.g.coins)); else delete out.coins;
+  if (ent.g.pli) out.pli = JSON.parse(JSON.stringify(ent.g.pli));
+  return out;
+}
 function appliquerReglageMeuble(pt, m){
   const r = m && m.reglage;
   pt.pied = true;
-  delete pt.coins;
+  delete pt.coins; delete pt.pli;
   if (!r) return;
   if (r.w) pt.w = r.w; if (r.h) pt.h = r.h;
   if (r.coins) pt.coins = JSON.parse(JSON.stringify(r.coins));
+  if (r.pli) pt.pli = JSON.parse(JSON.stringify(r.pli));   // v685
   pt.flipped = !!r.flipped;
   if (r.pied === false) pt.pied = false;
 }
@@ -32457,7 +32480,7 @@ function renderSceneEditorDpad(){
      modèle, on l'ajuste une fois, et ce réglage devient celui du meuble. */
   sur('scKitGarder', async ()=>{
     if (!meubleKit) return;
-    const reglage = { w: pt.w, h: pt.h, coins: pt.coins ? JSON.parse(JSON.stringify(pt.coins)) : null, flipped: !!pt.flipped, pied: !!pt.pied };
+    const reglage = { w: pt.w, h: pt.h, coins: pt.coins ? JSON.parse(JSON.stringify(pt.coins)) : null, pli: pt.pli ? JSON.parse(JSON.stringify(pt.pli)) : null, flipped: !!pt.flipped, pied: !!pt.pied };
     try {
       if (meubleKit.ficheId){   // v677 : le réglage va dans la fiche, pour cet angle
         await itemsCol.doc(meubleKit.ficheId).set({ mob: { reglages: { [meubleKit.angle || 'face']: reglage } } }, { merge:true });
@@ -32479,7 +32502,7 @@ function renderSceneEditorDpad(){
   const pasCoin = 1.5;
   sur('scCoinUp', ()=> bougerCoin(0, -pasCoin)); sur('scCoinDown', ()=> bougerCoin(0, pasCoin));
   sur('scCoinLeft', ()=> bougerCoin(-pasCoin, 0)); sur('scCoinRight', ()=> bougerCoin(pasCoin, 0));
-  sur('scCoinReset', ()=>{ delete pt.coins; after(); });
+  sur('scCoinReset', ()=>{ delete pt.coins; delete pt.pli; after(); });
   sur('scDpadUp', ()=>{ pt.y = clamp((pt.y||0)-step,0,100); after(); });
   sur('scDpadDown', ()=>{ pt.y = clamp((pt.y||0)+step,0,100); after(); });
   sur('scDpadLeft', ()=>{ pt.x = clamp((pt.x||0)-step,0,100); after(); });
@@ -32780,6 +32803,7 @@ function renderSceneDetailAppearance(pt){
     if (m.ficheId){ pt.ficheId = m.ficheId; pt.ficheAngle = m.angle || 'face'; } else { delete pt.ficheId; delete pt.ficheAngle; }   // v677
     pt.coffreModele = null; pt.coffreAngle = null; pt.useExitArrow = false;
     appliquerReglageMeuble(pt, m);   // v647
+    if (!m.reglage){ const rc = await reglageDepuisChambre(m); if (rc) Object.assign(pt, rc); }   // v685 : la chambre sert de base
     renderSceneEditorPoints();
     renderSceneEditorDpad();
     renderSceneDetailAppearance(pt);
@@ -35209,6 +35233,7 @@ function composerFenetre(cadreId, vueId, nuit, assombrir){
 function positionImagePoint(pt){ return pt && pt.pied ? 'object-position:50% 100%;' : ''; }
 const COINS_ORDRE = ['tl', 'tr', 'br', 'bl'];
 function coinsActifs(pt){
+  if (pt && pt.pli) return true;   // v685 : un pli (venu de la chambre) déforme aussi
   const c = pt && pt.coins; if (!c) return false;
   return COINS_ORDRE.some(k=> c[k] && (c[k][0] || c[k][1]));
 }
@@ -35237,6 +35262,7 @@ function homographie4(src, dst){
 const coinsCache = new Map();
 /* l'image déformée : { url, x0, y0, w, h } — x0..h en unités du rectangle du point */
 function imageEnCoins(url, pt){
+  if (pt && pt.pli) return imageDeformee(url, { coins: pt.coins, pli: pt.pli }, !!pt.flipped);   // v685
   const q = coinsUnite(pt);
   const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(q) + '|' + (pt.flipped ? 1 : 0);
   if (coinsCache.has(cle)) return coinsCache.get(cle);
