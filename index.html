@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v682</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v683</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -36171,6 +36171,7 @@ async function ouvrirPlacementChambre(itemId){
   if (!emps.length){ showToast('Aucun emplacement n\'accepte cet objet : ajoute-en un avec 📐 (Édition → 🛏️ Chambre des robots)'); return; }
   const P = JSON.parse(JSON.stringify((chambreConfig.placements || {})[itemId] || {}));
   let sel = emps[0].id, img = null, glisse = null, modeCoins = false;   // v682 : ◇ la perspective
+  const etatPal = { onglet: 'placer', coin: 'tl', x: null, y: null, replie: false };   // v683 : la palette 🎛️ des flèches
   const libAngle = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
   const regl = (e)=>{
     if (P[e.id]) return P[e.id];
@@ -36215,6 +36216,7 @@ async function ouvrirPlacementChambre(itemId){
     }
     calque.innerHTML = h;
     majDeforme();
+    dessinerPalette();
     calque.querySelectorAll('[data-emp]').forEach(d=> d.onclick = async ()=>{ sel = d.dataset.emp; await chargerObjet(); dessiner(); });
     const ze = fond.querySelector('[data-emps]');
     ze.innerHTML = emps.map((x, i)=> `<button type="button" class="${x.id === sel ? 'btn-primary' : 'btn-secondary'}" data-choix="${x.id}" style="padding:4px 8px; font-size:11px;">${TYPES_DECO[x.type].emoji} ${i + 1} · ${libAngle[(P[x.id] && P[x.id].angle) || angleEmplacementChambre(x)]}${P[x.id] ? ' ✓' : ''}</button>`).join('');
@@ -36223,12 +36225,46 @@ async function ouvrirPlacementChambre(itemId){
     zr.innerHTML = `<div style="display:flex; gap:8px; align-items:center;">Taille <input type="range" min="0.3" max="3" step="0.05" value="${g.s || 1}" data-taille style="flex:1;"><span data-tval>×${(+g.s || 1).toFixed(2)}</span></div>
       <div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Image :</span>${[['', 'auto (' + libAngle[angleEmplacementChambre(e)] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(g.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-ang="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>
       <div style="display:flex; gap:6px; margin-top:8px;"><button type="button" class="${modeCoins ? 'btn-capture' : 'btn-secondary'}" data-coins style="flex:1; padding:6px;">◇ Perspective : ${modeCoins ? 'tire les 4 coins rouges' : 'régler les 4 coins'}</button>${g.coins ? '<button type="button" class="btn-secondary" data-coins-zero style="flex:none; padding:6px 10px;">↺ coins</button>' : ''}</div>`;
-    zr.querySelector('[data-coins]').onclick = ()=>{ modeCoins = !modeCoins; dessiner(); };
+    zr.querySelector('[data-coins]').onclick = ()=>{ modeCoins = !modeCoins; etatPal.onglet = modeCoins ? 'coins' : 'placer'; dessiner(); };
     const cz = zr.querySelector('[data-coins-zero]'); if (cz) cz.onclick = ()=>{ delete toucher(e).coins; dessiner(); };
     const t = zr.querySelector('[data-taille]');
     t.oninput = ()=>{ toucher(e).s = +t.value; zr.querySelector('[data-tval]').textContent = '×' + (+t.value).toFixed(2); dessinerObjetSeul(); };
     zr.querySelectorAll('[data-ang]').forEach(b=> b.onclick = async ()=>{ const gg = toucher(e); if (b.dataset.ang) gg.angle = b.dataset.ang; else delete gg.angle; await chargerObjet(); dessiner(); });
   };
+  /* v683 — LA PALETTE 🎛️ (la même que l'éditeur de scène) : ✥ placer, ⤢ taille, ◇ coins, au pas fin */
+  const pal = document.createElement('div');
+  pal.style.cssText = 'position:fixed; z-index:4820; right:8px; bottom:200px; background:rgba(0,0,0,.72); border:1px solid rgba(255,255,255,.25); border-radius:12px; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.5); user-select:none; -webkit-user-select:none;';
+  fond.appendChild(pal);
+  function dessinerPalette(){
+    if (!pal.isConnected) return;
+    const e = emps.find(x=> x.id === sel), g = regl(e);
+    const b = 'border:none; background:rgba(255,255,255,.14); color:#fff; font-size:17px; width:44px; height:40px; border-radius:8px; display:flex; align-items:center; justify-content:center; -webkit-touch-callout:none;';
+    const small = 'font-size:13px;', vide = '<span></span>', on = etatPal.onglet;
+    const bA = (k, l, extra)=> `<button type="button" data-pa="${k}" style="${b}${extra || ''}">${l}</button>`;
+    const bC = (k, l)=> `<button type="button" data-pc="${k}" style="${b}${k === etatPal.coin ? ' background:rgba(255,120,120,.55);' : ''}">${l}</button>`;
+    const ong = (k, l)=> `<button type="button" data-po="${k}" style="flex:1; border:none; border-radius:7px; padding:5px 0; font-size:13px; color:#fff; background:${on === k ? 'rgba(95,242,255,.38)' : 'rgba(255,255,255,.1)'};">${l}</button>`;
+    const grille = on === 'taille' ? vide + bA('plus', '＋') + vide + vide + bA('moins', '－') + vide
+      : on === 'coins' ? bC('tl', '◤') + bA('cH', '▲') + bC('tr', '◥') + bA('cG', '◀') + bA('cZero', '⟲', small) + bA('cD', '▶') + bC('bl', '◣') + bA('cB', '▼') + bC('br', '◢')
+      : vide + bA('h', '▲') + vide + bA('g', '◀') + vide + bA('d', '▶') + vide + bA('b', '▼') + vide;
+    pal.innerHTML = etatPal.replie
+      ? `<div data-poignee style="display:flex; align-items:center; gap:4px; padding:6px 8px; cursor:move;"><span style="font-size:14px;">🎛️</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▸</button></div>`
+      : `<div data-poignee style="display:flex; align-items:center; gap:6px; padding:5px 8px; border-bottom:1px solid rgba(255,255,255,.18); cursor:move;"><span style="font-size:12px; opacity:.85; flex:1 1 auto;">⋮⋮ objet</span><button type="button" data-plier style="border:none; background:none; color:#fff; font-size:14px; padding:0 2px;">▾</button></div>
+        <div style="display:flex; gap:3px; padding:6px 6px 0;">${ong('placer', '✥')}${ong('taille', '⤢')}${ong('coins', '◇')}</div>
+        <div style="padding:6px; display:grid; grid-template-columns:repeat(3, 44px); gap:4px;">${grille}</div>`;
+    rendreDeplacable(pal, pal.querySelector('[data-poignee]'), etatPal, ()=>{});
+    if (etatPal.x == null){ pal.style.left = 'auto'; pal.style.top = 'auto'; pal.style.right = '8px'; pal.style.bottom = '200px'; }
+    pal.querySelector('[data-plier]').onclick = (ev)=>{ ev.stopPropagation(); etatPal.replie = !etatPal.replie; dessinerPalette(); };
+    pal.querySelectorAll('[data-po]').forEach(x=> x.onclick = ()=>{ etatPal.onglet = x.dataset.po; modeCoins = etatPal.onglet === 'coins'; dessiner(); });
+    pal.querySelectorAll('[data-pc]').forEach(x=> x.onclick = ()=>{ etatPal.coin = x.dataset.pc; dessinerPalette(); });
+    const pas = 0.4, pasCoin = 1.5;
+    const faire = (f)=>{ const gg = toucher(e); f(gg); dessiner(); };
+    const coin = (dx, dy)=> faire((gg)=>{ gg.coins = gg.coins || {}; const c = gg.coins[etatPal.coin] || [0, 0]; gg.coins[etatPal.coin] = [Math.max(-60, Math.min(60, +(c[0] + dx).toFixed(1))), Math.max(-60, Math.min(60, +(c[1] + dy).toFixed(1)))]; });
+    const act = { h: ()=> faire(gg=> gg.dy = +((+gg.dy || 0) - pas).toFixed(2)), b: ()=> faire(gg=> gg.dy = +((+gg.dy || 0) + pas).toFixed(2)),
+      g: ()=> faire(gg=> gg.dx = +((+gg.dx || 0) - pas).toFixed(2)), d: ()=> faire(gg=> gg.dx = +((+gg.dx || 0) + pas).toFixed(2)),
+      plus: ()=> faire(gg=> gg.s = Math.min(3, +((+gg.s || 1) * 1.03).toFixed(3))), moins: ()=> faire(gg=> gg.s = Math.max(0.3, +((+gg.s || 1) / 1.03).toFixed(3))),
+      cH: ()=> coin(0, -pasCoin), cB: ()=> coin(0, pasCoin), cG: ()=> coin(-pasCoin, 0), cD: ()=> coin(pasCoin, 0), cZero: ()=> faire(gg=> delete gg.coins) };
+    pal.querySelectorAll('[data-pa]').forEach(x=> x.onclick = act[x.dataset.pa]);
+  }
   let jetonDeforme = 0;
   function majDeforme(){   // v682 : l'aperçu déformé, calculé comme dans l'image finale
     const d = calque.querySelector('[data-deforme]'); if (!d || !img) return;
