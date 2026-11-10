@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v688</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v689</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35546,6 +35546,8 @@ async function enregistrerChambreConfig(){
     emplacements: chambreConfig.emplacements || null, lumiere: chambreConfig.lumiere,
     cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null,
     placements: chambreConfig.placements || {}, updatedAt: Date.now() }, { merge:true });
+  /* v689 : les réglages sont REMPLACÉS en entier (le merge gardait un coin ou un pli retiré) */
+  try { await chambreDoc().update({ placements: chambreConfig.placements || {} }); } catch(e){}
 }
 /* v681 — LE PLACEMENT D'UN OBJET DANS LA CHAMBRE. Chaque emplacement accepte des catégories de la
    bibliothèque (e.categories, vide = toutes) ; chaque objet a, pour chaque emplacement, son réglage
@@ -35563,7 +35565,15 @@ function reglagePlacement(itemId, e){
   const a = angleEmplacementChambre(e);
   const autre = Object.keys(P).map(k=> ({ k, g: P[k], e2: emplacementsChambre().find(x=> x.id === k) }))
     .find(o=> o.e2 && o.e2.type === e.type && (o.g.angle || angleEmplacementChambre(o.e2)) === a);
-  return autre ? { s: autre.g.s || 1 } : null;
+  /* v689 : tout le réglage d'un emplacement du même angle (taille, coins, pli) — seule la place est propre à l'emplacement */
+  return autre ? copieReglageSansPlace(autre.g) : null;
+}
+function copieReglageSansPlace(g){
+  const o = { s: g.s || 1 };
+  if (g.angle) o.angle = g.angle;
+  if (g.coins) o.coins = JSON.parse(JSON.stringify(g.coins));
+  if (g.pli) o.pli = JSON.parse(JSON.stringify(g.pli));
+  return o;
 }
 function rectObjetChambre(e, iw, ih, W, H, g){
   const r = caseDeDessin(e, iw, ih, W, H);
@@ -36361,7 +36371,7 @@ async function ouvrirPlacementChambre(itemId){
     if (P[e.id]) return P[e.id];
     const a = angleEmplacementChambre(e);
     const k = Object.keys(P).find(id=>{ const e2 = emps.find(x=> x.id === id); return e2 && e2.type === e.type && (P[id].angle || angleEmplacementChambre(e2)) === a; });
-    return { s: k ? (P[k].s || 1) : 1, dx: 0, dy: 0 };
+    return k ? Object.assign(copieReglageSansPlace(P[k]), { dx: 0, dy: 0 }) : { s: 1, dx: 0, dy: 0 };   // v689
   };
   const toucher = (e)=>{ if (!P[e.id]) P[e.id] = Object.assign({}, regl(e)); return P[e.id]; };
   const fond = document.createElement('div');
