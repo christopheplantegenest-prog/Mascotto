@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v679</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v680</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2832,6 +2832,7 @@
         <div class="field-label">Les images selon l'angle</div>
         <p class="meta" style="margin:0 0 6px;">Un objet plat n'a besoin que de l'image de face : le jeu la colle lui-même sur un mur de côté. Un objet en relief a une image par mur.</p>
         <div id="itemMobVues"></div>
+        <div id="itemMobDessiner"></div>
         <p class="meta" id="itemMobFabrique" style="margin:8px 0 0;"></p>
       </div>
       <div id="itemComposantBlock" style="display:none;">
@@ -13081,6 +13082,14 @@ async function ouvrirBrouillons(){
     if (nC && nV && !attente) fh += '<div style="display:flex; flex-wrap:wrap; gap:5px; margin:4px 0 10px 22px;">' + bouton('data-envoi="fcad"', '📤 6 cadres de plus') + bouton('data-poser-fenetres="cadres"', '📷 Ajouter des cadres') + bouton('data-envoi="fjour"', '📤 6 vues de plus') + bouton('data-poser-fenetres="jour"', '📷 Ajouter des vues') + '</div>';
     liste.insertAdjacentHTML('beforeend', fh);
   }
+  /* v680 — 🪑 le mobilier à dessiner : une seule ligne, le travail se fait dans la fiche */
+  {
+    const nD = (typeof items !== 'undefined' ? items : []).filter(ficheADessiner).length;
+    if (nD) liste.insertAdjacentHTML('beforeend', '<div style="font-weight:700; margin:14px 0 6px;">🪑 Mobilier</div>'
+      + tache(false, '✏️ ' + nD + ' meuble(s) à dessiner', 'Des fiches de la bibliothèque attendent leurs images.',
+        'Ouvre la bibliothèque : dans chaque fiche marquée ✏️, <b>📤 Envoyer à ChatGPT</b>, enregistre l\'image, puis <b>📷 Poser la planche</b>.',
+        bouton('data-biblio-dessiner', '📚 Ouvrir la bibliothèque', true)));
+  }
   /* v629 — 🧩 LES PIÈCES EN KIT */
   {
     const K = kitBiblio;
@@ -13181,6 +13190,11 @@ async function ouvrirBrouillons(){
     const f = ficheParId(b.dataset.fiche);
     fond.remove(); ctrlOuvrirCible('pnj', b.dataset.fiche);
     bandeauGuide('Tu es dans la fiche de <b>' + esc(f && f.name) + '</b>. Fais tes changements, appuie sur <b>Enregistrer</b> en bas de la fiche, puis reviens au guide.');
+  });
+  sur('[data-biblio-dessiner]', ()=>{   // v680
+    fond.remove(); document.getElementById('editHubOverlay').classList.remove('show');
+    document.getElementById('itemsEditorOverlay').classList.add('show');
+    biblioFamille = 'adessiner'; showItemsSection('list');
   });
   sur('[data-zone]', (b)=>{ fond.remove(); ctrlOuvrirCible('zone', b.dataset.zone); bandeauGuide('Tu es dans la zone. Quand tu as fini, enregistre et reviens au guide.', { scene:true }); });
   /* v595 : 📤 envoie (prompt + images, préparées d'avance), 📋 copie le même prompt. */
@@ -15715,11 +15729,13 @@ function renderItemsListView(){
       const n = items.filter(i=> famileDe(i) === f.id).length;
       return `<button type="button" class="${f.id === biblioFamille ? 'btn-capture' : 'btn-secondary'}" data-fam="${f.id}" style="flex:none; padding:5px 9px; font-size:12px;">${f.nom} <span style="opacity:.6;">${n}</span></button>`;
     }).join('');
+    const nD = items.filter(ficheADessiner).length;   // v680 : les fiches qui attendent leurs images
+    if (nD || biblioFamille === 'adessiner') fam.insertAdjacentHTML('afterbegin', `<button type="button" class="${biblioFamille === 'adessiner' ? 'btn-capture' : 'btn-secondary'}" data-fam="adessiner" style="flex:none; padding:5px 9px; font-size:12px;">✏️ À dessiner <span style="opacity:.6;">${nD}</span></button>`);
     fam.querySelectorAll('[data-fam]').forEach(b=> b.onclick = ()=>{ biblioFamille = b.dataset.fam; renderItemsListView(); });
   }
   majBoutonRassembler();
   const q = ((document.getElementById('biblioRecherche') || {}).value || '').trim().toLowerCase();
-  const liste = items.filter(i=> q ? String(i.name || '').toLowerCase().includes(q) : famileDe(i) === biblioFamille)
+  const liste = items.filter(i=> q ? String(i.name || '').toLowerCase().includes(q) : biblioFamille === 'adessiner' ? ficheADessiner(i) : famileDe(i) === biblioFamille)
     .sort((a,b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
   const groupes = {};
   liste.forEach(it=>{
@@ -15735,7 +15751,7 @@ function renderItemsListView(){
   listEl.innerHTML = ordre.map(g=> (g ? `<div style="font-weight:700; font-size:13px; margin:12px 0 6px;">${htmlEsc(g)} <span class="meta">${groupes[g].length}</span></div>` : '')
     + '<div class="biblio-grille">' + groupes[g].map(it=>{
       const m = it.mob || {};
-      const marques = (m.ouvrable ? '🔓' : '') + (m.lumiere ? '💡' : '') + (m.fenetre ? '🪟' : '') + (m.ramassable ? '🎒' : '');
+      const marques = (ficheADessiner(it) ? '✏️' : '') + (m.ouvrable ? '🔓' : '') + (m.lumiere ? '💡' : '') + (m.fenetre ? '🪟' : '') + (m.ramassable ? '🎒' : '');
       const nbAngles = famileDe(it) === 'mobilier' ? Object.keys(m.vues || {}).filter(k=> m.vues[k] && (m.vues[k].ref || m.vues[k].path)).length : 0;
       return `<button type="button" class="biblio-case" data-edit="${it.id}">
         <span class="biblio-img"><img data-vignette="${it.id}" src="${it.imageUrl || ITEM_PLACEHOLDER_IMG}" alt=""></span>
@@ -15827,6 +15843,108 @@ function dessinerVuesMob(){
     if (!v.ref && !v.path && !v.refOuvert && !v.pathOuvert) delete currentMob.vues[a];
     dessinerVuesMob();
   });
+  dessinerBlocADessiner();   // v680
+}
+/* v680 — ✏️ FAIRE DESSINER UNE FICHE : une seule planche avec toutes les vues qui manquent
+   (rangée du haut : fermé, rangée du bas : ouvert ; une colonne par angle), la chambre des robots
+   jointe comme modèle de perspective, et une vue déjà faite jointe comme modèle du meuble.
+   📷 découpe la planche et range chaque morceau dans sa case d'angle. */
+const ANGLES_PROMPT = {
+  face: "DE FACE, le meuble posé contre le MUR DU FOND de la chambre : la façade face à nous, parallèle au mur du fond, ses lignes horizontales bien droites",
+  gauche: "le meuble posé contre le MUR DE GAUCHE de la chambre, le dos collé à ce mur : la façade est parallèle au mur de gauche et fuit en perspective comme lui, ses lignes du haut et du bas convergent vers le point de fuite au centre de la chambre, elle rapetisse en s'éloignant vers le fond ; le petit côté tourné vers l'avant de la pièce se voit presque de face",
+  droite: "le meuble posé contre le MUR DE DROITE de la chambre, le dos collé à ce mur : la façade est parallèle au mur de droite et fuit en perspective comme lui, ses lignes du haut et du bas convergent vers le point de fuite au centre de la chambre, elle rapetisse en s'éloignant vers le fond ; le petit côté tourné vers l'avant de la pièce se voit presque de face",
+};
+function anglesVoulus(mob){
+  const a = mob && mob.aDessiner && mob.aDessiner.angles;
+  if (Array.isArray(a) && a.length) return a.filter(x=> ANGLES_MOBILIER[x]);
+  return (mob && (mob.pose === 'mur' || mob.pose === 'plafond' || mob.pose === 'sol_plat')) ? ['face'] : ['face', 'gauche'];
+}
+/* la grille de la planche : les angles qui manquent (une colonne chacun), fermé puis ouvert */
+function planDeDessin(mob){
+  const v = (mob && mob.vues) || {};
+  const manque = (a, ouv)=> !refDeVue(v[a], ouv);
+  const etats = mob && mob.ouvrable ? [false, true] : [false];
+  const cols = anglesVoulus(mob).filter(a=> etats.some(o=> manque(a, o)));
+  return { cols, etats, n: cols.length * etats.length };
+}
+const ficheADessiner = (it)=> !!(it && it.mob && famileDe(it) === 'mobilier' && planDeDessin(it.mob).n > 0);
+function promptPlancheMobilier(nom, description, mob, aModele){
+  const pl = planDeDessin(mob), ouv = mob.ouvrable;
+  let k = 0;
+  const lignes = pl.etats.map((o, r)=> (ouv ? `RANGÉE ${r + 1} — ${o ? 'OUVERT' : 'FERMÉ'} :
+` : '') + pl.cols.map(a=> `${++k}. ${String(nom).toUpperCase()}${ouv ? (o ? ', PORTES GRANDES OUVERTES' : ', PORTES FERMÉES') : ''} — ${ANGLES_PROMPT[a]}.`).join('\n')).join('\n\n');
+  const disp = pl.etats.length === 1 ? (pl.n === 1 ? 'seul' : 'en une rangée de ' + pl.n) : 'en 2 rangées de ' + pl.cols.length + ' (en haut fermé, en bas ouvert, la même colonne = le même angle)';
+  return `Je joins ${aModele ? 'deux images' : 'une image'}.
+IMAGE 1 : la chambre vide des robots d'un vaisseau. C'est le MODÈLE DE PERSPECTIVE : vue de face, caméra à hauteur d'homme au centre de la pièce, un seul point de fuite au centre de l'image.${aModele ? `
+IMAGE 2 : ${nom}. C'est EXACTEMENT ce meuble qu'il faut redessiner : même forme, mêmes proportions, mêmes couleurs, mêmes détails. N'invente rien, n'ajoute rien, n'enlève rien.` : ''}
+
+Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec ${pl.n === 1 ? 'UNE VUE' : pl.n + ' VUES DU MÊME MEUBLE'}, ${disp}, SÉPARÉES PAR DE GRANDS ESPACES VIDES : rien ne se touche, rien ne se chevauche, chaque vue entière. Chaque vue est grande et détaillée ; aucun numéro, aucun texte, aucune case dessinée.
+
+LE MEUBLE : ${nom}.${description ? ' ' + description : ''}
+
+${lignes}
+
+${pl.n > 1 ? `C'est EXACTEMENT LE MÊME MEUBLE dans toutes les vues : mêmes proportions, mêmes couleurs, mêmes détails, même taille. ${ouv ? 'Seuls changent l\'angle et les portes : OUVERT = portes grandes ouvertes, l\'intérieur bien visible et VIDE (étagères et penderie vides, rien dedans). ' : 'Seul change l\'angle. '}` : ''}L'ANGLE (le plus important) suit exactement l'image 1 : même hauteur de caméra (on voit à peine le dessus du meuble), même fuite que le mur concerné, même échelle que la chambre.
+
+STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet.
+
+LIVRABLE : une seule image PNG à fond TRANSPARENT. Aucun mur, aucun sol, aucune ombre portée, aucun autre objet, aucun texte, aucune lettre, aucun chiffre.`;
+}
+function vueModeleMob(mob){
+  const v = (mob && mob.vues) || {};
+  for (const a of ['face', 'gauche', 'droite']){ const r = refDeVue(v[a]); if (r) return r; }
+  return null;
+}
+function dessinerBlocADessiner(){
+  const el = document.getElementById('itemMobDessiner'); if (!el) return;
+  if (!currentMob || !editingItemId){ el.innerHTML = ''; return; }
+  const m = lireBlocMob(), pl = planDeDessin(m);
+  if (!pl.n){ el.innerHTML = ''; return; }
+  const lib = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
+  const quoi = pl.etats.map(o=> pl.cols.map(a=> lib[a] + (m.ouvrable ? (o ? ' ouvert' : ' fermé') : '')).join(', ')).join(' · ');
+  el.innerHTML = `<div style="margin-top:10px; padding:10px; border-radius:10px; border:1px dashed rgba(255,170,60,.7); background:rgba(255,170,60,.08);">
+    <div style="font-weight:700; font-size:13px;">✏️ À faire dessiner — ${pl.n} vue${pl.n > 1 ? 's' : ''} sur une planche</div>
+    <p class="meta" style="margin:4px 0 8px; font-size:11px;">${quoi}. La chambre des robots part avec le prompt (modèle de perspective)${vueModeleMob(m) ? ', et une vue déjà faite comme modèle du meuble' : ''}. Le mur de droite se fait en miroir.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <button type="button" class="btn-capture" id="itemMobEnvoyer" style="flex:none; padding:6px 10px; font-size:12px;">📤 Envoyer à ChatGPT</button>
+      <button type="button" class="btn-secondary" id="itemMobCopier" style="flex:none; padding:6px 10px; font-size:12px;">📋 Copier</button>
+      <button type="button" class="btn-secondary" id="itemMobPoserPlanche" style="flex:none; padding:6px 10px; font-size:12px;">📷 Poser la planche</button>
+    </div></div>`;
+  const texte = ()=> promptPlancheMobilier(document.getElementById('itemName').value || 'Meuble', (m.aDessiner && m.aDessiner.apparence) || document.getElementById('itemDescription').value || '', lireBlocMob(), !!vueModeleMob(lireBlocMob()));
+  document.getElementById('itemMobEnvoyer').onclick = (ev)=>{
+    const imgs = [];
+    if (chambreConfig.imageRef) imgs.push(fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef)));
+    else showToast('La chambre des robots n\'a pas d\'image : le prompt part sans elle');
+    const ref = vueModeleMob(lireBlocMob()); if (ref) imgs.push(fichierPourPartage('meuble-' + editingItemId, urlDeRef(ref)));
+    envoyerAChatGPT(texte(), imgs, ev.currentTarget);
+  };
+  document.getElementById('itemMobCopier').onclick = (ev)=> copierAvecRepli(texte(), ev.currentTarget);
+  document.getElementById('itemMobPoserPlanche').onclick = poserPlancheMobilier;
+}
+async function poserPlancheMobilier(){
+  const id = editingItemId; if (!id || !currentMob) return;
+  const m = lireBlocMob(), pl = planDeDessin(m);
+  if (!pl.n){ showToast('Toutes les vues sont déjà là'); return; }
+  const img = await choisirFichierImage(); if (!img) return;
+  const r = decouperGrille(img, pl.n);
+  if (r.erreur){ showToast('Planche refusée : ' + r.erreur + ' (attendu : ' + pl.n + ')'); return; }
+  showToast('⏳ Découpage et enregistrement…');
+  try {
+    for (let i = 0; i < r.vues.length; i++){
+      const a = pl.cols[i % pl.cols.length], ouvert = pl.etats[Math.floor(i / pl.cols.length)];
+      const ref = await externalizeSceneImage(encoderImageSousLimite(r.vues[i], 520, true));
+      if (!ref) throw new Error('image ' + (i + 1) + ' non enregistrée');
+      const v = currentMob.vues[a] = currentMob.vues[a] || {};
+      if (ouvert){ v.refOuvert = ref; v.pathOuvert = null; } else { v.ref = ref; v.path = null; }
+    }
+    const mob = lireBlocMob();
+    const data = { mob, updatedAt: Date.now() };
+    const it = items.find(x=> x.id === id);
+    if (!(it && (it.imageUrl || it.imagePath))){ const vg = await vignetteDeMob(mob); if (vg) data.imageUrl = vg; }
+    await itemsCol.doc(id).set(data, { merge:true });
+    showToast('✅ ' + r.vues.length + ' vue(s) rangée(s) dans la fiche');
+    dessinerVuesMob();
+  } catch(e){ showToast('Échec : ' + e.message); }
 }
 function lireBlocMob(){
   const m = currentMob || mobVide();
@@ -41383,6 +41501,16 @@ async function importerScenario(sc){
       effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false,
       basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
     };
+    if (o.type === 'mobilier'){   // v680 : une fiche de mobilier, à faire dessiner depuis sa fiche
+      const POSES = ['mur', 'plafond', 'sol_plat', 'sol_debout'];
+      data.mob = { categorie: categorieMobilier(o.categorie, o.name), pose: POSES.includes(o.pose) ? o.pose : 'sol_debout',
+        w: Math.max(1, parseInt(o.w, 10) || 2), p: Math.max(1, parseInt(o.p, 10) || 2),
+        ramassable: !!o.ramassable, ouvrable: !!o.ouvrable, lumiere: !!o.lumiere, fenetre: false, vues: {},
+        aDessiner: { angles: (Array.isArray(o.angles) && o.angles.length ? o.angles : ['face']).filter(a=> ANGLES_MOBILIER[a]), apparence: o.apparence || '' } };
+      data.mob.porte = data.mob.categorie === 'Porte';
+      const deco = decoDeMob(data.mob); if (deco){ data.deco = deco; data.lumiere = !!data.mob.lumiere; }
+      if (o.poids != null) data.poids = +o.poids;
+    }
     noter(cles.objets, o, await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal));
   }
 
