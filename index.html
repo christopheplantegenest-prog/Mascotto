@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v681</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v682</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35600,11 +35600,18 @@ async function composerChambre(hab, opts){
     const im = url ? await chargerImage(url) : null;
     if (!im) continue;
     const r = rectObjetChambre(e, im.naturalWidth, im.naturalHeight, W, H, reglage);
+    /* v682 : la perspective réglée (4 coins) : l'image déformée, miroir compris */
+    let imD = im, rD = r, miroirFait = false;
+    if (reglage && reglage.coins){
+      const w = await imageEnCoins(url, { coins: reglage.coins, flipped: miroirObjet });
+      const iw = w ? await chargerImage(w.url) : null;
+      if (iw){ imD = iw; rD = { x: r.x + w.x0 * r.w, y: r.y + w.y0 * r.h, w: w.w * r.w, h: w.h * r.h }; miroirFait = true; }
+    }
     const dessiner = ()=>{
       if (e.type === 'volume' || e.type === 'couchage' || e.type === 'robot') ombreAuSol(ctx, r);
-      if (miroirObjet || (e.type === 'robot' && positionsRobot[hab.id] && positionsRobot[hab.id].miroir)){
-        ctx.save(); ctx.translate(r.x + r.w, r.y); ctx.scale(-1, 1); ctx.drawImage(im, 0, 0, r.w, r.h); ctx.restore();
-      } else ctx.drawImage(im, r.x, r.y, r.w, r.h);
+      if (!miroirFait && (miroirObjet || (e.type === 'robot' && positionsRobot[hab.id] && positionsRobot[hab.id].miroir))){
+        ctx.save(); ctx.translate(rD.x + rD.w, rD.y); ctx.scale(-1, 1); ctx.drawImage(imD, 0, 0, rD.w, rD.h); ctx.restore();
+      } else ctx.drawImage(imD, rD.x, rD.y, rD.w, rD.h);
     };
     if (lampe && eteinte){
       apres.push(async ()=>{
@@ -35908,7 +35915,10 @@ function decoDeChambre(hab, brute){
 async function enregistrerDecoChambre(hab, deco){
   if (!hab || !hab.chambreNo || !playerDocRef) return;
   if (playerSelfData){ playerSelfData.chambres = playerSelfData.chambres || {}; playerSelfData.chambres[hab.chambreNo] = deco; }
-  await playerDocRef.set({ chambres: { [hab.chambreNo]: deco } }, { merge:true });
+  /* v682 : la chambre est REMPLACÉE en entier. Avant, un set(merge) fusionnait les cartes : un objet
+     retiré restait dans la sauvegarde et revenait s'afficher à son ancienne place. */
+  try { await playerDocRef.update({ ['chambres.' + hab.chambreNo]: deco }); }
+  catch(e){ await playerDocRef.set({ chambres: { [hab.chambreNo]: deco } }, { merge:true }); }
 }
 /* la place et la vue du robot pour cette visite */
 const VUES_CHAMBRE = ['face', 'av34', 'profil'];
@@ -36160,7 +36170,7 @@ async function ouvrirPlacementChambre(itemId){
   const emps = emplacementsChambre().filter(e=> accepteObjetChambre(e, it));
   if (!emps.length){ showToast('Aucun emplacement n\'accepte cet objet : ajoute-en un avec 📐 (Édition → 🛏️ Chambre des robots)'); return; }
   const P = JSON.parse(JSON.stringify((chambreConfig.placements || {})[itemId] || {}));
-  let sel = emps[0].id, img = null, glisse = null;
+  let sel = emps[0].id, img = null, glisse = null, modeCoins = false;   // v682 : ◇ la perspective
   const libAngle = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
   const regl = (e)=>{
     if (P[e.id]) return P[e.id];
@@ -36195,27 +36205,60 @@ async function ouvrirPlacementChambre(itemId){
     let h = emps.map(x=> `<div data-emp="${x.id}" style="position:absolute; ${rectPct(x)} border:2px dashed ${x.id === sel ? 'var(--danger)' : 'rgba(95,242,255,.8)'}; border-radius:4px; pointer-events:${x.id === sel ? 'none' : 'auto'};"></div>`).join('');
     if (img){
       const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g);
-      h += `<img data-objet src="${img.url}" style="position:absolute; left:${r.x / W * 100}%; top:${r.y / H * 100}%; width:${r.w / W * 100}%; height:${r.h / H * 100}%; ${img.miroir ? 'transform:scaleX(-1);' : ''} touch-action:none; cursor:move; outline:1px solid rgba(255,80,80,.6);">`;
+      h += `<img data-objet src="${g.coins ? '' : img.url}" style="position:absolute; left:${r.x / W * 100}%; top:${r.y / H * 100}%; width:${r.w / W * 100}%; height:${r.h / H * 100}%; ${img.miroir && !g.coins ? 'transform:scaleX(-1);' : ''} touch-action:none; cursor:move; ${modeCoins ? '' : 'outline:1px solid rgba(255,80,80,.6);'} ${g.coins ? 'visibility:hidden;' : ''}">`;
+      h += `<img data-deforme style="position:absolute; pointer-events:none; display:none;">`;
+      if (modeCoins){
+        const q = coinsUnite({ coins: g.coins });
+        COINS_ORDRE.forEach(k=>{ const [u, v] = q[k];
+          h += `<span data-coin-obj="${k}" style="position:absolute; left:calc(${(r.x + u * r.w) / W * 100}% - 13px); top:calc(${(r.y + v * r.h) / H * 100}% - 13px); width:26px; height:26px; border-radius:50%; background:rgba(255,80,80,.85); border:2px solid #fff; touch-action:none; z-index:3;"></span>`; });
+      }
     }
     calque.innerHTML = h;
+    majDeforme();
     calque.querySelectorAll('[data-emp]').forEach(d=> d.onclick = async ()=>{ sel = d.dataset.emp; await chargerObjet(); dessiner(); });
     const ze = fond.querySelector('[data-emps]');
     ze.innerHTML = emps.map((x, i)=> `<button type="button" class="${x.id === sel ? 'btn-primary' : 'btn-secondary'}" data-choix="${x.id}" style="padding:4px 8px; font-size:11px;">${TYPES_DECO[x.type].emoji} ${i + 1} · ${libAngle[(P[x.id] && P[x.id].angle) || angleEmplacementChambre(x)]}${P[x.id] ? ' ✓' : ''}</button>`).join('');
     ze.querySelectorAll('[data-choix]').forEach(b=> b.onclick = async ()=>{ sel = b.dataset.choix; await chargerObjet(); dessiner(); });
     const zr = fond.querySelector('[data-reglage]');
     zr.innerHTML = `<div style="display:flex; gap:8px; align-items:center;">Taille <input type="range" min="0.3" max="3" step="0.05" value="${g.s || 1}" data-taille style="flex:1;"><span data-tval>×${(+g.s || 1).toFixed(2)}</span></div>
-      <div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Angle :</span>${[['', 'auto (' + libAngle[angleEmplacementChambre(e)] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(g.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-ang="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>`;
+      <div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Image :</span>${[['', 'auto (' + libAngle[angleEmplacementChambre(e)] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(g.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-ang="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>
+      <div style="display:flex; gap:6px; margin-top:8px;"><button type="button" class="${modeCoins ? 'btn-capture' : 'btn-secondary'}" data-coins style="flex:1; padding:6px;">◇ Perspective : ${modeCoins ? 'tire les 4 coins rouges' : 'régler les 4 coins'}</button>${g.coins ? '<button type="button" class="btn-secondary" data-coins-zero style="flex:none; padding:6px 10px;">↺ coins</button>' : ''}</div>`;
+    zr.querySelector('[data-coins]').onclick = ()=>{ modeCoins = !modeCoins; dessiner(); };
+    const cz = zr.querySelector('[data-coins-zero]'); if (cz) cz.onclick = ()=>{ delete toucher(e).coins; dessiner(); };
     const t = zr.querySelector('[data-taille]');
     t.oninput = ()=>{ toucher(e).s = +t.value; zr.querySelector('[data-tval]').textContent = '×' + (+t.value).toFixed(2); dessinerObjetSeul(); };
     zr.querySelectorAll('[data-ang]').forEach(b=> b.onclick = async ()=>{ const gg = toucher(e); if (b.dataset.ang) gg.angle = b.dataset.ang; else delete gg.angle; await chargerObjet(); dessiner(); });
   };
+  let jetonDeforme = 0;
+  function majDeforme(){   // v682 : l'aperçu déformé, calculé comme dans l'image finale
+    const d = calque.querySelector('[data-deforme]'); if (!d || !img) return;
+    const e = emps.find(x=> x.id === sel), g = regl(e);
+    if (!g.coins){ d.style.display = 'none'; return; }
+    const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g), j = ++jetonDeforme;
+    imageEnCoins(img.url, { coins: g.coins, flipped: img.miroir }).then(w=>{
+      if (!w || j !== jetonDeforme || !d.isConnected) return;
+      d.src = w.url; d.style.display = '';
+      d.style.left = (r.x + w.x0 * r.w) / W * 100 + '%'; d.style.top = (r.y + w.y0 * r.h) / H * 100 + '%';
+      d.style.width = w.w * r.w / W * 100 + '%'; d.style.height = w.h * r.h / H * 100 + '%';
+    });
+  }
   const dessinerObjetSeul = ()=>{
     const o = calque.querySelector('[data-objet]'); if (!o || !img) return;
     const e = emps.find(x=> x.id === sel), r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, regl(e));
     o.style.left = r.x / W * 100 + '%'; o.style.top = r.y / H * 100 + '%'; o.style.width = r.w / W * 100 + '%'; o.style.height = r.h / H * 100 + '%';
+    if (modeCoins) dessiner(); else majDeforme();
   };
   calque.addEventListener('pointerdown', (ev)=>{
-    if (!ev.target.closest('[data-objet]')) return;
+    const coin = ev.target.closest('[data-coin-obj]');
+    if (coin && img){   // v682 : un coin, en % du rectangle de l'objet (comme les points de décor)
+      const e = emps.find(x=> x.id === sel), g = toucher(e), rr = pano.scene.getBoundingClientRect();
+      const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g);
+      g.coins = g.coins || {}; const k = coin.dataset.coinObj, d0 = (g.coins[k] || [0, 0]).slice();
+      glisse = { coin: k, g, d0, x0: ev.clientX, y0: ev.clientY, rwp: r.w / W * rr.width, rhp: r.h / H * rr.height };
+      try { coin.setPointerCapture(ev.pointerId); } catch(err){}
+      ev.preventDefault(); return;
+    }
+    if (!ev.target.closest('[data-objet]') || modeCoins) return;
     const e = emps.find(x=> x.id === sel), g = toucher(e), rr = pano.scene.getBoundingClientRect();
     glisse = { g, x0: ev.clientX, y0: ev.clientY, dx: +g.dx || 0, dy: +g.dy || 0, Wp: rr.width, Hp: rr.height };
     try { ev.target.setPointerCapture(ev.pointerId); } catch(err){}
@@ -36224,6 +36267,12 @@ async function ouvrirPlacementChambre(itemId){
   window.addEventListener('pointermove', function bouge(ev){
     if (!fond.isConnected){ window.removeEventListener('pointermove', bouge); return; }
     if (!glisse) return;
+    if (glisse.coin){
+      glisse.g.coins[glisse.coin] = [+(glisse.d0[0] + (ev.clientX - glisse.x0) / glisse.rwp * 100).toFixed(1), +(glisse.d0[1] + (ev.clientY - glisse.y0) / glisse.rhp * 100).toFixed(1)];
+      const span = calque.querySelector('[data-coin-obj="' + glisse.coin + '"]');
+      if (span){ span.style.transform = 'translate(' + (ev.clientX - glisse.x0) + 'px,' + (ev.clientY - glisse.y0) + 'px)'; }
+      majDeforme(); return;
+    }
     glisse.g.dx = +(glisse.dx + (ev.clientX - glisse.x0) / glisse.Wp * 100).toFixed(2);
     glisse.g.dy = +(glisse.dy + (ev.clientY - glisse.y0) / glisse.Hp * 100).toFixed(2);
     dessinerObjetSeul();
