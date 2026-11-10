@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v697</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v698</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -36998,6 +36998,7 @@ function geoKit(c){
 }
 /* le rectangle (ou le quadrilatère) occupé par un objet posé, en pixels de l'image */
 function emplacementKit(G, o, m){
+  o = oKit(G, o, m);
   const { w, d, h } = dimsKit(o, m, G);
   if (o.zone === 'sol'){
     const tB = (G.ny - o.r) / G.ny, tF = (G.ny - o.r - d) / G.ny;
@@ -37198,6 +37199,7 @@ function boiteDe(poly){
 }
 /* les cases que l'objet occupe, pour les chevauchements */
 function casesDe(G, o, m){
+  o = oKit(G, o, m);
   const { w, d, h } = dimsKit(o, m, G), out = [];
   if (o.zone === 'sol' || o.zone === 'plafond'){ for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) out.push(o.zone + ':' + (o.c + i) + ':' + (o.r + j)); }
   else if (o.zone === 'fond'){ for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.push('fond:' + (o.c + i) + ':' + (o.k + j)); }
@@ -37206,6 +37208,7 @@ function casesDe(G, o, m){
 }
 /* v635 : dans les limites de la pièce et de l'image (sans regarder les autres meubles) */
 function dansLesLimitesKit(G, o, m){
+  o = oKit(G, o, m);
   const { w, d, h } = dimsKit(o, m, G);
   if (o.zone === 'sol' || o.zone === 'plafond'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r + d > G.ny) return false; }
   else if (o.zone === 'fond'){ if (o.c < 0 || o.k < 0 || o.c + w > G.nx || o.k + h > G.nh) return false; }
@@ -37245,9 +37248,18 @@ function tourneKit(o, m, G){
   if (o.angle === 'gauche' || o.angle === 'droite') return o.angle;
   if (o.angle === 'face') return null;
   if (o.c <= 0) return 'gauche';
-  const prof = Math.max(1, m.d || 1) * KIT_FIN;   // tourné, sa profondeur prend la largeur de la pièce
-  if (G && o.c + prof >= G.nx) return 'droite';
+  /* v698 : contre le mur de droite dès que le meuble DE FACE le touche (avant, on testait sa profondeur :
+     la poignée ne pouvait jamais l'amener assez loin, il restait de face) */
+  const larg = Math.max(1, m.w || 1) * KIT_FIN, prof = Math.max(1, m.d || 1) * KIT_FIN;
+  if (G && (o.c + larg >= G.nx || o.c + prof >= G.nx)) return 'droite';
   return null;
+}
+/* v698 : un meuble tourné contre le mur de droite se colle au mur (sa colonne se recale sur le bord) */
+function oKit(G, o, m){
+  if (!o || o.zone !== 'sol' || !G || o.angle) return o;
+  if (tourneKit(o, m, G) !== 'droite') return o;
+  const prof = Math.max(1, m.d || 1) * KIT_FIN;
+  return o.c === G.nx - prof ? o : Object.assign({}, o, { c: G.nx - prof });
 }
 /* l'image à dessiner selon l'orientation (face par défaut ; dos ; profil, en miroir pour l'autre côté) */
 function refVueKit(o, m, G){
@@ -37382,6 +37394,18 @@ async function composerKit(kit, opts){
         }
       } catch(err){}
     }
+    /* v698 : un meuble de face au sol prend la largeur du BORD AVANT de son empreinte (pas la boîte de
+       l'empreinte, qui s'élargit vers les bords de la pièce avec la perspective — le meuble grossissait
+       en allant sur les côtés), mesurée sur ses pixels opaques (les marges vides de l'image ne comptent
+       plus) : même taille qu'une fois tourné contre un mur. */
+    const ob = e.zone === 'sol' && !o.cadreId ? boiteOpaqueImage(brute) : null;
+    if (ob && ob.w > 4){
+      const k = e.ancre.wpx / ob.w, dw = iw * k, dh = ih * k;
+      const x = e.ancre.cx - (ob.x + ob.w / 2) * k, y = e.ancre.yBas - (ob.y + ob.h) * k;
+      ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(e.ancre.cx, e.ancre.yBas - e.ancre.wpx * 0.03, e.ancre.wpx * 0.48, e.ancre.wpx * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      if (o.miroir){ const xm = e.ancre.cx + (ob.x + ob.w / 2) * k; ctx.translate(xm, y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, dw, dh); }
+      else ctx.drawImage(img, x, y, dw, dh);
+    } else
     if (e.zone === 'sol' || e.zone === 'plafond'){
       const { wpx, hpx, x, y } = boiteImageKit(e, iw, ih);
       if (e.zone === 'sol'){
