@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v686</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v687</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12417,14 +12417,28 @@ async function poserPlancheDecor(zid, pid){
   const r = decouperGrille(img, pl.objets.length);
   if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Redemande-la à ChatGPT, dessins bien séparés, fond transparent.'); return false; }
   const scenes = data.scenes || [];
-  const t = Date.now(); let poses = 0;
+  let poses = 0, creees = 0;
+  /* v687 : chaque objet de la planche va dans SA FICHE de la bibliothèque (même nom = même fiche,
+     l'image range dans la case de son angle) — plus dans la liste à part du kit */
+  const fichesTouchees = new Map();
+  const ficheDe = (o)=>{
+    const k = cleNom(o.nom);
+    if (fichesTouchees.has(k)) return fichesTouchees.get(k);
+    const ex = (typeof items !== 'undefined' ? items : []).find(i=> cleNom(i.name) === k && (famileDe(i) === 'mobilier' || i.deco));
+    const cat = categorieMobilier(o.categorie, o.nom);
+    const pose = ['Affiche', 'Panneau', 'Écran', 'Fenêtre', 'Porte'].includes(cat) ? 'mur' : cat === 'Tapis' ? 'sol_plat' : 'sol_debout';
+    const f = { id: ex ? ex.id : null, ex, name: ex ? ex.name : String(o.nom || 'Objet').trim(), description: o.description || '',
+      mob: JSON.parse(JSON.stringify((ex && ex.mob) || Object.assign(mobVide(), { categorie: cat, pose }))) };
+    if (!f.mob.vues) f.mob.vues = {};
+    fichesTouchees.set(k, f); return f;
+  };
   for (let i = 0; i < pl.objets.length; i++){
     const o = pl.objets[i];
     const ref = await externalizeSceneImage(encoderImageSousLimite(r.vues[i], 520, true));
     if (!ref){ showToast('Échec : image non enregistrée'); return false; }
-    const deja = (kitBiblio.meubles || []).find(x=> x.nom === o.nom && (x.angle || 'face') === (o.angle || 'face'));
-    if (deja){ deja.ref = ref; deja.categorie = o.categorie || deja.categorie || null; }
-    else kitBiblio.meubles.push({ id: 'mb_' + t + '_' + i, nom: o.nom, type: 'mur', w: 3, h: 2, categorie: o.categorie || null, angle: o.angle || 'face', ref });
+    const f = ficheDe(o), a = ANGLES_MOBILIER[o.angle] ? o.angle : 'face';
+    f.mob.vues[a] = Object.assign(f.mob.vues[a] || {}, { ref, path: null });
+    o.ficheNom = f.name; o._fiche = f; o._angle = a;
     /* v659 : la pièce notée dans la planche a pu changer d'identifiant (réparation des pièces en
        double) : le point, lui, garde le sien — on le cherche alors dans toute la zone. */
     const sc = scenes.find(x=> x && x.id === o.sceneId);
@@ -12432,12 +12446,24 @@ async function poserPlancheDecor(zid, pid){
     if (!pt) for (const s2 of scenes){ pt = (s2 && s2.points || []).find(x=> x && x.id === o.pointId); if (pt){ o.sceneId = s2.id; break; } }
     /* v664 : point recréé entre-temps (nouvel identifiant) : on le retrouve par son nom */
     if (!pt) for (const s2 of scenes){ pt = (s2 && s2.points || []).find(x=> x && x.type === 'decor' && memeNomDecor(x.label, o.nom)); if (pt){ o.sceneId = s2.id; o.pointId = pt.id; break; } }
-    if (pt){ pt.imageRef = ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; poses++; }
+    if (pt){ pt.imageRef = ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; pt.ficheAngle = a; pt._fiche = f; poses++; }
   }
+  /* les fiches : créées ou complétées, puis chaque point reçoit l'identifiant de la sienne */
+  for (const f of fichesTouchees.values()){
+    const d = { type: 'mobilier', mob: f.mob, updatedAt: Date.now() };
+    if (!(f.ex && (f.ex.imageUrl || f.ex.imagePath))){ const vg = await vignetteDeMob(f.mob); if (vg) d.imageUrl = vg; }
+    if (f.id) await itemsCol.doc(f.id).set(d, { merge:true });
+    else {
+      const nv = await itemsCol.add(Object.assign({ name: f.name, emoji: '🪑', imagePath: null, description: f.description, poids: null,
+        sellable: false, basePrice: 10, equippable: false, createdAt: Date.now() }, { imageUrl: '' }, d));
+      f.id = nv.id; creees++;
+    }
+  }
+  scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{ if (pt && pt._fiche){ pt.ficheId = pt._fiche.id; delete pt._fiche; } }));
+  (pl.objets || []).forEach(o=>{ delete o._fiche; delete o._angle; });
   await zonesCol.doc(zid).set({ scenes, planchesDecor: data.planchesDecor, updatedAt: Date.now() }, { merge:true });
   oublierScenesDeZone(zid);
-  await enregistrerKitBiblio();
-  showToast(pl.objets.length + ' objet(s) rangés dans la bibliothèque, ' + poses + ' posé(s) dans les pièces ✅');
+  showToast(pl.objets.length + ' objet(s) rangés dans la bibliothèque (' + creees + ' fiche(s) neuve(s)), ' + poses + ' posé(s) dans les pièces ✅');
   return true;
 }
 /* les planches d'un fichier d'import : objets désignés par le nom de leur pièce et de leur point */
@@ -12886,7 +12912,7 @@ async function ouvrirBrouillons(){
         const cle = 'pdz|' + z.id + '|' + pl.id;
         blocs += tache(okPl, '🧩 Planche du décor « ' + esc(pl.nom) + ' » (' + (pl.objets || []).length + ' objets)',
           'Une seule image pour ' + (pl.objets || []).map(o=> esc(o.nom)).join(', ') + '. Chaque objet est demandé à l\'angle du mur où il va.',
-          '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Poser la planche</b> : le jeu la découpe, range chaque objet dans la bibliothèque (par type) et le pose à sa place dans sa pièce.<br>4. <b>🗺️ Ouvrir la pièce</b> pour affiner chaque objet (taille, 4 coins), puis <b>Enregistrer la scène</b>.',
+          '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Poser la planche</b> : le jeu la découpe, range chaque objet dans <b>sa fiche de la bibliothèque</b> (Édition → Objets → 📚, même nom = même fiche) et le pose à sa place dans sa pièce.<br>4. <b>🗺️ Ouvrir la pièce</b> pour affiner chaque objet (taille, 4 coins), puis <b>Enregistrer la scène</b>.',
           bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPl) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pdz="' + z.id + '|' + pl.id + '"', okPl ? '📷 Reposer la planche' : '📷 Poser la planche'));
         envois[cle] = ()=> ({ texte: promptPlancheDecor(pl), imgs: plancheAvecCote(pl) && chambreConfig.imageRef ? [fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef))] : [] });   // v679
       });
