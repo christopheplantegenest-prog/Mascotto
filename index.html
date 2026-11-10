@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v695</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v696</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8438,8 +8438,7 @@ function renderSheet(){
   const portrait = buste || c.imageUrl;
   emojiEl.innerHTML = bustEnAttente(c)
     ? `<div style="width:160px;height:160px;max-width:100%;margin:0 auto;"></div>`   // v608 : place réservée, pas de clignotement
-    : (portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾'))
-      + (c._diagBuste ? `<div style="font-size:10px; line-height:1.35; text-align:left; white-space:pre-wrap; word-break:break-all; background:rgba(0,0,0,.55); color:#9ff; padding:6px; border-radius:6px; margin-top:6px; user-select:text; -webkit-user-select:text;">🩺 v695 — diagnostic du buste\n${htmlEsc(c._diagBuste)}</div>` : '');   // v695 : temporaire
+    : (portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾'));
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
@@ -30267,11 +30266,18 @@ function renderQuartersList(){
   });
 
   /* Les vignettes sont celles de l'ordre des tours en combat : même cadrage manuel, même cache. */
-  habitants.forEach(r=>{
-    if (!r.imageUrl) return;
+  /* v696 : pour un robot à modèle, l'image et le cadrage se lisent EN DIRECT sur le modèle, comme
+     en combat et dans le dialogue de sa chambre. Avant, on prenait la copie faite dans le robot à
+     son arrivée à bord (r.imageUrl / r.combatPortraitCrop) : un cadrage réglé après restait ignoré. */
+  habitants.forEach(async (r)=>{
     const box = el.querySelector('[data-quarters-thumb="' + r.id + '"]');
     if (!box) return;
-    const f = { imageUrl: r.imageUrl, combatPortraitCrop: r.combatPortraitCrop || null };
+    const m = r.robotModeleId && typeof ctModele === 'function' ? ctModele(r.robotModeleId) : null;
+    let url = '', crop = null;
+    if (m){ try { url = await urlFaceModeleAsync(m); } catch(e){ url = ''; } crop = m.portraitCrop || null; }
+    if (!url){ url = r.imageUrl || ''; crop = r.combatPortraitCrop || null; }
+    if (!url) return;
+    const f = { imageUrl: url, combatPortraitCrop: crop };
     generateThumbFor(f).then(()=>{
       if (!f.thumbUrl || !box.isConnected) return;
       box.innerHTML = `<img src="${f.thumbUrl}" style="width:100%; height:100%; object-fit:cover;">`;
@@ -36399,34 +36405,10 @@ async function ouvrirDialogueRobot(hab){
   /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours. */
   /* v694 : l'IMAGE DE BUSTE posée dans la fiche de dialogue passe en premier ; le cadrage du modèle
      ne sert que s'il n'y en a pas (avant, il la masquait) */
-  /* v695 — DIAGNOSTIC TEMPORAIRE du buste (à retirer) : une ligne sous l'image dit d'où vient
-     l'image, quel cadrage est lu, et si la découpe a réussi. */
-  const dg = [];
-  dg.push('modèle : ' + (m ? (m.nom || '?') + ' [' + m.id + ']' : 'AUCUN (robotModeleId=' + (hab.robotModeleId || 'vide') + ')'));
-  const fd = ficheDialogueDuModele(m);
-  dg.push('fiche dialogue : ' + (fd ? 'oui [' + fd.id + ']' + (fd.enTravaux ? ' en travaux' : '') + (f && f !== fd && f.versionPubliee ? ' (version publiée)' : '') : 'non'));
-  dg.push('buste fiche : ' + (c.bustImagePath ? 'chemin ' + c.bustImagePath : c.bustImageRef ? 'réserve ' + c.bustImageRef : 'aucun'));
-  dg.push('cadrage modèle : ' + (m && m.portraitCrop ? 'cx=' + (+m.portraitCrop.cx).toFixed(3) + ' cy=' + (+m.portraitCrop.cy).toFixed(3) + ' taille=' + (+m.portraitCrop.size).toFixed(3) : 'AUCUN'));
-  dg.push('image face : ' + (!m ? '—' : m.faceImagePath ? 'GitHub ' + m.faceImagePath : m.faceImageDataUrl ? 'intégrée' : m.faceImageRef ? 'réserve ' + m.faceImageRef : 'aucune'));
   if (!c.bustImagePath && !c.bustImageRef){
     const brute = await urlFaceModeleAsync(m);
-    dg.push('adresse : ' + (brute ? (brute.startsWith('data:') ? 'data (' + Math.round(brute.length / 1024) + ' ko)' : brute.startsWith('blob:') ? 'blob' : brute.slice(0, 90)) : 'VIDE'));
-    if (brute){
-      const im = await chargerImage(brute);
-      dg.push('taille image : ' + (im ? im.naturalWidth + '×' + im.naturalHeight : 'ILLISIBLE'));
-      const fin = (prom)=> Promise.race([prom, new Promise(ok=> setTimeout(()=> ok('__DELAI__'), 6000))]);
-      try {
-        const res = await fin(m && m.portraitCrop ? buildManualThumb(brute, m.portraitCrop) : buildFaceThumb(brute));
-        if (res === '__DELAI__'){ dg.push('découpe : BLOQUÉE (6 s)'); c.imageUrl = brute; }
-        else {
-          c.imageUrl = res;
-          dg.push('découpe : ' + (!res ? 'VIDE' : res === brute ? 'ÉCHEC (image brute renvoyée)' : (m && m.portraitCrop ? 'manuelle OK' : 'automatique (sans cadrage)')));
-          if (res && res !== brute){ const ti = await chargerImage(res); dg.push('vignette : ' + (ti ? ti.naturalWidth + '×' + ti.naturalHeight : 'illisible')); }
-        }
-      } catch(e){ c.imageUrl = brute; dg.push('découpe : ERREUR ' + e.message); }
-    }
-  } else dg.push('→ le buste de la fiche passe devant le cadrage');
-  c._diagBuste = dg.join('\n');
+    if (brute){ try { c.imageUrl = await (m && m.portraitCrop ? buildManualThumb(brute, m.portraitCrop) : buildFaceThumb(brute)); } catch(e){ c.imageUrl = brute; } }
+  }
   dialogueChambreOuvert = true;
   document.getElementById('overlay').style.zIndex = '4650';
   openSheet(c);
