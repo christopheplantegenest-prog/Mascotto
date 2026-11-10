@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v696</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v697</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -36900,7 +36900,8 @@ function meubleDeFiche(it){
   return { id: 'fi_' + it.id, ficheId: it.id, nom: it.name || 'Meuble', categorie: mob.categorie || null,
     type: mur ? 'mur' : mob.pose === 'plafond' ? 'plafond' : 'sol', w: Math.max(1, mob.w || 1), d: mur ? 1 : p, h: mur ? p : 1,
     ref, refs, angle: refs.face ? 'face' : refs.gauche ? 'gauche' : 'droite', reglage: reglages[refs.face ? 'face' : refs.gauche ? 'gauche' : 'droite'] || null, reglages,
-    porte: !!mob.porte || mob.categorie === 'Porte', lumiere: !!mob.lumiere, kDefaut: mob.kDefaut != null ? mob.kDefaut : null };
+    porte: !!mob.porte || mob.categorie === 'Porte', lumiere: !!mob.lumiere, kDefaut: mob.kDefaut != null ? mob.kDefaut : null,
+    hauteur: mob.hauteur || null };   // v697 : hauteur réelle en cases (sinon déduite des images)
 }
 function ficheDuMeubleKit(idAncien){
   return (typeof items !== 'undefined' ? items : []).find(i=> i && i.mob && i.mob.sources && (i.mob.sources.kit || []).includes(idAncien)) || null;
@@ -36946,7 +36947,9 @@ function angleAutoKit(o, m, G){
   if (o.zone === 'g') return 'gauche';
   if (o.zone === 'd') return 'droite';
   if (o.zone === 'sol' && G && m){
-    const { w } = dimsKit(o, m);
+    const t = tourneKit(o, m, G);   // v697 : un meuble de trois-quarts se tourne contre le mur
+    if (t) return t;
+    const { w } = dimsKit(o, m, G);
     if (o.c <= 0) return 'gauche';
     if (o.c + w >= G.nx) return 'droite';
   }
@@ -36995,7 +36998,7 @@ function geoKit(c){
 }
 /* le rectangle (ou le quadrilatère) occupé par un objet posé, en pixels de l'image */
 function emplacementKit(G, o, m){
-  const { w, d, h } = dimsKit(o, m);
+  const { w, d, h } = dimsKit(o, m, G);
   if (o.zone === 'sol'){
     const tB = (G.ny - o.r) / G.ny, tF = (G.ny - o.r - d) / G.ny;
     const yB = G.yAt(tB), yFr = G.yAt(tF);
@@ -37061,6 +37064,125 @@ function teinterOrange(img, hex){
   ctx.putImageData(id, 0, 0);
   teinteCache[cle] = cv; return cv;
 }
+/* ---------- v697 : le calage automatique d'un meuble de trois-quarts ----------
+   1) L'IMAGE : on repère sur la silhouette (pixels opaques) l'arête verticale la plus proche de nous —
+      le point le plus haut du dessus — et, de part et d'autre, les lignes du haut et du bas : on obtient
+      le côté (plaque étroite) et la façade (plaque large) tels qu'ils sont DESSINÉS.
+   2) LA PIÈCE : la boîte du meuble (empreinte au sol + hauteur) projetée avec la géométrie de la coquille.
+   3) On envoie chaque plaque dessinée sur sa face de la boîte : ce sont les 4 coins + le pli du jeu. */
+const analyseTroisQuartsCache = new Map();
+function analyserTroisQuarts(img){
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const cle = (img.src || '').length + '|' + (img.src || '').slice(-60) + '|' + iw + 'x' + ih;
+  if (analyseTroisQuartsCache.has(cle)) return analyseTroisQuartsCache.get(cle);
+  let res = null;
+  try {
+    const cv = document.createElement('canvas'); cv.width = iw; cv.height = ih;
+    const ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, iw, ih).data;
+    const haut = new Array(iw).fill(-1), bas = new Array(iw).fill(-1);
+    for (let x = 0; x < iw; x++){
+      for (let y = 0; y < ih; y++) if (d[(y * iw + x) * 4 + 3] > 40){ haut[x] = y; break; }
+      for (let y = ih - 1; y >= 0; y--) if (d[(y * iw + x) * 4 + 3] > 40){ bas[x] = y; break; }
+    }
+    const cols = []; for (let x = 0; x < iw; x++) if (haut[x] >= 0 && bas[x] - haut[x] > ih * 0.3) cols.push(x);
+    if (cols.length > 10){
+      const x0 = cols[0], x1 = cols[cols.length - 1];
+      /* l'arête : le haut le plus haut (milieu des colonnes à 2 px près du minimum) */
+      const hMin = Math.min(...cols.map(x=> haut[x]));
+      const pres = cols.filter(x=> haut[x] <= hMin + 2);
+      const xp = pres[Math.floor(pres.length / 2)];
+      /* une droite par moindres carrés sur la partie centrale d'un segment (les coins sont arrondis) */
+      const droite = (prof, a, b)=>{
+        const xs = []; for (let x = Math.round(a); x <= Math.round(b); x++) if (prof[x] >= 0) xs.push(x);
+        if (xs.length < 3) return null;
+        const n = xs.length, mx = xs.reduce((t, x)=> t + x, 0) / n, my = xs.reduce((t, x)=> t + prof[x], 0) / n;
+        let num = 0, den = 0; xs.forEach(x=>{ num += (x - mx) * (prof[x] - my); den += (x - mx) * (x - mx); });
+        const k = den ? num / den : 0; return (x)=> my + k * (x - mx);
+      };
+      const g1 = xp - x0, g2 = x1 - xp;
+      if (g1 > 6 && g2 > 6){
+        const hG = droite(haut, x0 + g1 * 0.2, xp - g1 * 0.2), bG = droite(bas, x0 + g1 * 0.2, xp - g1 * 0.2);
+        const hD = droite(haut, xp + g2 * 0.2, x1 - g2 * 0.2), bD = droite(bas, xp + g2 * 0.2, x1 - g2 * 0.2);
+        if (hG && bG && hD && bD){
+          const hp = (hG(xp) + hD(xp)) / 2, bp = (bG(xp) + bD(xp)) / 2;
+          const gauche = [[x0, hG(x0)], [xp, hp], [xp, bp], [x0, bG(x0)]];
+          const droiteQ = [[xp, hp], [x1, hD(x1)], [x1, bD(x1)], [xp, bp]];
+          /* le côté est la plaque la plus étroite */
+          const coteAGauche = g1 <= g2;
+          res = { iw, ih, xp, u: xp / iw, gauche, droite: droiteQ, coteAGauche,
+                  hArete: bp - hp, largeurFacade: coteAGauche ? g2 : g1 };
+        }
+      }
+    }
+  } catch(e){ res = null; }
+  analyseTroisQuartsCache.set(cle, res);
+  return res;
+}
+function appliquerH(h, p){ const w = h[6] * p[0] + h[7] * p[1] + h[8]; return [(h[0] * p[0] + h[1] * p[1] + h[2]) / w, (h[3] * p[0] + h[4] * p[1] + h[5]) / w]; }
+/* la hauteur du meuble en demi-cases : celle de sa fiche si elle est donnée (mob.hauteur, en cases),
+   sinon déduite de son image de face (proportions exactes), sinon de l'image de trois-quarts */
+async function hauteurMeubleKit(m, wLargeur, an){
+  if (m.hauteur) return Math.max(1, m.hauteur * KIT_FIN);
+  if (m.refs && m.refs.face){
+    try {
+      const im = await chargerImage(await urlDeRef(m.refs.face));
+      const b = im ? boiteOpaqueImage(im) : null;
+      if (b && b.w > 4) return Math.max(1, wLargeur * b.h / b.w);
+    } catch(e){}
+  }
+  return Math.max(1, wLargeur * an.hArete / (an.largeurFacade * 1.2));
+}
+const boiteOpaqueCache = new Map();
+function boiteOpaqueImage(img){
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const cle = (img.src || '').length + '|' + (img.src || '').slice(-60);
+  if (boiteOpaqueCache.has(cle)) return boiteOpaqueCache.get(cle);
+  let r = null;
+  try {
+    const cv = document.createElement('canvas'); cv.width = iw; cv.height = ih;
+    const ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, iw, ih).data;
+    let x0 = iw, y0 = ih, x1 = -1, y1 = -1;
+    for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) if (d[(y * iw + x) * 4 + 3] > 40){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 >= x0) r = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  } catch(e){}
+  boiteOpaqueCache.set(cle, r); return r;
+}
+/* le réglage complet (coins + pli, en unités du rectangle) et le rectangle où dessiner, pour un meuble
+   tourné contre le mur de gauche ('gauche') ou de droite ('droite') */
+async function calageTroisQuartsKit(G, o, m, img, sens){
+  const an = analyserTroisQuarts(img); if (!an) return null;
+  const e = emplacementKit(G, o, m);
+  const [bL, bR, fR, fL] = e.poly;   // fond-gauche, fond-droite, devant-droite, devant-gauche (au sol)
+  const { d } = dimsKit(o, m, G);    // tourné : d = la LARGEUR du meuble le long de la pièce, côté écran
+  const largeur = Math.max(1, m.w || 1) * KIT_FIN;
+  const h = await hauteurMeubleKit(m, largeur, an);
+  const haut = (p)=> [p[0], p[1] - h * G.cellH(p[1])];
+  /* la face qui regarde le joueur (le devant de la boîte) et la face qui regarde le milieu de la pièce */
+  const devant = [haut(fL), haut(fR), fR, fL];
+  const flancInterieur = sens === 'gauche' ? [haut(fR), haut(bR), bR, fR] : [haut(bL), haut(fL), fL, bL];
+  /* dans l'image : la plaque étroite (le côté) va sur le devant, la façade sur la face intérieure.
+     Contre le mur de gauche, le côté doit être à gauche de la façade ; sinon on prend l'image en miroir. */
+  const veutCoteAGauche = sens === 'gauche';
+  const miroir = an.coteAGauche !== veutCoteAGauche;
+  const iw = an.iw, ih = an.ih;
+  const M = (q)=> q.map(p=> [iw - p[0], p[1]]);
+  let srcG, srcD, xp;
+  if (!miroir){ srcG = an.gauche; srcD = an.droite; xp = an.xp; }
+  else { const G2 = M(an.droite), D2 = M(an.gauche); srcG = [G2[1], G2[0], G2[3], G2[2]]; srcD = [D2[1], D2[0], D2[3], D2[2]]; xp = iw - an.xp; }
+  const cibleG = veutCoteAGauche ? devant : flancInterieur, cibleD = veutCoteAGauche ? flancInterieur : devant;
+  const H1 = homographie4(srcG, cibleG), H2 = homographie4(srcD, cibleD);
+  if (!H1 || !H2) return null;
+  const tl = appliquerH(H1, [0, 0]), bl = appliquerH(H1, [0, ih]), tr = appliquerH(H2, [iw, 0]), br = appliquerH(H2, [iw, ih]);
+  const ph = cibleG[1], pb = cibleG[2];   // l'arête commune
+  const u = xp / iw;
+  const rh = Math.max(1, pb[1] - ph[1]), rw = rh * iw / ih, rx = ph[0] - rw * u, ry = ph[1];
+  const off = (p, bx, by)=> [+(((p[0] - rx) / rw - bx) * 100).toFixed(2), +(((p[1] - ry) / rh - by) * 100).toFixed(2)];
+  const g = { coins: { tl: off(tl, 0, 0), tr: off(tr, 1, 0), br: off(br, 1, 1), bl: off(bl, 0, 1) },
+              pli: { u: +u.toFixed(4), haut: off(ph, u, 0), bas: off(pb, u, 1) } };
+  return { g, miroir, rect: { x: rx, y: ry, w: rw, h: rh }, ombre: [fL, fR, bR, bL] };
+}
 /* v633 : où l'image d'un meuble au sol / au plafond se dessine (largeur = la boîte de son empreinte) */
 function boiteImageKit(e, iw, ih){
   const b = boiteDe(e.poly);
@@ -37076,7 +37198,7 @@ function boiteDe(poly){
 }
 /* les cases que l'objet occupe, pour les chevauchements */
 function casesDe(G, o, m){
-  const { w, d, h } = dimsKit(o, m), out = [];
+  const { w, d, h } = dimsKit(o, m, G), out = [];
   if (o.zone === 'sol' || o.zone === 'plafond'){ for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) out.push(o.zone + ':' + (o.c + i) + ':' + (o.r + j)); }
   else if (o.zone === 'fond'){ for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.push('fond:' + (o.c + i) + ':' + (o.k + j)); }
   else { for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.push(o.zone + ':' + (o.r + i) + ':' + (o.k + j)); }
@@ -37084,7 +37206,7 @@ function casesDe(G, o, m){
 }
 /* v635 : dans les limites de la pièce et de l'image (sans regarder les autres meubles) */
 function dansLesLimitesKit(G, o, m){
-  const { w, d, h } = dimsKit(o, m);
+  const { w, d, h } = dimsKit(o, m, G);
   if (o.zone === 'sol' || o.zone === 'plafond'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r + d > G.ny) return false; }
   else if (o.zone === 'fond'){ if (o.c < 0 || o.k < 0 || o.c + w > G.nx || o.k + h > G.nh) return false; }
   else { if (o.r < 0 || o.k < 0 || o.r + w > G.ny || o.k + h > G.nh) return false; }
@@ -37106,10 +37228,26 @@ function zonesPossibles(m){ return m.type === 'mur' ? ['fond', 'g', 'd'] : [m.ty
    DEMI-CASES (20 cm) pour pouvoir aligner un canapé de 4 sur une table de 3. Un meuble tourné
    de profil (orientation g/d) échange sa largeur et sa profondeur. */
 const KIT_FIN = 2;
-function dimsKit(o, m){
+function dimsKit(o, m, G){
   let w = Math.max(1, m.w || 1) * KIT_FIN, d = Math.max(1, m.d || 1) * KIT_FIN, h = Math.max(1, m.h || 1) * KIT_FIN;
   if (o && (o.orient === 'g' || o.orient === 'd') && m.type !== 'mur'){ const t = w; w = d; d = t; }
+  /* v697 : tourné contre un mur de côté, sa largeur court le long du mur (en profondeur) */
+  else if (o && tourneKit(o, m, G)){ const t = w; w = d; d = t; }
   return { w, d, h };
+}
+/* v697 — UN MEUBLE DE TROIS-QUARTS CONTRE UN MUR DE CÔTÉ. Un meuble au sol qui a une image « mur de
+   gauche » ou « mur de droite » (dessinée de trois-quarts : un côté + la façade) se TOURNE quand il
+   touche le mur de côté (ou quand on lui a choisi cet angle) : sa façade regarde le milieu de la pièce.
+   Le jeu calcule alors lui-même sa perspective (4 coins + le pli) à partir de la géométrie de la pièce
+   et des vraies dimensions du meuble — plus rien à régler à la main. Renvoie 'gauche', 'droite' ou null. */
+function tourneKit(o, m, G){
+  if (!o || o.zone !== 'sol' || !m || m.type === 'mur' || !m.refs || (!m.refs.gauche && !m.refs.droite)) return null;
+  if (o.angle === 'gauche' || o.angle === 'droite') return o.angle;
+  if (o.angle === 'face') return null;
+  if (o.c <= 0) return 'gauche';
+  const prof = Math.max(1, m.d || 1) * KIT_FIN;   // tourné, sa profondeur prend la largeur de la pièce
+  if (G && o.c + prof >= G.nx) return 'droite';
+  return null;
 }
 /* l'image à dessiner selon l'orientation (face par défaut ; dos ; profil, en miroir pour l'autre côté) */
 function refVueKit(o, m, G){
@@ -37214,18 +37352,36 @@ async function composerKit(kit, opts){
     }
     const m = meubleParId(o.meubleId); if (!m) continue;
     const vue = refVueKit(o, m, G);
-    const img = await chargerImage(await urlDeRef(vue.ref)); if (!img) continue;
+    const urlVue = await urlDeRef(vue.ref);
+    const img = await chargerImage(urlVue); if (!img) continue;
     const e = emplacementKit(G, o, m);
     /* v652 : les essais de meubles tournés (gabarit v636, planche tournante v637, vue murale v639-v642) sont
        retirés ; un meuble est toujours dessiné de face sur son empreinte, réglé ensuite à la main (4 coins). */
-    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), e });
+    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
-  for (const { o, m, img, e } of avecGeo){
+  for (const { o, m, img, e, brute, urlVue } of avecGeo){
     if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth || img.width, ih: img.naturalHeight || img.height };
     if (opts.sauf && opts.sauf === o.id) continue;
     const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
     ctx.save();
+    /* v697 : un meuble de trois-quarts tourné contre un mur de côté — calé par le calcul */
+    const sens = e.zone === 'sol' && !o.cadreId ? tourneKit(o, m, G) : null;
+    let cale = null;
+    if (sens){
+      try {
+        cale = await calageTroisQuartsKit(G, o, m, brute, sens);
+        const def = cale ? await imageDeformee(urlVue, cale.g, cale.miroir) : null;
+        const imD = def ? await chargerImage(def.url) : null;
+        if (imD){
+          const r = cale.rect;
+          ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.18)'; cheminPolys(ctx, [cale.ombre]); ctx.fill(); ctx.restore();
+          ctx.drawImage(imD, r.x + def.x0 * r.w, r.y + def.y0 * r.h, def.w * r.w, def.h * r.h);
+          ctx.restore();
+          continue;
+        }
+      } catch(err){}
+    }
     if (e.zone === 'sol' || e.zone === 'plafond'){
       const { wpx, hpx, x, y } = boiteImageKit(e, iw, ih);
       if (e.zone === 'sol'){
@@ -37394,7 +37550,7 @@ async function ouvrirEditeurKit(){
     return { x, y: Math.max(yFloor - G.nh * G.cellH(yFloor) + 1, Math.min(yFloor - 1, p.y)) };
   };
   const cibleSous = (o, m, p)=>{
-    const { w, d, h } = dimsKit(o, m);
+    const { w, d, h } = dimsKit(o, m, G);
     const zones = zonesPossibles(m);
     for (const zone of zones.concat(zones.includes(o.zone) ? [o.zone + '!'] : [zones[0] + '!'])){
       const force = zone.endsWith('!'), z = force ? zone.slice(0, -1) : zone;
@@ -37465,7 +37621,7 @@ async function ouvrirEditeurKit(){
     const bt = selBar.querySelector('[data-tourner]');
     if (bt) bt.addEventListener('click', async ()=>{
       const test = Object.assign({}, o, { orient: 'face' });
-      { const { w, d } = dimsKit(test, m); test.c = Math.max(0, Math.min(G.nx - w, test.c)); test.r = Math.max(0, Math.min(G.ny - d, test.r)); }
+      { const { w, d } = dimsKit(test, m, G); test.c = Math.max(0, Math.min(G.nx - w, test.c)); test.r = Math.max(0, Math.min(G.ny - d, test.r)); }
       if (!dansLesLimitesKit(G, test, m)){ showToast('Pas la place de le tourner ici'); return; }
       Object.assign(o, test); signalerChevauchement(o, m); await redessinerImage(); dessinerCalque(); dessinerSelection();
     });
