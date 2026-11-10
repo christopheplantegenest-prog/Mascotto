@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v685</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v686</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -15655,6 +15655,7 @@ let editingItemId = null;
 if (itemsCol){
   itemsCol.onSnapshot((snap)=>{
     items = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
+    try { coffresResoudreImages(); Object.keys(compoFenetreCache).forEach(k=>{ if (k.startsWith('fi_')) delete compoFenetreCache[k]; }); } catch(e){}   // v686
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
     renderPickupItemSelect();
@@ -31057,7 +31058,37 @@ let scImageCache = {}; // ref -> dataUrl
    `scene_images` (comme toute image de scène) et le modèle n'en garde que la référence. */
 const coffresCol = (typeof db !== 'undefined') ? db.collection('coffres_catalogue') : null;
 const COFFRES = { modeles: [], prets: false };
-function coffreModeleParId(id){ return COFFRES.modeles.find(m=> m.id === id) || null; }
+/* v686 — LES COFFRES VIENNENT AUSSI DE LA BIBLIOTHÈQUE : toute fiche de mobilier qui « s'ouvre » est un
+   modèle de coffre « fi_<fiche> », un angle par image d'angle (fermée + ouverte). Un ancien modèle déjà
+   rassemblé dans une fiche garde ses identifiants d'angle (les points posés restent valables) mais
+   prend ses images dans la fiche. */
+const LIB_ANGLE_COFFRE = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
+function angleCoffreDeFiche(it, a, id, nom){
+  const v = ((it.mob && it.mob.vues) || {})[a]; if (!v || !(v.ref || v.path)) return null;
+  return { id: id || a, nom: nom || LIB_ANGLE_COFFRE[a], fermeRef: v.ref || null, fermePath: v.path || null, ouvertRef: v.refOuvert || null, ouvertPath: v.pathOuvert || null };
+}
+function coffreDeFiche(it){
+  return { id: 'fi_' + it.id, nom: it.name || 'Coffre', categorie: (it.mob && it.mob.categorie) || null, ficheId: it.id,
+    angles: ['face', 'gauche', 'droite'].map(a=> angleCoffreDeFiche(it, a)).filter(Boolean) };
+}
+const ficheDuCoffre = (id)=> (typeof items !== 'undefined' ? items : []).find(i=> i && i.mob && i.mob.sources && i.mob.sources.coffre === id) || null;
+function coffresTous(){
+  const out = (typeof items !== 'undefined' ? items : []).filter(i=> i && i.mob && i.mob.ouvrable && famileDe(i) === 'mobilier').map(coffreDeFiche).filter(m=> m.angles.length);
+  COFFRES.modeles.forEach(m=>{ if (m && !ficheDuCoffre(m.id)) out.push(m); });
+  return out.sort((a, b)=> (a.nom || '').localeCompare(b.nom || '', 'fr'));
+}
+function coffreModeleParId(id){
+  if (!id) return null;
+  if (String(id).startsWith('fi_')){ const it = (typeof items !== 'undefined' ? items : []).find(i=> 'fi_' + i.id === id); return it && it.mob ? coffreDeFiche(it) : null; }
+  const l = COFFRES.modeles.find(m=> m.id === id) || null;
+  const f = ficheDuCoffre(id);
+  if (!l || !f) return l;
+  const pris = new Set();   // même correspondance qu'au rassemblement
+  return Object.assign({}, l, { nom: f.name || l.nom, angles: (l.angles || []).map(an=>{
+    let a = angleDeNom(an.nom); if (pris.has(a)) a = ['face', 'gauche', 'droite'].find(x=> !pris.has(x)) || a; pris.add(a);
+    return angleCoffreDeFiche(f, a, an.id, an.nom) || an;
+  }) });
+}
 function coffreDuCatalogue(pt){
   if (!pt || !pt.coffreModele) return null;
   const m = coffreModeleParId(pt.coffreModele);
@@ -31078,7 +31109,7 @@ function coffreFaceUrl(a, face){
 }
 async function coffresResoudreImages(){
   const jobs = [];
-  COFFRES.modeles.forEach(m=> (m.angles || []).forEach(a=>{
+  coffresTous().concat(COFFRES.modeles.map(m=> coffreModeleParId(m.id)).filter(Boolean)).forEach(m=> (m.angles || []).forEach(a=>{
     ['ferme', 'ouvert'].forEach(face=>{ const r = a[face + 'Ref']; if (r && !scImageCache[r]) jobs.push(internalizeSceneImage(r)); });
   }));
   if (!jobs.length) return;
@@ -31103,7 +31134,7 @@ if (coffresCol){
 /* v650 : un modèle appartient à UNE catégorie (armoire, malle, caisse…). Le sélecteur va par niveaux :
    catégorie → modèle → angle (fermé/ouvert en vignette). Sans catégorie, un modèle va en « Sans catégorie ». */
 function categorieCoffre(m){ return (m && String(m.categorie || '').trim()) || 'Sans catégorie'; }
-function categoriesCoffre(){ return [...new Set(COFFRES.modeles.map(categorieCoffre))].sort((a, b)=> a.localeCompare(b, 'fr')); }
+function categoriesCoffre(){ return [...new Set(coffresTous().map(categorieCoffre))].sort((a, b)=> a.localeCompare(b, 'fr')); }
 function ouvrirChoixCoffre(cb){
   const fond = document.createElement('div');
   fond.className = 'overlay show';
@@ -31122,12 +31153,12 @@ function ouvrirChoixCoffre(cb){
     } else if (catSel){
       titre = esc(catSel);
       retour = `<button type="button" class="btn-secondary" data-retour="cat" style="width:100%; margin-bottom:8px;">← Catégories</button>`;
-      corps = COFFRES.modeles.filter(m=> categorieCoffre(m) === catSel).map(m=> bouton(`data-modele="${m.id}"`, vignette(coffreFaceUrl((m.angles || [])[0], 'ferme'), 84), esc(m.nom), (m.angles || []).length + ' angle(s)')).join('');
+      corps = coffresTous().filter(m=> categorieCoffre(m) === catSel).map(m=> bouton(`data-modele="${m.id}"`, vignette(coffreFaceUrl((m.angles || [])[0], 'ferme'), 84), esc(m.nom), (m.angles || []).length + ' angle(s)')).join('');
     } else {
       titre = 'Quelle catégorie ?';
       corps = categoriesCoffre().map(c=>{
-        const m0 = COFFRES.modeles.find(m=> categorieCoffre(m) === c);
-        return bouton(`data-categorie="${esc(c)}"`, vignette(coffreFaceUrl(m0 && (m0.angles || [])[0], 'ferme'), 84), esc(c), COFFRES.modeles.filter(m=> categorieCoffre(m) === c).length + ' modèle(s)');
+        const m0 = coffresTous().find(m=> categorieCoffre(m) === c);
+        return bouton(`data-categorie="${esc(c)}"`, vignette(coffreFaceUrl(m0 && (m0.angles || [])[0], 'ferme'), 84), esc(c), coffresTous().filter(m=> categorieCoffre(m) === c).length + ' modèle(s)');
       }).join('') || '<p class="meta">Le catalogue est vide : ajoute des coffres dans Outils de test → 🗺️ Zones et exploration → 📦 Catalogue de coffres.</p>';
     }
     fond.innerHTML = `<div class="sheet" style="max-height:85vh; overflow-y:auto;">
@@ -32599,7 +32630,7 @@ function addNewScenePoint(typeId){
   if (typeId === 'emplacement'){ newPt.w = 20; newPt.h = 40; newPt.hideIcon = true; }   // v498 : un peu plus large au départ
   if (typeId === 'fenetre'){   // v622 : le premier cadre et la première vue de la bibliothèque
     newPt.w = 18; newPt.h = 24; newPt.perspective = 0;
-    newPt.cadreId = (fenetresBiblio.cadres[0] || {}).id || null;
+    newPt.cadreId = (cadresTous()[0] || {}).id || null;   // v686
     newPt.vueId = (fenetresBiblio.vues.find(v=> v.nuitRef) || fenetresBiblio.vues[0] || {}).id || null;
   }
   renderSceneEditorPoints();
@@ -32872,7 +32903,7 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
   if (pt.type === 'fenetre'){   // v622 : cadre, vue dehors, perspective
-    const B = fenetresBiblio;
+    const B = Object.assign({}, fenetresBiblio, { cadres: cadresTous() });   // v686 : les fiches comprises
     if (!B.cadres.length){
       typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.8); margin:0;">🪟 La bibliothèque de fenêtres est vide : fais d'abord les planches dans 🧰 À finir → 🪟 Fenêtres.</p>`;
       return;
@@ -35160,11 +35191,30 @@ const estMagenta = (r, g, b)=> r > 150 && b > 150 && g < 120 && (r - g) > 80 && 
 const compoFenetreCache = {};
 /* La fenêtre composée : la vue (jour ou nuit) à travers le vitrage magenta, le cadre par-dessus.
    `assombrir` (0 à 1) : la pièce est éteinte — le cadre s'assombrit, la vue dehors non. */
+/* v686 — LES CADRES DE FENÊTRE VIENNENT AUSSI DE LA BIBLIOTHÈQUE : toute fiche de mobilier « fenêtre »
+   est un cadre « fi_<fiche> » (son image de face, vitrage magenta). Un ancien cadre rassemblé garde son
+   identifiant mais prend l'image de sa fiche. */
+const ficheDuCadre = (id)=> (typeof items !== 'undefined' ? items : []).find(i=> i && i.mob && i.mob.sources && (i.mob.sources.cadres || []).includes(id)) || null;
+function cadreDeFiche(it, id){
+  const r = it && it.mob && refDeVue((it.mob.vues || {}).face);
+  return r ? { id: id || 'fi_' + it.id, nom: it.name || 'Fenêtre', ref: r, ficheId: it.id } : null;
+}
+function cadresTous(){
+  const out = (typeof items !== 'undefined' ? items : []).filter(i=> i && i.mob && i.mob.fenetre).map(i=> cadreDeFiche(i)).filter(Boolean);
+  (fenetresBiblio.cadres || []).forEach(c=>{ if (c && c.id && !ficheDuCadre(c.id)) out.push(c); });
+  return out;
+}
+function cadreParId(id){
+  if (!id) return null;
+  if (String(id).startsWith('fi_')) return cadreDeFiche((typeof items !== 'undefined' ? items : []).find(i=> 'fi_' + i.id === id));
+  const l = (fenetresBiblio.cadres || []).find(c=> c.id === id) || null, f = ficheDuCadre(id);
+  return (f && cadreDeFiche(f, id)) || l;
+}
 function composerFenetre(cadreId, vueId, nuit, assombrir){
   const cle = [cadreId, vueId, nuit ? 1 : 0, (assombrir || 0).toFixed(2)].join('|');
   if (compoFenetreCache[cle]) return compoFenetreCache[cle];
   compoFenetreCache[cle] = (async ()=>{
-    const cadre = fenetresBiblio.cadres.find(c=> c.id === cadreId);
+    const cadre = cadreParId(cadreId);   // v686
     const vue = fenetresBiblio.vues.find(v=> v.id === vueId);
     if (!cadre) return '';
     const imC = await chargerImage(await urlDeRef(cadre.ref));
@@ -35903,7 +35953,7 @@ async function ouvrirReglagesChambre(){
       <button type="button" class="btn-secondary" data-img style="flex:1 1 45%;">📷 ${url ? 'Changer l\'image' : 'Poser l\'image'}</button>
       ${url ? '<button type="button" class="btn-primary" data-emp style="flex:1 1 45%;">📐 Emplacements</button>' : ''}
     </div>
-    <p class="meta" style="margin:10px 0 4px;">☁️ ${ciels.length} ciel(s) complet(s) · 🟫 ${nb(chambreConfig.textures)} texture(s) de sol · 🪟 ${nb(fenetresBiblio.cadres)} cadre(s) · 🪴 ${(typeof items !== 'undefined' ? items : []).filter(i=> i.deco).length} objet(s) de déco</p>
+    <p class="meta" style="margin:10px 0 4px;">☁️ ${ciels.length} ciel(s) complet(s) · 🟫 ${nb(chambreConfig.textures)} texture(s) de sol · 🪟 ${cadresTous().length} cadre(s) · 🪴 ${(typeof items !== 'undefined' ? items : []).filter(i=> i.deco).length} objet(s) de déco</p>
     <div class="field-label" style="margin-top:10px;">💡 Lumière de la chambre</div>
     <div style="display:flex; gap:8px; align-items:center;">
       <label class="meta" style="flex:1;">Éteinte à<input type="time" data-ext class="field-input" value="${htmlEsc(l.extinction || '22:00')}"></label>
@@ -36605,7 +36655,7 @@ async function ouvrirDecoration(hab){
         + '</div>'
         + '<p class="meta" style="margin:4px 0 0; font-size:12px;">Pour poser un objet : dans la chambre, ouvre ton sac 🎒, touche l\'objet, puis <b>🪑 Poser</b>.' + (poses ? ' Ici, ↩️ reprend un objet posé.' : '') + '</p>';
     } else if (onglet === 'fenetres'){
-      const cadres = fenetresBiblio.cadres || [];
+      const cadres = cadresTous();   // v686
       const poses = Object.values(deco().fenetres || {}).length;
       h = '<div style="display:flex; flex-wrap:wrap; gap:6px; padding:2px 0 4px;">'
         + cadres.map(c=> vignette('data-cadre="' + c.id + '"', enMain && enMain.genre === 'cadre' && enMain.id === c.id, `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;">`, c.nom)).join('')
@@ -36623,7 +36673,7 @@ async function ouvrirDecoration(hab){
     }
     panneau.innerHTML = h;
     panneau.querySelectorAll('[data-tref]').forEach(im=>{ const t = chambreConfig.textures.find(x=> x.id === im.dataset.tref); urlDeRef(t && t.ref).then(u=>{ if (u) im.src = u; }); });
-    panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = fenetresBiblio.cadres.find(x=> x.id === im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
+    panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = cadreParId(im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-objet]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'objet' && enMain.id === b.dataset.objet) ? null : { genre:'objet', id: b.dataset.objet }; dessinerPanneau(); dessinerCases(); }));
     panneau.querySelectorAll('[data-cadre]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'cadre' && enMain.id === b.dataset.cadre) ? null : { genre:'cadre', id: b.dataset.cadre }; dessinerPanneau(); dessinerCases(); }));
     panneau.querySelectorAll('[data-reprendre]').forEach(b=> b.addEventListener('click', ()=>{ enMain = (enMain && enMain.genre === 'reprendre') ? null : { genre:'reprendre' }; dessinerPanneau(); dessinerCases(); }));
@@ -37299,7 +37349,7 @@ async function ouvrirEditeurKit(){
       const ms = meublesKit();   // v677 : les fiches de la bibliothèque
       h = '<div style="display:flex; flex-wrap:wrap; gap:6px; padding:2px 0 4px;">'
         + ms.map(m=> vignette('data-ajout="' + m.id + '"', `<img data-mref="${m.id}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; left:2px; bottom:1px; font-size:9px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; padding:0 3px;">${TYPES_KIT[m.type] ? TYPES_KIT[m.type].emoji : ''} ${m.w || 1}×${m.type === 'mur' ? (m.h || 1) : (m.d || 1)}</span>`, m.nom)).join('')
-        + (fenetresBiblio.cadres || []).map(c=> vignette('data-ajout-cadre="' + c.id + '"', `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; left:2px; bottom:1px; font-size:9px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; padding:0 3px;">🪟</span>`, c.nom)).join('')
+        + cadresTous().map(c=> vignette('data-ajout-cadre="' + c.id + '"', `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;"><span style="position:absolute; left:2px; bottom:1px; font-size:9px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; padding:0 3px;">🪟</span>`, c.nom)).join('')
         + '</div>'
         + (ms.length ? '' : '<p class="meta" style="font-size:12px;">Aucun meuble : crée des fiches de mobilier dans Édition → Objets → 📚 Bibliothèque.</p>');
     } else if (onglet === 'poses'){
@@ -37312,7 +37362,7 @@ async function ouvrirEditeurKit(){
     }
     panneau.innerHTML = h;
     panneau.querySelectorAll('[data-mref]').forEach(im=>{ const m = meubleParId(im.dataset.mref); urlDeRef(m && m.ref).then(u=>{ if (u) im.src = u; }); });
-    panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = (fenetresBiblio.cadres || []).find(x=> x.id === im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
+    panneau.querySelectorAll('[data-cref]').forEach(im=>{ const c = cadreParId(im.dataset.cref); urlDeRef(c && c.ref).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-oref]').forEach(im=>{ const o = objet(im.dataset.oref); const m = o && meubleDe(o); urlDeRef(m && (o.cadreId ? m.ref : refVueKit(o, m, G).ref)).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-coqref]').forEach(im=>{ const c = coquilleParId(im.dataset.coqref); urlDeRef(c && c.ref || c && c.imageRef).then(u=>{ if (u) im.src = u; }); });
     panneau.querySelectorAll('[data-ajout]').forEach(b=> b.addEventListener('click', async ()=>{
@@ -37331,7 +37381,7 @@ async function ouvrirEditeurKit(){
     panneau.querySelectorAll('[data-ajout-cadre]').forEach(b=> b.addEventListener('click', async ()=>{
       if (occupe) return; occupe = true;
       try {
-        const c = (fenetresBiblio.cadres || []).find(x=> x.id === b.dataset.ajoutCadre); if (!c) return;
+        const c = cadreParId(b.dataset.ajoutCadre); if (!c) return;
         const faux = { nom: c.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 3 };
         const place = premierePlaceLibre(G, kit.objets, faux);
         if (!place){ showToast('Plus de place sur les murs'); return; }
@@ -41485,8 +41535,8 @@ async function importerMiseAJour(sc){
           if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
           if (base.type === 'fenetre'){   // v656 : une fenêtre = un cadre + une vue (jour ET nuit), jamais un décor dessiné
             base.perspective = 0;
-            const cad = pt.cadre && (fenetresBiblio.cadres || []).find(c=> c && (c.nom || c.name || '') === pt.cadre);
-            base.cadreId = (cad || fenetresBiblio.cadres[0] || {}).id || null;
+            const cad = pt.cadre && cadresTous().find(c=> c && (c.nom || c.name || '') === pt.cadre);
+            base.cadreId = (cad || cadresTous()[0] || {}).id || null;
             base.vueId = ((fenetresBiblio.vues || []).find(v=> v && v.nuitRef) || fenetresBiblio.vues[0] || {}).id || null;
           }
           /* v656 : un point nommé qui existait déjà (même type, même nom) garde son identifiant (un
@@ -42154,8 +42204,8 @@ async function importerScenario(sc){
           if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
           if (base.type === 'fenetre'){   // v656 : une fenêtre = un cadre + une vue (jour ET nuit), jamais un décor dessiné
             base.perspective = 0;
-            const cad = pt.cadre && (fenetresBiblio.cadres || []).find(c=> c && (c.nom || c.name || '') === pt.cadre);
-            base.cadreId = (cad || fenetresBiblio.cadres[0] || {}).id || null;
+            const cad = pt.cadre && cadresTous().find(c=> c && (c.nom || c.name || '') === pt.cadre);
+            base.cadreId = (cad || cadresTous()[0] || {}).id || null;
             base.vueId = ((fenetresBiblio.vues || []).find(v=> v && v.nuitRef) || fenetresBiblio.vues[0] || {}).id || null;
           }
           if (pt.qty) base.qty = parseInt(pt.qty,10) || 1;
@@ -42184,7 +42234,7 @@ async function importerScenario(sc){
           /* v591 : `coffre: "Malle en bois", angle: "face"` → coffre du catalogue, par son nom */
           if (estCoffre(pt) && pt.coffre){
             const voulu = String(pt.coffre).trim().toLowerCase();
-            const m = COFFRES.modeles.find(x=> String(x.nom || '').trim().toLowerCase() === voulu);
+            const m = coffresTous().find(x=> String(x.nom || '').trim().toLowerCase() === voulu);   // v686 : fiches comprises
             if (!m) journal.push('⚠️ Zone « ' + z.name + ' » : coffre « ' + pt.coffre + ' » absent du catalogue — mets ses images à la main');
             else {
               const va = String(pt.angle || '').trim().toLowerCase();
