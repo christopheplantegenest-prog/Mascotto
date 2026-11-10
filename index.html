@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v689</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v690</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35351,10 +35351,11 @@ function homographie4(src, dst){
 }
 const coinsCache = new Map();
 /* l'image déformée : { url, x0, y0, w, h } — x0..h en unités du rectangle du point */
-function imageEnCoins(url, pt){
-  if (pt && pt.pli) return imageDeformee(url, { coins: pt.coins, pli: pt.pli }, !!pt.flipped);   // v685
+function imageEnCoins(url, pt, maxPx){
+  if (pt && pt.pli) return imageDeformee(url, { coins: pt.coins, pli: pt.pli }, !!pt.flipped, maxPx);   // v685
   const q = coinsUnite(pt);
-  const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(q) + '|' + (pt.flipped ? 1 : 0);
+  const LIM = maxPx || 1100;   // v690 : l'aperçu de l'éditeur se calcule plus petit (plus rapide)
+  const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(q) + '|' + (pt.flipped ? 1 : 0) + '|' + LIM;
   if (coinsCache.has(cle)) return coinsCache.get(cle);
   const pr = chargerImage(url).then(img=>{
     if (!img) return null;
@@ -35365,7 +35366,7 @@ function imageEnCoins(url, pt){
     const y0 = Math.min(...pts.map(p=> p[1])), y1 = Math.max(...pts.map(p=> p[1]));
     /* résolution : celle de l'image source, bornée */
     let s = 1; const W0 = (x1 - x0) * iw, H0 = (y1 - y0) * ih;
-    if (Math.max(W0, H0) > 1100) s = 1100 / Math.max(W0, H0);
+    if (Math.max(W0, H0) > LIM) s = LIM / Math.max(W0, H0);
     const cw = Math.max(2, Math.round(W0 * s)), ch = Math.max(2, Math.round(H0 * s));
     const versCanvas = (p)=> [(p[0] - x0) * iw * s, (p[1] - y0) * ih * s];
     const cible = pts.map(versCanvas);
@@ -35415,11 +35416,11 @@ function pointsDeforme(g){
   if (pl){ const u = Math.max(0.05, Math.min(0.95, +pl.u || 0.5)); P.ph = d('haut', u, 0, pl); P.pb = d('bas', u, 1, pl); P.u = u; }
   return P;
 }
-function imageDeformee(url, g, flipped){
+function imageDeformee(url, g, flipped, maxPx){
   if (!g || (!g.coins && !g.pli)) return Promise.resolve(null);
-  if (!g.pli) return imageEnCoins(url, { coins: g.coins, flipped });
-  const P = pointsDeforme(g);
-  const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(P) + '|' + (flipped ? 1 : 0);
+  if (!g.pli) return imageEnCoins(url, { coins: g.coins, flipped }, maxPx);
+  const P = pointsDeforme(g), LIM = maxPx || 1100;
+  const cle = url.length + '|' + url.slice(-60) + '|' + JSON.stringify(P) + '|' + (flipped ? 1 : 0) + '|' + LIM;
   if (deformeCache.has(cle)) return deformeCache.get(cle);
   const pr = chargerImage(url).then(img=>{
     if (!img) return null;
@@ -35431,7 +35432,7 @@ function imageDeformee(url, g, flipped){
     let sd; try { sd = sctx.getImageData(0, 0, iw, ih).data; } catch(e){ return null; }
     const tous = ['tl', 'tr', 'br', 'bl', 'ph', 'pb'].map(k=> P[k]);
     const x0 = Math.min(...tous.map(p=> p[0])), x1 = Math.max(...tous.map(p=> p[0])), y0 = Math.min(...tous.map(p=> p[1])), y1 = Math.max(...tous.map(p=> p[1]));
-    let k = 1; const W0 = (x1 - x0) * iw, H0 = (y1 - y0) * ih; if (Math.max(W0, H0) > 1100) k = 1100 / Math.max(W0, H0);
+    let k = 1; const W0 = (x1 - x0) * iw, H0 = (y1 - y0) * ih; if (Math.max(W0, H0) > LIM) k = LIM / Math.max(W0, H0);
     const cw = Math.max(2, Math.round(W0 * k)), ch = Math.max(2, Math.round(H0 * k));
     const vc = (p)=> [(p[0] - x0) * iw * k, (p[1] - y0) * ih * k];
     const us = P.u * iw;
@@ -35731,6 +35732,7 @@ async function imageObjetChambre(it, angle){
   }
   return { url: urlImageItem(it), miroir: false };
 }
+const journalChambreVu = new Set();   // v690
 async function composerChambre(hab, opts){
   opts = opts || {};
   const base = await chargerImage(await urlDeRef(chambreConfig.imageRef));
@@ -35788,6 +35790,10 @@ async function composerChambre(hab, opts){
       const it = objetDeco((deco.objets || {})[e.id]);
       if (!it) continue;
       reglage = reglagePlacement(it.id, e);   // v681 : la taille et la place réglées pour cet objet
+      try { const P0 = (chambreConfig.placements || {})[it.id] || {};
+        const etat = P0[e.id] ? 'son réglage' : reglage ? 'réglage repris d\'un autre emplacement du même angle' : 'AUCUN réglage (réglés : ' + (Object.keys(P0).join(', ') || 'aucun') + ')';
+        const cleJ = it.id + '|' + e.id + '|' + etat;   // une seule ligne par situation, pas à chaque affichage
+        if (!opts.silence && typeof journal === 'function' && !journalChambreVu.has(cleJ)){ journalChambreVu.add(cleJ); journal('base', '🛏️ chambre — ' + (it.name || it.id) + ' sur ' + e.id, etat); } } catch(err){}
       const vo = await imageObjetChambre(it, (reglage && reglage.angle) || angleEmplacementChambre(e));   // v679 : l'image de l'angle du mur
       url = vo.url; miroirObjet = vo.miroir; lampe = !!it.lumiere;
     }
@@ -36401,7 +36407,7 @@ async function ouvrirPlacementChambre(itemId){
     if (img){
       const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g);
       const def = !!(g.coins || g.pli);
-      h += `<img data-objet src="${def ? '' : img.url}" style="position:absolute; left:${r.x / W * 100}%; top:${r.y / H * 100}%; width:${r.w / W * 100}%; height:${r.h / H * 100}%; ${img.miroir && !def ? 'transform:scaleX(-1);' : ''} touch-action:none; cursor:move; ${modeCoins ? '' : 'outline:1px solid rgba(255,80,80,.6);'} ${def ? 'visibility:hidden;' : ''}">`;
+      h += `<img data-objet src="${img.url}" style="position:absolute; left:${r.x / W * 100}%; top:${r.y / H * 100}%; width:${r.w / W * 100}%; height:${r.h / H * 100}%; ${img.miroir && !def ? 'transform:scaleX(-1);' : ''} touch-action:none; cursor:move; ${modeCoins ? '' : 'outline:1px solid rgba(255,80,80,.6);'} ${def ? 'visibility:hidden;' : ''}">`;
       h += `<img data-deforme style="position:absolute; pointer-events:none; display:none;">`;
       if (modeCoins){   // v684 : plus de gros points — un petit repère sur le point choisi, et le pli en pointillés
         const P = pointsDeforme(g), at = (p)=> [(r.x + p[0] * r.w) / W * 100, (r.y + p[1] * r.h) / H * 100];
@@ -36474,13 +36480,17 @@ async function ouvrirPlacementChambre(itemId){
       pliD: ()=> faire(gg=>{ if (gg.pli) gg.pli.u = Math.min(0.95, +((+gg.pli.u || 0.5) + 0.02).toFixed(3)); }) };
     pal.querySelectorAll('[data-pa]').forEach(x=> x.onclick = act[x.dataset.pa]);
   }
-  let jetonDeforme = 0;
-  function majDeforme(){   // v682 : l'aperçu déformé, calculé comme dans l'image finale
+  let jetonDeforme = 0, minuterieDeforme = null;
+  function majDeforme(){   // v690 : regroupé (un seul calcul après une rafale d'appuis) et en 420 px
+    clearTimeout(minuterieDeforme);
+    minuterieDeforme = setTimeout(majDeformeMaintenant, 120);
+  }
+  function majDeformeMaintenant(){   // v682 : l'aperçu déformé, calculé comme dans l'image finale
     const d = calque.querySelector('[data-deforme]'); if (!d || !img) return;
     const e = emps.find(x=> x.id === sel), g = regl(e);
     if (!g.coins && !g.pli){ d.style.display = 'none'; return; }
     const r = rectObjetChambre(e, img.im.naturalWidth, img.im.naturalHeight, W, H, g), j = ++jetonDeforme;
-    imageDeformee(img.url, g, img.miroir).then(w=>{
+    imageDeformee(img.url, g, img.miroir, 420).then(w=>{
       if (!w || j !== jetonDeforme || !d.isConnected) return;
       d.src = w.url; d.style.display = '';
       d.style.left = (r.x + w.x0 * r.w) / W * 100 + '%'; d.style.top = (r.y + w.y0 * r.h) / H * 100 + '%';
@@ -36527,6 +36537,8 @@ async function ouvrirPlacementChambre(itemId){
   fond.querySelector('[data-zero]').onclick = async ()=>{ delete P[sel]; await chargerObjet(); dessiner(); };
   fond.querySelector('[data-ok]').onclick = async ()=>{
     chambreConfig.placements = Object.assign({}, chambreConfig.placements || {}, { [itemId]: P });
+    try { Object.keys(P).forEach(k=>{ const g = P[k], e = emps.find(x=> x.id === k);
+      journal('base', '🛏️ placement enregistré — ' + (it.name || itemId) + ' sur ' + k, 'angle ' + ((g.angle || (e && angleEmplacementChambre(e))) || '?') + ', ×' + (+g.s || 1).toFixed(2) + (g.coins ? ', coins' : '') + (g.pli ? ', pli' : '')); }); } catch(err){}
     try { await enregistrerChambreConfig(); showToast('Placement enregistré ✅'); fond.remove(); } catch(e){ showToast('Échec : ' + e.message); }
   };
   await chargerObjet(); dessiner();
