@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v699</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v700</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -42223,6 +42223,23 @@ async function importerScenario(sc){
         ramassable: !!o.ramassable, ouvrable: !!o.ouvrable, lumiere: !!o.lumiere, fenetre: false, vues: {},
         aDessiner: { angles: (Array.isArray(o.angles) && o.angles.length ? o.angles : ['face']).filter(a=> ANGLES_MOBILIER[a]), apparence: o.apparence || '' } };
       data.mob.porte = data.mob.categorie === 'Porte';
+      if (o.hauteur) data.mob.hauteur = Math.max(1, +o.hauteur);   // v700 : hauteur réelle en cases de 40 cm
+      /* v700 : des vues déjà prêtes (images rangées dans le dépôt) — téléchargées et mises dans la réserve
+         d'images du jeu, comme une image posée à la main. Les angles fournis ne sont plus « à dessiner ». */
+      if (o.vues && typeof o.vues === 'object'){
+        for (const a of Object.keys(o.vues)){
+          if (!ANGLES_MOBILIER[a] || !o.vues[a]) continue;
+          try {
+            const rep = await fetch(resolveMediaPath(o.vues[a]), { cache: 'no-store' });
+            if (!rep.ok) throw new Error('HTTP ' + rep.status);
+            const blob = await rep.blob();
+            const dataUrl = await new Promise((ok, ko)=>{ const fr = new FileReader(); fr.onload = ()=> ok(fr.result); fr.onerror = ko; fr.readAsDataURL(blob); });
+            const ref = await externalizeSceneImage(dataUrl);
+            if (ref){ data.mob.vues[a] = { ref }; journal.push('🖼️ « ' + o.name + ' » : vue ' + a + ' posée'); }
+          } catch(e){ journal.push('⚠️ « ' + o.name + ' » : vue ' + a + ' introuvable (' + o.vues[a] + ')'); }
+        }
+        data.mob.aDessiner.angles = data.mob.aDessiner.angles.filter(a=> !data.mob.vues[a]);
+      }
       const deco = decoDeMob(data.mob); if (deco){ data.deco = deco; data.lumiere = !!data.mob.lumiere; }
       if (o.poids != null) data.poids = +o.poids;
     }
