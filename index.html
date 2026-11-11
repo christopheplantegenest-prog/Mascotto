@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v703</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v704</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -3745,7 +3745,7 @@
       <button type="button" class="scene-action-btn" id="sceneEditorVariantsBtn">🕒 Variantes</button>
       <button type="button" class="scene-action-btn" id="sceneEditorEncounterBtn">🎲 Rencontres</button>
       <button type="button" class="scene-action-btn" id="sceneEditorLumiereBtn">💡 Lumière</button>
-      <button type="button" class="scene-action-btn" id="sceneEditorKitBtn">🧩 Kit</button>
+      <button type="button" class="scene-action-btn" id="sceneEditorKitBtn">🛋️ Meubles</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageBtn" style="user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;">🖼️ Image</button>
       <button type="button" class="scene-action-btn" id="sceneEditorImageGithubBtn">📁 Image hébergée</button>
       <button type="button" class="scene-action-btn" id="sceneEditorAddPointBtn">➕ Point</button>
@@ -31902,7 +31902,7 @@ function lireSceneLumiere(){
   delete sc.filtreNuit;
   if (apercuNuitEditeur) renderSceneEditorPoints();
 }
-document.getElementById('sceneEditorKitBtn').addEventListener('click', ()=> ouvrirEditeurKit());   // v629
+document.getElementById('sceneEditorKitBtn').addEventListener('click', ()=> ouvrirEditeurKit());   // v629 (v704 : « 🛋️ Meubles »)
 document.getElementById('sceneEditorLumiereBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
   renderSceneLumiereOverlay();
@@ -33610,6 +33610,19 @@ function renderSceneDetailTypeSpecific(pt){
 
   if (pt.type === 'decor'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Point purement décoratif : image affichée sur la scène, sans aucune interaction possible pour le joueur (un tap dessus passe à travers, comme s'il n'était pas là).</p>`;
+    /* v704 : un meuble posé par le kit — on le replace sur la grille de la pièce (le calcul refait sa
+       perspective), ou on garde ses retouches faites à la palette */
+    if (pt.kitDecor && pt.kitObjetId){
+      typeWrap.insertAdjacentHTML('beforeend', `<div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+        <button type="button" class="btn-secondary" data-kit-grille style="flex:1; padding:6px 8px;">🧩 Déplacer sur la grille</button>
+        <button type="button" class="btn-secondary" data-kit-recalcul style="flex:1; padding:6px 8px;">↺ Effacer mes retouches</button></div>
+        <p class="meta" style="font-size:11px; margin:4px 0 0; color:rgba(255,255,255,.6);">Meuble de la pièce en kit : la palette 🎛️ le retouche ; la grille le déplace (sa perspective est alors recalculée).</p>`);
+      typeWrap.querySelector('[data-kit-grille]').addEventListener('click', ()=> ouvrirEditeurKit(pt.kitObjetId));
+      typeWrap.querySelector('[data-kit-recalcul]').addEventListener('click', async ()=>{
+        if (!(await appConfirm('Effacer les retouches de ce meuble et reprendre le calcul du kit ?'))) return;
+        delete pt.kitSig; ouvrirEditeurKit(pt.kitObjetId, true);
+      });
+    }
     return;
   }
 
@@ -37551,7 +37564,7 @@ function synchroniserPointsKit(sc, G){
 }
 
 /* ---------- 🧩 l'éditeur de kit (depuis l'éditeur de scène) ---------- */
-async function ouvrirEditeurKit(){
+async function ouvrirEditeurKit(selDepart, validerTout){
   const sc = sceneEditeurCourante();
   if (!sc){ showToast('Ouvre d\'abord une scène'); return; }
   if (!(kitBiblio.coquilles || []).length){ showToast('Aucune coquille : pose-en une dans 🧰 À finir → 🧩 Pièces en kit'); return; }
@@ -37559,7 +37572,7 @@ async function ouvrirEditeurKit(){
   const kit = sc.kit ? JSON.parse(JSON.stringify(sc.kit)) : { coquilleId: kitBiblio.coquilles[0].id, objets: [] };
   if (!coquilleParId(kit.coquilleId)) kit.coquilleId = kitBiblio.coquilles[0].id;
   let G = geoKit(coquilleParId(kit.coquilleId));
-  let sel = null, onglet = 'meubles', occupe = false;
+  let sel = (selDepart && kit.objets.some(o=> o.id === selDepart)) ? selDepart : null, onglet = 'meubles', occupe = false;   // v704 : ouvert depuis un meuble de la scène
   const fond = document.createElement('div');
   fond.className = 'overlay show'; fond.style.cssText = 'z-index:4700; align-items:stretch; padding:0;';
   fond.innerHTML = `<div style="width:100%; height:100%; display:flex; flex-direction:column; background:var(--panel);">
@@ -37871,6 +37884,7 @@ async function ouvrirEditeurKit(){
     finally { occupe = false; }
   });
   await monter(); dessinerSelection(); dessinerPanneau();
+  if (validerTout) fond.querySelector('[data-fini]').click();   // v704 : « effacer mes retouches » recalcule tout de suite
 }
 
 /* ---------- 📐 régler une coquille (ses six repères) ----------
