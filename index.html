@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v709</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v710</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12710,6 +12710,7 @@ async function ouvrirBrouillons(){
       const scs = d.data().scenes || [];
       const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && (pt.type === 'image' || pt.type === 'decor') && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
         || (sc.points || []).some(pt=> decorQuiNeSeVoitPas(pt, sc.points))   // v664
+        || (sc.kit && sc.kit.aAssembler)   // v710 : pièce en kit dont des meubles attendaient leurs images
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)));
       if (fz && enAttente){ scenesDe[d.id] = scs; planchesDe[d.id] = d.data().planchesDecor || []; zonesATerminer.push(fz); }
@@ -12916,6 +12917,17 @@ async function ouvrirBrouillons(){
           '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Poser la planche</b> : le jeu la découpe, range chaque objet dans <b>sa fiche de la bibliothèque</b> (Édition → Objets → 📚, même nom = même fiche) et le pose à sa place dans sa pièce.<br>4. <b>🗺️ Ouvrir la pièce</b> pour affiner chaque objet (taille, 4 coins), puis <b>Enregistrer la scène</b>.',
           bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPl) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pdz="' + z.id + '|' + pl.id + '"', okPl ? '📷 Reposer la planche' : '📷 Poser la planche'));
         envois[cle] = ()=> ({ texte: promptPlancheDecor(pl), imgs: plancheAvecCote(pl) && chambreConfig.imageRef ? [fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef))] : [] });   // v679
+      });
+      scenes.forEach(sc=>{   // v710 : les pièces en kit à réassembler
+        if (!sc || !sc.kit || !sc.kit.aAssembler) return;
+        const sans = (sc.kit.objets || []).filter(o=> !o.cadreId && !meubleParId(o.meubleId));
+        const noms = sans.map(o=>{ const it = String(o.meubleId || '').startsWith('fi_') && items.find(i=> 'fi_' + i.id === String(o.meubleId).split('|')[0]); return it ? it.name : '?'; });
+        manque++;
+        blocs += tache(false, '🧩 Assembler la pièce « ' + esc(sc.name) + ' »',
+          'La pièce en kit a été posée avant que tous ses meubles aient leurs images.',
+          sans.length ? 'D\'abord, dessine ' + noms.map(n=> '<b>' + esc(n) + '</b>').join(', ') + ' dans <b>🪑 Mobilier</b> (plus bas). Ensuite, reviens ici.'
+            : 'Tous ses meubles ont leurs images : <b>🧩 Assembler</b> recompose la pièce avec eux.',
+          bouton('data-assembler="' + z.id + '|' + sc.id + '"', '🧩 Assembler', !sans.length));
       });
       scenes.forEach(sc=>{
         if (!sc || !sc.id) return;
@@ -13495,6 +13507,13 @@ async function ouvrirBrouillons(){
         const neuf = sceneEditorSelectedPointId;
         if (neuf && creatureCol) creatureCol.doc(fid).set({ emplacementPointId: neuf, updatedAt: Date.now() }, { merge:true }).catch(()=>{});
       });
+  });
+  sur('[data-assembler]', async (b)=>{   // v710
+    const [zid, sid] = b.dataset.assembler.split('|');
+    showToast('⏳ Assemblage de la pièce…');
+    const manquent = await reassemblerPieceZone(zid, sid);
+    showToast(manquent ? '🧩 Assemblée, mais ' + manquent + ' meuble(s) n\'ont pas encore d\'image' : '🧩 Pièce assemblée ✅');
+    rouvrir();
   });
   sur('[data-placer]', async (b)=>{
     const [fid, zid, sid] = b.dataset.placer.split('|');
@@ -15902,6 +15921,7 @@ const ANGLES_PROMPT = {
   droite: "le meuble posé contre le MUR DE DROITE de la chambre, le dos collé à ce mur : la façade est parallèle au mur de droite et fuit en perspective comme lui, ses lignes du haut et du bas convergent vers le point de fuite au centre de la chambre, elle rapetisse en s'éloignant vers le fond ; le petit côté tourné vers l'avant de la pièce se voit presque de face",
 };
 function anglesVoulus(mob){
+  if (mob && mob.vueUnique) return ['face'];   // v710 : objet pareil de tous les côtés (hologramme, objet rond)
   const a = mob && mob.aDessiner && mob.aDessiner.angles;
   if (Array.isArray(a) && a.length) return a.filter(x=> ANGLES_MOBILIER[x]);
   return (mob && (mob.pose === 'mur' || mob.pose === 'plafond' || mob.pose === 'sol_plat')) ? ['face'] : ['face', 'gauche'];
@@ -16011,7 +16031,9 @@ async function controleVueMeuble(m, a){
 }
 /* v707 — le travail du gabarit, utilisable depuis le guide 🧰 À finir comme depuis la fiche */
 async function etatGabarit(mob){
-  const cF = await controleVueMeuble(mob, 'face'), cG = await controleVueMeuble(mob, 'gauche');
+  const cF = await controleVueMeuble(mob, 'face');
+  if (mob.vueUnique) return { cF, cG: { ok: true, txt: 'inutile (pareil de tous les côtés)' }, etape: cF.ok ? null : 'face', modeleRef: null };   // v710
+  const cG = await controleVueMeuble(mob, 'gauche');
   const etape = (cF.ok || cG.ok) ? (!cF.ok ? 'face' : !cG.ok ? 'gauche' : null) : 'planche';
   const modeleRef = etape === 'face' ? refDeVue((mob.vues || {}).gauche) : etape === 'gauche' ? refDeVue((mob.vues || {}).face) : null;
   return { cF, cG, etape, modeleRef };
@@ -16091,14 +16113,23 @@ async function remplirTacheGabarit(el, it){
   const et = await etatGabarit(mob);
   const ligne = (c)=> c.manque ? '⬜ à faire' : (c.ok ? '✅ ' : '⚠️ ') + c.txt;
   const ajustable = !et.cF.ok && et.cF.ecart != null && Math.abs(et.cF.ecart) <= ECART_AJUSTABLE;
-  el.innerHTML = `<div style="font-weight:600; font-size:13px;">⬜ ${htmlEsc(nom)} — ${et.etape ? LIB_ETAPE_GABARIT[et.etape] : 'prêt'}</div>
+  const unique = !mob.vueUnique && et.cG.manque;   // v710 : proposer « une seule vue » tant que le mur de gauche n'est pas fait
+  el.innerHTML = `<div style="font-weight:600; font-size:13px;">⬜ ${htmlEsc(nom)} — ${et.etape ? (mob.vueUnique && et.etape === 'face' ? 'sa vue de face (une seule vue)' : LIB_ETAPE_GABARIT[et.etape]) : 'prêt'}</div>
     <div class="meta" style="font-size:11px; margin-top:3px;">De face : ${ligne(et.cF)} · Mur de gauche : ${ligne(et.cG)}</div>
+    ${unique ? `<button type="button" class="btn-secondary" data-g-uni style="flex:none; padding:5px 9px; font-size:11px; margin-top:5px;">⭕ Pareil de tous les côtés : une seule vue</button>` : ''}
     ${ajustable ? `<div style="font-size:12px; margin-top:5px; line-height:1.4;">La vue de face est un peu trop ${et.cF.ecart > 0 ? 'large' : 'étroite'} : le jeu peut la mettre aux bonnes proportions, inutile de la refaire.</div>
     <button type="button" class="btn-capture" data-g-aju style="flex:none; padding:6px 10px; font-size:12px; margin-top:6px;">↔️ Mettre aux bonnes proportions</button>` : et.etape ? `<div style="font-size:12px; margin-top:5px; line-height:1.4;">1. <b>📤 Envoyer à ChatGPT</b> : ${et.etape === 'planche' ? 'le gabarit (rectangle magenta aux bonnes proportions) et la chambre partent avec le prompt' : et.etape === 'face' ? 'le gabarit et l\'autre vue (modèle) partent avec le prompt' : 'la chambre et la vue de face (modèle) partent avec le prompt'}.<br>2. Enregistre l'image.<br>3. <b>📷 Poser l'image</b> : le jeu découpe, range et vérifie.</div>
     <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
       <button type="button" class="btn-capture" data-g-env style="flex:none; padding:6px 10px; font-size:12px;">📤 Envoyer à ChatGPT</button>
       <button type="button" class="btn-secondary" data-g-cop style="flex:none; padding:6px 10px; font-size:12px;">📋 Copier</button>
       <button type="button" class="btn-secondary" data-g-pos style="flex:none; padding:6px 10px; font-size:12px;">📷 Poser l'image</button></div>` : ''}`;
+  if (unique) el.querySelector('[data-g-uni]').onclick = async (ev)=>{
+    ev.currentTarget.disabled = true;
+    mob.vueUnique = true; delete mob.gabaritValide;
+    mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: refDeVue((mob.vues || {}).face) ? [] : ['face'] });
+    try { await itemsCol.doc(it.id).set({ mob, updatedAt: Date.now() }, { merge:true }); it.mob = mob; remplirTacheGabarit(el, it); }
+    catch(e){ showToast('Échec : ' + e.message); }
+  };
   if (ajustable){
     el.querySelector('[data-g-aju]').onclick = async (ev)=>{
       ev.currentTarget.disabled = true;
@@ -37691,6 +37722,23 @@ async function composerKit(kit, opts){
        la palette 🎛️ : place, taille, coins, pli) au lieu d'être collés dans l'image. On ne fait ici que
        calculer leur rectangle et leur réglage ; la porte et les objets muraux restent dans l'image. */
     const enPoint = opts.enPoints && !o.cadreId && e.zone === 'sol' && !m.porte;
+    /* v710 : dans l'éditeur du kit, un meuble retouché à la palette (coins, pli, place) est montré
+       tel qu'il est dans la scène, tant qu'il n'a pas bougé ; avant, l'angle recalculé revenait */
+    const pR = !opts.enPoints && opts.retouches && !o.cadreId && e.zone === 'sol' && opts.retouches.get(o.id);
+    if (pR && pR.kitSig === JSON.stringify([o.meubleId, o.c, o.r, o.angle || '', !!o.miroir, ref])){
+      try {
+        const r = { x: (pR.x - pR.w / 2) / 100 * G.W, y: (pR.y - pR.h / 2) / 100 * G.H, w: pR.w / 100 * G.W, h: pR.h / 100 * G.H };
+        if (pR.coins){
+          const def = await imageDeformee(urlVue, { coins: pR.coins, pli: pR.pli || null }, !!pR.flipped);
+          const imD = def ? await chargerImage(def.url) : null;
+          if (imD){ ctx.drawImage(imD, r.x + def.x0 * r.w, r.y + def.y0 * r.h, def.w * r.w, def.h * r.h); continue; }
+        } else {
+          ctx.save();
+          if (pR.flipped){ ctx.translate(r.x + r.w, r.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, r.w, r.h); } else ctx.drawImage(img, r.x, r.y, r.w, r.h);
+          ctx.restore(); continue;
+        }
+      } catch(err){}
+    }
     if (enPoint){
       const sensP = tourneKit(o, m, G);
       if (sensP){
@@ -37821,6 +37869,91 @@ function synchroniserPointsKit(sc, G){
   sc.points = pts.filter(p=> !p.kitObjetId || p.kitDecor || vivants.has(p.id));   // v703 : les décors se gèrent à part
 }
 
+/* ---------- v710 — UNE PIÈCE EN KIT ÉCRITE PAR UN FICHIER D'IMPORT ----------
+   Le fichier décrit la pièce avec des intentions (« contre le mur de gauche, au fond ») et des noms
+   de meubles ; le jeu trouve la coquille et les meubles par leur nom, cherche la place qui colle le
+   mieux, puis assemble la pièce comme le ✓ Terminer de l'éditeur du kit (image + points de décor + portes).
+   Un meuble encore sans image (fiche créée par le même fichier) garde sa place : la pièce reste « à
+   assembler » et le guide 🧰 À finir propose de la réassembler quand ses images sont posées. */
+const normKit = (t)=> String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+function coquilleParNom(nom){
+  const cs = kitBiblio.coquilles || [], n = normKit(nom);
+  return (n && (cs.find(c=> normKit(c.nom) === n) || cs.find(c=> normKit(c.nom).includes(n) || n.includes(normKit(c.nom))))) || null;
+}
+/* un meuble par son nom (ou, pour une porte, n'importe quelle porte) ; défini par le fichier s'il n'a pas encore d'image */
+function meubleImportKit(spec, defs, cles){
+  const nom = typeof spec === 'string' ? spec : (spec.meuble || spec.nom || '');
+  const n = normKit(nom), tous = meublesKit();
+  let m = n ? (tous.find(x=> normKit(x.nom) === n) || tous.find(x=> normKit(x.nom).includes(n))) : null;
+  if (!m && spec && spec.porte) m = tous.find(x=> x.porte) || null;
+  if (m) return m;
+  const def = (defs || []).find(o=> o && o.type === 'mobilier' && (normKit(o.name) === n || normKit(o.cle) === n));
+  const id = def && cles && (cles.objets[def.cle] || cles.objets[def.name]);
+  if (!def || !id) return null;
+  const mur = def.pose === 'mur', p = Math.max(1, parseInt(def.p, 10) || 2);
+  return { id: 'fi_' + id, nom: def.name, type: mur ? 'mur' : def.pose === 'plafond' ? 'plafond' : 'sol', w: Math.max(1, parseInt(def.w, 10) || 2), d: mur ? 1 : p, h: mur ? p : 1,
+    refs: (!mur && !def.vueUnique && (def.angles || []).includes('gauche')) ? { gauche: 'a-venir' } : {}, porte: def.categorie === 'Porte', hauteur: def.hauteur || null, provisoire: true };
+}
+/* la place qui colle le mieux au vœu : { contre: gauche|droite|fond|milieu, ou: fond|milieu|devant } */
+function placerVoeuKit(G, poses, m, voeu){
+  voeu = voeu || {};
+  const occupees = new Set(); poses.forEach(({ o, m: mx })=> casesDe(G, o, mx).forEach(k=> occupees.add(k)));
+  const libre = (o)=> dansLesLimitesKit(G, o, m) && !casesDe(G, o, m).some(k=> occupees.has(k));
+  const cands = [];
+  if (m.type === 'mur'){
+    const { w, h } = dimsKit({ zone: 'fond' }, m, G), k = Math.min(Math.max(0, (m.kDefaut || 0) * KIT_FIN), Math.max(0, G.nh - h));
+    const zone = voeu.contre === 'gauche' ? 'g' : voeu.contre === 'droite' ? 'd' : 'fond';
+    if (zone === 'fond') for (let c = 0; c + w <= G.nx; c++) cands.push({ o: { zone, c, k }, s: Math.abs(c + w / 2 - (voeu.ou === 'gauche' ? w / 2 : voeu.ou === 'droite' ? G.nx - w / 2 : G.nx / 2)) });
+    else for (let r = 0; r + w <= G.ny; r++) cands.push({ o: { zone, r, k }, s: Math.abs(r - (voeu.ou === 'devant' ? G.ny : voeu.ou === 'fond' ? 0 : G.ny / 2)) });
+  } else {
+    for (let r = 0; r < G.ny; r++) for (let c = 0; c < G.nx; c++){
+      const o = { zone: 'sol', c, r }, { w, d } = dimsKit(o, m, G);
+      const cx = c + w / 2, rx = r + d / 2;
+      let sc = 0;
+      if (voeu.contre === 'gauche') sc += c * 10;
+      else if (voeu.contre === 'droite') sc += Math.max(0, G.nx - (c + w)) * 10;
+      else if (voeu.contre === 'fond') sc += r * 10 + Math.abs(cx - G.nx / 2);
+      else sc += Math.abs(cx - G.nx / 2) * 3;
+      sc += voeu.ou === 'fond' ? r : voeu.ou === 'devant' ? (G.ny - rx) : Math.abs(rx - G.ny / 2);
+      cands.push({ o, s: sc });
+    }
+  }
+  cands.sort((a, b)=> a.s - b.s);
+  for (const { o } of cands) if (libre(o)) return o;
+  return null;
+}
+/* assemble une pièce en kit (objet scène nu : kit + points) ; renvoie le nombre de meubles encore sans image */
+async function assemblerSceneKit(scn, idsScenes){
+  const c = coquilleParId(scn.kit && scn.kit.coquilleId); if (!c) throw new Error('coquille introuvable');
+  const G = geoKit(c), enPoints = [];
+  const cv = await composerKit(scn.kit, { enPoints }); if (!cv) throw new Error('pièce impossible à composer');
+  scn.imageUrl = encoderImageSousLimite(cv, 1600, false); scn.imagePath = null; scn.imageRef = null;
+  scn.points = scn.points || [];
+  synchroniserPointsKit(scn, G);
+  synchroniserDecorsKit(scn, G, enPoints);
+  /* les portes mènent où le fichier l'a dit */
+  (scn.kit.objets || []).forEach(o=>{
+    if (!o.vers || !o.pointId) return;
+    const pt = scn.points.find(p=> p && p.id === o.pointId); if (!pt) return;
+    if (o.vers === '@carte'){ pt.type = 'sortie_zone'; delete pt.targetSceneId; }
+    else pt.targetSceneId = (idsScenes && idsScenes[o.vers]) || o.vers;
+  });
+  const manquent = (scn.kit.objets || []).filter(o=> !o.cadreId && !meubleParId(o.meubleId)).length;
+  if (manquent) scn.kit.aAssembler = true; else delete scn.kit.aAssembler;
+  return manquent;
+}
+/* depuis le guide : réassembler une pièce d'une zone (ses meubles ont reçu leurs images) */
+async function reassemblerPieceZone(zoneId, sceneId){
+  const doc = await zonesCol.doc(zoneId).get(); if (!doc.exists) throw new Error('zone introuvable');
+  const scenes = doc.data().scenes || [];
+  const scn = scenes.find(x=> x && x.id === sceneId); if (!scn || !scn.kit) throw new Error('pièce introuvable');
+  const manquent = await assemblerSceneKit(scn, null);
+  const aEcrire = await externalizeScenesForSave(scenes);
+  await zonesCol.doc(zoneId).set({ scenes: aEcrire, updatedAt: Date.now() }, { merge:true });
+  if (typeof oublierScenesDeZone === 'function') oublierScenesDeZone(zoneId);
+  return manquent;
+}
+
 /* ---------- 🧩 l'éditeur de kit (depuis l'éditeur de scène) ---------- */
 async function ouvrirEditeurKit(selDepart, validerTout){
   const sc = sceneEditeurCourante();
@@ -37855,7 +37988,8 @@ async function ouvrirEditeurKit(selDepart, validerTout){
   const panoWrap = fond.querySelector('[data-pano]');
   let pano = null, svg = null;
   const tailles = {};
-  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true, tailles, traces: true }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
+  const composer = async ()=>{ const retouches = new Map((sceneEditorPoints || []).filter(p=> p && p.kitDecor).map(p=> [p.kitObjetId, p]));
+    const cv = await composerKit(kit, { avecFenetres: true, tailles, traces: true, retouches }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
   /* v633 : la zone qu'on attrape = l'image dessinée du meuble (un gros rectangle), pas sa petite empreinte au sol */
   const polyPrise = (x, e)=>{
     if (e.zone === 'sol' || e.zone === 'plafond'){
@@ -42603,6 +42737,7 @@ async function importerScenario(sc){
         ramassable: !!o.ramassable, ouvrable: !!o.ouvrable, lumiere: !!o.lumiere, fenetre: false, vues: {},
         aDessiner: { angles: (Array.isArray(o.angles) && o.angles.length ? o.angles : ['face']).filter(a=> ANGLES_MOBILIER[a]), apparence: o.apparence || '' } };
       data.mob.porte = data.mob.categorie === 'Porte';
+      if (o.vueUnique){ data.mob.vueUnique = true; data.mob.aDessiner.angles = ['face']; }   // v710
       if (o.hauteur) data.mob.hauteur = Math.max(1, +o.hauteur);   // v700 : hauteur réelle en cases de 40 cm
       /* v700 : des vues déjà prêtes (images rangées dans le dépôt) — téléchargées et mises dans la réserve
          d'images du jeu, comme une image posée à la main. Les angles fournis ne sont plus « à dessiner ». */
@@ -42914,6 +43049,36 @@ async function importerScenario(sc){
       idScene[s.cle || s.name] = a ? a.id : genSceneId();
     });
 
+    /* v710 — une pièce en kit : coquille + meubles nommés, placés d'après leur vœu, puis assemblée */
+    const kitsDesScenes = {}, fleches = {};   // fleches : sorties sans porte dessinée, par pièce
+    for (const s of (z.scenes || [])){
+      if (!s.kit) continue;
+      const coq = coquilleParNom(s.kit.coquille) || (kitBiblio.coquilles || [])[0];
+      if (!coq){ journal.push('⚠️ « ' + s.name + ' » : aucune coquille dans le jeu — pièce en kit impossible'); continue; }
+      if (normKit(coq.nom) !== normKit(s.kit.coquille)) journal.push('ℹ️ « ' + s.name + ' » : coquille « ' + s.kit.coquille + ' » prise comme « ' + coq.nom + ' »');
+      const G = geoKit(coq), poses = [], kit = { coquilleId: coq.id, objets: [] };
+      if (s.kit.teinte) kit.teinte = s.kit.teinte;
+      for (const v of (s.kit.objets || [])){
+        if (v.fenetre){
+          const cad = (cadresTous() || [])[0]; if (!cad){ journal.push('⚠️ « ' + s.name + ' » : pas de cadre de fenêtre dans le jeu'); continue; }
+          const faux = { nom: cad.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 3 };
+          const o = placerVoeuKit(G, poses, faux, v); if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour la fenêtre'); continue; }
+          const ko = Object.assign({ id: 'ko_' + Date.now() + '_' + kit.objets.length, cadreId: cad.id, cadre: faux, miroir: false }, o);
+          kit.objets.push(ko); poses.push({ o: ko, m: faux }); continue;
+        }
+        if (v.fleche && v.vers){ (fleches[s.cle || s.name] = fleches[s.cle || s.name] || []).push(v.vers); continue; }   // sortie fléchée voulue
+        const m = meubleImportKit(v, sc.objets, cles);
+        if (!m && v.porte && v.vers){ (fleches[s.cle || s.name] = fleches[s.cle || s.name] || []).push(v.vers); journal.push('ℹ️ « ' + s.name + ' » : pas de porte dans la bibliothèque — sortie fléchée à la place'); continue; }
+        if (!m){ journal.push('⚠️ « ' + s.name + ' » : meuble « ' + (v.meuble || v.nom || '?') + ' » introuvable — pas posé'); continue; }
+        const o = placerVoeuKit(G, poses, m, v);
+        if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour « ' + m.nom + ' »'); continue; }
+        const ko = Object.assign({ id: 'ko_' + Date.now() + '_' + kit.objets.length, meubleId: m.id, miroir: false }, o);
+        if (v.vers) ko.vers = v.vers;
+        kit.objets.push(ko); poses.push({ o: ko, m });
+        journal.push('🪑 « ' + s.name + ' » : ' + m.nom + (m.provisoire ? ' (place gardée, image à dessiner)' : ''));
+      }
+      kitsDesScenes[s.cle || s.name] = kit;
+    }
     const scenes = (z.scenes||[]).map(s=>({
       id: idScene[s.cle || s.name],
       name: s.name || 'Scène',
@@ -43019,6 +43184,25 @@ async function importerScenario(sc){
       encounterMonsterIds: (s.monstres||[]).map(m=> cles.pnj[m]).filter(Boolean),
     }));
 
+    for (const s of (z.scenes || [])){
+      const kit = kitsDesScenes[s.cle || s.name]; if (!kit) continue;
+      const scn = scenes.find(x=> x.id === idScene[s.cle || s.name]); if (!scn) continue;
+      scn.kit = kit; scn._kitNeuf = true;   // un ré-import garde la nouvelle composition, pas l'ancienne image
+      /* une porte qui mène à une autre pièce : sa clé devient l'identifiant de cette pièce */
+      kit.objets.forEach(o=>{ if (o.vers && o.vers !== '@carte') o.vers = idScene[o.vers] || o.vers; });
+      try {
+        const manquent = await assemblerSceneKit(scn, null);
+        journal.push('🧩 « ' + scn.name + ' » assemblée' + (manquent ? ' — ' + manquent + ' meuble(s) à dessiner : 🧰 À finir proposera de la réassembler' : ''));
+      } catch(e){ journal.push('⚠️ « ' + scn.name + ' » : assemblage impossible (' + e.message + ')'); }
+      /* une porte absente de la bibliothèque : une sortie fléchée (la première à sa place habituelle, les autres sur les côtés) */
+      (fleches[s.cle || s.name] || []).forEach((v, i)=>{
+        const pt = { id: 'pt_' + Date.now() + '_s' + i, type: v === '@carte' ? 'sortie_zone' : 'sortie', x: 50, y: 85, w: 14, h: 10, rotation: 0, flipped: false, lockType: 'none' };
+        if (v !== '@carte') pt.targetSceneId = idScene[v] || null;
+        poserFlecheALaPlaceHabituelle(pt);
+        if (i === 1) pt.x = 12; else if (i === 2) pt.x = 88;
+        scn.points.push(pt);
+      });
+    }
     if (scenes.length){
       /* Le tableau `scenes` est remplacé EN ENTIER (le merge ne protège que les champs
          du premier niveau) : sans précaution, un ré-import effacerait toutes les images
@@ -43046,6 +43230,7 @@ async function importerScenario(sc){
             });
             /* v655 : une VRAIE image déjà posée (pas le schéma d'un import précédent) passe avant le
                schéma que le fichier apporte ; avant, elle était remplacée par lui. */
+            if (s._kitNeuf) return;   // v710 : pièce en kit tout juste assemblée
             const vraieImage = (a.imageUrl || a.imagePath || a.imageRef) && !(a.structureRef && a.imageRef === a.structureRef);
             if ((s.imageUrl || s.imagePath) && !vraieImage) return;   // v592 : le fichier apporte sa propre image, on la garde
             if (vraieImage){ s.imageUrl = ''; s.imagePath = null; s._garderImage = true; if (a.structureRef) s._structureAncienne = a.structureRef; }
@@ -43073,6 +43258,7 @@ async function importerScenario(sc){
       /* le dessin de structure est repéré par sa référence : le guide saura quand il a été remplacé */
       /* v593 : `definitive: true` sur une scène = l'image du fichier est l'image finale (dessin de Claude), pas un schéma */
       scenesAEcrire.forEach(sc=>{
+        delete sc._kitNeuf;
         if (sc._garderImage){ if (sc._structureAncienne) sc.structureRef = sc._structureAncienne; delete sc._garderImage; delete sc._structureAncienne; return; }   // v655
         if (sc.imageRef && (z.scenes || []).some(x=> (x.cle || x.name) && idScene[x.cle || x.name] === sc.id && typeof x.image === 'string' && x.image.startsWith('data:') && !x.definitive)) sc.structureRef = sc.imageRef;
       });
