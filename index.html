@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v704</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v705</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -37154,6 +37154,15 @@ async function hauteurMeubleKit(m, wLargeur, an){
   return Math.max(1, wLargeur * an.hArete / (Math.max(an.largeurG, an.largeurD) * 1.2));
 }
 const boiteOpaqueCache = new Map();
+/* v705 — l'échelle d'un meuble DE FACE au sol : la hauteur de la fiche est respectée exactement, et la
+   largeur vise celle de ses cases en s'autorisant un léger étirement (10 % au plus) pour rattraper
+   l'imprécision des proportions dessinées par ChatGPT. Sans hauteur dans la fiche : la largeur seule. */
+function echelleFaceKit(G, e, m, ob){
+  const kw = e.ancre.wpx / ob.w;
+  if (!m.hauteur) return { kx: kw, ky: kw };
+  const ky = m.hauteur * KIT_FIN * G.cellH(e.ancre.yBas) / ob.h;
+  return { kx: Math.max(ky * 0.9, Math.min(ky * 1.1, kw)), ky };
+}
 function boiteOpaqueImage(img){
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   const cle = (img.src || '').length + '|' + (img.src || '').slice(-60);
@@ -37439,10 +37448,9 @@ async function composerKit(kit, opts){
       }
       const obP = boiteOpaqueImage(brute);
       if (obP && obP.w > 4){
-        let k = e.ancre.wpx / obP.w;
-        if (m.hauteur){ const hpx = m.hauteur * KIT_FIN * G.cellH(e.ancre.yBas); k = Math.min(k, hpx / obP.h); }
-        const x = o.miroir ? e.ancre.cx - (iw - obP.x - obP.w / 2) * k : e.ancre.cx - (obP.x + obP.w / 2) * k;
-        opts.enPoints.push({ o, m, ref, rect: { x, y: e.ancre.yBas - (obP.y + obP.h) * k, w: iw * k, h: ih * k }, g: null, flipped: !!o.miroir });
+        const { kx, ky } = echelleFaceKit(G, e, m, obP);   // v705
+        const x = o.miroir ? e.ancre.cx - (iw - obP.x - obP.w / 2) * kx : e.ancre.cx - (obP.x + obP.w / 2) * kx;
+        opts.enPoints.push({ o, m, ref, rect: { x, y: e.ancre.yBas - (obP.y + obP.h) * ky, w: iw * kx, h: ih * ky }, g: null, flipped: !!o.miroir });
         continue;
       }
     }
@@ -37472,10 +37480,9 @@ async function composerKit(kit, opts){
     if (ob && ob.w > 4){
       /* v701 : si la fiche donne la hauteur, le dessin tient DANS la largeur ET la hauteur — même hauteur
          de face que tourné contre un mur (avant, de face, seule la largeur comptait) */
-      let k = e.ancre.wpx / ob.w;
-      if (m.hauteur){ const hpx = m.hauteur * KIT_FIN * G.cellH(e.ancre.yBas); k = Math.min(k, hpx / ob.h); }
-      const dw = iw * k, dh = ih * k;
-      const x = e.ancre.cx - (ob.x + ob.w / 2) * k, y = e.ancre.yBas - (ob.y + ob.h) * k;
+      const { kx, ky } = echelleFaceKit(G, e, m, ob);   // v705 : léger étirement permis
+      const dw = iw * kx, dh = ih * ky, k = kx;
+      const x = e.ancre.cx - (ob.x + ob.w / 2) * kx, y = e.ancre.yBas - (ob.y + ob.h) * ky;
       ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(e.ancre.cx, e.ancre.yBas - e.ancre.wpx * 0.03, e.ancre.wpx * 0.48, e.ancre.wpx * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       if (o.miroir){ const xm = e.ancre.cx + (ob.x + ob.w / 2) * k; ctx.translate(xm, y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, dw, dh); }
       else ctx.drawImage(img, x, y, dw, dh);
