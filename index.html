@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v706</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v707</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -13112,11 +13112,18 @@ async function ouvrirBrouillons(){
   }
   /* v680 — 🪑 le mobilier à dessiner : une seule ligne, le travail se fait dans la fiche */
   {
-    const nD = (typeof items !== 'undefined' ? items : []).filter(ficheADessiner).length;
-    if (nD) liste.insertAdjacentHTML('beforeend', '<div style="font-weight:700; margin:14px 0 6px;">🪑 Mobilier</div>'
-      + tache(false, '✏️ ' + nD + ' meuble(s) à dessiner', 'Des fiches de la bibliothèque attendent leurs images.',
-        'Ouvre la bibliothèque : dans chaque fiche marquée ✏️, <b>📤 Envoyer à ChatGPT</b>, enregistre l\'image, puis <b>📷 Poser la planche</b>.',
-        bouton('data-biblio-dessiner', '📚 Ouvrir la bibliothèque', true)));
+    const aD = (typeof items !== 'undefined' ? items : []).filter(ficheADessiner);
+    /* v707 : les meubles « méthode du gabarit » se font ICI, un par un, sans ouvrir leur fiche */
+    const gab = aD.filter(it=> methodeGabarit(it.mob)), autres = aD.filter(it=> !methodeGabarit(it.mob));
+    if (aD.length){
+      liste.insertAdjacentHTML('beforeend', '<div style="font-weight:700; margin:14px 0 6px;">🪑 Mobilier</div>'
+        + (gab.length ? '<p class="meta" style="font-size:12px;">Méthode du gabarit : une planche par meuble (vue de face dans un rectangle aux bonnes proportions + vue contre le mur de gauche). Le jeu vérifie chaque vue ; une vue ratée se refait seule.</p>' : '')
+        + gab.map(it=> '<div data-tache-gabarit="' + it.id + '" style="margin:8px 0; padding:8px; border-radius:8px; background:rgba(128,128,128,.12);"><span class="meta" style="font-size:12px;">⏳ ' + htmlEsc(it.name || 'Meuble') + '…</span></div>').join('')
+        + (autres.length ? tache(false, '✏️ ' + autres.length + ' autre(s) meuble(s) à dessiner', 'Meubles muraux, qui s\'ouvrent ou fenêtres : ils gardent leur planche dans la fiche.',
+          'Ouvre la bibliothèque : dans chaque fiche marquée ✏️, <b>📤 Envoyer à ChatGPT</b>, enregistre l\'image, puis <b>📷 Poser la planche</b>.',
+          bouton('data-biblio-dessiner', '📚 Ouvrir la bibliothèque', true)) : ''));
+      gab.forEach(it=>{ const el = liste.querySelector('[data-tache-gabarit="' + it.id + '"]'); if (el) remplirTacheGabarit(el, it); });
+    }
   }
   /* v629 — 🧩 LES PIÈCES EN KIT */
   {
@@ -15994,6 +16001,66 @@ async function controleVueMeuble(m, a){
     return { ok: false, txt: 'trop ' + (ecart < 0 ? 'étroite' : 'large') + ' de ' + Math.abs(ecart) + ' % : à refaire' };
   }
   return analyserTroisQuarts(img) ? { ok: true, txt: 'coin repéré, calable' } : { ok: false, txt: 'coin introuvable : à refaire' };
+}
+/* v707 — le travail du gabarit, utilisable depuis le guide 🧰 À finir comme depuis la fiche */
+async function etatGabarit(mob){
+  const cF = await controleVueMeuble(mob, 'face'), cG = await controleVueMeuble(mob, 'gauche');
+  const etape = (cF.ok || cG.ok) ? (!cF.ok ? 'face' : !cG.ok ? 'gauche' : null) : 'planche';
+  const modeleRef = etape === 'face' ? refDeVue((mob.vues || {}).gauche) : etape === 'gauche' ? refDeVue((mob.vues || {}).face) : null;
+  return { cF, cG, etape, modeleRef };
+}
+const LIB_ETAPE_GABARIT = { planche: 'les deux vues sur une planche', face: 'la vue de face seule (dans son gabarit)', gauche: 'la vue « mur de gauche » seule' };
+function envoiGabarit(id, nom, desc, mob, et){
+  const texte = promptGabarit(nom, desc, mob, { etape: et.etape, modele: !!et.modeleRef });
+  const imgs = [];
+  if (et.etape !== 'gauche') imgs.push(fichierPourPartage('gabarit-' + et.etape + '-' + mob.w + 'x' + mob.hauteur, gabaritMeuble(mob, et.etape === 'planche')));
+  if (et.etape !== 'face'){ if (chambreConfig.imageRef) imgs.push(fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef))); }
+  if (et.modeleRef) imgs.push(fichierPourPartage('meuble-' + id + '-' + et.etape, urlDeRef(et.modeleRef)));
+  return { texte, imgs };
+}
+/* pose l'image rendue par ChatGPT : découpe, range dans la fiche, contrôle ; renvoie le message */
+async function poserGabarit(id, mob, etape){
+  const img = await choisirFichierImage(); if (!img) return null;
+  const n = etape === 'planche' ? 2 : 1;
+  const r = decouperGrille(img, n);
+  if (r.erreur) return '⚠️ Image refusée : ' + r.erreur + ' (attendu : ' + n + ')';
+  showToast('⏳ Découpage, rangement, contrôle…');
+  const angles = etape === 'planche' ? ['face', 'gauche'] : [etape];
+  mob.vues = mob.vues || {};
+  for (let i = 0; i < r.vues.length; i++){
+    const ref = await externalizeSceneImage(encoderImageSousLimite(r.vues[i], 640, true));
+    if (!ref) throw new Error('image ' + (i + 1) + ' non enregistrée');
+    mob.vues[angles[i]] = { ref };
+  }
+  mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
+  const data = { mob, updatedAt: Date.now() };
+  const it = items.find(x=> x.id === id);
+  if (!(it && (it.imageUrl || it.imagePath))){ const vg = await vignetteDeMob(mob); if (vg) data.imageUrl = vg; }
+  await itemsCol.doc(id).set(data, { merge:true });
+  const c1 = await controleVueMeuble(mob, 'face'), c2 = await controleVueMeuble(mob, 'gauche');
+  return (c1.ok ? '✅' : '⚠️') + ' face : ' + c1.txt + ' · ' + (c2.ok ? '✅' : '⚠️') + ' mur de gauche : ' + c2.txt;
+}
+/* la tâche d'un meuble dans le guide 🧰 À finir */
+async function remplirTacheGabarit(el, it){
+  const mob = JSON.parse(JSON.stringify(it.mob || {}));
+  const nom = it.name || 'Meuble', desc = (mob.aDessiner && mob.aDessiner.apparence) || it.description || '';
+  if (!mob.hauteur){ el.innerHTML = '<div class="meta" style="font-size:12px;">⚠️ ' + htmlEsc(nom) + ' : la fiche n\'a pas de hauteur — ouvre-la et remplis la 3e case de la taille.</div>'; return; }
+  const et = await etatGabarit(mob);
+  const ligne = (c)=> c.manque ? '⬜ à faire' : (c.ok ? '✅ ' : '⚠️ ') + c.txt;
+  el.innerHTML = `<div style="font-weight:600; font-size:13px;">⬜ ${htmlEsc(nom)} — ${et.etape ? LIB_ETAPE_GABARIT[et.etape] : 'prêt'}</div>
+    <div class="meta" style="font-size:11px; margin-top:3px;">De face : ${ligne(et.cF)} · Mur de gauche : ${ligne(et.cG)}</div>
+    ${et.etape ? `<div style="font-size:12px; margin-top:5px; line-height:1.4;">1. <b>📤 Envoyer à ChatGPT</b> : ${et.etape === 'planche' ? 'le gabarit (rectangle magenta aux bonnes proportions) et la chambre partent avec le prompt' : et.etape === 'face' ? 'le gabarit et l\'autre vue (modèle) partent avec le prompt' : 'la chambre et la vue de face (modèle) partent avec le prompt'}.<br>2. Enregistre l'image.<br>3. <b>📷 Poser l'image</b> : le jeu découpe, range et vérifie.</div>
+    <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
+      <button type="button" class="btn-capture" data-g-env style="flex:none; padding:6px 10px; font-size:12px;">📤 Envoyer à ChatGPT</button>
+      <button type="button" class="btn-secondary" data-g-cop style="flex:none; padding:6px 10px; font-size:12px;">📋 Copier</button>
+      <button type="button" class="btn-secondary" data-g-pos style="flex:none; padding:6px 10px; font-size:12px;">📷 Poser l'image</button></div>` : ''}`;
+  if (!et.etape) return;
+  el.querySelector('[data-g-env]').onclick = (ev)=>{ const e = envoiGabarit(it.id, nom, desc, mob, et); envoyerAChatGPT(e.texte, e.imgs, ev.currentTarget); };
+  el.querySelector('[data-g-cop]').onclick = (ev)=> copierAvecRepli(envoiGabarit(it.id, nom, desc, mob, et).texte, ev.currentTarget);
+  el.querySelector('[data-g-pos]').onclick = async ()=>{
+    try { const msg = await poserGabarit(it.id, mob, et.etape); if (msg) showToast(msg); it.mob = mob; remplirTacheGabarit(el, it); }
+    catch(e){ showToast('Échec : ' + e.message); }
+  };
 }
 async function dessinerBlocGabarit(el, m){
   const nom = () => document.getElementById('itemName').value || 'Meuble';
