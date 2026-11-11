@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v705</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v706</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2822,6 +2822,7 @@
         <div style="display:flex; gap:8px;">
           <input type="number" id="itemMobW" class="field-input" min="1" max="20" value="2" style="flex:1;" title="largeur">
           <input type="number" id="itemMobP" class="field-input" min="1" max="20" value="2" style="flex:1;" title="profondeur ou hauteur">
+          <input type="number" id="itemMobH" class="field-input" min="1" max="20" step="0.5" value="" placeholder="haut." style="flex:1;" title="hauteur (v706)">
         </div>
         <div id="itemMobFlags" style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
           <label style="display:flex; gap:8px; align-items:center; margin:0;"><input type="checkbox" id="itemMobRamassable" style="width:auto;"> 🎒 Se ramasse (va dans le compartiment, se pose dans une chambre)</label>
@@ -15814,6 +15815,7 @@ function remplirBlocMob(mob, nom){
   sp.value = POSES_MOBILIER[currentMob.pose] ? currentMob.pose : 'sol_debout';
   document.getElementById('itemMobW').value = currentMob.w || 2;
   document.getElementById('itemMobP').value = currentMob.p || 2;
+  document.getElementById('itemMobH').value = currentMob.hauteur || '';
   document.getElementById('itemMobRamassable').checked = !!currentMob.ramassable;
   document.getElementById('itemMobOuvrable').checked = !!currentMob.ouvrable;
   document.getElementById('itemMobLumiere').checked = !!currentMob.lumiere;
@@ -15822,7 +15824,8 @@ function remplirBlocMob(mob, nom){
 }
 function majLibelleCases(){
   const pose = document.getElementById('itemMobPose').value;
-  document.getElementById('itemMobCasesLabel').textContent = 'Taille en cases (une case = 40 cm) : largeur × ' + (pose === 'mur' ? 'hauteur' : 'profondeur');
+  document.getElementById('itemMobCasesLabel').textContent = 'Taille en cases (une case = 40 cm) : largeur × ' + (pose === 'mur' ? 'hauteur' : 'profondeur × hauteur');
+  const hEl = document.getElementById('itemMobH'); if (hEl) hEl.style.display = pose === 'mur' ? 'none' : '';
 }
 function majInfoFabrique(){
   const el = document.getElementById('itemMobFabrique'); if (!el) return;
@@ -15926,9 +15929,132 @@ function vueModeleMob(mob){
   for (const a of ['face', 'gauche', 'droite']){ const r = refDeVue(v[a]); if (r) return r; }
   return null;
 }
+/* ---------- v706 — LA MÉTHODE DU GABARIT (meubles posés au sol) ----------
+   Une planche à deux cases : à gauche un RECTANGLE MAGENTA aux proportions exactes de la fiche (largeur ×
+   hauteur) que ChatGPT remplit avec la vue DE FACE ; à droite la vue « mur de gauche » (côté à gauche,
+   façade à droite), la chambre jointe comme modèle de perspective. Le jeu découpe, range et VÉRIFIE :
+   proportions de la face (10 % d'écart toléré, l'étirement du kit rattrape) et coin repérable sur la vue
+   de trois-quarts. Une vue ratée se refait SEULE, l'autre servant de modèle. */
+const methodeGabarit = (m)=> !!m && m.pose === 'sol_debout' && !m.ouvrable && !m.fenetre;
+function gabaritMeuble(m, avecCase){
+  const W = avecCase ? 1536 : 1024, H = 1024, cell = avecCase ? 768 : 1024;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+  const R = (m.w || 1) / (m.hauteur || 1);
+  const maxW = cell - 160, maxH = H - 260;
+  let rw = maxW, rh = rw / R; if (rh > maxH){ rh = maxH; rw = rh * R; }
+  const x = (cell - rw) / 2, y = (H - rh) / 2;
+  ctx.fillStyle = 'rgba(255,0,255,.18)'; ctx.fillRect(x, y, rw, rh);
+  ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 8; ctx.strokeRect(x, y, rw, rh);
+  if (avecCase){ ctx.setLineDash([24, 18]); ctx.strokeStyle = '#9a9a9a'; ctx.lineWidth = 5; ctx.strokeRect(cell + 70, 110, cell - 140, H - 220); }
+  return cv.toDataURL('image/png');
+}
+function promptGabarit(nom, desc, m, quoi){
+  const L = Math.round((m.w || 1) * 40), Hc = Math.round((m.hauteur || 1) * 40), P = Math.round((m.p || 1) * 40);
+  const face = `${String(nom).toUpperCase()} vu PARFAITEMENT DE FACE : aucune perspective, aucun côté visible, ses lignes horizontales bien droites. Le meuble REMPLIT EXACTEMENT le rectangle magenta : ses bords gauche et droit touchent les côtés du rectangle, le bas de ses pieds touche le bas du rectangle, son point le plus haut touche le haut. Ses proportions sont donc EXACTEMENT celles du rectangle : ${L} cm de large pour ${Hc} cm de haut`;
+  const gauche = `${String(nom).toUpperCase()} posé contre le MUR DE GAUCHE de la chambre, le dos collé à ce mur, comme vu depuis l'entrée de la chambre : on voit son CÔTÉ (celui tourné vers nous) À GAUCHE, et sa FAÇADE À DROITE, qui fuit en perspective comme le mur de gauche, ses lignes du haut et du bas convergeant vers le point de fuite au centre de la chambre. Le meuble entier, rien de coupé. Il fait ${L} cm de large, ${P} cm de profondeur, ${Hc} cm de haut`;
+  const tete = { planche: `Je joins DEUX images.
+IMAGE 1 : un GABARIT. À gauche, un RECTANGLE MAGENTA ; à droite, une grande case en pointillés gris.
+IMAGE 2 : la chambre vide des robots d'un vaisseau : le MODÈLE DE PERSPECTIVE (vue de face, caméra à hauteur d'homme au centre de la pièce, un seul point de fuite au centre de l'image).
+
+Dessine UNE SEULE IMAGE, au même format que le gabarit, sur fond TRANSPARENT (PNG), avec DEUX VUES DU MÊME MEUBLE, côte à côte, séparées par un grand espace vide (rien ne se touche) :
+1. À GAUCHE, exactement à la place du rectangle magenta : ${face}.
+2. À DROITE, dans la case en pointillés : ${gauche}.
+
+C'est EXACTEMENT LE MÊME MEUBLE dans les deux vues : mêmes proportions, mêmes couleurs, mêmes détails.
+Le rectangle magenta et la case en pointillés NE DOIVENT PAS apparaître dans le résultat : seulement les deux meubles.`,
+    face: `Je joins ${quoi.modele ? 'DEUX images' : 'UNE image'}.
+IMAGE 1 : un GABARIT avec un RECTANGLE MAGENTA.${quoi.modele ? `
+IMAGE 2 : ${nom}, vu de trois-quarts. C'est EXACTEMENT ce meuble qu'il faut redessiner : même forme, mêmes couleurs, mêmes détails. N'invente rien.` : ''}
+
+Dessine UNE SEULE IMAGE, au même format que le gabarit, sur fond TRANSPARENT (PNG) : ${face}.
+Le rectangle magenta NE DOIT PAS apparaître dans le résultat : seulement le meuble.`,
+    gauche: `Je joins ${quoi.modele ? 'DEUX images' : 'UNE image'}.
+IMAGE 1 : la chambre vide des robots d'un vaisseau : le MODÈLE DE PERSPECTIVE (vue de face, caméra à hauteur d'homme au centre de la pièce, un seul point de fuite au centre de l'image).${quoi.modele ? `
+IMAGE 2 : ${nom}, vu de face. C'est EXACTEMENT ce meuble qu'il faut redessiner : même forme, mêmes proportions, mêmes couleurs, mêmes détails. N'invente rien.` : ''}
+
+Dessine UNE SEULE IMAGE sur fond TRANSPARENT (PNG) : ${gauche}.` }[quoi.etape];
+  return `${tete}
+
+LE MEUBLE : ${nom}.${desc ? ' ' + desc : ''}
+
+STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet.
+
+LIVRABLE : une seule image PNG à fond TRANSPARENT. Aucun mur, aucun sol, aucune ombre portée, aucun autre objet, aucun texte, aucune lettre, aucun chiffre.`;
+}
+/* le contrôle d'une vue posée : { ok, txt } */
+async function controleVueMeuble(m, a){
+  const ref = refDeVue((m.vues || {})[a]); if (!ref) return { manque: true, ok: false, txt: 'à faire' };
+  const img = await chargerImage(await urlDeRef(ref)); if (!img) return { ok: false, txt: 'image illisible' };
+  if (a === 'face'){
+    const ob = boiteOpaqueImage(img); if (!ob || !m.hauteur) return { ok: true, txt: 'posée' };
+    const R = (m.w || 1) / m.hauteur, mes = ob.w / ob.h, ecart = Math.round((mes / R - 1) * 100);
+    if (Math.abs(ecart) <= 10) return { ok: true, txt: 'proportions bonnes (' + (ecart > 0 ? '+' : '') + ecart + ' %)' };
+    return { ok: false, txt: 'trop ' + (ecart < 0 ? 'étroite' : 'large') + ' de ' + Math.abs(ecart) + ' % : à refaire' };
+  }
+  return analyserTroisQuarts(img) ? { ok: true, txt: 'coin repéré, calable' } : { ok: false, txt: 'coin introuvable : à refaire' };
+}
+async function dessinerBlocGabarit(el, m){
+  const nom = () => document.getElementById('itemName').value || 'Meuble';
+  const desc = () => (m.aDessiner && m.aDessiner.apparence) || document.getElementById('itemDescription').value || '';
+  if (!m.hauteur){ el.innerHTML = `<div style="margin-top:10px; padding:10px; border-radius:10px; border:1px dashed rgba(255,170,60,.7); background:rgba(255,170,60,.08); font-size:12px;">✏️ Donne d'abord sa <b>hauteur</b> (3e case de la taille) : le gabarit en a besoin.</div>`; return; }
+  el.innerHTML = '<p class="meta" style="font-size:11px;">⏳ Contrôle des vues…</p>';
+  const cF = await controleVueMeuble(m, 'face'), cG = await controleVueMeuble(m, 'gauche');
+  const etat = (c)=> c.manque ? '⬜ à faire' : (c.ok ? '✅ ' : '⚠️ ') + c.txt;
+  const etape = (cF.ok || cG.ok) ? (!cF.ok ? 'face' : !cG.ok ? 'gauche' : null) : 'planche';
+  const lib = { planche: 'les deux vues sur une planche', face: 'la vue de face seule (dans son gabarit)', gauche: 'la vue « mur de gauche » seule' };
+  el.innerHTML = `<div style="margin-top:10px; padding:10px; border-radius:10px; border:1px dashed rgba(255,170,60,.7); background:rgba(255,170,60,.08);">
+    <div style="font-weight:700; font-size:13px;">✏️ Vues du meuble — méthode du gabarit</div>
+    <div class="meta" style="margin:4px 0 2px; font-size:12px;">De face : ${etat(cF)}</div>
+    <div class="meta" style="margin:0 0 8px; font-size:12px;">Mur de gauche : ${etat(cG)} <span style="opacity:.7;">(le mur de droite se fait en miroir)</span></div>
+    ${etape ? `<p class="meta" style="margin:0 0 6px; font-size:11px;">À faire : <b>${lib[etape]}</b>.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <button type="button" class="btn-capture" data-gab-envoyer style="flex:none; padding:6px 10px; font-size:12px;">📤 Envoyer à ChatGPT</button>
+      <button type="button" class="btn-secondary" data-gab-copier style="flex:none; padding:6px 10px; font-size:12px;">📋 Copier</button>
+      <button type="button" class="btn-secondary" data-gab-poser style="flex:none; padding:6px 10px; font-size:12px;">📷 Poser l'image</button>
+    </div>` : '<p class="meta" style="margin:0; font-size:11px;">Les deux vues sont bonnes : le meuble est prêt pour les pièces en kit.</p>'}</div>`;
+  if (!etape) return;
+  const modeleRef = etape === 'face' ? refDeVue((m.vues || {}).gauche) : etape === 'gauche' ? refDeVue((m.vues || {}).face) : null;
+  const texte = ()=> promptGabarit(nom(), desc(), lireBlocMob(), { etape, modele: !!modeleRef });
+  el.querySelector('[data-gab-copier]').onclick = (ev)=> copierAvecRepli(texte(), ev.currentTarget);
+  el.querySelector('[data-gab-envoyer]').onclick = (ev)=>{
+    const imgs = [];
+    if (etape !== 'gauche') imgs.push(fichierPourPartage('gabarit-' + etape + '-' + m.w + 'x' + m.hauteur, gabaritMeuble(m, etape === 'planche')));
+    if (etape !== 'face'){ if (chambreConfig.imageRef) imgs.push(fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef))); else showToast('La chambre des robots n\'a pas d\'image : le prompt part sans elle'); }
+    if (modeleRef) imgs.push(fichierPourPartage('meuble-' + editingItemId + '-' + etape, urlDeRef(modeleRef)));
+    envoyerAChatGPT(texte(), imgs, ev.currentTarget);
+  };
+  el.querySelector('[data-gab-poser]').onclick = async ()=>{
+    const id = editingItemId; if (!id || !currentMob) return;
+    const img = await choisirFichierImage(); if (!img) return;
+    const n = etape === 'planche' ? 2 : 1;
+    const r = decouperGrille(img, n);
+    if (r.erreur){ showToast('Image refusée : ' + r.erreur + ' (attendu : ' + n + ')'); return; }
+    showToast('⏳ Découpage, rangement, contrôle…');
+    try {
+      const angles = etape === 'planche' ? ['face', 'gauche'] : [etape];
+      for (let i = 0; i < r.vues.length; i++){
+        const ref = await externalizeSceneImage(encoderImageSousLimite(r.vues[i], 640, true));
+        if (!ref) throw new Error('image ' + (i + 1) + ' non enregistrée');
+        currentMob.vues[angles[i]] = { ref };
+      }
+      const mob = lireBlocMob();
+      mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
+      const data = { mob, updatedAt: Date.now() };
+      const it = items.find(x=> x.id === id);
+      if (!(it && (it.imageUrl || it.imagePath))){ const vg = await vignetteDeMob(mob); if (vg) data.imageUrl = vg; }
+      await itemsCol.doc(id).set(data, { merge:true });
+      dessinerVuesMob();
+      const c1 = await controleVueMeuble(mob, 'face'), c2 = await controleVueMeuble(mob, 'gauche');
+      showToast((c1.ok ? '✅' : '⚠️') + ' face : ' + c1.txt + ' · ' + (c2.ok ? '✅' : '⚠️') + ' mur de gauche : ' + c2.txt);
+    } catch(e){ showToast('Échec : ' + e.message); }
+  };
+}
 function dessinerBlocADessiner(){
   const el = document.getElementById('itemMobDessiner'); if (!el) return;
   if (!currentMob || !editingItemId){ el.innerHTML = ''; return; }
+  if (methodeGabarit(lireBlocMob())){ dessinerBlocGabarit(el, lireBlocMob()); return; }   // v706
   const m = lireBlocMob(), pl = planDeDessin(m);
   if (!pl.n){ el.innerHTML = ''; return; }
   const lib = { face:'de face', gauche:'mur de gauche', droite:'mur de droite' };
@@ -15983,6 +16109,7 @@ function lireBlocMob(){
   m.pose = document.getElementById('itemMobPose').value;
   m.w = Math.max(1, parseInt(document.getElementById('itemMobW').value, 10) || 1);
   m.p = Math.max(1, parseInt(document.getElementById('itemMobP').value, 10) || 1);
+  { const h = parseFloat(document.getElementById('itemMobH').value); if (h > 0) m.hauteur = h; else delete m.hauteur; }   // v706
   m.ramassable = document.getElementById('itemMobRamassable').checked;
   m.ouvrable = document.getElementById('itemMobOuvrable').checked;
   m.lumiere = document.getElementById('itemMobLumiere').checked;
@@ -15993,6 +16120,7 @@ function lireBlocMob(){
 }
 document.getElementById('itemMobPose').addEventListener('change', majLibelleCases);
 document.getElementById('itemMobOuvrable').addEventListener('change', dessinerVuesMob);
+['itemMobW', 'itemMobP', 'itemMobH', 'itemMobPose'].forEach(id=>{ const e = document.getElementById(id); if (e) e.addEventListener('change', dessinerVuesMob); });   // v706 : le gabarit suit la taille
 function majBlocMob(){
   const mob = document.getElementById('itemType').value === 'mobilier';
   document.getElementById('itemMobBlock').style.display = mob ? 'block' : 'none';
