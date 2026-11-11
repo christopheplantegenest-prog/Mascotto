@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v701</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v702</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -37218,12 +37218,30 @@ function casesDe(G, o, m){
 function dansLesLimitesKit(G, o, m){
   o = oKit(G, o, m);
   const { w, d, h } = dimsKit(o, m, G);
-  if (o.zone === 'sol' || o.zone === 'plafond'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r + d > G.ny) return false; }
+  /* v702 : au sol, un meuble peut avancer vers nous et sortir par le bas de l'image, tant qu'il en
+     reste au moins une demi-case dans la pièce (avant : interdit dès qu'il touchait le bord) */
+  if (o.zone === 'sol'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r > G.ny - 1) return false; }
+  else if (o.zone === 'plafond'){ if (o.c < 0 || o.r < 0 || o.c + w > G.nx || o.r + d > G.ny) return false; }
   else if (o.zone === 'fond'){ if (o.c < 0 || o.k < 0 || o.c + w > G.nx || o.k + h > G.nh) return false; }
   else { if (o.r < 0 || o.k < 0 || o.r + w > G.ny || o.k + h > G.nh) return false; }
-  /* v632 : rien ne dépasse de l'image (le sol et le plafond continuent sous les bords, pas les meubles) */
+  /* v702 : jamais de meuble découpé — une vue de trois-quarts ne se pose que là où son côté est visible */
+  if (!angleJusteKit(G, o, m)) return false;
   const b = boiteDe(emplacementKit(G, o, m).poly);
+  if (o.zone === 'sol'){
+    /* il en reste un bout visible, et il ne passe pas « derrière » le joueur (trop près, la perspective casse) */
+    const yDevant = emplacementKit(G, o, m).poly[2][1];
+    return b.y0 < G.H - 2 && isFinite(yDevant) && yDevant > G.yA && yDevant < G.H * 2.2;
+  }
+  /* v632 : rien ne dépasse de l'image (le sol et le plafond continuent sous les bords, pas les meubles) */
   return !(b.x0 < -1 || b.x1 > G.W + 1 || b.y1 > G.H + 1 || b.y0 < -1);
+}
+/* v702 — un meuble tourné (vue de trois-quarts) montre sa façade sur sa face intérieure : contre le mur
+   de gauche, la face qui regarde à droite. On ne la voit que si elle est À GAUCHE du point de fuite ;
+   au-delà, le calcul retournerait le dessin (canapé « découpé »). Pareil en miroir à droite. */
+function angleJusteKit(G, o, m){
+  const sens = tourneKit(o, m, G); if (!sens) return true;
+  const [bL, bR, fR, fL] = emplacementKit(G, o, m).poly;
+  return sens === 'gauche' ? (fR[0] < G.V.x - 2 && bR[0] < G.V.x - 2) : (fL[0] > G.V.x + 2 && bL[0] > G.V.x + 2);
 }
 /* les meubles que o chevaucherait */
 function chevauchementsKit(G, objets, o, m, ignorerId){
@@ -37387,8 +37405,8 @@ async function composerKit(kit, opts){
     for (const { o, m, e } of avecGeo){
       if (o.cadreId || e.zone !== 'sol') continue;
       const rouge = chevauchementsKit(G, kit.objets || [], o, m, o.id).length > 0;
-      ctx.save(); ctx.fillStyle = rouge ? 'rgba(230,50,50,.45)' : 'rgba(95,242,255,.22)';
-      ctx.strokeStyle = rouge ? 'rgba(230,50,50,.95)' : 'rgba(95,242,255,.7)'; ctx.lineWidth = 2;
+      ctx.save(); ctx.fillStyle = rouge ? 'rgba(235,40,40,.55)' : 'rgba(40,215,100,.5)';   // v702 : plus franches
+      ctx.strokeStyle = rouge ? '#ff2a2a' : '#22e070'; ctx.lineWidth = 6; ctx.lineJoin = 'round';
       cheminPolys(ctx, [e.poly]); ctx.fill(); ctx.stroke(); ctx.restore();
     }
   }
@@ -37605,7 +37623,7 @@ async function ouvrirEditeurKit(){
       const q = force ? dansZone(z, p) : p;
       const cs = caseSous(G, q.x, q.y, z); if (!cs) continue;
       let cand;
-      if (z === 'sol' || z === 'plafond') cand = { zone: z, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), r: Math.max(0, Math.min(G.ny - d, cs.r - Math.floor(d / 2))) };
+      if (z === 'sol' || z === 'plafond') cand = { zone: z, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), r: Math.max(0, Math.min(z === 'sol' ? G.ny - 1 : G.ny - d, cs.r - Math.floor(d / 2))) };   // v702 : au sol, il peut sortir par le bas
       else if (z === 'fond') cand = { zone: z, c: Math.max(0, Math.min(G.nx - w, cs.c - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
       else cand = { zone: z, r: Math.max(0, Math.min(G.ny - w, cs.r - Math.floor(w / 2))), k: m.porte ? 0 : Math.max(0, Math.min(G.nh - h, cs.k - Math.floor(h / 2))) };
       return cand;
@@ -37646,7 +37664,10 @@ async function ouvrirEditeurKit(){
         Object.assign(g.o, g.cand);
         signalerChevauchement(g.o, g.m);
         await redessinerImage();
-      } else if (g.bouge && g.cand && !g.ok) showToast('Hors de la pièce : il reste où il était');
+      } else if (g.bouge && g.cand && !g.ok){
+        const t = Object.assign({}, g.o, g.cand);
+        showToast(angleJusteKit(G, t, g.m) ? 'Hors de la pièce : il reste où il était' : 'Vu sous cet angle, il serait coupé ici : il reste où il était');   // v702
+      }
       dessinerCalque(); dessinerSelection();
     };
     svg.addEventListener('pointerup', fin); svg.addEventListener('pointercancel', fin);
@@ -37689,7 +37710,7 @@ async function ouvrirEditeurKit(){
       else if (o.zone === 'fond'){ if (d === 'g') test.c--; if (d === 'd') test.c++; if (d === 'h') test.k++; if (d === 'b') test.k--; }
       else { if (d === 'g') test.r += (o.zone === 'g' ? -1 : 1); if (d === 'd') test.r += (o.zone === 'g' ? 1 : -1); if (d === 'h') test.k++; if (d === 'b') test.k--; }
       if (m && m.porte && test.k) test.k = 0;
-      if (!dansLesLimitesKit(G, test, m)){ showToast('Le bord de la pièce'); return; }
+      if (!dansLesLimitesKit(G, test, m)){ showToast(angleJusteKit(G, test, m) ? 'Le bord de la pièce' : 'Vu sous cet angle, il serait coupé plus loin'); return; }
       Object.assign(o, test); signalerChevauchement(o, m); await redessinerImage(); dessinerCalque();
     }));
     selBar.querySelector('[data-miroir]').addEventListener('click', async ()=>{ o.miroir = !o.miroir; await redessinerImage(); });
