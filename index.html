@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v700</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v701</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -37380,6 +37380,18 @@ async function composerKit(kit, opts){
     avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e, coteG: !!(m.refs && vue.ref === m.refs.gauche) });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
+  /* v701 : dans l'éditeur, la trace au sol de chaque meuble est peinte SOUS les meubles (le dessin
+     reste entier par-dessus) : bleutée si sa place est libre, rouge s'il en chevauche un autre.
+     Rien de tout ça dans la pièce finie. */
+  if (opts.traces){
+    for (const { o, m, e } of avecGeo){
+      if (o.cadreId || e.zone !== 'sol') continue;
+      const rouge = chevauchementsKit(G, kit.objets || [], o, m, o.id).length > 0;
+      ctx.save(); ctx.fillStyle = rouge ? 'rgba(230,50,50,.45)' : 'rgba(95,242,255,.22)';
+      ctx.strokeStyle = rouge ? 'rgba(230,50,50,.95)' : 'rgba(95,242,255,.7)'; ctx.lineWidth = 2;
+      cheminPolys(ctx, [e.poly]); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+  }
   for (const { o, m, img, e, brute, urlVue, coteG } of avecGeo){
     if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth || img.width, ih: img.naturalHeight || img.height };
     if (opts.sauf && opts.sauf === o.id) continue;
@@ -37408,7 +37420,11 @@ async function composerKit(kit, opts){
        plus) : même taille qu'une fois tourné contre un mur. */
     const ob = e.zone === 'sol' && !o.cadreId ? boiteOpaqueImage(brute) : null;
     if (ob && ob.w > 4){
-      const k = e.ancre.wpx / ob.w, dw = iw * k, dh = ih * k;
+      /* v701 : si la fiche donne la hauteur, le dessin tient DANS la largeur ET la hauteur — même hauteur
+         de face que tourné contre un mur (avant, de face, seule la largeur comptait) */
+      let k = e.ancre.wpx / ob.w;
+      if (m.hauteur){ const hpx = m.hauteur * KIT_FIN * G.cellH(e.ancre.yBas); k = Math.min(k, hpx / ob.h); }
+      const dw = iw * k, dh = ih * k;
       const x = e.ancre.cx - (ob.x + ob.w / 2) * k, y = e.ancre.yBas - (ob.y + ob.h) * k;
       ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(e.ancre.cx, e.ancre.yBas - e.ancre.wpx * 0.03, e.ancre.wpx * 0.48, e.ancre.wpx * 0.09, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       if (o.miroir){ const xm = e.ancre.cx + (ob.x + ob.w / 2) * k; ctx.translate(xm, y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, dw, dh); }
@@ -37503,7 +37519,7 @@ async function ouvrirEditeurKit(){
   const panoWrap = fond.querySelector('[data-pano]');
   let pano = null, svg = null;
   const tailles = {};
-  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true, tailles }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
+  const composer = async ()=>{ const cv = await composerKit(kit, { avecFenetres: true, tailles, traces: true }); return cv ? cv.toDataURL('image/jpeg', 0.86) : ''; };
   /* v633 : la zone qu'on attrape = l'image dessinée du meuble (un gros rectangle), pas sa petite empreinte au sol */
   const polyPrise = (x, e)=>{
     if (e.zone === 'sol' || e.zone === 'plafond'){
@@ -37551,7 +37567,7 @@ async function ouvrirEditeurKit(){
       .sort((a, b)=> (a.x.id === sel) - (b.x.id === sel) || ordreZ(a.x) - ordreZ(b.x) || (a.e.ancre && b.e.ancre ? (a.e.ancre.yBas || 0) - (b.e.ancre.yBas || 0) : 0));
     tries.forEach(({ x, e })=>{
       const estSel = x.id === sel;
-      if (estSel) poly(pctPoly(e.poly), 'fill:rgba(95,242,255,.18); stroke:#5ff2ff; stroke-width:1.5; vector-effect:non-scaling-stroke; pointer-events:none;');
+      if (estSel) poly(pctPoly(e.poly), (x.zone === 'sol' ? 'fill:none;' : 'fill:rgba(95,242,255,.18);') + ' stroke:#5ff2ff; stroke-width:1.5; vector-effect:non-scaling-stroke; pointer-events:none;');   // v701 : au sol, la trace est déjà peinte sous le meuble
       const p = poly(pctPoly(polyPrise(x, e)), estSel ? 'fill:rgba(95,242,255,.08); stroke:#5ff2ff; stroke-width:2.5; stroke-dasharray:6 4; vector-effect:non-scaling-stroke; cursor:grab;' : 'fill:rgba(255,255,255,0.001); stroke:none; cursor:grab;');
       p.dataset.objet = x.id; p.style.touchAction = 'none';
     });
@@ -37616,7 +37632,9 @@ async function ouvrirEditeurKit(){
       if (cand){
         const test = Object.assign({}, glisse.o, cand);
         const ok = dansLesLimitesKit(G, test, glisse.m);   // v635 : on passe à travers les autres meubles
-        dessinerCalque({ poly: emplacementKit(G, test, glisse.m).poly, ok });
+        /* v701 : la place visée s'allume en vert si elle est libre, en rouge si elle chevauche un meuble */
+        const libre = ok && !chevauchementsKit(G, kit.objets, test, glisse.m, glisse.o.id).length;
+        dessinerCalque({ poly: emplacementKit(G, test, glisse.m).poly, ok: libre });
         glisse.ok = ok;
       } else dessinerCalque();
     });
@@ -37635,9 +37653,17 @@ async function ouvrirEditeurKit(){
   }
   /* ----- la barre de l'objet choisi ----- */
   /* v635 : un chevauchement n'empêche rien, il est juste dit */
+  /* v701 : un seul message, une fois les déplacements finis (avant, chaque ◀▶ en envoyait un, et ils
+     faisaient la queue pendant de longues secondes) ; la trace rouge au sol suffit à le voir */
+  let minuteurChev = null, dernierChev = '';
   const signalerChevauchement = (o, m)=>{
-    const ch = chevauchementsKit(G, kit.objets, o, m, o.id);
-    if (ch.length) showToast('Il chevauche ' + ch.map(x=> (meubleDe(x) || {}).nom || '?').join(', '));
+    clearTimeout(minuteurChev);
+    minuteurChev = setTimeout(()=>{
+      const ch = chevauchementsKit(G, kit.objets, o, m, o.id);
+      const msg = ch.length ? 'Il chevauche ' + ch.map(x=> (meubleDe(x) || {}).nom || '?').join(', ') : '';
+      if (msg && msg !== dernierChev) showToast(msg);
+      dernierChev = msg;
+    }, 900);
   };
   const dessinerSelection = ()=>{
     const o = sel ? objet(sel) : null;
@@ -37745,7 +37771,18 @@ async function ouvrirEditeurKit(){
   fond.querySelectorAll('[data-onglet]').forEach(b=> b.addEventListener('click', ()=>{ onglet = b.dataset.onglet; dessinerPanneau(); }));
   fond.querySelector('[data-annuler]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-fini]').addEventListener('click', async ()=>{
-    if (occupe) return; occupe = true;
+    if (occupe) return;
+    /* v701 : pas de pièce validée tant que deux meubles se marchent dessus */
+    const conflits = [];
+    kit.objets.forEach((o, i)=>{ const m = meubleDe(o); if (!m) return;
+      chevauchementsKit(G, kit.objets.slice(i + 1), o, m, o.id).forEach(x=> conflits.push([o, x])); });
+    if (conflits.length){
+      const n = (x)=> (meubleDe(x) || {}).nom || '?';
+      sel = conflits[0][0].id; dessinerCalque(); dessinerSelection();
+      showToast('Impossible de valider : ' + conflits.map(([a, b])=> n(a) + ' chevauche ' + n(b)).join(' · ') + ' — déplace-les (traces rouges au sol)');
+      return;
+    }
+    occupe = true;
     try {
       const cv = await composerKit(kit);
       if (!cv){ showToast('Impossible de composer la pièce'); return; }
