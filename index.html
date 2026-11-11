@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v708</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v709</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -13112,7 +13112,10 @@ async function ouvrirBrouillons(){
   }
   /* v680 — 🪑 le mobilier à dessiner : une seule ligne, le travail se fait dans la fiche */
   {
-    const aD = (typeof items !== 'undefined' ? items : []).filter(ficheADessiner);
+    /* v709 : un meuble du gabarit reste dans la liste tant que ses deux vues n'ont pas passé le contrôle
+       (ses images peuvent être posées mais refusées : il n'est alors plus « à dessiner » au sens strict) */
+    const aD = (typeof items !== 'undefined' ? items : []).filter(it=> ficheADessiner(it)
+      || (it && it.mob && famileDe(it) === 'mobilier' && methodeGabarit(it.mob) && it.mob.vues && Object.keys(it.mob.vues).length && !it.mob.gabaritValide));
     /* v707 : les meubles « méthode du gabarit » se font ICI, un par un, sans ouvrir leur fiche */
     const gabT = aD.filter(it=> methodeGabarit(it.mob)), autres = aD.filter(it=> !methodeGabarit(it.mob));
     /* v708 : un meuble sans hauteur ni image ne peut pas avoir son gabarit → une seule ligne pour eux tous */
@@ -16022,7 +16025,7 @@ async function ajusterFaceGabarit(id, mob){
   const cv = document.createElement('canvas'); cv.width = tw; cv.height = ob.h;
   cv.getContext('2d').drawImage(img, ob.x, ob.y, ob.w, ob.h, 0, 0, tw, ob.h);
   const nref = await externalizeSceneImage(encoderImageSousLimite(cv, 640, true)); if (!nref) throw new Error('image non enregistrée');
-  mob.vues.face = { ref: nref };
+  mob.vues.face = { ref: nref }; delete mob.gabaritValide;
   mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
   await itemsCol.doc(id).set({ mob, updatedAt: Date.now() }, { merge:true });
   return true;
@@ -16067,6 +16070,7 @@ async function poserGabarit(id, mob, etape){
     mob.vues[angles[i]] = { ref };
   }
   mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
+  delete mob.gabaritValide;
   const data = { mob, updatedAt: Date.now() };
   const it = items.find(x=> x.id === id);
   if (!(it && (it.imageUrl || it.imagePath))){ const vg = await vignetteDeMob(mob); if (vg) data.imageUrl = vg; }
@@ -16103,7 +16107,10 @@ async function remplirTacheGabarit(el, it){
     };
     return;
   }
-  if (!et.etape) return;
+  if (!et.etape){
+    if (!mob.gabaritValide){ mob.gabaritValide = true; it.mob = mob; try { await itemsCol.doc(it.id).set({ mob, updatedAt: Date.now() }, { merge:true }); } catch(e){} }
+    return;
+  }
   el.querySelector('[data-g-env]').onclick = (ev)=>{ const e = envoiGabarit(it.id, nom, desc, mob, et); envoyerAChatGPT(e.texte, e.imgs, ev.currentTarget); };
   el.querySelector('[data-g-cop]').onclick = (ev)=> copierAvecRepli(envoiGabarit(it.id, nom, desc, mob, et).texte, ev.currentTarget);
   el.querySelector('[data-g-pos]').onclick = async ()=>{
