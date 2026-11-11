@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v698</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v699</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -37072,6 +37072,13 @@ function teinterOrange(img, hex){
    2) LA PIÈCE : la boîte du meuble (empreinte au sol + hauteur) projetée avec la géométrie de la coquille.
    3) On envoie chaque plaque dessinée sur sa face de la boîte : ce sont les 4 coins + le pli du jeu. */
 const analyseTroisQuartsCache = new Map();
+/* v699 — repérage générique (armoire, canapé, table…) par le BAS de la silhouette, toujours lisible :
+   - l'enveloppe basse (les pieds / le socle) donne deux droites : le bas du côté et le bas de la façade ;
+   - leur croisement = le coin du meuble le plus proche de nous (l'arête du pli) ;
+   - la hauteur = du bas de cette arête jusqu'au point le plus haut du dessin (dossier, dessus d'armoire).
+   On n'utilise plus le haut du dessin pour trouver le pli : sur un canapé, le point le plus haut est le
+   dossier, au fond, pas l'arête. Chaque plaque est prise comme un parallélogramme posé sur sa ligne de
+   sol : le dessin garde sa propre perspective (légère), le jeu impose celle de la pièce. */
 function analyserTroisQuarts(img){
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   const cle = (img.src || '').length + '|' + (img.src || '').slice(-60) + '|' + iw + 'x' + ih;
@@ -37086,33 +37093,32 @@ function analyserTroisQuarts(img){
       for (let y = 0; y < ih; y++) if (d[(y * iw + x) * 4 + 3] > 40){ haut[x] = y; break; }
       for (let y = ih - 1; y >= 0; y--) if (d[(y * iw + x) * 4 + 3] > 40){ bas[x] = y; break; }
     }
-    const cols = []; for (let x = 0; x < iw; x++) if (haut[x] >= 0 && bas[x] - haut[x] > ih * 0.3) cols.push(x);
-    if (cols.length > 10){
+    const cols = []; for (let x = 0; x < iw; x++) if (haut[x] >= 0) cols.push(x);
+    if (cols.length > 20){
       const x0 = cols[0], x1 = cols[cols.length - 1];
-      /* l'arête : le haut le plus haut (milieu des colonnes à 2 px près du minimum) */
-      const hMin = Math.min(...cols.map(x=> haut[x]));
-      const pres = cols.filter(x=> haut[x] <= hMin + 2);
-      const xp = pres[Math.floor(pres.length / 2)];
-      /* une droite par moindres carrés sur la partie centrale d'un segment (les coins sont arrondis) */
-      const droite = (prof, a, b)=>{
-        const xs = []; for (let x = Math.round(a); x <= Math.round(b); x++) if (prof[x] >= 0) xs.push(x);
-        if (xs.length < 3) return null;
-        const n = xs.length, mx = xs.reduce((t, x)=> t + x, 0) / n, my = xs.reduce((t, x)=> t + prof[x], 0) / n;
-        let num = 0, den = 0; xs.forEach(x=>{ num += (x - mx) * (prof[x] - my); den += (x - mx) * (x - mx); });
-        const k = den ? num / den : 0; return (x)=> my + k * (x - mx);
-      };
-      const g1 = xp - x0, g2 = x1 - xp;
-      if (g1 > 6 && g2 > 6){
-        const hG = droite(haut, x0 + g1 * 0.2, xp - g1 * 0.2), bG = droite(bas, x0 + g1 * 0.2, xp - g1 * 0.2);
-        const hD = droite(haut, xp + g2 * 0.2, x1 - g2 * 0.2), bD = droite(bas, xp + g2 * 0.2, x1 - g2 * 0.2);
-        if (hG && bG && hD && bD){
-          const hp = (hG(xp) + hD(xp)) / 2, bp = (bG(xp) + bD(xp)) / 2;
-          const gauche = [[x0, hG(x0)], [xp, hp], [xp, bp], [x0, bG(x0)]];
-          const droiteQ = [[xp, hp], [x1, hD(x1)], [x1, bD(x1)], [xp, bp]];
-          /* le côté est la plaque la plus étroite */
-          const coteAGauche = g1 <= g2;
-          res = { iw, ih, xp, u: xp / iw, gauche, droite: droiteQ, coteAGauche,
-                  hArete: bp - hp, largeurFacade: coteAGauche ? g2 : g1 };
+      /* enveloppe basse (y vers le bas : on garde les points les plus bas) */
+      const env = [];
+      const cr = (o, a, b)=> (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+      for (const x of cols){ const p = [x, bas[x]]; while (env.length >= 2 && cr(env[env.length - 2], env[env.length - 1], p) >= 0) env.pop(); env.push(p); }
+      /* le groupe le plus bas (à 2 px près) = le pied ou le coin le plus proche */
+      const yMax = Math.max(...env.map(p=> p[1]));
+      const iBas = env.map((p, i)=> p[1] >= yMax - 2 ? i : -1).filter(i=> i >= 0);
+      const iG = iBas[0], iD = iBas[iBas.length - 1];
+      const PG = env[iG], PD = env[iD], QG = env[iG - 1], QD = env[iD + 1];
+      if (QG && QD && QG[0] < PG[0] && QD[0] > PD[0]){
+        const kG = (PG[1] - QG[1]) / (PG[0] - QG[0]), kD = (QD[1] - PD[1]) / (QD[0] - PD[0]);
+        const LG = (x)=> PG[1] + kG * (x - PG[0]), LD = (x)=> PD[1] + kD * (x - PD[0]);
+        /* croisement des deux droites = le coin au sol le plus proche */
+        let xs = (PD[1] - kD * PD[0] - PG[1] + kG * PG[0]) / (kG - kD);
+        if (!isFinite(xs)) xs = (PG[0] + PD[0]) / 2;
+        xs = Math.max(x0 + 2, Math.min(x1 - 2, xs));
+        const bs = LG(xs), hTop = Math.min(...cols.map(x=> haut[x]));
+        const Hs = bs - hTop;
+        if (Hs > 8){
+          const gauche = [[x0, LG(x0) - Hs], [xs, bs - Hs], [xs, bs], [x0, LG(x0)]];
+          const droiteQ = [[xs, bs - Hs], [x1, LD(x1) - Hs], [x1, LD(x1)], [xs, bs]];
+          res = { iw, ih, xp: xs, u: xs / iw, gauche, droite: droiteQ, hArete: Hs,
+                  largeurG: xs - x0, largeurD: x1 - xs };
         }
       }
     }
@@ -37132,7 +37138,7 @@ async function hauteurMeubleKit(m, wLargeur, an){
       if (b && b.w > 4) return Math.max(1, wLargeur * b.h / b.w);
     } catch(e){}
   }
-  return Math.max(1, wLargeur * an.hArete / (an.largeurFacade * 1.2));
+  return Math.max(1, wLargeur * an.hArete / (Math.max(an.largeurG, an.largeurD) * 1.2));
 }
 const boiteOpaqueCache = new Map();
 function boiteOpaqueImage(img){
@@ -37152,7 +37158,7 @@ function boiteOpaqueImage(img){
 }
 /* le réglage complet (coins + pli, en unités du rectangle) et le rectangle où dessiner, pour un meuble
    tourné contre le mur de gauche ('gauche') ou de droite ('droite') */
-async function calageTroisQuartsKit(G, o, m, img, sens){
+async function calageTroisQuartsKit(G, o, m, img, sens, coteAGauche){
   const an = analyserTroisQuarts(img); if (!an) return null;
   const e = emplacementKit(G, o, m);
   const [bL, bR, fR, fL] = e.poly;   // fond-gauche, fond-droite, devant-droite, devant-gauche (au sol)
@@ -37166,7 +37172,9 @@ async function calageTroisQuartsKit(G, o, m, img, sens){
   /* dans l'image : la plaque étroite (le côté) va sur le devant, la façade sur la face intérieure.
      Contre le mur de gauche, le côté doit être à gauche de la façade ; sinon on prend l'image en miroir. */
   const veutCoteAGauche = sens === 'gauche';
-  const miroir = an.coteAGauche !== veutCoteAGauche;
+  /* l'image « mur de gauche » a son côté à gauche, l'image « mur de droite » à droite (v699 : on ne devine
+     plus le côté par la plaque la plus étroite — sur un canapé, le côté vu de face est le plus large) */
+  const miroir = (coteAGauche !== false) !== veutCoteAGauche;
   const iw = an.iw, ih = an.ih;
   const M = (q)=> q.map(p=> [iw - p[0], p[1]]);
   let srcG, srcD, xp;
@@ -37369,10 +37377,10 @@ async function composerKit(kit, opts){
     const e = emplacementKit(G, o, m);
     /* v652 : les essais de meubles tournés (gabarit v636, planche tournante v637, vue murale v639-v642) sont
        retirés ; un meuble est toujours dessiné de face sur son empreinte, réglé ensuite à la main (4 coins). */
-    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e });
+    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e, coteG: !!(m.refs && vue.ref === m.refs.gauche) });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
-  for (const { o, m, img, e, brute, urlVue } of avecGeo){
+  for (const { o, m, img, e, brute, urlVue, coteG } of avecGeo){
     if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth || img.width, ih: img.naturalHeight || img.height };
     if (opts.sauf && opts.sauf === o.id) continue;
     const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
@@ -37382,7 +37390,7 @@ async function composerKit(kit, opts){
     let cale = null;
     if (sens){
       try {
-        cale = await calageTroisQuartsKit(G, o, m, brute, sens);
+        cale = await calageTroisQuartsKit(G, o, m, brute, sens, coteG);
         const def = cale ? await imageDeformee(urlVue, cale.g, cale.miroir) : null;
         const imD = def ? await chargerImage(def.url) : null;
         if (imD){
