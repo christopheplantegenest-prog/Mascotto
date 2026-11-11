@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v702</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v703</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -37395,7 +37395,7 @@ async function composerKit(kit, opts){
     const e = emplacementKit(G, o, m);
     /* v652 : les essais de meubles tournés (gabarit v636, planche tournante v637, vue murale v639-v642) sont
        retirés ; un meuble est toujours dessiné de face sur son empreinte, réglé ensuite à la main (4 coins). */
-    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e, coteG: !!(m.refs && vue.ref === m.refs.gauche) });
+    avecGeo.push({ o: Object.assign({}, o, { miroir: vue.miroir }), m, img: teinterOrange(img, kit.teinte), brute: img, urlVue, e, coteG: !!(m.refs && vue.ref === m.refs.gauche), ref: vue.ref });
   }
   avecGeo.sort((a, b)=> ordre(a.o) - ordre(b.o) || (a.o.zone === 'sol' ? (a.e.ancre.yBas - b.e.ancre.yBas) : 0));
   /* v701 : dans l'éditeur, la trace au sol de chaque meuble est peinte SOUS les meubles (le dessin
@@ -37410,10 +37410,29 @@ async function composerKit(kit, opts){
       cheminPolys(ctx, [e.poly]); ctx.fill(); ctx.stroke(); ctx.restore();
     }
   }
-  for (const { o, m, img, e, brute, urlVue, coteG } of avecGeo){
+  for (const { o, m, img, e, brute, urlVue, coteG, ref } of avecGeo){
     if (opts.tailles) opts.tailles[o.id] = { iw: img.naturalWidth || img.width, ih: img.naturalHeight || img.height };
     if (opts.sauf && opts.sauf === o.id) continue;
     const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    /* v703 : la pièce finie — les meubles au sol deviennent des POINTS DE DÉCOR de la scène (retouchables à
+       la palette 🎛️ : place, taille, coins, pli) au lieu d'être collés dans l'image. On ne fait ici que
+       calculer leur rectangle et leur réglage ; la porte et les objets muraux restent dans l'image. */
+    const enPoint = opts.enPoints && !o.cadreId && e.zone === 'sol' && !m.porte;
+    if (enPoint){
+      const sensP = tourneKit(o, m, G);
+      if (sensP){
+        const cale = await calageTroisQuartsKit(G, o, m, brute, sensP, coteG);
+        if (cale){ opts.enPoints.push({ o, m, ref, rect: cale.rect, g: cale.g, flipped: cale.miroir }); continue; }
+      }
+      const obP = boiteOpaqueImage(brute);
+      if (obP && obP.w > 4){
+        let k = e.ancre.wpx / obP.w;
+        if (m.hauteur){ const hpx = m.hauteur * KIT_FIN * G.cellH(e.ancre.yBas); k = Math.min(k, hpx / obP.h); }
+        const x = o.miroir ? e.ancre.cx - (iw - obP.x - obP.w / 2) * k : e.ancre.cx - (obP.x + obP.w / 2) * k;
+        opts.enPoints.push({ o, m, ref, rect: { x, y: e.ancre.yBas - (obP.y + obP.h) * k, w: iw * k, h: ih * k }, g: null, flipped: !!o.miroir });
+        continue;
+      }
+    }
     ctx.save();
     /* v697 : un meuble de trois-quarts tourné contre un mur de côté — calé par le calcul */
     const sens = e.zone === 'sol' && !o.cadreId ? tourneKit(o, m, G) : null;
@@ -37470,6 +37489,34 @@ async function composerKit(kit, opts){
 }
 
 /* ---------- les points qui vont avec les objets (portes → sortie, fenêtres → 🪟) ---------- */
+/* v703 — chaque meuble au sol du kit devient un point « décor » de la scène, dessiné par-dessus l'image,
+   dans l'ordre du fond vers l'avant. Le réglage calculé (rectangle, coins, pli, miroir) y est recopié ;
+   ensuite on peut le retoucher avec la palette 🎛️ de l'éditeur de scène. Tant que le meuble n'a pas bougé
+   dans le kit, une nouvelle validation garde les retouches (signature de sa place). */
+function synchroniserDecorsKit(sc, G, enPoints){
+  const pts = sc.points || (sc.points = []);
+  const anciens = new Map(pts.filter(p=> p && p.kitDecor).map(p=> [p.kitObjetId, p]));
+  const autres = pts.filter(p=> !(p && p.kitDecor));
+  const nouveaux = [];
+  for (const d of enPoints){
+    const o = d.o;
+    const sig = JSON.stringify([o.meubleId, o.c, o.r, o.angle || '', !!o.miroir, d.ref]);
+    let pt = anciens.get(o.id);
+    if (!pt || pt.kitSig !== sig){
+      const r = d.rect;
+      pt = Object.assign(pt || { id: 'pt_' + Date.now() + '_' + Math.floor(Math.random() * 100000) }, {
+        type: 'decor', kitDecor: true, kitObjetId: o.id, kitSig: sig, label: (d.m && d.m.nom) || 'Meuble',
+        x: +((r.x + r.w / 2) / G.W * 100).toFixed(3), y: +((r.y + r.h / 2) / G.H * 100).toFixed(3),
+        w: +(r.w / G.W * 100).toFixed(3), h: +(r.h / G.H * 100).toFixed(3), rotation: 0, flipped: !!d.flipped
+      });
+      delete pt.coins; delete pt.pli; delete pt.imageRef; delete pt.imagePath; delete pt.imageUrl;
+      if (d.g){ pt.coins = d.g.coins; if (d.g.pli) pt.pli = d.g.pli; }
+      if (typeof d.ref === 'string' && d.ref.startsWith('path:')) pt.imagePath = d.ref.slice(5); else pt.imageRef = d.ref;
+    }
+    nouveaux.push(pt);
+  }
+  sc.points = autres.concat(nouveaux);
+}
 function synchroniserPointsKit(sc, G){
   if (!sc || !sc.kit) return;
   const pts = sc.points || (sc.points = []);
@@ -37500,7 +37547,7 @@ function synchroniserPointsKit(sc, G){
     vivants.add(pt.id);
   });
   /* un point né d'un objet disparu s'en va avec lui */
-  sc.points = pts.filter(p=> !p.kitObjetId || vivants.has(p.id));
+  sc.points = pts.filter(p=> !p.kitObjetId || p.kitDecor || vivants.has(p.id));   // v703 : les décors se gèrent à part
 }
 
 /* ---------- 🧩 l'éditeur de kit (depuis l'éditeur de scène) ---------- */
@@ -37805,18 +37852,21 @@ async function ouvrirEditeurKit(){
     }
     occupe = true;
     try {
-      const cv = await composerKit(kit);
+      const enPoints = [];
+      const cv = await composerKit(kit, { enPoints });
       if (!cv){ showToast('Impossible de composer la pièce'); return; }
       sc.kit = kit;
       /* l'image de la scène devient la composition (enregistrée comme toute image de scène) */
       sceneEditorImageDataUrl = encoderImageSousLimite(cv, 1600, false);
       sceneEditorImagePath = null;
       synchroniserPointsKit(Object.assign(sc, { points: sceneEditorPoints }), G);
+      synchroniserDecorsKit(sc, G, enPoints);   // v703 : les meubles deviennent des points de décor
+      for (const pt of sc.points){ if (pt && pt.kitDecor){ const jobs = []; resolvePointImageRefJobs(pt, jobs); await Promise.all(jobs); } }
       sceneEditorPoints = sc.points;
       syncCurrentVariantFromEditorState();
       renderSceneEditorImage();
       fond.remove();
-      showToast('Pièce assemblée ✅ — pense à 💾 Enregistrer la scène');
+      showToast('Pièce assemblée ✅ — les meubles sont des points de décor (🎛️ pour les retoucher) — pense à 💾 Enregistrer la scène');
     } catch(e){ showToast('Échec : ' + e.message); }
     finally { occupe = false; }
   });
