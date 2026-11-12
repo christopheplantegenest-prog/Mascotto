@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v710</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v711</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11991,6 +11991,16 @@ document.getElementById('bibleBtn').addEventListener('click', ouvrirBible);
 
 try { bibleFond(); } catch(e){}   // dès le démarrage : l'import et l'export sont rangés dans la Bible
 
+/* v711 — le bâtiment d'une zone vu sur la carte, quand le fichier d'import n'a pas donné son prompt */
+function promptCarteParDefaut(z){
+  const nom = (z && z.name) || 'le bâtiment', desc = String((z && (z.apparence || z.description)) || '').trim();
+  return `Image pour la carte d'un jeu mobile : le bâtiment « ${nom} », vu de haut en trois-quarts (environ 45°), entier, isolé et centré, sur fond TRANSPARENT (PNG). Pas de sol autour, pas de route, pas de texte, pas d'ombre portée au loin.
+
+{CHARTE}
+
+LE BÂTIMENT : ${desc || nom}. Garde-le compact, avec une porte sas bien visible sur la façade avant.
+Il doit rester lisible en tout petit sur la carte : silhouette simple, formes franches, peu de détails.`;
+}
 function avecCharte(prompt, batiment){
   const bloc = batiment ? CHARTE_BATIMENT : CHARTE_DECOR;
   const p = String(prompt || '');
@@ -12867,11 +12877,13 @@ async function ouvrirBrouillons(){
       if (!okPos) manque++;
       const okImgZone = aImagePrincipale(z);
       if (!okImgZone) manque++;
+      /* v711 : une zone importée sans prompt de carte en reçoit un, tiré de son nom et de sa description */
+      const promptCarteZ = z.promptCarte || promptCarteParDefaut(z);
       let blocs = tache(okImgZone, '🏠 Image de « ' + esc(z.name) + ' » sur la carte',
         'C\'est le bâtiment que le joueur voit sur la carte, vu de haut en trois-quarts, sur fond transparent.',
         '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, ajoute le dessin du bâtiment que Claude t\'a donné, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b>.',
-        (z.promptCarte ? bouton('data-envoi="carte|' + z.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="carte|' + z.id + '"', '📋 Copier') : '') + bouton('data-poser-img="' + z.id + '"', '📷 Choisir l\'image') + bouton('data-hebergee-img="' + z.id + '"', '📁 Image hébergée'));
-      if (z.promptCarte && !okImgZone) envois['carte|' + z.id] = ()=> ({ texte: avecCharte(z.promptCarte, true), imgs: [] });
+        bouton('data-envoi="carte|' + z.id + '"', '📤 Envoyer à ChatGPT', !okImgZone) + bouton('data-envoi-copie="carte|' + z.id + '"', '📋 Copier') + bouton('data-poser-img="' + z.id + '"', '📷 Choisir l\'image') + bouton('data-hebergee-img="' + z.id + '"', '📁 Image hébergée'));
+      envois['carte|' + z.id] = ()=> ({ texte: avecCharte(promptCarteZ, true), imgs: [] });
       blocs += tache(okPos, '📍 Placer « ' + esc(z.name) + ' » sur la carte',
         'Tant que la zone n\'a pas de position, personne ne peut y entrer.',
         '1. <b>✏️ Ouvrir la fiche</b> de la zone.<br>2. Règle sa position sur la carte (📍 dans la fiche).<br>3. <b>Enregistrer</b>, puis reviens au guide.',
@@ -12920,8 +12932,8 @@ async function ouvrirBrouillons(){
       });
       scenes.forEach(sc=>{   // v710 : les pièces en kit à réassembler
         if (!sc || !sc.kit || !sc.kit.aAssembler) return;
-        const sans = (sc.kit.objets || []).filter(o=> !o.cadreId && !meubleParId(o.meubleId));
-        const noms = sans.map(o=>{ const it = String(o.meubleId || '').startsWith('fi_') && items.find(i=> 'fi_' + i.id === String(o.meubleId).split('|')[0]); return it ? it.name : '?'; });
+        const sans = (sc.kit.objets || []).filter(meubleEnAttenteKit);
+        const noms = sans.map(nomMeubleKit);
         manque++;
         blocs += tache(false, '🧩 Assembler la pièce « ' + esc(sc.name) + ' »',
           'La pièce en kit a été posée avant que tous ses meubles aient leurs images.',
@@ -37887,6 +37899,13 @@ function meubleImportKit(spec, defs, cles){
   let m = n ? (tous.find(x=> normKit(x.nom) === n) || tous.find(x=> normKit(x.nom).includes(n))) : null;
   if (!m && spec && spec.porte) m = tous.find(x=> x.porte) || null;
   if (m) return m;
+  /* v711 : une fiche de la bibliothèque qui n'a pas encore ses images (ex. l'hologramme) garde sa place */
+  const fi = n ? (items || []).find(it=> it && it.mob && !it.mob.fenetre && (normKit(it.name) === n || normKit(it.name).includes(n))) : null;
+  if (fi){
+    const mb = fi.mob, mur = mb.pose === 'mur', p = Math.max(1, mb.p || 1);
+    return { id: 'fi_' + fi.id, nom: fi.name, type: mur ? 'mur' : mb.pose === 'plafond' ? 'plafond' : 'sol', w: Math.max(1, mb.w || 1), d: mur ? 1 : p, h: mur ? p : 1,
+      refs: (!mur && !mb.vueUnique) ? { gauche: 'a-venir' } : {}, porte: !!mb.porte || mb.categorie === 'Porte', hauteur: mb.hauteur || null, provisoire: true };
+  }
   const def = (defs || []).find(o=> o && o.type === 'mobilier' && (normKit(o.name) === n || normKit(o.cle) === n));
   const id = def && cles && (cles.objets[def.cle] || cles.objets[def.name]);
   if (!def || !id) return null;
@@ -37922,6 +37941,20 @@ function placerVoeuKit(G, poses, m, voeu){
   for (const { o } of cands) if (libre(o)) return o;
   return null;
 }
+/* v711 : un meuble de la pièce attend encore ses images (aucune, ou celles du gabarit pas encore validées) */
+function meubleEnAttenteKit(o){
+  if (!o || o.cadreId) return false;
+  if (!meubleParId(o.meubleId)) return true;
+  const id = String(o.meubleId || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
+  const it = id && (items || []).find(x=> x && x.id === id);
+  return !!(it && it.mob && methodeGabarit(it.mob) && !it.mob.gabaritValide);
+}
+function nomMeubleKit(o){
+  const m = meubleParId(o.meubleId); if (m) return m.nom;
+  const id = String(o.meubleId || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
+  const it = id && (items || []).find(x=> x && x.id === id);
+  return it ? it.name : '?';
+}
 /* assemble une pièce en kit (objet scène nu : kit + points) ; renvoie le nombre de meubles encore sans image */
 async function assemblerSceneKit(scn, idsScenes){
   const c = coquilleParId(scn.kit && scn.kit.coquilleId); if (!c) throw new Error('coquille introuvable');
@@ -37938,7 +37971,7 @@ async function assemblerSceneKit(scn, idsScenes){
     if (o.vers === '@carte'){ pt.type = 'sortie_zone'; delete pt.targetSceneId; }
     else pt.targetSceneId = (idsScenes && idsScenes[o.vers]) || o.vers;
   });
-  const manquent = (scn.kit.objets || []).filter(o=> !o.cadreId && !meubleParId(o.meubleId)).length;
+  const manquent = (scn.kit.objets || []).filter(meubleEnAttenteKit).length;
   if (manquent) scn.kit.aAssembler = true; else delete scn.kit.aAssembler;
   return manquent;
 }
