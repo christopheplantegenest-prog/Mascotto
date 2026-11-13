@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v713</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v714</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12938,16 +12938,31 @@ async function ouvrirBrouillons(){
           bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPl) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pdz="' + z.id + '|' + pl.id + '"', okPl ? '📷 Reposer la planche' : '📷 Poser la planche'));
         envois[cle] = ()=> ({ texte: promptPlancheDecor(pl), imgs: plancheAvecCote(pl) && chambreConfig.imageRef ? [fichierPourPartage('chambre-modele', urlDeRef(chambreConfig.imageRef))] : [] });   // v679
       });
+      /* v714 : les MEUBLES de la zone à dessiner sont ICI, dans la zone (plus en bas de page, après les
+         robots), une seule fois chacun même s'il sert dans deux pièces ; l'assemblage vient après */
+      const meublesZ = new Map();
+      scenes.forEach(sc=> (sc && sc.kit && sc.kit.aAssembler ? sc.kit.objets || [] : []).forEach(o=>{
+        if (!meubleEnAttenteKit(o)) return;
+        const it = ficheKitDe(o); if (it && methodeGabarit(it.mob)) meublesZ.set(it.id, it);
+      }));
+      if (meublesZ.size){
+        manque++;
+        blocs += '<div style="font-weight:600; margin:8px 0 2px;">🪑 Les meubles de cette zone à dessiner (' + meublesZ.size + ')</div>'
+          + [...meublesZ.values()].map(it=> '<div data-tache-gabarit="' + it.id + '" style="margin:6px 0; padding:8px; border-radius:8px; background:rgba(128,128,128,.12);"><span class="meta" style="font-size:12px;">⏳ ' + esc(it.name || 'Meuble') + '…</span></div>').join('');
+      }
       scenes.forEach(sc=>{   // v710 : les pièces en kit à réassembler
         if (!sc || !sc.kit || !sc.kit.aAssembler) return;
         const sans = (sc.kit.objets || []).filter(meubleEnAttenteKit);
-        const noms = sans.map(nomMeubleKit);
         manque++;
+        if (sans.length){   // v714 : pas de bouton tant que ce n'est pas prêt
+          blocs += '<p class="meta" style="font-size:12px; margin:6px 0;">⏳ 🧩 La pièce « ' + esc(sc.name) + ' » s\'assemblera quand ces meubles seront faits : '
+            + [...new Set(sans.map(nomMeubleKit))].map(n=> '<b>' + esc(n) + '</b>').join(', ') + '.</p>';
+          return;
+        }
         blocs += tache(false, '🧩 Assembler la pièce « ' + esc(sc.name) + ' »',
-          'La pièce en kit a été posée avant que tous ses meubles aient leurs images.',
-          sans.length ? 'D\'abord, dessine ' + noms.map(n=> '<b>' + esc(n) + '</b>').join(', ') + ' dans <b>🪑 Mobilier</b> (plus bas). Ensuite, reviens ici.'
-            : 'Tous ses meubles ont leurs images : <b>🧩 Assembler</b> recompose la pièce avec eux.',
-          bouton('data-assembler="' + z.id + '|' + sc.id + '"', '🧩 Assembler', !sans.length));
+          'Tous ses meubles ont leurs images : il ne reste qu\'à recomposer la pièce avec eux.',
+          'Appuie sur <b>🧩 Assembler</b>.',
+          bouton('data-assembler="' + z.id + '|' + sc.id + '"', '🧩 Assembler', true));
       });
       scenes.forEach(sc=>{
         if (!sc || !sc.id) return;
@@ -13146,22 +13161,30 @@ async function ouvrirBrouillons(){
   {
     /* v709 : un meuble du gabarit reste dans la liste tant que ses deux vues n'ont pas passé le contrôle
        (ses images peuvent être posées mais refusées : il n'est alors plus « à dessiner » au sens strict) */
-    const aD = (typeof items !== 'undefined' ? items : []).filter(it=> ficheADessiner(it)
-      || (it && it.mob && famileDe(it) === 'mobilier' && methodeGabarit(it.mob) && it.mob.vues && Object.keys(it.mob.vues).length && !it.mob.gabaritValide));
+    /* v714 : seulement ce qui reste vraiment à faire, hors des meubles déjà montrés dans leur zone, et
+       une seule fiche par nom (un doublon sans image ne se montre pas à côté de sa jumelle) */
+    const dejaZones = new Set([...liste.querySelectorAll('[data-tache-gabarit]')].map(el=> el.dataset.tacheGabarit));
+    const nomsZones = new Set([...dejaZones].map(id=> normKit(((items || []).find(x=> x.id === id) || {}).name)));
+    const vus = new Set();
+    const aD = (typeof items !== 'undefined' ? items : []).filter(it=> it && (methodeGabarit(it.mob) ? aFaireGabarit(it) : ficheADessiner(it))
+      && !dejaZones.has(it.id) && !nomsZones.has(normKit(it.name))
+      && !(it.mob && !meubleDeFiche(it) && (items || []).some(x=> x !== it && x.mob && normKit(x.name) === normKit(it.name) && meubleDeFiche(x)))
+      && !vus.has(normKit(it.name)) && vus.add(normKit(it.name)));
     /* v707 : les meubles « méthode du gabarit » se font ICI, un par un, sans ouvrir leur fiche */
     const gabT = aD.filter(it=> methodeGabarit(it.mob)), autres = aD.filter(it=> !methodeGabarit(it.mob));
     /* v708 : un meuble sans hauteur ni image ne peut pas avoir son gabarit → une seule ligne pour eux tous */
     const gab = gabT.filter(it=> it.mob.hauteur || aUneImageMob(it.mob)), sansH = gabT.filter(it=> !gab.includes(it));
     if (aD.length){
-      liste.insertAdjacentHTML('beforeend', '<div style="font-weight:700; margin:14px 0 6px;">🪑 Mobilier</div>'
+      liste.insertAdjacentHTML('beforeend', '<details style="margin:14px 0 6px;"><summary style="font-weight:700;">🪑 Autres meubles de la bibliothèque à compléter (' + aD.length + ') — pas urgent</summary>'
         + (gab.length ? '<p class="meta" style="font-size:12px;">Méthode du gabarit : une planche par meuble (vue de face dans un rectangle aux bonnes proportions + vue contre le mur de gauche). Le jeu vérifie chaque vue ; une vue ratée se refait seule.</p>' : '')
         + (sansH.length ? '<p class="meta" style="font-size:12px;">⬜ ' + sansH.length + ' meuble(s) en attente de leur hauteur (' + sansH.slice(0, 4).map(it=> htmlEsc(it.name || 'Meuble')).join(', ') + (sansH.length > 4 ? '…' : '') + ') : rien à faire pour l\'instant, ils seront donnés dans un fichier d\'import.</p>' : '')
         + gab.map(it=> '<div data-tache-gabarit="' + it.id + '" style="margin:8px 0; padding:8px; border-radius:8px; background:rgba(128,128,128,.12);"><span class="meta" style="font-size:12px;">⏳ ' + htmlEsc(it.name || 'Meuble') + '…</span></div>').join('')
         + (autres.length ? tache(false, '✏️ ' + autres.length + ' autre(s) meuble(s) à dessiner', 'Meubles muraux, qui s\'ouvrent ou fenêtres : ils gardent leur planche dans la fiche.',
           'Ouvre la bibliothèque : dans chaque fiche marquée ✏️, <b>📤 Envoyer à ChatGPT</b>, enregistre l\'image, puis <b>📷 Poser la planche</b>.',
-          bouton('data-biblio-dessiner', '📚 Ouvrir la bibliothèque', true)) : ''));
-      gab.forEach(it=>{ const el = liste.querySelector('[data-tache-gabarit="' + it.id + '"]'); if (el) remplirTacheGabarit(el, it); });
+          bouton('data-biblio-dessiner', '📚 Ouvrir la bibliothèque', true)) : '') + '</details>');
     }
+    /* toutes les tâches de meuble, celles des zones comprises */
+    liste.querySelectorAll('[data-tache-gabarit]').forEach(el=>{ const it = (items || []).find(x=> x.id === el.dataset.tacheGabarit); if (it) remplirTacheGabarit(el, it); });
   }
   /* v629 — 🧩 LES PIÈCES EN KIT */
   {
@@ -15294,8 +15317,11 @@ document.getElementById('reserveBtn').addEventListener('click', ()=>{
   pendingLat = null; pendingLng = null;
   refreshPosStatusDisplay();
 });
+function masquerBandeauGuide(oui){   // v714 : il cachait le viseur pendant le placement sur la carte
+  const b = document.getElementById('bandeauGuide'); if (b) b.style.visibility = oui ? 'hidden' : '';
+}
 document.getElementById('placeNewBtn').addEventListener('click', ()=>{
-  fermerFenetresParDessusLaCarte();
+  fermerFenetresParDessusLaCarte(); masquerBandeauGuide(true);
   placementTarget = 'creature';
   document.getElementById('editorOverlay').classList.remove('show');
   document.getElementById('crosshair').style.display = 'block';
@@ -15304,6 +15330,7 @@ document.getElementById('placeNewBtn').addEventListener('click', ()=>{
   if (playerPos) map.setView([playerPos.lat, playerPos.lng], map.getZoom());
 });
 document.getElementById('placeCancelBtn').addEventListener('click', ()=>{
+  masquerBandeauGuide(false);
   document.getElementById('crosshair').style.display = 'none';
   document.getElementById('placementHint').style.display = 'none';
   document.getElementById('placementBar').style.display = 'none';
@@ -15311,6 +15338,7 @@ document.getElementById('placeCancelBtn').addEventListener('click', ()=>{
   else document.getElementById('editorOverlay').classList.add('show');
 });
 document.getElementById('placeConfirmBtn').addEventListener('click', ()=>{
+  masquerBandeauGuide(false);
   const center = map.getCenter();
   document.getElementById('crosshair').style.display = 'none';
   document.getElementById('placementHint').style.display = 'none';
@@ -16067,7 +16095,7 @@ async function ajusterFaceGabarit(id, mob){
   const cv = document.createElement('canvas'); cv.width = tw; cv.height = ob.h;
   cv.getContext('2d').drawImage(img, ob.x, ob.y, ob.w, ob.h, 0, 0, tw, ob.h);
   const nref = await externalizeSceneImage(encoderImageSousLimite(cv, 640, true)); if (!nref) throw new Error('image non enregistrée');
-  mob.vues.face = { ref: nref }; delete mob.gabaritValide;
+  mob.vues.face = { ref: nref }; delete mob.gabaritValide; mob.gabaritPose = true;
   mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
   await itemsCol.doc(id).set({ mob, updatedAt: Date.now() }, { merge:true });
   return true;
@@ -16112,7 +16140,7 @@ async function poserGabarit(id, mob, etape){
     mob.vues[angles[i]] = { ref };
   }
   mob.aDessiner = Object.assign({}, mob.aDessiner || {}, { angles: ['face', 'gauche'].filter(a=> !refDeVue(mob.vues[a])) });
-  delete mob.gabaritValide;
+  delete mob.gabaritValide; mob.gabaritPose = true;   // v714
   const data = { mob, updatedAt: Date.now() };
   const it = items.find(x=> x.id === id);
   if (!(it && (it.imageUrl || it.imagePath))){ const vg = await vignetteDeMob(mob); if (vg) data.imageUrl = vg; }
@@ -16126,7 +16154,19 @@ async function remplirTacheGabarit(el, it){
   const nom = it.name || 'Meuble', desc = (mob.aDessiner && mob.aDessiner.apparence) || it.description || '';
   if (!mob.hauteur){
     const h = await hauteurAutoMob(mob);
-    if (!h){ el.remove(); return; }
+    if (!h){   // v714 : sans hauteur ni image, on la demande ici (en cases de 40 cm), sans ouvrir la fiche
+      el.innerHTML = `<div style="font-weight:600; font-size:13px;">⬜ ${htmlEsc(nom)} — il manque sa hauteur</div>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:6px; font-size:12px;">Hauteur en cases de 40 cm :
+          <input type="number" min="0.5" step="0.5" value="2" data-g-h style="width:64px;">
+          <button type="button" class="btn-capture" data-g-hok style="flex:none; padding:5px 9px; font-size:12px;">OK</button></div>`;
+      el.querySelector('[data-g-hok]').onclick = async ()=>{
+        const v = Math.max(0.5, Math.round((+el.querySelector('[data-g-h]').value || 0) * 2) / 2);
+        mob.hauteur = v; it.mob = mob;
+        try { await itemsCol.doc(it.id).set({ mob, updatedAt: Date.now() }, { merge:true }); } catch(e){ showToast('Échec : ' + e.message); return; }
+        remplirTacheGabarit(el, it);
+      };
+      return;
+    }
     mob.hauteur = h; it.mob = mob;
     try { await itemsCol.doc(it.id).set({ mob, updatedAt: Date.now() }, { merge:true }); } catch(e){}
   }
@@ -37972,23 +38012,36 @@ function pointDecorKit(G, o, m, pose, hauteur){
   return { x: +((rx + rw / 2) / G.W * 100).toFixed(3), y: +((ry + rh / 2) / G.H * 100).toFixed(3), w: +(rw / G.W * 100).toFixed(3), h: +(rh / G.H * 100).toFixed(3),
     coins: { tl: off(q[0], 0, 0), tr: off(q[1], 1, 0), br: off(q[2], 1, 1), bl: off(q[3], 0, 1) } };
 }
+/* v714 — LA FICHE D'UN MEUBLE DU KIT, doublons compris : si la fiche notée n'a pas d'image mais qu'une
+   autre fiche du même nom en a (un lit dessiné dans la « mauvaise » fiche après deux imports), c'est
+   celle-là qui compte. */
+function ficheKitDe(o){
+  const id = String((o && o.meubleId) || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
+  const it = id && (items || []).find(x=> x && x.id === id); if (!it) return null;
+  if (meubleDeFiche(it)) return it;
+  const n = normKit(it.name);
+  return (items || []).find(x=> x && x !== it && x.mob && normKit(x.name) === n && meubleDeFiche(x)) || it;
+}
+/* un meuble du gabarit encore à faire : une vue manque, ou ses vues posées n'ont pas passé le contrôle */
+function aFaireGabarit(it){
+  if (!it || !it.mob || !methodeGabarit(it.mob)) return false;
+  return ficheADessiner(it) || (!!it.mob.gabaritPose && !it.mob.gabaritValide);
+}
 /* v711 : un meuble de la pièce attend encore ses images (aucune, ou celles du gabarit pas encore validées) */
 function meubleEnAttenteKit(o){
   if (!o || o.cadreId) return false;
-  if (!meubleParId(o.meubleId)) return true;
-  const id = String(o.meubleId || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
-  const it = id && (items || []).find(x=> x && x.id === id);
-  return !!(it && it.mob && methodeGabarit(it.mob) && !it.mob.gabaritValide);
+  const it = ficheKitDe(o);
+  if (it) return !meubleDeFiche(it) || aFaireGabarit(it);
+  return !meubleParId(o.meubleId);
 }
 function nomMeubleKit(o){
-  const m = meubleParId(o.meubleId); if (m) return m.nom;
-  const id = String(o.meubleId || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
-  const it = id && (items || []).find(x=> x && x.id === id);
-  return it ? it.name : '?';
+  const it = ficheKitDe(o); if (it) return it.name || '?';
+  const m = meubleParId(o.meubleId); return m ? m.nom : '?';
 }
 /* assemble une pièce en kit (objet scène nu : kit + points) ; renvoie le nombre de meubles encore sans image */
 async function assemblerSceneKit(scn, idsScenes){
   const c = coquilleParId(scn.kit && scn.kit.coquilleId); if (!c) throw new Error('coquille introuvable');
+  (scn.kit.objets || []).forEach(o=>{ const it = !o.cadreId && ficheKitDe(o); if (it && 'fi_' + it.id !== o.meubleId) o.meubleId = 'fi_' + it.id; });   // v714 : doublons
   const G = geoKit(c), enPoints = [];
   const cv = await composerKit(scn.kit, { enPoints }); if (!cv) throw new Error('pièce impossible à composer');
   scn.imageUrl = encoderImageSousLimite(cv, 1600, false); scn.imagePath = null; scn.imageRef = null;
