@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v720</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v721</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35891,8 +35891,8 @@ const EMPLACEMENTS_CHAMBRE_DEFAUT = [
   { id:'plafond1', type:'plafond', x:50, y:27, w:20, h:18 },
   { id:'plafond2', type:'plafond', x:30, y:30, w:14, h:14 },
   { id:'plafond3', type:'plafond', x:70, y:30, w:14, h:14 },
-  { id:'fen1', type:'fenetre', x:10, y:40, w:12, h:20, perspective:45 },
-  { id:'fen2', type:'fenetre', x:90, y:40, w:12, h:20, perspective:-45 },
+  { id:'fen1', type:'fenetre', x:10, y:40, w:12, h:20, coins:{ tl:[0, 0], tr:[0, 20], br:[0, -20], bl:[0, 0] } },
+  { id:'fen2', type:'fenetre', x:90, y:40, w:12, h:20, coins:{ tl:[0, 20], tr:[0, 0], br:[0, 0], bl:[0, -20] } },
   { id:'couchage1', type:'couchage', x:38, y:55, w:32, h:15 },
   { id:'couchage2', type:'couchage', x:66, y:55, w:28, h:15 },
   { id:'volume1', type:'volume', x:81, y:59, w:11, h:11 },
@@ -36055,6 +36055,11 @@ async function composerChambre(hab, opts){
         const src = document.createElement('canvas'); src.width = im.naturalWidth; src.height = im.naturalHeight;
         src.getContext('2d').drawImage(im, 0, 0);
         const r = caseDeDessin(e, src.width, src.height, W, H);
+        if (e.coins){   // v721 : la fenêtre réglée par ses 4 coins (comme dans l'éditeur de scène)
+          const d = await imageEnCoins(u, { coins: e.coins });
+          const imd = d ? await chargerImage(d.url) : null;
+          if (imd){ ctx.drawImage(imd, r.x + d.x0 * r.w, r.y + d.y0 * r.h, d.w * r.w, d.h * r.h); return; }
+        }
         ctx.drawImage(enTrapeze(src, e.perspective), r.x, r.y, r.w, r.h);
       });
       continue;
@@ -36853,86 +36858,260 @@ async function ouvrirPlacementChambre(itemId){
 }
 
 /* ---------- 📐 ajuster les emplacements (Édition → 🛏️ Chambre des robots) ---------- */
+/* v721 — L'ÉDITEUR DES EMPLACEMENTS DE LA CHAMBRE, VU COMME PAR LE JOUEUR
+   · la chambre à toute la hauteur de l'écran, centrée, côtés rognés : exactement le cadrage du jeu
+     (↔ montre l'image entière pour atteindre un emplacement rogné) ;
+   · chaque emplacement montre un APERÇU : un objet de la bibliothèque qu'il accepte (rendu comme en jeu :
+     angle du mur, réglage taille / coins / pli, miroir), un robot dans les places 🤖, une fenêtre avec le ciel
+     du jour. ⟳ dans la palette fait défiler les autres objets / robots / fenêtres de ce type ;
+   · une fenêtre se règle par ses 4 COINS, avec l'onglet ◇ de la palette — le même que l'éditeur de scène
+     (l'ancien réglage en degrés est converti en coins à l'ouverture). */
+const apercusChambre = {};   // emplacement → id de l'objet / robot / cadre montré (pour la session)
+function coinsDePerspective(p){
+  p = Number(p) || 0;
+  if (!p) return null;
+  const k = Math.min(0.55, Math.abs(p) / 90 * 0.8) * 50;   // le côté qui s'éloigne, raccourci de k % en haut et en bas
+  const r = (v)=> +v.toFixed(1);
+  return p > 0 ? { tl:[0, 0], tr:[0, r(k)], br:[0, r(-k)], bl:[0, 0] } : { tl:[0, r(k)], tr:[0, 0], br:[0, 0], bl:[0, r(-k)] };
+}
+function candidatsApercuChambre(e){
+  if (!e) return [];
+  if (e.type === 'robot') return (typeof robotsModeles !== 'undefined' ? robotsModeles : [])
+    .filter(m=> m && (m.faceImagePath || m.faceImageDataUrl || m.faceImageRef)).map(m=> ({ id: m.id, nom: m.name || m.nom || 'Robot', m }));
+  if (e.type === 'fenetre') return cadresTous().map(c=> ({ id: c.id, nom: c.nom || 'Fenêtre', c }));
+  return (typeof items !== 'undefined' ? items : []).filter(it=> accepteObjetChambre(e, it)).map(it=> ({ id: it.id, nom: it.name || 'Objet', it }));
+}
 async function ouvrirEditeurEmplacementsChambre(){
   const url = await urlDeRef(chambreConfig.imageRef);
   if (!url){ showToast('Pose d\'abord l\'image de la chambre'); return; }
+  const base = await chargerImage(url);
+  if (!base){ showToast('Image de la chambre introuvable'); return; }
+  const W = base.naturalWidth, H = base.naturalHeight;
   let emps = JSON.parse(JSON.stringify(emplacementsChambre()));
-  let sel = null, filtre = null;   // v681 : un seul type de rectangle affiché à la fois
+  const migrer = ()=> emps.forEach(e=>{   // v721 : les fenêtres passent aux 4 coins
+    if (e.type !== 'fenetre') return;
+    if (!e.coins && e.perspective){ const c = coinsDePerspective(e.perspective); if (c) e.coins = c; }
+    delete e.perspective;
+  });
+  migrer();
+  let sel = null, filtre = null, voirApercus = true, imageEntiere = false, panneauOuvert = true;
   const fond = document.createElement('div');
-  fond.className = 'overlay show'; fond.style.cssText = 'z-index:4800; align-items:stretch; padding:0;';
-  fond.innerHTML = `<div style="width:100%; height:100%; display:flex; flex-direction:column; background:var(--panel);">
-    <div data-pano style="flex:none;"></div>
-    <div style="flex:1; overflow-y:auto; padding:8px 12px max(12px, env(safe-area-inset-bottom));">
-      <p class="meta" style="margin:0 0 6px; font-size:11px;">Touche un rectangle pour le choisir (ou ☰ dans la palette 🎛️), puis déplace-le avec ✥ et règle sa taille avec ⤢ — la même palette que l'éditeur de scène. Glisser au doigt marche aussi.</p>
-      <div data-filtres style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;"></div>
-      <div data-panneau></div>
-      <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">${Object.keys(TYPES_DECO).map(t=> `<button type="button" class="btn-secondary" data-ajout="${t}" style="padding:6px 8px;">➕ ${TYPES_DECO[t].emoji}</button>`).join('')}</div>
-      <div style="display:flex; gap:6px; margin-top:10px;"><button type="button" class="btn-secondary" data-origine style="flex:1;">↺ Positions de Claude</button><button type="button" class="btn-primary" data-ok style="flex:1;">💾 Enregistrer</button><button type="button" class="btn-secondary" data-x>✕</button></div>
+  fond.className = 'overlay show'; fond.style.cssText = 'z-index:4800; align-items:stretch; padding:0; background:#000;';
+  fond.innerHTML = `<div style="position:absolute; inset:0;">
+    <div data-pano style="position:absolute; inset:0;"></div>
+    <div data-tiroir style="position:absolute; left:0; right:0; bottom:0; max-height:46vh; display:flex; flex-direction:column; background:var(--panel); border-radius:14px 14px 0 0; box-shadow:0 -4px 14px rgba(0,0,0,.45);">
+      <div style="display:flex; gap:5px; align-items:center; padding:6px 8px; flex:none;">
+        <button type="button" class="btn-secondary" data-tiroir-btn style="padding:5px 9px;"></button>
+        <button type="button" class="btn-secondary" data-apercus style="padding:5px 9px;"></button>
+        <button type="button" class="btn-secondary" data-entiere style="padding:5px 9px;"></button>
+        <span style="flex:1;"></span>
+        <button type="button" class="btn-primary" data-ok style="padding:5px 12px;">💾</button>
+        <button type="button" class="btn-secondary" data-x style="padding:5px 10px;">✕</button>
+      </div>
+      <div data-corps style="flex:1; min-height:0; overflow-y:auto; padding:0 12px max(10px, env(safe-area-inset-bottom));">
+        <p class="meta" style="margin:0 0 6px; font-size:11px;">La chambre telle que le joueur la voit. Touche un rectangle (ou ☰ dans la palette 🎛️) : ✥ le déplacer, ⤢ sa taille, ◇ les coins d'une fenêtre, ⟳ un autre objet en aperçu. Les aperçus ne sont pas enregistrés : ils servent à voir comment ça tombe.</p>
+        <div data-filtres style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;"></div>
+        <div data-panneau></div>
+        <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">${Object.keys(TYPES_DECO).map(t=> `<button type="button" class="btn-secondary" data-ajout="${t}" style="padding:6px 8px;">➕ ${TYPES_DECO[t].emoji}</button>`).join('')}</div>
+        <div style="display:flex; gap:6px; margin-top:10px;"><button type="button" class="btn-secondary" data-origine style="flex:1;">↺ Positions de Claude</button></div>
+      </div>
     </div>
   </div>`;
   document.body.appendChild(fond);
-  const pano = monterPanorama(fond.querySelector('[data-pano]'), url, 'min(150vw, 64vh)');
-  const cases = pano.calque, panneau = fond.querySelector('[data-panneau]');
+  const panneau = fond.querySelector('[data-panneau]');
+  let pano = null, couches = null, cases = null;
+  const monter = ()=>{
+    pano = imageEntiere
+      ? monterPanorama(fond.querySelector('[data-pano]'), url, '100%', { css: 'position:absolute; inset:0; width:auto; height:auto;' })
+      : monterPanorama(fond.querySelector('[data-pano]'), url, '100%', { css: 'position:absolute; inset:0; width:auto; height:auto;', fixe: true });   // le cadrage du jeu
+    couches = document.createElement('div'); couches.style.cssText = 'position:absolute; inset:0; pointer-events:none; overflow:hidden;';
+    cases = document.createElement('div'); cases.style.cssText = 'position:absolute; inset:0;';
+    pano.calque.appendChild(couches); pano.calque.appendChild(cases);
+    brancherGlisse();
+    Object.keys(cacheAp).forEach(k=> delete cacheAp[k].el);
+  };
+
+  /* ---- les aperçus : un calque par emplacement, mis à jour sur place ---- */
+  const cacheAp = {};   // id d'emplacement → { cle, im, url, miroir, reglage, def, el, robot }
+  const candidat = (e)=>{
+    const l = candidatsApercuChambre(e);
+    return l.find(c=> c.id === apercusChambre[e.id]) || l[0] || null;
+  };
+  const cleAp = (e, c)=> c ? [e.type, c.id, e.type === 'fenetre' ? JSON.stringify(e.coins || null) : '', ['mur', 'volume', 'couchage'].includes(e.type) ? angleEmplacementChambre(e) : ''].join('|') : '';
+  const ordre = (e)=> e.type === 'plafond' ? 1e9 : e.type === 'sol' ? -2 : (e.type === 'mur' || e.type === 'fenetre') ? -1 : (e.y + e.h / 2);
+  async function chargerApercu(e, c, cle){
+    const o = { cle };
+    if (e.type === 'robot'){
+      o.url = await urlVueRobot(c.m, 'face'); o.robot = true;
+    } else if (e.type === 'fenetre'){
+      const vueId = cielDuJour(new Date());
+      o.url = vueId ? await composerFenetre(c.id, vueId, false, 0) : await urlDeRef(c.c && c.c.ref);
+      if (o.url && e.coins) o.def = await imageEnCoins(o.url, { coins: e.coins }, 700);
+    } else {
+      o.reglage = reglagePlacement(c.it.id, e);
+      const vo = await imageObjetChambre(c.it, (o.reglage && o.reglage.angle) || angleEmplacementChambre(e));
+      o.url = vo.url; o.miroir = vo.miroir;
+      if (o.url && o.reglage && (o.reglage.coins || o.reglage.pli)) o.def = await imageDeformee(o.url, o.reglage, o.miroir, 700);
+    }
+    o.im = o.url ? await chargerImage(o.url) : null;
+    o.imDef = o.def ? await chargerImage(o.def.url) : null;
+    return o;
+  }
+  function placerCouches(){
+    if (!couches) return;
+    const vus = new Set();
+    emps.slice().sort((a, b)=> ordre(a) - ordre(b)).forEach((e, rang)=>{
+      const c = voirApercus ? candidat(e) : null, cle = cleAp(e, c);
+      let a = cacheAp[e.id];
+      if (!c){ if (a && a.el) a.el.remove(); delete cacheAp[e.id]; return; }
+      if (!a || a.cle !== cle){
+        if (!a || !a.attente || a.attente !== cle){
+          const ancien = a;
+          cacheAp[e.id] = Object.assign({}, ancien || {}, { attente: cle });
+          chargerApercu(e, c, cle).then(o=>{
+            const cur = cacheAp[e.id]; if (!cur || cur.attente !== cle || !fond.isConnected) return;
+            if (cur.el) cur.el.remove();
+            cacheAp[e.id] = o; placerCouches();
+          });
+        }
+        a = cacheAp[e.id];
+        if (!a.im) return;   // rien d'ancien à montrer en attendant
+      }
+      vus.add(e.id);
+      const geo = (r)=> 'left:' + (r.x / W * 100) + '%; top:' + (r.y / H * 100) + '%; width:' + (r.w / W * 100) + '%; height:' + (r.h / H * 100) + '%;';
+      if (!a.el){
+        a.el = document.createElement('div');
+        if (a.robot){ a.el.className = 'player-robot'; a.el.innerHTML = '<div class="prshadow"></div><img alt="">'; a.el.querySelector('img').src = a.url; }
+        else { const im = document.createElement('img'); im.src = a.imDef ? a.def.url : a.url; im.style.cssText = 'position:absolute; display:block; max-width:none;'; a.el.appendChild(im); }
+      }
+      if (a.el.parentNode !== couches) couches.appendChild(a.el);
+      a.el.style.zIndex = String(rang + 1);
+      if (a.robot){
+        const r = caseDeDessin(e, a.im.naturalWidth, a.im.naturalHeight, W, H);
+        a.el.style.cssText = 'position:absolute; ' + geo(r) + ' pointer-events:none; z-index:' + (rang + 1) + ';';
+        return;
+      }
+      const im = a.el.querySelector('img');
+      let r;
+      if (e.type === 'fenetre'){
+        r = caseDeDessin(e, a.im.naturalWidth, a.im.naturalHeight, W, H);
+        if (a.imDef) r = { x: r.x + a.def.x0 * r.w, y: r.y + a.def.y0 * r.h, w: a.def.w * r.w, h: a.def.h * r.h };
+      } else {
+        r = rectObjetChambre(e, a.im.naturalWidth, a.im.naturalHeight, W, H, a.reglage);
+        if (a.imDef) r = { x: r.x + a.def.x0 * r.w, y: r.y + a.def.y0 * r.h, w: a.def.w * r.w, h: a.def.h * r.h };
+      }
+      a.el.style.cssText = 'position:absolute; inset:0; pointer-events:none; z-index:' + (rang + 1) + ';';
+      im.style.cssText = 'position:absolute; display:block; max-width:none; ' + geo(r) + (a.miroir && !a.imDef ? ' transform:scaleX(-1);' : '');
+    });
+    Object.keys(cacheAp).forEach(k=>{ if (!vus.has(k) && cacheAp[k].el && !emps.find(x=> x.id === k)){ cacheAp[k].el.remove(); delete cacheAp[k]; } });
+  }
+
+  /* ---- les rectangles, le panneau, la palette ---- */
   const dessiner = ()=>{
+    fond.querySelector('[data-tiroir-btn]').textContent = panneauOuvert ? '▾ Réglages' : '▴ Réglages';
+    fond.querySelector('[data-corps]').style.display = panneauOuvert ? '' : 'none';
+    fond.querySelector('[data-apercus]').textContent = voirApercus ? '👁️ Aperçus' : '🚫 Aperçus';
+    fond.querySelector('[data-entiere]').textContent = imageEntiere ? '📱 Vue du jeu' : '↔ Image entière';
     const fz = fond.querySelector('[data-filtres]');
     fz.innerHTML = [[null, 'Tous']].concat(Object.keys(TYPES_DECO).map(t=> [t, TYPES_DECO[t].emoji + ' ' + emps.filter(x=> x.type === t).length])).map(([t, l])=>
       `<button type="button" class="${filtre === t ? 'btn-primary' : 'btn-secondary'}" data-filtre="${t || ''}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('');
     fz.querySelectorAll('[data-filtre]').forEach(b=> b.onclick = ()=>{ filtre = b.dataset.filtre || null; if (sel && filtre && (emps.find(x=> x.id === sel) || {}).type !== filtre) sel = null; dessiner(); });
-    cases.innerHTML = emps.filter(e=> !filtre || e.type === filtre || e.id === sel).map(e=> `<div data-id="${e.id}" style="position:absolute; ${rectPct(e)} border:2px dashed ${e.id === sel ? 'var(--danger)' : (e.type === 'robot' ? 'rgba(255,196,80,.95)' : 'rgba(95,242,255,.95)')}; background:rgba(95,242,255,.12); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:14px; touch-action:none; ${e.type === 'fenetre' && e.perspective ? 'transform:perspective(420px) rotateY(' + e.perspective + 'deg);' : ''}">${TYPES_DECO[e.type].emoji}<span data-coin style="position:absolute; right:-7px; bottom:-7px; width:16px; height:16px; border-radius:50%; background:${e.id === sel ? 'var(--danger)' : '#5ff2ff'};"></span></div>`).join('');
     const e = emps.find(x=> x.id === sel);
+    let h = emps.filter(x=> !filtre || x.type === filtre || x.id === sel).map(x=>{
+      const choisi = x.id === sel, coul = choisi ? 'var(--danger)' : (x.type === 'robot' ? 'rgba(255,196,80,.9)' : 'rgba(95,242,255,.9)');
+      return `<div data-id="${x.id}" style="position:absolute; ${rectPct(x)} border:${choisi ? 2 : 1}px dashed ${coul}; background:${choisi ? 'rgba(255,80,80,.06)' : 'transparent'}; border-radius:4px; box-sizing:border-box; touch-action:none; z-index:${choisi ? 2 : 1};">`
+        + `<span style="position:absolute; left:2px; top:1px; font-size:11px; line-height:1; opacity:${choisi ? 1 : .7};">${TYPES_DECO[x.type].emoji}</span>`
+        + (choisi ? '<span data-coin style="position:absolute; right:-9px; bottom:-9px; width:18px; height:18px; border-radius:50%; background:var(--danger); border:2px solid #fff;"></span>' : '') + '</div>';
+    }).join('');
+    if (e && e.type === 'fenetre' && etatPalEmp.onglet === 'coins'){   // le coin choisi, repéré comme dans le réglage des objets
+      const q = coinsUnite(e)[etatPalEmp.coin || 'tl'];
+      if (q){ const x0 = e.x - e.w / 2, y0 = e.y - e.h / 2;
+        h += `<span style="position:absolute; left:calc(${x0 + q[0] * e.w}% - 8px); top:calc(${y0 + q[1] * e.h}% - 8px); width:16px; height:16px; border-radius:50%; border:2px solid #ff5050; pointer-events:none; z-index:3;"></span>`; }
+    }
+    cases.innerHTML = h;
     panneau.innerHTML = e ? `<div style="display:flex; align-items:center; gap:8px;"><b>${TYPES_DECO[e.type].emoji} ${TYPES_DECO[e.type].nom}</b>${(e.type === 'robot' && emps.filter(x=> x.type === 'robot').length < 2) ? '' : '<button type="button" class="btn-secondary" data-suppr style="margin-left:auto;">🗑️</button>'}</div>`
       + (['mur', 'volume', 'couchage'].includes(e.type) ? `<div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Angle des objets :</span>${[['', 'auto (' + ({ face:'face', gauche:'gauche', droite:'droite' })[angleEmplacementChambre(Object.assign({}, e, { angle: null }))] + ')'], ['face', 'face'], ['gauche', 'mur gauche'], ['droite', 'mur droit']].map(([a, l])=> `<button type="button" class="${(e.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-angle-emp="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>` : '')
       + (!['fenetre', 'robot'].includes(e.type) ? `<div style="margin-top:6px;"><span class="meta" style="font-size:11px;">Accepte : ${(e.categories || []).length ? '' : '<b>toutes les catégories</b> (touche pour limiter)'}</span><div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">${CATEGORIES_MOBILIER.filter(c=> !['Porte', 'Fenêtre'].includes(c)).map(c=> `<button type="button" class="${(e.categories || []).includes(c) ? 'btn-primary' : 'btn-secondary'}" data-cat-emp="${htmlEsc(c)}" style="padding:3px 7px; font-size:10.5px;">${htmlEsc(c)}</button>`).join('')}</div></div>` : '')
-      + (e.type === 'fenetre' ? `<div style="display:flex; gap:8px; align-items:center; margin-top:6px;">perspective <input type="range" min="-60" max="60" step="2" value="${e.perspective || 0}" data-persp style="flex:1;"><span>${e.perspective || 0}°</span></div>` : '')
+      + (e.type === 'fenetre' ? '<p class="meta" style="margin:6px 0 0; font-size:11px;">La perspective de la fenêtre : onglet ◇ de la palette, choisis un coin (◤ ◥ ◣ ◢) et pousse-le aux flèches. ⟲ la remet à plat.</p>' : '')
       : '<p class="meta" style="margin:0; font-size:11px;">Touche un rectangle pour le choisir. 🤖 : les places du robot (il en prend une au hasard à chaque visite).</p>';
     const s = panneau.querySelector('[data-suppr]'); if (s) s.addEventListener('click', ()=>{ emps = emps.filter(x=> x.id !== sel); sel = null; dessiner(); });
-    const p = panneau.querySelector('[data-persp]'); if (p) p.addEventListener('input', ()=>{ e.perspective = parseInt(p.value, 10) || 0; dessiner(); });
-    panneau.querySelectorAll('[data-angle-emp]').forEach(b=> b.addEventListener('click', ()=>{ if (b.dataset.angleEmp) e.angle = b.dataset.angleEmp; else delete e.angle; dessiner(); }));   // v679
-    panneau.querySelectorAll('[data-cat-emp]').forEach(b=> b.addEventListener('click', ()=>{   // v681
+    panneau.querySelectorAll('[data-angle-emp]').forEach(b=> b.addEventListener('click', ()=>{ if (b.dataset.angleEmp) e.angle = b.dataset.angleEmp; else delete e.angle; dessiner(); }));
+    panneau.querySelectorAll('[data-cat-emp]').forEach(b=> b.addEventListener('click', ()=>{
       const c = b.dataset.catEmp, l = new Set(e.categories || []);
       if (l.has(c)) l.delete(c); else l.add(c);
       if (l.size) e.categories = [...l]; else delete e.categories;
       dessiner();
     }));
+    placerCouches();
     dessinerPaletteEmp();
   };
-  /* v694 — LA PALETTE COMMUNE 🎛️ pour l'emplacement choisi : ✥ le déplacer, ⤢ sa taille, ☰ en choisir un */
+  /* LA PALETTE COMMUNE 🎛️ (dessinerPaletteReglage, comme l'éditeur de scène) */
   const palEmp = document.createElement('div');
   palEmp.style.cssText = 'position:fixed; z-index:4820; right:8px; bottom:200px; background:rgba(0,0,0,.72); border:1px solid rgba(255,255,255,.25); border-radius:12px; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.5); user-select:none; -webkit-user-select:none;';
   fond.appendChild(palEmp);
-  const etatPalEmp = { onglet: 'placer', replie: false, x: null, y: null };
+  const etatPalEmp = { onglet: 'placer', replie: false, x: null, y: null, coin: 'tl' };
   function dessinerPaletteEmp(){
     if (!palEmp.isConnected) return;
     const e = emps.find(x=> x.id === sel);
     const visibles = emps.filter(x=> !filtre || x.type === filtre);
-    const pas = 0.5, borne = (v, a, b)=> Math.max(a, Math.min(b, v));
+    const pas = 0.5, pasCoin = 1.5, borne = (v, a, b)=> Math.max(a, Math.min(b, v));
     const faire = (f)=>{ if (!e) { showToast('Choisis d\'abord un emplacement'); return; } f(e); ['x', 'y', 'w', 'h'].forEach(k=> e[k] = +(+e[k]).toFixed(2)); dessiner(); };
     const prop = (k)=> faire(x=>{ x.w = borne(x.w * k, 1, 100); x.h = borne(x.h * k, 1, 100); });
+    const cands = candidatsApercuChambre(e), occ = e ? candidat(e) : null;
+    const suivant = ()=>{
+      if (!e) { showToast('Choisis d\'abord un emplacement'); return; }
+      if (!cands.length){ showToast(e.type === 'robot' ? 'Aucun robot avec une image' : e.type === 'fenetre' ? 'La bibliothèque de fenêtres est vide' : 'Aucun objet de la bibliothèque n\'accepte cet emplacement'); return; }
+      const i = cands.findIndex(c=> c.id === (occ && occ.id));
+      apercusChambre[e.id] = cands[(i + 1) % cands.length].id;
+      if (!voirApercus) voirApercus = true;
+      dessiner();
+    };
+    const emoAp = e ? (e.type === 'robot' ? '🤖' : e.type === 'fenetre' ? '🪟' : '🪑') : '🪑';
+    const cAp = { l: emoAp + (cands.length > 1 ? '⟳' : ''), petit: true, titre: 'Aperçu : le suivant de ce type', act: suivant };
+    const choix = (k, l)=> ({ l, sel: k === etatPalEmp.coin, act: ()=>{ etatPalEmp.coin = k; dessiner(); } });
+    const coin = (dx, dy)=> faire(x=>{
+      x.coins = x.coins || {};
+      const c = x.coins[etatPalEmp.coin] || [0, 0];
+      x.coins[etatPalEmp.coin] = [borne(+((+c[0] || 0) + dx).toFixed(1), -60, 60), borne(+((+c[1] || 0) + dy).toFixed(1), -60, 60)];
+      delete x.perspective;
+    });
+    const aCoins = !!(e && e.type === 'fenetre');
+    if (etatPalEmp.onglet === 'coins' && !aCoins) etatPalEmp.onglet = 'placer';
     dessinerPaletteReglage(palEmp, etatPalEmp, {
       titre: e ? TYPES_DECO[e.type].emoji + ' emplacement' : 'emplacement',
-      onglets: [{ k:'placer', l:'✥' }, { k:'taille', l:'⤢' }, { k:'liste', l:'☰' }],
+      onglets: [{ k:'placer', l:'✥' }, { k:'taille', l:'⤢' }].concat(aCoins ? [{ k:'coins', l:'◇' }] : [], [{ k:'liste', l:'☰' }]),
       grilles: {
         placer: [null, { l:'▲', act: ()=> faire(x=> x.y = borne(x.y - pas, 0, 100)) }, null,
-          { l:'◀', act: ()=> faire(x=> x.x = borne(x.x - pas, 0, 100)) }, null, { l:'▶', act: ()=> faire(x=> x.x = borne(x.x + pas, 0, 100)) },
+          { l:'◀', act: ()=> faire(x=> x.x = borne(x.x - pas, 0, 100)) }, cAp, { l:'▶', act: ()=> faire(x=> x.x = borne(x.x + pas, 0, 100)) },
           null, { l:'▼', act: ()=> faire(x=> x.y = borne(x.y + pas, 0, 100)) }, null],
         taille: [{ l:'↔＋', petit:true, act: ()=> faire(x=> x.w = borne(x.w + pas, 1, 100)) }, { l:'＋', act: ()=> prop(1.04) }, { l:'↕＋', petit:true, act: ()=> faire(x=> x.h = borne(x.h + pas, 1, 100)) },
-          { l:'↔－', petit:true, act: ()=> faire(x=> x.w = borne(x.w - pas, 1, 100)) }, { l:'－', act: ()=> prop(1 / 1.04) }, { l:'↕－', petit:true, act: ()=> faire(x=> x.h = borne(x.h - pas, 1, 100)) }],
+          { l:'↔－', petit:true, act: ()=> faire(x=> x.w = borne(x.w - pas, 1, 100)) }, { l:'－', act: ()=> prop(1 / 1.04) }, { l:'↕－', petit:true, act: ()=> faire(x=> x.h = borne(x.h - pas, 1, 100)) },
+          null, cAp, null],
+        coins: [choix('tl', '◤'), { l:'▲', act: ()=> coin(0, -pasCoin) }, choix('tr', '◥'),
+          { l:'◀', act: ()=> coin(-pasCoin, 0) }, { l:'⟲', petit:true, titre:'Remettre à plat', act: ()=> faire(x=>{ delete x.coins; delete x.perspective; }) }, { l:'▶', act: ()=> coin(pasCoin, 0) },
+          choix('bl', '◣'), { l:'▼', act: ()=> coin(0, pasCoin) }, choix('br', '◢'),
+          null, cAp, null],
       },
       listes: { liste: visibles.map(x=> ({ l: TYPES_DECO[x.type].emoji + ' ' + TYPES_DECO[x.type].nom + ' ' + (emps.filter(y=> y.type === x.type).indexOf(x) + 1) + (x.categories && x.categories.length ? ' · ' + x.categories.join(', ') : ''),
         actif: x.id === sel, act: ()=>{ sel = x.id; dessiner(); } })) },
-      pied: e ? '' : 'Touche un rectangle, ou choisis-le dans ☰',
+      pied: !e ? 'Touche un rectangle, ou choisis-le dans ☰'
+        : occ ? 'Aperçu : ' + htmlEsc(occ.nom) + (cands.length > 1 ? ' (' + (cands.indexOf(occ) + 1) + '/' + cands.length + ')' : '')
+        : 'Aucun aperçu pour ce type',
       defaut: { right: 8, bottom: 200 }, redessiner: dessiner,
     });
   }
+  /* glisser au doigt : le rectangle, ou sa taille par le rond rouge */
   let glisse = null;
-  cases.addEventListener('pointerdown', (ev)=>{
-    const box = ev.target.closest('[data-id]'); if (!box) return;
-    sel = box.dataset.id; const e = emps.find(x=> x.id === sel);
-    const r = pano.scene.getBoundingClientRect();
-    glisse = { e, coin: !!ev.target.closest('[data-coin]'), x0: ev.clientX, y0: ev.clientY, ex: e.x, ey: e.y, ew: e.w, eh: e.h, W: r.width, H: r.height };
-    try { box.setPointerCapture(ev.pointerId); } catch(err){}
-    ev.preventDefault(); dessiner();
-  });
+  function brancherGlisse(){
+    cases.addEventListener('pointerdown', (ev)=>{
+      const box = ev.target.closest('[data-id]'); if (!box) return;
+      sel = box.dataset.id; const e = emps.find(x=> x.id === sel);
+      const r = pano.scene.getBoundingClientRect();
+      glisse = { e, coin: !!ev.target.closest('[data-coin]'), x0: ev.clientX, y0: ev.clientY, ex: e.x, ey: e.y, ew: e.w, eh: e.h, W: r.width, H: r.height };
+      try { box.setPointerCapture(ev.pointerId); } catch(err){}
+      ev.preventDefault(); dessiner();
+    });
+  }
   window.addEventListener('pointermove', function bouge(ev){
     if (!fond.isConnected){ window.removeEventListener('pointermove', bouge); return; }
     if (!glisse) return;
@@ -36948,15 +37127,18 @@ async function ouvrirEditeurEmplacementsChambre(){
   fond.querySelectorAll('[data-ajout]').forEach(b=> b.addEventListener('click', ()=>{
     const t = b.dataset.ajout;
     const e = { id: t + '_' + Date.now(), type: t, x: 50, y: 50, w: t === 'sol' ? 40 : (t === 'robot' ? 24 : 16), h: t === 'sol' ? 10 : (t === 'robot' ? 20 : 14) };
-    if (t === 'fenetre') e.perspective = 0;
     emps.push(e); sel = e.id; filtre = t; dessiner();
   }));
+  fond.querySelector('[data-tiroir-btn]').addEventListener('click', ()=>{ panneauOuvert = !panneauOuvert; dessiner(); });
+  fond.querySelector('[data-apercus]').addEventListener('click', ()=>{ voirApercus = !voirApercus; dessiner(); });
+  fond.querySelector('[data-entiere]').addEventListener('click', ()=>{ imageEntiere = !imageEntiere; monter(); dessiner(); });
   fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
-  fond.querySelector('[data-origine]').addEventListener('click', ()=>{ emps = JSON.parse(JSON.stringify(EMPLACEMENTS_CHAMBRE_DEFAUT)); sel = null; dessiner(); });
+  fond.querySelector('[data-origine]').addEventListener('click', ()=>{ emps = JSON.parse(JSON.stringify(EMPLACEMENTS_CHAMBRE_DEFAUT)); migrer(); sel = null; dessiner(); });
   fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
     chambreConfig.emplacements = emps;
     try { await enregistrerChambreConfig(); showToast('Emplacements enregistrés ✅'); fond.remove(); } catch(e){ showToast('Échec : ' + e.message); }
   });
+  monter();
   dessiner();
 }
 
