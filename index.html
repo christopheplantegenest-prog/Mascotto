@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v712</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v713</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -11998,7 +11998,8 @@ function promptCarteParDefaut(z){
 
 {CHARTE}
 
-LE BÂTIMENT : ${desc || nom}. Garde-le compact, avec une porte sas bien visible sur la façade avant.
+LE BÂTIMENT : ${desc || nom}. Volume compact, plus large que haut, avec une porte sas bien visible sur la façade avant.
+PALETTE INVERSE DES INTÉRIEURS : de grandes surfaces de la couleur d'accent et une vraie masse sombre anthracite ; le blanc seulement en appui (sinon le bâtiment s'efface sur la carte claire). Aucune ombre au sol.
 Il doit rester lisible en tout petit sur la carte : silhouette simple, formes franches, peu de détails.`;
 }
 function avecCharte(prompt, batiment){
@@ -43133,11 +43134,17 @@ async function importerScenario(sc){
         if (v.fleche && v.vers){ (fleches[s.cle || s.name] = fleches[s.cle || s.name] || []).push(v.vers); continue; }   // sortie fléchée voulue
         if (v.texte && v.sur){ (textesKit[s.cle || s.name] = textesKit[s.cle || s.name] || []).push(v); continue; }   // v712 : un texte quand on touche un meuble
         if (v.decor || v.porteDecor){   // v712 : un élément de décor (ou une porte dessinée) → point de décor + planche
-          const nom = String(v.decor || v.porteDecor);
           const pose = v.porteDecor ? 'mur' : (v.pose || 'debout');
-          const w = Math.max(0.5, +v.w || (v.porteDecor ? 3 : 1));
-          const tmp = pose === 'mur' ? { nom, decor: true, type: 'mur', w, d: 1, h: Math.max(0.5, +v.h || (v.porteDecor ? 5 : 2)), kDefaut: v.k != null ? +v.k : (v.porteDecor ? 0 : 2), refs: {} }
-            : { nom, decor: true, type: 'sol', w, d: Math.max(0.5, +v.d || w), h: 1, refs: {}, hauteur: pose === 'plat' ? 0.1 : (+v.hauteur || 1) };
+          /* v713 : la bibliothèque d'abord (méthode, point 13) — une porte, ou un objet de la liste « existant »,
+             déjà dessiné, est réutilisé tel quel, à sa vraie taille : rien à redemander à ChatGPT */
+          const tous = meublesKit().filter(x=> x && x.refs && x.refs.face);
+          let ex = v.porteDecor ? (tous.find(x=> x.porte) || null) : null;
+          if (!ex) for (const n of [].concat(v.existant || [])){ const nn = normKit(n); ex = tous.find(x=> normKit(x.nom) === nn) || tous.find(x=> normKit(x.nom).includes(nn)) || null; if (ex) break; }
+          const nom = ex ? ex.nom : String(v.decor || v.porteDecor);
+          const w = Math.max(0.5, (ex && ex.w) || +v.w || (v.porteDecor ? 3 : 1));
+          const tmp = pose === 'mur' ? { nom, decor: true, type: 'mur', w, d: 1, h: Math.max(0.5, (ex && ex.h) || +v.h || (v.porteDecor ? 5 : 2)), kDefaut: v.k != null ? +v.k : (v.porteDecor ? 0 : 2), refs: {} }
+            : { nom, decor: true, type: 'sol', w, d: Math.max(0.5, (ex && ex.d) || +v.d || w), h: 1, refs: {}, hauteur: pose === 'plat' ? 0.1 : ((ex && ex.hauteur) || +v.hauteur || 1) };
+          if (ex) journal.push('♻️ « ' + s.name + ' » : « ' + ex.nom + ' » repris de la bibliothèque');
           let o = null;
           if (pose === 'plat' && v.sous){   // un tapis : centré sous un meuble déjà posé, sans compter comme obstacle
             const cible = poses.find(x=> x.m && normKit(x.m.nom).includes(normKit(v.sous)));
@@ -43149,9 +43156,9 @@ async function importerScenario(sc){
           if (!o) o = placerVoeuKit(G, pose === 'plat' ? [] : poses, tmp, v);
           if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour « ' + nom + ' »'); continue; }
           if (pose !== 'plat') poses.push({ o, m: tmp });
-          const geo = pointDecorKit(G, o, tmp, pose, +v.hauteur || 1);
+          const geo = pointDecorKit(G, o, tmp, pose, tmp.hauteur || 1);
           if (!geo){ journal.push('⚠️ « ' + s.name + ' » : « ' + nom + ' » impossible à placer'); continue; }
-          (decorsKit[s.cle || s.name] = decorsKit[s.cle || s.name] || []).push({ v, nom, geo, porte: !!v.porteDecor });
+          (decorsKit[s.cle || s.name] = decorsKit[s.cle || s.name] || []).push({ v, nom, geo, porte: !!v.porteDecor, ex });
           continue;
         }
         const m = meubleImportKit(v, sc.objets, cles);
@@ -43288,7 +43295,12 @@ async function importerScenario(sc){
       (decorsKit[s.cle || s.name] || []).forEach((d, i)=>{
         const pt = Object.assign({ id: 'pt_' + Date.now() + '_d' + i + '_' + Math.floor(Math.random() * 1000), type: 'decor', label: d.nom, rotation: 0, flipped: false }, d.geo);
         const dejaDemande = planchesKit.some(pl=> pl.objets.some(x=> normKit(x.nom) === normKit(d.nom)));
-        if (dejaDemande) pt.attendPlanche = true;
+        if (d.ex){   // déjà dans la bibliothèque : son image, sa fiche
+          const r = d.ex.refs.face;
+          if (String(r).startsWith('path:')) pt.imagePath = String(r).slice(5); else pt.imageRef = r;
+          if (d.ex.ficheId){ pt.ficheId = d.ex.ficheId; pt.ficheAngle = 'face'; }
+        }
+        else if (dejaDemande) pt.attendPlanche = true;
         else {
           pt.prompt = d.v.description || d.nom;
           const nomPl = d.v.planche || s.name;
