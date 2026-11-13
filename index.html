@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v711</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v712</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12400,7 +12400,7 @@ LIVRABLE : une seule image, PNG à fond TRANSPARENT. Aucun mur, aucun sol, aucun
 /* v664 : un point de décor qui ne montre rien au joueur, hors de ceux qui attendent leur dessin
    (prompt, sans image : ils ont déjà leur tâche 🪑). */
 function decorQuiNeSeVoitPas(pt){
-  if (!pt || pt.type !== 'decor') return false;
+  if (!pt || pt.type !== 'decor' || pt.attendPlanche) return false;   // v712 : attend l'image d'une planche
   const aImg = !!(pt.imageRef || pt.imageUrl || pt.imagePath);
   if (!aImg && pt.prompt) return false;
   return !aImg || !!pt.hideIcon;
@@ -12459,6 +12459,13 @@ async function poserPlancheDecor(zid, pid){
     if (!pt) for (const s2 of scenes){ pt = (s2 && s2.points || []).find(x=> x && x.type === 'decor' && memeNomDecor(x.label, o.nom)); if (pt){ o.sceneId = s2.id; o.pointId = pt.id; break; } }
     if (pt){ pt.imageRef = ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; pt.ficheAngle = a; pt._fiche = f; poses++; }
   }
+  /* v712 : un autre point du même nom qui attendait cette planche (la porte des deux pièces) reçoit la même image */
+  scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{
+    if (!pt || pt.type !== 'decor' || !pt.attendPlanche || pt.imageRef || pt.imagePath || pt.imageUrl) return;
+    const o = pl.objets.find(x=> memeNomDecor(x.nom, pt.label)); if (!o || !o._fiche) return;
+    const src = scenes.reduce((t, s2)=> t || (s2 && (s2.points || []).find(x=> x && x.id === o.pointId)), null);
+    if (src && src.imageRef){ pt.imageRef = src.imageRef; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; pt.ficheAngle = 'face'; pt._fiche = o._fiche; delete pt.attendPlanche; poses++; }
+  }));
   /* les fiches : créées ou complétées, puis chaque point reçoit l'identifiant de la sienne */
   for (const f of fichesTouchees.values()){
     const d = { type: 'mobilier', mob: f.mob, updatedAt: Date.now() };
@@ -37938,8 +37945,31 @@ function placerVoeuKit(G, poses, m, voeu){
     }
   }
   cands.sort((a, b)=> a.s - b.s);
+  /* v712 : d'abord une place où l'objet se voit en entier (rien hors de l'image) ; sinon la meilleure possible */
+  const entier = (o)=>{ try { const e = emplacementKit(G, o, m); let P = e.poly.slice();
+    if (e.ancre && m.type === 'sol'){ const hp = (m.hauteur || 1) * KIT_FIN * G.cellH(e.ancre.yBas); P.push([e.ancre.cx, e.ancre.yBas - hp]); }
+    return P.every(p=> p[0] >= 0 && p[0] <= G.W && p[1] >= 0 && p[1] <= G.H * 0.98); } catch(e){ return false; } };
+  if (m.decor) for (const { o } of cands) if (libre(o) && entier(o)) return o;   // les meubles du kit, eux, peuvent sortir par le bas
   for (const { o } of cands) if (libre(o)) return o;
   return null;
+}
+/* v712 — UN ÉLÉMENT DE DÉCOR D'UNE PIÈCE EN KIT (plante, tapis, écran, étagère, porte…) : ce n'est pas un
+   meuble du kit mais un POINT DE DÉCOR de la scène (sélectionnable, retouchable à la palette 🎛️). Sa place
+   vient de la grille du kit ; un objet au mur ou à plat au sol reçoit ses 4 coins en perspective, un
+   objet debout un rectangle posé sur le sol, à sa hauteur réelle. Son image arrive par une planche. */
+function pointDecorKit(G, o, m, pose, hauteur){
+  const e = emplacementKit(G, o, m);
+  if (pose === 'debout' && e.ancre){
+    const a = e.ancre, hp = Math.max(1, (hauteur || 1) * KIT_FIN * G.cellH(a.yBas)), wp = Math.max(a.wpx, hp * 0.5);
+    return { x: +(a.cx / G.W * 100).toFixed(3), y: +((a.yBas - hp / 2) / G.H * 100).toFixed(3), w: +(wp / G.W * 100).toFixed(3), h: +(hp / G.H * 100).toFixed(3), pied: true };
+  }
+  const P = e.poly; if (!P || P.length < 4) return null;
+  const q = e.zone === 'g' ? [P[1], P[0], P[3], P[2]] : [P[0], P[1], P[2], P[3]];   // tl, tr, br, bl (mur de gauche : l'avant est à gauche)
+  const xs = q.map(p=> p[0]), ys = q.map(p=> p[1]);
+  const rx = Math.min(...xs), ry = Math.min(...ys), rw = Math.max(1, Math.max(...xs) - rx), rh = Math.max(1, Math.max(...ys) - ry);
+  const off = (p, bx, by)=> [+(((p[0] - rx) / rw - bx) * 100).toFixed(2), +(((p[1] - ry) / rh - by) * 100).toFixed(2)];
+  return { x: +((rx + rw / 2) / G.W * 100).toFixed(3), y: +((ry + rh / 2) / G.H * 100).toFixed(3), w: +(rw / G.W * 100).toFixed(3), h: +(rh / G.H * 100).toFixed(3),
+    coins: { tl: off(q[0], 0, 0), tr: off(q[1], 1, 0), br: off(q[2], 1, 1), bl: off(q[3], 0, 1) } };
 }
 /* v711 : un meuble de la pièce attend encore ses images (aucune, ou celles du gabarit pas encore validées) */
 function meubleEnAttenteKit(o){
@@ -43084,6 +43114,7 @@ async function importerScenario(sc){
 
     /* v710 — une pièce en kit : coquille + meubles nommés, placés d'après leur vœu, puis assemblée */
     const kitsDesScenes = {}, fleches = {};   // fleches : sorties sans porte dessinée, par pièce
+    const decorsKit = {}, textesKit = {};   // v712
     for (const s of (z.scenes || [])){
       if (!s.kit) continue;
       const coq = coquilleParNom(s.kit.coquille) || (kitBiblio.coquilles || [])[0];
@@ -43094,12 +43125,35 @@ async function importerScenario(sc){
       for (const v of (s.kit.objets || [])){
         if (v.fenetre){
           const cad = (cadresTous() || [])[0]; if (!cad){ journal.push('⚠️ « ' + s.name + ' » : pas de cadre de fenêtre dans le jeu'); continue; }
-          const faux = { nom: cad.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 3 };
+          const faux = { nom: cad.nom || 'Fenêtre', type: 'mur', w: 3, h: 3, kDefaut: 2 };
           const o = placerVoeuKit(G, poses, faux, v); if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour la fenêtre'); continue; }
           const ko = Object.assign({ id: 'ko_' + Date.now() + '_' + kit.objets.length, cadreId: cad.id, cadre: faux, miroir: false }, o);
           kit.objets.push(ko); poses.push({ o: ko, m: faux }); continue;
         }
         if (v.fleche && v.vers){ (fleches[s.cle || s.name] = fleches[s.cle || s.name] || []).push(v.vers); continue; }   // sortie fléchée voulue
+        if (v.texte && v.sur){ (textesKit[s.cle || s.name] = textesKit[s.cle || s.name] || []).push(v); continue; }   // v712 : un texte quand on touche un meuble
+        if (v.decor || v.porteDecor){   // v712 : un élément de décor (ou une porte dessinée) → point de décor + planche
+          const nom = String(v.decor || v.porteDecor);
+          const pose = v.porteDecor ? 'mur' : (v.pose || 'debout');
+          const w = Math.max(0.5, +v.w || (v.porteDecor ? 3 : 1));
+          const tmp = pose === 'mur' ? { nom, decor: true, type: 'mur', w, d: 1, h: Math.max(0.5, +v.h || (v.porteDecor ? 5 : 2)), kDefaut: v.k != null ? +v.k : (v.porteDecor ? 0 : 2), refs: {} }
+            : { nom, decor: true, type: 'sol', w, d: Math.max(0.5, +v.d || w), h: 1, refs: {}, hauteur: pose === 'plat' ? 0.1 : (+v.hauteur || 1) };
+          let o = null;
+          if (pose === 'plat' && v.sous){   // un tapis : centré sous un meuble déjà posé, sans compter comme obstacle
+            const cible = poses.find(x=> x.m && normKit(x.m.nom).includes(normKit(v.sous)));
+            if (cible){
+              const dc = dimsKit(cible.o, cible.m, G), oc = oKit(G, cible.o, cible.m), dt = dimsKit({ zone: 'sol' }, tmp, G);
+              o = { zone: 'sol', c: Math.max(0, Math.min(G.nx - dt.w, Math.round(oc.c + dc.w / 2 - dt.w / 2))), r: Math.max(0, Math.min(G.ny - dt.d, Math.round(oc.r + dc.d / 2 - dt.d / 2))) };
+            }
+          }
+          if (!o) o = placerVoeuKit(G, pose === 'plat' ? [] : poses, tmp, v);
+          if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour « ' + nom + ' »'); continue; }
+          if (pose !== 'plat') poses.push({ o, m: tmp });
+          const geo = pointDecorKit(G, o, tmp, pose, +v.hauteur || 1);
+          if (!geo){ journal.push('⚠️ « ' + s.name + ' » : « ' + nom + ' » impossible à placer'); continue; }
+          (decorsKit[s.cle || s.name] = decorsKit[s.cle || s.name] || []).push({ v, nom, geo, porte: !!v.porteDecor });
+          continue;
+        }
         const m = meubleImportKit(v, sc.objets, cles);
         if (!m && v.porte && v.vers){ (fleches[s.cle || s.name] = fleches[s.cle || s.name] || []).push(v.vers); journal.push('ℹ️ « ' + s.name + ' » : pas de porte dans la bibliothèque — sortie fléchée à la place'); continue; }
         if (!m){ journal.push('⚠️ « ' + s.name + ' » : meuble « ' + (v.meuble || v.nom || '?') + ' » introuvable — pas posé'); continue; }
@@ -43217,6 +43271,7 @@ async function importerScenario(sc){
       encounterMonsterIds: (s.monstres||[]).map(m=> cles.pnj[m]).filter(Boolean),
     }));
 
+    const planchesKit = [];   // v712 : les planches des éléments de décor des pièces en kit
     for (const s of (z.scenes || [])){
       const kit = kitsDesScenes[s.cle || s.name]; if (!kit) continue;
       const scn = scenes.find(x=> x.id === idScene[s.cle || s.name]); if (!scn) continue;
@@ -43227,6 +43282,33 @@ async function importerScenario(sc){
         const manquent = await assemblerSceneKit(scn, null);
         journal.push('🧩 « ' + scn.name + ' » assemblée' + (manquent ? ' — ' + manquent + ' meuble(s) à dessiner : 🧰 À finir proposera de la réassembler' : ''));
       } catch(e){ journal.push('⚠️ « ' + scn.name + ' » : assemblage impossible (' + e.message + ')'); }
+      /* v712 : les éléments de décor (et portes dessinées) deviennent des points de la scène ; leur image
+         arrive par la planche de leur pièce. Un même nom déjà demandé (la porte des deux pièces) n'est
+         dessiné qu'une fois : les autres points reçoivent son image quand la planche est posée. */
+      (decorsKit[s.cle || s.name] || []).forEach((d, i)=>{
+        const pt = Object.assign({ id: 'pt_' + Date.now() + '_d' + i + '_' + Math.floor(Math.random() * 1000), type: 'decor', label: d.nom, rotation: 0, flipped: false }, d.geo);
+        const dejaDemande = planchesKit.some(pl=> pl.objets.some(x=> normKit(x.nom) === normKit(d.nom)));
+        if (dejaDemande) pt.attendPlanche = true;
+        else {
+          pt.prompt = d.v.description || d.nom;
+          const nomPl = d.v.planche || s.name;
+          let pl = planchesKit.find(x=> x.nom === nomPl);
+          if (!pl){ pl = { nom: nomPl, style: z.styleDecor || '', objets: [] }; planchesKit.push(pl); }
+          pl.objets.push({ nom: d.nom, categorie: d.v.categorie || (d.porte ? 'Porte' : null), angle: 'face', description: d.v.description || '', scene: scn.name, point: d.nom });
+        }
+        scn.points.push(pt);
+        if (d.porte && d.v.vers){   // la porte : une sortie invisible posée sur son dessin
+          const so = { id: pt.id + '_s', type: d.v.vers === '@carte' ? 'sortie_zone' : 'sortie', x: pt.x, y: pt.y, w: pt.w, h: pt.h, rotation: 0, flipped: false, hideIcon: true, lockType: 'none' };
+          if (d.v.vers !== '@carte') so.targetSceneId = idScene[d.v.vers] || null;
+          scn.points.push(so);
+        }
+      });
+      /* v712 : toucher un meuble → un petit texte (point dialogue invisible posé sur le meuble) */
+      (textesKit[s.cle || s.name] || []).forEach((t, i)=>{
+        const cible = (scn.points || []).find(p=> p && p.kitDecor && normKit(p.label).includes(normKit(t.sur)));
+        if (!cible){ journal.push('ℹ️ « ' + scn.name + ' » : « ' + t.sur + ' » absent — son texte n\'est pas posé'); return; }
+        scn.points.push({ id: 'pt_' + Date.now() + '_t' + i, type: 'dialogue', text: String(t.texte), label: t.sur, x: cible.x, y: cible.y, w: cible.w, h: cible.h, rotation: 0, flipped: false, hideIcon: true });
+      });
       /* une porte absente de la bibliothèque : une sortie fléchée (la première à sa place habituelle, les autres sur les côtés) */
       (fleches[s.cle || s.name] || []).forEach((v, i)=>{
         const pt = { id: 'pt_' + Date.now() + '_s' + i, type: v === '@carte' ? 'sortie_zone' : 'sortie', x: 50, y: 85, w: 14, h: 10, rotation: 0, flipped: false, lockType: 'none' };
@@ -43295,7 +43377,8 @@ async function importerScenario(sc){
         if (sc._garderImage){ if (sc._structureAncienne) sc.structureRef = sc._structureAncienne; delete sc._garderImage; delete sc._structureAncienne; return; }   // v655
         if (sc.imageRef && (z.scenes || []).some(x=> (x.cle || x.name) && idScene[x.cle || x.name] === sc.id && typeof x.image === 'string' && x.image.startsWith('data:') && !x.definitive)) sc.structureRef = sc.imageRef;
       });
-      const planchesZ = Array.isArray(z.planchesDecor) ? resoudrePlanchesDecor(z.planchesDecor, scenesAEcrire, journal, z.name) : null;   // v657
+      const listePl = (Array.isArray(z.planchesDecor) ? z.planchesDecor : []).concat(planchesKit);   // v712
+      const planchesZ = listePl.length ? resoudrePlanchesDecor(listePl, scenesAEcrire, journal, z.name) : null;   // v657
       await zonesCol.doc(zoneId).set(Object.assign({
         scenes: scenesAEcrire,
         startSceneId: idScene[z.sceneDepart] || scenes[0].id,
