@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v716</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v717</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -32928,6 +32928,12 @@ function renderSceneEditorDpad(){
   };
   const cGarder = meubleKit ? [null, { l:'💾', petit:true, titre:'Garder taille et coins comme réglage de ce meuble', act: garderMeuble }, null] : [];
   const bougerCoin = (dx, dy)=>{
+    if (coinSel === 'ph' || coinSel === 'pb'){   // v717 : le haut ou le bas du pli
+      if (!pt.pli){ etat.coin = 'tl'; return; }
+      const k = coinSel === 'ph' ? 'haut' : 'bas', c = pt.pli[k] || [0, 0];
+      pt.pli[k] = [clamp((+c[0] || 0) + dx, -60, 60), clamp((+c[1] || 0) + dy, -60, 60)];
+      after(); return;
+    }
     pt.coins = pt.coins || {};
     const c = pt.coins[coinSel] || [0, 0];
     pt.coins[coinSel] = [clamp(c[0] + dx, -60, 60), clamp(c[1] + dy, -60, 60)];
@@ -32957,7 +32963,14 @@ function renderSceneEditorDpad(){
         .concat(aCoins && pt.type !== 'fenetre' ? [null, { l: pt.pied ? '⬇' : '⦿', petit:true, actif: !!pt.pied, titre: pt.pied ? 'Posé par le pied (bas du rectangle)' : 'Centré dans le rectangle', act: ()=>{ pt.pied = !pt.pied; after(); } }, null] : [], cGarder),
       coins: [coin('tl', '◤'), { l:'▲', act: ()=> bougerCoin(0, -pasCoin) }, coin('tr', '◥'),
         { l:'◀', act: ()=> bougerCoin(-pasCoin, 0) }, { l:'⟲', petit:true, titre:'Remettre à plat', act: ()=>{ delete pt.coins; delete pt.pli; after(); } }, { l:'▶', act: ()=> bougerCoin(pasCoin, 0) },
-        coin('bl', '◣'), { l:'▼', act: ()=> bougerCoin(0, pasCoin) }, coin('br', '◢')].concat(cGarder),
+        coin('bl', '◣'), { l:'▼', act: ()=> bougerCoin(0, pasCoin) }, coin('br', '◢')]
+        /* v717 : le PLI (l'arête entre la façade et le côté d'un meuble de trois-quarts) se règle ici aussi :
+           ⌃ son haut, ⌄ son bas (avec les flèches), ⇠ ⇢ sa place dans l'image, ✂ l'ajouter ou le retirer */
+        .concat(pt.type === 'fenetre' ? [] : pt.pli
+          ? [coin('ph', '⌃ pli'), { l:'⇠', petit:true, titre:'Pli vers la gauche', act: ()=>{ pt.pli.u = Math.max(0.05, +((+pt.pli.u || 0.5) - 0.02).toFixed(3)); after(); } }, { l:'⇢', petit:true, titre:'Pli vers la droite', act: ()=>{ pt.pli.u = Math.min(0.95, +((+pt.pli.u || 0.5) + 0.02).toFixed(3)); after(); } },
+             coin('pb', '⌄ pli'), { l:'✂✕', petit:true, titre:'Retirer le pli', act: ()=>{ delete pt.pli; if (etat.coin === 'ph' || etat.coin === 'pb') etat.coin = 'tl'; after(); } }, null]
+          : [null, { l:'✂ pli', petit:true, titre:'Ajouter un pli (façade + côté)', act: ()=>{ pt.pli = { u: 0.5, haut: [0, 0], bas: [0, 0] }; etat.coin = 'ph'; garderPalette(); after(); } }, null])
+        .concat(cGarder),
     },
     /* v647 : ☰ tous les points de la pièce, pour en choisir un quand ils se recouvrent */
     listes: { liste: sceneEditorPoints.map((p, i)=>{
@@ -37753,8 +37766,9 @@ async function composerKit(kit, opts){
   opts = opts || {};
   const c = coquilleParId(kit && kit.coquilleId);
   if (!c) return null;
-  const fond = await chargerImage(await urlDeRef(c.imageRef));
-  if (!fond) return null;
+  const fond0 = await chargerImage(await urlDeRef(c.imageRef));
+  if (!fond0) return null;
+  const fond = teinterOrange(fond0, kit.teinte);   // v717 : la couleur de la maison s'applique aussi aux murs et au sol
   const G = geoKit(c);
   const cv = document.createElement('canvas'); cv.width = G.W; cv.height = G.H;
   const ctx = cv.getContext('2d');
@@ -38124,6 +38138,8 @@ async function assemblerSceneKit(scn, idsScenes){
   scn.points = scn.points || [];
   synchroniserPointsKit(scn, G);
   synchroniserDecorsKit(scn, G, enPoints);
+  await teinterPointsKit(scn);   // v717
+  ordonnerDecorsParProfondeur(scn);   // v717
   /* les portes mènent où le fichier l'a dit */
   (scn.kit.objets || []).forEach(o=>{
     if (!o.vers || !o.pointId) return;
@@ -38134,6 +38150,34 @@ async function assemblerSceneKit(scn, idsScenes){
   const manquent = (scn.kit.objets || []).filter(meubleEnAttenteKit).length;
   if (manquent) scn.kit.aAssembler = true; else delete scn.kit.aAssembler;
   return manquent;
+}
+/* v717 — LA COULEUR DE LA PIÈCE sur ses meubles posés en points : l'image teintée est rangée une fois
+   (kit.teintes : image d'origine → image teintée), le point garde sa signature (ses retouches restent) */
+async function teinterPointsKit(scn){
+  const kit = scn && scn.kit; if (!kit || !kit.teinte || /^#ff8000$/i.test(kit.teinte)) return;
+  kit.teintes = kit.teintes || {};
+  for (const pt of (scn.points || [])){
+    if (!pt || !pt.kitDecor || !pt.kitSig) continue;
+    let brut = null; try { brut = JSON.parse(pt.kitSig)[5]; } catch(e){}
+    if (!brut) continue;
+    const cle = brut + '|' + kit.teinte;
+    if (!kit.teintes[cle]){
+      const img = await chargerImage(await urlDeRef(brut)); if (!img) continue;
+      const cv = teinterOrange(img, kit.teinte); if (cv === img) continue;
+      const ref = await externalizeSceneImage(encoderImageSousLimite(cv, 640, true)); if (!ref) continue;
+      kit.teintes[cle] = ref;
+    }
+    pt.imageRef = kit.teintes[cle]; pt.imagePath = null; pt.imageUrl = '';
+  }
+}
+/* v717 — l'ordre de dessin des décors suit la profondeur : un tapis d'abord, puis du fond vers l'avant
+   (la plante n'est plus cachée derrière le canapé posé devant elle) */
+function ordonnerDecorsParProfondeur(scn){
+  const pts = scn.points || [];
+  const dec = pts.filter(p=> p && p.type === 'decor');
+  const cle = (p)=> p.aPlat ? -1 : (+p.y || 0) + (+p.h || 0) / 2;
+  dec.sort((a, b)=> cle(a) - cle(b));
+  let i = 0; scn.points = pts.map(p=> (p && p.type === 'decor') ? dec[i++] : p);
 }
 /* depuis le guide : réassembler une pièce d'une zone (ses meubles ont reçu leurs images) */
 async function reassemblerPieceZone(zoneId, sceneId){
@@ -43267,8 +43311,21 @@ async function importerScenario(sc){
           /* v713 : la bibliothèque d'abord (méthode, point 13) — une porte, ou un objet de la liste « existant »,
              déjà dessiné, est réutilisé tel quel, à sa vraie taille : rien à redemander à ChatGPT */
           const tous = meublesKit().filter(x=> x && x.refs && x.refs.face);
+          /* v717 : une porte qui existe dans la bibliothèque devient une VRAIE porte du kit (dessinée sur
+             son mur, la sortie posée dessus par le jeu) ; sinon elle attend la planche, comme avant */
+          const porteKit = v.porteDecor ? (tous.find(x=> x.porte && x.type === 'mur') || null) : null;
+          if (porteKit){
+            const o = placerVoeuKit(G, poses, porteKit, v);
+            if (o){
+              const ko = Object.assign({ id: 'ko_' + Date.now() + '_' + kit.objets.length, meubleId: porteKit.id, miroir: false }, o);
+              if (v.vers) ko.vers = v.vers;
+              kit.objets.push(ko); poses.push({ o: ko, m: porteKit });
+              journal.push('🚪 « ' + s.name + ' » : porte « ' + porteKit.nom + ' » (porte du kit)');
+              continue;
+            }
+          }
           let ex = v.porteDecor ? (tous.find(x=> x.porte) || null) : null;
-          if (!ex) for (const n of [].concat(v.existant || [])){ const nn = normKit(n); ex = tous.find(x=> normKit(x.nom) === nn) || tous.find(x=> normKit(x.nom).includes(nn)) || null; if (ex) break; }
+          if (!ex) for (const n of [String(v.decor || '')].concat(v.existant || [])){ if (!n) continue; const nn = normKit(n); ex = tous.find(x=> normKit(x.nom) === nn) || tous.find(x=> normKit(x.nom).includes(nn)) || null; if (ex) break; }
           const nom = ex ? ex.nom : String(v.decor || v.porteDecor);
           const w = Math.max(0.5, (ex && ex.w) || +v.w || (v.porteDecor ? 3 : 1));
           const tmp = pose === 'mur' ? { nom, decor: true, type: 'mur', w, d: 1, h: Math.max(0.5, (ex && ex.h) || +v.h || (v.porteDecor ? 5 : 2)), kDefaut: v.k != null ? +v.k : (v.porteDecor ? 0 : 2), refs: {} }
@@ -43287,7 +43344,8 @@ async function importerScenario(sc){
           if (pose !== 'plat') poses.push({ o, m: tmp });
           const geo = pointDecorKit(G, o, tmp, pose, tmp.hauteur || 1);
           if (!geo){ journal.push('⚠️ « ' + s.name + ' » : « ' + nom + ' » impossible à placer'); continue; }
-          (decorsKit[s.cle || s.name] = decorsKit[s.cle || s.name] || []).push({ v, nom, geo, porte: !!v.porteDecor, ex });
+          if (pose === 'mur') geo.pied = true;   // v717 : un objet au mur repose sur le bas de son cadre (une porte touche le sol)
+          (decorsKit[s.cle || s.name] = decorsKit[s.cle || s.name] || []).push({ v, nom, geo, porte: !!v.porteDecor, ex, plat: pose === 'plat' });
           continue;
         }
         const m = meubleImportKit(v, sc.objets, cles);
@@ -43423,7 +43481,8 @@ async function importerScenario(sc){
          arrive par la planche de leur pièce. Un même nom déjà demandé (la porte des deux pièces) n'est
          dessiné qu'une fois : les autres points reçoivent son image quand la planche est posée. */
       (decorsKit[s.cle || s.name] || []).forEach((d, i)=>{
-        const pt = Object.assign({ id: 'pt_' + Date.now() + '_d' + i + '_' + Math.floor(Math.random() * 1000), type: 'decor', label: d.nom, rotation: 0, flipped: false }, d.geo);
+        const pt = Object.assign({ id: 'pt_' + Date.now() + '_d' + i + '_' + Math.floor(Math.random() * 1000), type: 'decor', label: d.nom, rotation: 0, flipped: false, decorKit: true }, d.geo);
+        if (d.plat) pt.aPlat = true;
         const dejaDemande = planchesKit.some(pl=> pl.objets.some(x=> normKit(x.nom) === normKit(d.nom)));
         if (d.ex){   // déjà dans la bibliothèque : son image, sa fiche
           const r = d.ex.refs.face;
@@ -43451,6 +43510,7 @@ async function importerScenario(sc){
         if (!cible){ journal.push('ℹ️ « ' + scn.name + ' » : « ' + t.sur + ' » absent — son texte n\'est pas posé'); return; }
         scn.points.push({ id: 'pt_' + Date.now() + '_t' + i, type: 'dialogue', text: String(t.texte), label: t.sur, x: cible.x, y: cible.y, w: cible.w, h: cible.h, rotation: 0, flipped: false, hideIcon: true });
       });
+      ordonnerDecorsParProfondeur(scn);   // v717
       /* une porte absente de la bibliothèque : une sortie fléchée (la première à sa place habituelle, les autres sur les côtés) */
       (fleches[s.cle || s.name] || []).forEach((v, i)=>{
         const pt = { id: 'pt_' + Date.now() + '_s' + i, type: v === '@carte' ? 'sortie_zone' : 'sortie', x: 50, y: 85, w: 14, h: 10, rotation: 0, flipped: false, lockType: 'none' };
