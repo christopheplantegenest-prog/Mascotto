@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v715</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v716</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -12728,7 +12728,7 @@ async function ouvrirBrouillons(){
       const scs = d.data().scenes || [];
       const enAttente = scs.some(sc=> sc && ((sc.points || []).some(pt=> pt && (pt.type === 'image' || pt.type === 'decor') && pt.prompt && !(pt.imageRef || pt.imageUrl || pt.imagePath))
         || (sc.points || []).some(pt=> decorQuiNeSeVoitPas(pt, sc.points))   // v664
-        || (sc.kit && sc.kit.aAssembler)   // v710 : pièce en kit dont des meubles attendaient leurs images
+        || (sc.kit && kitAReassembler(sc))   // v710/v716 : pièce en kit à (ré)assembler
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)));
       if (fz && enAttente){ scenesDe[d.id] = scs; planchesDe[d.id] = d.data().planchesDecor || []; zonesATerminer.push(fz); }
@@ -12941,7 +12941,7 @@ async function ouvrirBrouillons(){
       /* v714 : les MEUBLES de la zone à dessiner sont ICI, dans la zone (plus en bas de page, après les
          robots), une seule fois chacun même s'il sert dans deux pièces ; l'assemblage vient après */
       const meublesZ = new Map();
-      scenes.forEach(sc=> (sc && sc.kit && sc.kit.aAssembler ? sc.kit.objets || [] : []).forEach(o=>{
+      scenes.forEach(sc=> (sc && sc.kit && kitAReassembler(sc) ? sc.kit.objets || [] : []).forEach(o=>{
         if (!meubleEnAttenteKit(o)) return;
         const it = ficheKitDe(o); if (it && methodeGabarit(it.mob)) meublesZ.set(it.id, it);
       }));
@@ -12951,7 +12951,7 @@ async function ouvrirBrouillons(){
           + [...meublesZ.values()].map(it=> '<div data-tache-gabarit="' + it.id + '" style="margin:6px 0; padding:8px; border-radius:8px; background:rgba(128,128,128,.12);"><span class="meta" style="font-size:12px;">⏳ ' + esc(it.name || 'Meuble') + '…</span></div>').join('');
       }
       scenes.forEach(sc=>{   // v710 : les pièces en kit à réassembler
-        if (!sc || !sc.kit || !sc.kit.aAssembler) return;
+        if (!sc || !sc.kit || !kitAReassembler(sc)) return;
         const sans = (sc.kit.objets || []).filter(meubleEnAttenteKit);
         manque++;
         if (sans.length){   // v714 : pas de bouton tant que ce n'est pas prêt
@@ -38011,8 +38011,47 @@ function placerVoeuKit(G, poses, m, voeu){
     if (e.ancre && m.type === 'sol'){ const hp = (m.hauteur || 1) * KIT_FIN * G.cellH(e.ancre.yBas); P.push([e.ancre.cx, e.ancre.yBas - hp]); }
     return P.every(p=> p[0] >= 0 && p[0] <= G.W && p[1] >= 0 && p[1] <= G.H * 0.98); } catch(e){ return false; } };
   if (m.decor) for (const { o } of cands) if (libre(o) && entier(o)) return o;   // les meubles du kit, eux, peuvent sortir par le bas
+  /* v716 : un meuble peut déborder un peu, mais sa partie utile reste visible (l'assise d'un canapé, de quoi
+     y asseoir quelqu'un) : son empreinte au sol tient à 85 % dans l'image et son bord avant est entier */
+  const assez = (o)=> assezVisibleKit(G, o, m);
+  if (!m.decor) for (const { o } of cands) if (libre(o) && assez(o)) return o;
   for (const { o } of cands) if (libre(o)) return o;
   return null;
+}
+function assezVisibleKit(G, o, m){   // v716 : l'empreinte au sol tient aux 3/4 dans l'image, son centre est dedans
+  try {
+    const P = emplacementKit(G, o, m).poly;
+    const aire = (Q)=> Math.abs(Q.reduce((t, p, i)=>{ const q = Q[(i + 1) % Q.length]; return t + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
+    /* découpe du polygone par le cadre de l'image (Sutherland-Hodgman) */
+    const couper = (Q, dedans, inter)=>{ const R = []; Q.forEach((p, i)=>{ const q = Q[(i + 1) % Q.length], a = dedans(p), b = dedans(q);
+      if (a) R.push(p); if (a !== b) R.push(inter(p, q)); }); return R; };
+    const lx = (x)=> (p, q)=> [x, p[1] + (q[1] - p[1]) * (x - p[0]) / ((q[0] - p[0]) || 1e-9)];
+    const ly = (y)=> (p, q)=> [p[0] + (q[0] - p[0]) * (y - p[1]) / ((q[1] - p[1]) || 1e-9), y];
+    let Q = P.slice();
+    Q = couper(Q, p=> p[0] >= 0, lx(0)); if (Q.length < 3) return false;
+    Q = couper(Q, p=> p[0] <= G.W, lx(G.W)); if (Q.length < 3) return false;
+    Q = couper(Q, p=> p[1] >= 0, ly(0)); if (Q.length < 3) return false;
+    Q = couper(Q, p=> p[1] <= G.H, ly(G.H)); if (Q.length < 3) return false;
+    const cx = P.reduce((t, p)=> t + p[0], 0) / P.length, cy = P.reduce((t, p)=> t + p[1], 0) / P.length;
+    return aire(Q) / Math.max(1, aire(P)) >= 0.75 && cx >= 0 && cx <= G.W && cy <= G.H;
+  } catch(err){ return false; }
+}
+/* v716 : un meuble au sol trop sorti de l'image (assise invisible) est replacé au plus près, contre le même mur */
+function meublesTropSortisKit(c, kit){
+  const G = geoKit(c);
+  return (kit.objets || []).filter(o=> !o.cadreId && o.zone === 'sol' && !meubleEnAttenteKit(o)).filter(o=>{ const m = meubleParId(o.meubleId); return m && !assezVisibleKit(G, o, m); });
+}
+function replacerMeublesSortisKit(c, kit){
+  const G = geoKit(c); let n = 0;
+  meublesTropSortisKit(c, kit).forEach(o=>{
+    const m = meubleParId(o.meubleId);
+    const autres = (kit.objets || []).filter(x=> x !== o).map(x=> ({ o: x, m: x.cadreId ? (x.cadre || { w: 3, h: 3, type: 'mur' }) : meubleParId(x.meubleId) })).filter(x=> x.m);
+    const dw = dimsKit(o, m, G).w;
+    const contre = o.contre || (o.c <= 0 ? 'gauche' : o.c + dw >= G.nx ? 'droite' : 'milieu');
+    const nv = placerVoeuKit(G, autres, m, { contre, ou: 'milieu' });
+    if (nv){ o.c = nv.c; o.r = nv.r; n++; }
+  });
+  return n;
 }
 /* v712 — UN ÉLÉMENT DE DÉCOR D'UNE PIÈCE EN KIT (plante, tapis, écran, étagère, porte…) : ce n'est pas un
    meuble du kit mais un POINT DE DÉCOR de la scène (sélectionnable, retouchable à la palette 🎛️). Sa place
@@ -38038,9 +38077,13 @@ function pointDecorKit(G, o, m, pose, hauteur){
 function ficheKitDe(o){
   const id = String((o && o.meubleId) || '').startsWith('fi_') ? String(o.meubleId).slice(3).split('|')[0] : null;
   const it = id && (items || []).find(x=> x && x.id === id); if (!it) return null;
-  if (meubleDeFiche(it)) return it;
+  /* v716 : parmi les fiches du même nom, la plus complète (le plus de vues : face + mur de gauche),
+     à égalité celle notée dans la pièce — un lit dessiné de côté dans un doublon n'est plus ignoré */
   const n = normKit(it.name);
-  return (items || []).find(x=> x && x !== it && x.mob && normKit(x.name) === n && meubleDeFiche(x)) || it;
+  const score = (x)=> (meubleDeFiche(x) ? 1 : 0) + ['face', 'gauche', 'droite'].filter(a=> refDeVue(((x.mob || {}).vues || {})[a])).length;
+  let best = it;
+  (items || []).forEach(x=>{ if (x && x !== it && x.mob && normKit(x.name) === n && score(x) > score(best)) best = x; });
+  return best;
 }
 /* un meuble du gabarit encore à faire : une vue manque, ou ses vues posées n'ont pas passé le contrôle */
 function aFaireGabarit(it){
@@ -38051,8 +38094,18 @@ function aFaireGabarit(it){
 function meubleEnAttenteKit(o){
   if (!o || o.cadreId) return false;
   const it = ficheKitDe(o);
-  if (it) return !meubleDeFiche(it) || aFaireGabarit(it);
+  if (it){
+    if (!meubleDeFiche(it) || aFaireGabarit(it)) return true;
+    const mb = it.mob || {};
+    return !!(o.contre && mb.pose === 'sol_debout' && !mb.vueUnique && !refDeVue((mb.vues || {}).gauche) && !refDeVue((mb.vues || {}).droite));   // v716
+  }
   return !meubleParId(o.meubleId);
+}
+function kitAReassembler(sc){   // v716
+  if (!sc || !sc.kit) return false;
+  if (sc.kit.aAssembler || (sc.kit.objets || []).some(meubleEnAttenteKit)) return true;
+  const c = coquilleParId(sc.kit.coquilleId);
+  return !!(c && meublesTropSortisKit(c, sc.kit).length);
 }
 function nomMeubleKit(o){
   const it = ficheKitDe(o); if (it) return it.name || '?';
@@ -38063,7 +38116,10 @@ async function assemblerSceneKit(scn, idsScenes){
   const c = coquilleParId(scn.kit && scn.kit.coquilleId); if (!c) throw new Error('coquille introuvable');
   (scn.kit.objets || []).forEach(o=>{ const it = !o.cadreId && ficheKitDe(o); if (it && 'fi_' + it.id !== o.meubleId) o.meubleId = 'fi_' + it.id; });   // v714 : doublons
   const G = geoKit(c), enPoints = [];
-  const cv = await composerKit(scn.kit, { enPoints }); if (!cv) throw new Error('pièce impossible à composer');
+  /* v716 : un meuble qui attend encore ses images n'est pas dessiné (avant : un lit de face contre un mur) */
+  replacerMeublesSortisKit(c, scn.kit);
+  const kitPret = Object.assign({}, scn.kit, { objets: (scn.kit.objets || []).filter(o=> o.cadreId || !meubleEnAttenteKit(o)) });
+  const cv = await composerKit(kitPret, { enPoints }); if (!cv) throw new Error('pièce impossible à composer');
   scn.imageUrl = encoderImageSousLimite(cv, 1600, false); scn.imagePath = null; scn.imageRef = null;
   scn.points = scn.points || [];
   synchroniserPointsKit(scn, G);
@@ -43241,6 +43297,7 @@ async function importerScenario(sc){
         if (!o){ journal.push('⚠️ « ' + s.name + ' » : plus de place pour « ' + m.nom + ' »'); continue; }
         const ko = Object.assign({ id: 'ko_' + Date.now() + '_' + kit.objets.length, meubleId: m.id, miroir: false }, o);
         if (v.vers) ko.vers = v.vers;
+        if (v.contre === 'gauche' || v.contre === 'droite') ko.contre = v.contre;   // v716 : il attend sa vue de côté
         kit.objets.push(ko); poses.push({ o: ko, m });
         journal.push('🪑 « ' + s.name + ' » : ' + m.nom + (m.provisoire ? ' (place gardée, image à dessiner)' : ''));
       }
