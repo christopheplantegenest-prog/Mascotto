@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v725</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v726</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -36083,7 +36083,7 @@ async function composerChambre(hab, opts){
   const bas = (e)=> e.type === 'plafond' ? 1e9 : e.type === 'sol' ? -2 : (e.type === 'mur' || e.type === 'fenetre') ? -1 : (e.y + e.h / 2);
   for (const e of emps.slice().sort((a, b)=> bas(a) - bas(b))){
     if (e.type === 'fenetre'){
-      const cadreId = (deco.fenetres || {})[e.id];
+      const cadreId = cadreFenetreChambre(deco, e);
       if (!cadreId) continue;
       apres.push(async ()=>{
         const vueId = cielDuJour(now);
@@ -36470,6 +36470,14 @@ async function attribuerChambre(hab){
   } catch(e){}
   return n;
 }
+/* v726 : une place de fenêtre montre TOUJOURS une fenêtre — celle choisie par le joueur (🎨), sinon le
+   premier cadre de la bibliothèque. Enlever une fenêtre (↩️) l'enregistre à null : la place reste vide. */
+function cadreFenetreChambre(deco, e){
+  const f = (deco && deco.fenetres) || {};
+  if (Object.prototype.hasOwnProperty.call(f, e.id)) return f[e.id] || null;
+  const c = cadresTous()[0];
+  return c ? c.id : null;
+}
 function decoDeChambre(hab, brute){
   const ch = (playerSelfData && playerSelfData.chambres) || {};
   const d = hab && hab.chambreNo ? ch[hab.chambreNo] : null;
@@ -36617,7 +36625,7 @@ function cleChambreComposee(hab){
     const its = ids.map(id=>{ const it = objetDeco(id); if (!it) return id + ':-';
       const u = it.updatedAt; return id + ':' + JSON.stringify(it.mob || null) + ':' + JSON.stringify(it.deco || null) + ':' + (it.lumiere ? 1 : 0)
         + ':' + (u ? (u.seconds || u) : '') + ':' + String(it.image || it.imageRef || it.imagePath || '').length; });
-    return JSON.stringify([hab && hab.id, chambreConfig.imageRef, chambreConfig.emplacements, chambreConfig.textures, l,
+    return JSON.stringify([hab && hab.id, (cadresTous()[0] || {}).id || null, chambreConfig.imageRef, chambreConfig.emplacements, chambreConfig.textures, l,
       deco, ids.map(id=> P[id] || null), its,
       lumiereEteinte({ lumiere: { eteinte: true, extinction: l.extinction || '22:00', allumage: l.allumage || '07:00' } }, now),
       soleilCouche(now), cielDuJour(now)]);
@@ -36982,6 +36990,10 @@ async function ouvrirEditeurEmplacementsChambre(){
     let h = '';
     if (e){
       h += `<div style="display:flex; align-items:center; gap:8px;"><b>${TYPES_DECO[e.type].emoji} ${TYPES_DECO[e.type].nom}</b>${(e.type === 'robot' && emps.filter(x=> x.type === 'robot').length < 2) ? '' : '<button type="button" class="btn-secondary" data-suppr style="margin-left:auto;">🗑️</button>'}</div>`;
+      if (estMeuble(e)){   // v726 : en tête, et dit clairement
+        const cats = e.categories || [];
+        h += `<div style="margin-top:8px; padding:8px; border-radius:10px; border:1.5px solid var(--accent);"><div style="font-weight:700; font-size:12.5px;">🎯 Ce qui peut aller ici</div><div class="meta" style="font-size:11px; margin-top:2px;">${cats.length ? 'Seulement : <b>' + cats.map(htmlEsc).join(', ') + '</b>' : 'Tout meuble de type ' + TYPES_DECO[e.type].emoji + '. Touche une catégorie pour n\'accepter qu\'elle (par exemple 🪴 Plante).'}</div><div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">${CATEGORIES_MOBILIER.filter(c=> !['Porte', 'Fenêtre'].includes(c)).map(c=> `<button type="button" class="${cats.includes(c) ? 'btn-primary' : 'btn-secondary'}" data-cat-emp="${htmlEsc(c)}" style="padding:3px 7px; font-size:10.5px;">${htmlEsc(c)}</button>`).join('')}</div></div>`;
+      }
       if (['mur', 'volume', 'couchage'].includes(e.type))
         h += `<div style="display:flex; gap:5px; align-items:center; margin-top:6px; flex-wrap:wrap;"><span class="meta" style="font-size:11px;">Contre quel mur :</span>${[['', 'auto (' + libMur[angleEmplacementChambre(Object.assign({}, e, { angle: null }))] + ')'], ['face', 'fond'], ['gauche', 'gauche'], ['droite', 'droit']].map(([a, l])=> `<button type="button" class="${(e.angle || '') === a ? 'btn-primary' : 'btn-secondary'}" data-angle-emp="${a}" style="padding:4px 8px; font-size:11px;">${l}</button>`).join('')}</div>`;
       if (it){
@@ -36996,8 +37008,6 @@ async function ouvrirEditeurEmplacementsChambre(){
           ${propre ? '<button type="button" class="btn-secondary" data-zero style="margin-top:6px; padding:4px 10px; font-size:11px;">↺ Réglage par défaut pour ce meuble ici</button>' : ''}
         </div>`;
       }
-      if (estMeuble(e))
-        h += `<div style="margin-top:8px;"><span class="meta" style="font-size:11px;">Accepte : ${(e.categories || []).length ? '' : '<b>toutes les catégories</b> (touche pour limiter)'}</span><div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">${CATEGORIES_MOBILIER.filter(c=> !['Porte', 'Fenêtre'].includes(c)).map(c=> `<button type="button" class="${(e.categories || []).includes(c) ? 'btn-primary' : 'btn-secondary'}" data-cat-emp="${htmlEsc(c)}" style="padding:3px 7px; font-size:10.5px;">${htmlEsc(c)}</button>`).join('')}</div></div>`;
       if (e.type === 'fenetre') h += '<p class="meta" style="margin:6px 0 0; font-size:11px;">La perspective de la fenêtre : ◇ dans la palette, choisis un coin (◤ ◥ ◣ ◢) et pousse-le aux flèches.</p>';
     } else h = '<p class="meta" style="margin:0; font-size:11px;">Touche un emplacement pour le choisir. 🤖 : les places du robot (il en prend une au hasard à chaque visite).</p>';
     panneau.innerHTML = h;
@@ -37193,7 +37203,7 @@ async function ouvrirDecoration(hab){
   if (p){ const r = await elementRobotFlottant(hab, p); if (r) pano.calque.appendChild(r); }
   const redessiner = async ()=>{ pano.img.src = await composer(); };
   const emps = ()=> emplacementsChambre().filter(e=> e.type !== 'robot');
-  const occupant = (e)=> e.type === 'fenetre' ? (deco().fenetres || {})[e.id] : (deco().objets || {})[e.id];
+  const occupant = (e)=> e.type === 'fenetre' ? cadreFenetreChambre(deco(), e) : (deco().objets || {})[e.id];
   const compatibles = ()=>{
     if (!enMain) return [];
     if (enMain.genre === 'reprendre') return emps().filter(e=> occupant(e));
@@ -37219,7 +37229,7 @@ async function ouvrirDecoration(hab){
     try {
       if (e.type === 'fenetre'){
         deco().fenetres = deco().fenetres || {};
-        if (enMain.genre === 'cadre') deco().fenetres[e.id] = enMain.id; else delete deco().fenetres[e.id];
+        if (enMain.genre === 'cadre') deco().fenetres[e.id] = enMain.id; else deco().fenetres[e.id] = null;   // v726 : enlevée = vide (sinon la fenêtre par défaut revient)
       } else {
         deco().objets = deco().objets || {};
         const ancien = deco().objets[e.id] || null, nouveau = enMain.genre === 'objet' ? enMain.id : null;
@@ -37251,7 +37261,7 @@ async function ouvrirDecoration(hab){
         + '<p class="meta" style="margin:4px 0 0; font-size:12px;">Pour poser un objet : dans la chambre, ouvre ton sac 🎒, touche l\'objet, puis <b>🪑 Poser</b>.' + (poses ? ' Ici, ↩️ reprend un objet posé.' : '') + '</p>';
     } else if (onglet === 'fenetres'){
       const cadres = cadresTous();   // v686
-      const poses = Object.values(deco().fenetres || {}).length;
+      const poses = emps().filter(e=> e.type === 'fenetre' && occupant(e)).length;
       h = '<div style="display:flex; flex-wrap:wrap; gap:6px; padding:2px 0 4px;">'
         + cadres.map(c=> vignette('data-cadre="' + c.id + '"', enMain && enMain.genre === 'cadre' && enMain.id === c.id, `<img data-cref="${c.id}" style="width:100%; height:100%; object-fit:contain;">`, c.nom)).join('')
         + (poses ? vignette('data-reprendre', enMain && enMain.genre === 'reprendre', '<span style="font-size:24px;">↩️</span>', 'Enlever une fenêtre') : '')
