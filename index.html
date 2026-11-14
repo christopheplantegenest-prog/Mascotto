@@ -1510,7 +1510,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v733</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v734</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13094,6 +13094,11 @@ async function ouvrirBrouillons(){
         (sc.encounterMonsterIds || []).forEach(id=> idsAdv.add(id));
       });
       toutes.forEach(f=>{ if (f && f.pieceCommune && f.pieceCommune.zoneId === z.id && f.combatStats && f.combatStats.robotModeleId) idsAdv.add(f.id); });
+      /* v734 : les robots qu'un personnage de la zone lance en combat depuis son dialogue (Rask, Varek…) */
+      toutes.forEach(f=>{
+        if (!f || !((f.pieceCommune && f.pieceCommune.zoneId === z.id) || f.assignedZoneId === z.id)) return;
+        (f.dialogueSteps || []).forEach(st=> (st.choices || []).forEach(ch=> (ch && ch.combat && ch.combat.creatureIds || []).forEach(id=> idsAdv.add(id))));
+      });
       const modelesZone = [];
       idsAdv.forEach(id=>{ const f = toutes.find(x=> x.id === id); const m = f && f.combatStats && robotsModeles.find(x=> x.id === f.combatStats.robotModeleId); if (m && !modelesZone.includes(m)) modelesZone.push(m); });
       modelesZone.forEach(m=>{
@@ -13114,6 +13119,23 @@ async function ouvrirBrouillons(){
           '1. <b>🗺️ Ouvrir la pièce</b>.<br>2. Touche le coffre (onglet liste si tu ne le vois pas), puis choisis la caisse.<br>3. <b>Enregistrer la scène</b>.',
           bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', true));
       }));
+      /* v734 : les OBJETS de la zone à dessiner (objet de quête, photo d'un puzzle…) : leur prompt vient
+         du fichier d'import ; une pièce nommée peut partir avec (une photo prise DANS cette pièce). */
+      (typeof items !== 'undefined' ? items : []).forEach(it=>{
+        if (!it || !it.promptImage || !memeNom(it.dessinZone, z.name)) return;
+        const okO = !!(it.imageUrl || it.imagePath);
+        if (!okO) manque++;
+        const scJ = it.dessinScene ? scenes.find(sc=> sc && memeNom(sc.name, it.dessinScene)) : null;
+        const vraieJ = scJ && (scJ.imageUrl || scJ.imagePath || scJ.imageRef) && !(scJ.structureRef && scJ.imageRef === scJ.structureRef);
+        const cle = 'obj|' + it.id;
+        blocs += tache(okO, '🎁 Image de l\'objet « ' + esc(it.name) + ' »',
+          (it.assemblage ? 'C\'est l\'image entière du puzzle : ses morceaux en prendront chacun un bout, tout seuls. ' : 'C\'est l\'image de l\'objet dans le Compartiment. ')
+          + (scJ ? (vraieJ ? 'L\'image de la pièce « ' + esc(scJ.name) + ' » part avec le prompt.' : 'Fais d\'abord la pièce « ' + esc(scJ.name) + ' » : son image part avec ce prompt.') : ''),
+          '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b>.',
+          ((!scJ || vraieJ) ? bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okO) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') : '')
+          + bouton('data-poser-objet="' + it.id + '"', okO ? '📷 Changer l\'image' : '📷 Choisir l\'image'));
+        envois[cle] = ()=> ({ texte: it.promptImage, imgs: vraieJ ? [fichierPourPartage('piece-' + scJ.id, scJ.imageUrl || (scJ.imagePath ? resolveMediaPath(scJ.imagePath) : urlDeRef(scJ.imageRef)))] : [] });
+      });
       /* v657 : les planches de décor de la zone — une image ChatGPT pour 4 à 6 objets */
       const ptsDePlanche = new Set();
       (planchesDe[z.id] || []).forEach(pl=>{
@@ -13513,6 +13535,14 @@ async function ouvrirBrouillons(){
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
+  sur('[data-poser-objet]', async (b)=>{   // v734 : l'image d'un objet, comme le champ Photo de l'éditeur d'objets
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const url = encoderImageSousLimite(img, 600, true);
+    if (!url){ showToast('Image trop lourde même réduite'); return; }
+    await itemsCol.doc(b.dataset.poserObjet).set({ imageUrl: url, imagePath: null }, { merge:true });
+    showToast('Image posée ✅'); rouvrir();
+  });
   sur('[data-valider-robot]', async (b)=>{
     const [id, oui] = b.dataset.validerRobot.split('|');
     if (!robotsModelesCol){ showToast('Firebase indisponible ici'); return; }
@@ -16852,6 +16882,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
     if (existingItem && existingItem.teachesAttackId) data.teachesAttackId = existingItem.teachesAttackId;
     if (existingItem && existingItem.teachesRecipeId) data.teachesRecipeId = existingItem.teachesRecipeId;
     if (existingItem && existingItem.deco){ data.deco = existingItem.deco; data.lumiere = !!existingItem.lumiere; }   // v623 : objet de chambre
+    if (existingItem && existingItem.promptImage){ data.promptImage = existingItem.promptImage; data.dessinZone = existingItem.dessinZone || ''; data.dessinScene = existingItem.dessinScene || ''; }   // v734
   }
   {   /* v733 : les morceaux du puzzle (au moins deux), seulement sur un objet de quête */
     const pcs = currentAssemblage.filter(Boolean);
@@ -41681,13 +41712,10 @@ function importListeQtes(liste, table, journal, contexte){
        premier créneau horaire (`timeRanges[0].start`). Seuls les champs donnés changent :
        apparence, pose, fonction, dialogueSteps, et `emplacement.place` (le nom d'un rectangle 🧍
        de leur pièce, qui devient le leur). */
-async function importerMiseAJour(sc){
-  const journal = ['ℹ️ Mise à jour faite par ' + ((document.getElementById('appVersionLabel') || {}).textContent || '?')];
-  /* v618 — LES ADVERSAIRES. `adversaires: [{ nom, modele, emoji?, timeRanges?, ia?, ecart? }]` :
-     une fiche de combat (monstre) par adversaire, retrouvée par son nom ; son robot vient du
-     catalogue (stats et attaques du modèle). Ils passent AVANT les scènes, qui peuvent les citer. */
+/* v734 : la création des adversaires, commune à la mise à jour et à l'import complet. */
+async function importerAdversaires(liste, journal){
   const advParNom = {};
-  for (const a of (sc.adversaires || [])){
+  for (const a of (liste || [])){
     const nom = String(a.nom || '').trim();
     const m = robotsModeles.find(x=> x.nom === a.modele) || robotsModeles.find(x=> String(x.nom || '').toLowerCase() === String(a.modele || '').toLowerCase());
     if (!nom || !m){ journal.push('⚠️ Adversaire « ' + nom + ' » : modèle « ' + (a.modele || '?') + ' » introuvable — laissé de côté'); continue; }
@@ -41714,6 +41742,14 @@ async function importerMiseAJour(sc){
       journal.push('🤖 Adversaire « ' + nom + ' » (' + m.nom + ') créé');
     }
   }
+  return advParNom;
+}
+async function importerMiseAJour(sc){
+  const journal = ['ℹ️ Mise à jour faite par ' + ((document.getElementById('appVersionLabel') || {}).textContent || '?')];
+  /* v618 — LES ADVERSAIRES. `adversaires: [{ nom, modele, emoji?, timeRanges?, ia?, ecart? }]` :
+     une fiche de combat (monstre) par adversaire, retrouvée par son nom ; son robot vient du
+     catalogue (stats et attaques du modèle). Ils passent AVANT les scènes, qui peuvent les citer. */
+  const advParNom = await importerAdversaires(sc.adversaires, journal);
   const idDeFiche = (nom)=> advParNom[nom] || ((toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat') || {}).id) || null;
   const fiches = toutesLesFiches();
   const scenesMaj = {};   // zoneId → scènes telles qu'écrites
@@ -42151,6 +42187,8 @@ async function importerScenario(sc){
       effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false,
       basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
     };
+    /* v734 : un objet à faire dessiner — son prompt, et la zone dans le guide 🧰 de laquelle il apparaît */
+    if (o.prompt){ data.promptImage = String(o.prompt); data.dessinZone = o.zoneDessin || o.zone || ''; data.dessinScene = o.sceneDessin || ''; }
     if (o.type === 'mobilier'){   // v680 : une fiche de mobilier, à faire dessiner depuis sa fiche
       const POSES = ['mur', 'plafond', 'sol_plat', 'sol_debout'];
       data.mob = { categorie: categorieMobilier(o.categorie, o.name), pose: POSES.includes(o.pose) ? o.pose : 'sol_debout',
@@ -42262,11 +42300,22 @@ async function importerScenario(sc){
     noter(cles.missions, m, await importEcrireDoc(missionsCol, m.name, data, 'Mission', journal));
   }
 
+  /* v734 — les ADVERSAIRES (robots de combat d'un modèle du catalogue) dans l'import complet,
+     avant les personnages : leurs dialogues lancent des combats contre eux, les pièces les citent
+     dans leurs rencontres. */
+  const advImport = await importerAdversaires(sc.adversaires, journal);
+  const idAdversaire = (nom)=> advImport[nom] || cles.pnj[nom]
+    || ((toutesLesFiches().find(f=> f.name === nom && (f.interactionType === 'combat' || f.canFight)) || {}).id) || null;
+
   /* Les dialogues du fichier nomment les quêtes et les métiers en clair ; le jeu, lui,
      attend des identifiants. La conversion se fait ici, une fois les quêtes créées.
      `next` reste un numéro d'étape : c'est déjà ce que le jeu enregistre. */
   const resoudreDialogue = (steps, ctx)=>{
     (steps||[]).forEach(st=>{
+      (st.textVariants || []).forEach(v=>{
+        if (!v || !v.questName) return;
+        v.kind = 'quest'; v.questId = importResoudre(cles.quetes, v.questName, quests, journal, ctx) || null; v.state = v.state || 'completed'; delete v.questName;
+      });
       (st.choices||[]).forEach(ch=>{
         if (!ch.id) ch.id = 'ch_' + Math.random().toString(36).slice(2,9);
         if (typeof ch.questGive === 'string'){
@@ -42280,6 +42329,19 @@ async function importerScenario(sc){
         if (ch.showIf && ch.showIf.questName){
           const id = importResoudre(cles.quetes, ch.showIf.questName, quests, journal, ctx);
           ch.showIf = id ? { kind:'quest', questId:id, state: ch.showIf.state || 'completed' } : null;
+        }
+        /* v734 : les conditions en liste (et plus bas les variantes de texte) peuvent viser une quête par son nom */
+        (ch.showIfList || []).forEach(c=>{
+          if (!c || !c.questName) return;
+          const id = importResoudre(cles.quetes, c.questName, quests, journal, ctx);
+          c.kind = 'quest'; c.questId = id || null; c.state = c.state || 'completed'; delete c.questName;
+        });
+        /* v734 : `combat: { adversaires: ["Nom", …], gagne: n°, perdu: n° }` → le combat du choix,
+           adversaires retrouvés par leur nom (trois au plus), comme le bouton ⚔️ de l'éditeur */
+        if (ch.combat && Array.isArray(ch.combat.adversaires)){
+          const ids = ch.combat.adversaires.slice(0, 3).map(n=>{ const id = idAdversaire(n); if (!id) journal.push('⚠️ ' + ctx + ' : adversaire « ' + n + ' » introuvable'); return id; }).filter(Boolean);
+          const g = ch.combat.gagne, pd = ch.combat.perdu;
+          ch.combat = ids.length ? { creatureIds: ids, attackIds: [], stepWin: (g == null ? null : parseInt(g, 10)), stepLose: (pd == null ? null : parseInt(pd, 10)) } : null;
         }
         if (ch.recruit === true || typeof ch.recruit === 'string'){
           const nomMetier = (typeof ch.recruit === 'string') ? ch.recruit : 'Combattant';
@@ -42412,6 +42474,20 @@ async function importerScenario(sc){
     };
   };
   for (const p of (sc.pnj||[])){
+    /* v734 — `ficheId` : une version PRÉCISE d'un personnage déjà en jeu (Keira a trois versions sans
+       horaires : seul son identifiant la désigne). On lui apporte son dialogue et, plus bas, son
+       emplacement ; image, métier, groupe et le reste ne bougent pas. */
+    if (p.ficheId){
+      const f = toutesLesFiches().find(x=> x.id === p.ficheId);
+      if (!f){ journal.push('⚠️ PNJ « ' + p.name + ' » : fiche ' + p.ficheId + ' introuvable — rien changé'); continue; }
+      const maj = { updatedAt: Date.now() };
+      if (Array.isArray(p.dialogueSteps)) maj.dialogueSteps = resoudreDialogue(p.dialogueSteps, 'Dialogue de ' + p.name);
+      ['fonction', 'pose', 'apparence'].forEach(k=>{ if (typeof p[k] === 'string') maj[k] = p[k]; });
+      await creatureCol.doc(f.id).set(maj, { merge:true });
+      noter(cles.pnj, p, f.id);
+      journal.push('💬 « ' + p.name + ' » (version existante) : ' + (maj.dialogueSteps ? 'dialogue mis à jour' : 'retouchée') + ', image et groupe intacts');
+      continue;
+    }
     /* « dialogueSeul » sert aux personnages qui existent DÉJÀ dans le jeu (les quatre
        combattants, le métallier) : le scénario leur apporte des répliques, pas une fiche.
        On ne touche alors qu'au dialogue et on laisse statistiques, métier et image tranquilles. */
@@ -42553,6 +42629,8 @@ async function importerScenario(sc){
           } else if (pt.type === 'sortie'){ base.lockType = 'none'; }
           if (pt.lockMessage || pt.messageVerrou) base.lockMessage = pt.lockMessage || pt.messageVerrou;   // v733
           if (pt.pnj) base.linkedPnjId = cles.pnj[pt.pnj] || null;
+          if (pt.type === 'pnj' && pt.agression){ base.autoTrigger = true; base.agressionUneFois = pt.agression !== 'toujours'; }   // v734 : vient au joueur à l'entrée
+          if (pt.type === 'pnj' && !base.resetMode) base.resetMode = 'unlimited';
           /* v592 — tout ce qu'une zone dessinée par Claude a besoin d'écrire d'un coup :
              la flèche de sortie à sa place habituelle, l'apparence (miroir, rotation, invisible),
              les horaires d'une porte, le contenu et le message d'un coffre, la taille d'un
@@ -42584,7 +42662,14 @@ async function importerScenario(sc){
         }),
       encounterChance: parseInt(s.encounterChance,10) || 0,
       encounterMonsterIds: (s.monstres||[]).map(m=> cles.pnj[m]).filter(Boolean),
+      /* v734 : les rencontres aléatoires d'aujourd'hui (groupes de 1 à 3 robots, chance, moment) */
+      rencontres: Array.isArray(s.rencontres) ? s.rencontres.map((r, i)=>{
+        const ids = (r.adversaires || []).slice(0, 3).map(n=>{ const id = idAdversaire(n); if (!id) journal.push('⚠️ « ' + s.name + ' » : adversaire « ' + n + ' » introuvable'); return id; }).filter(Boolean);
+        const moment = ['toujours','nuit','eteinte','horaires'].includes(r.moment) ? r.moment : 'toujours';
+        return ids.length ? { id: 'renc_' + Date.now() + '_' + i, adversaires: ids, chance: Math.max(0, Math.min(100, parseInt(r.chance, 10) || 0)), moment, debut: r.debut || '', fin: r.fin || '' } : null;
+      }).filter(Boolean) : undefined,
     }));
+    scenes.forEach(x=>{ if (x.rencontres === undefined) delete x.rencontres; });
 
     if (scenes.length){
       /* Le tableau `scenes` est remplacé EN ENTIER (le merge ne protège que les champs
