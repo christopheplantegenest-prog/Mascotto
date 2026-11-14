@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v729</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v730</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8334,9 +8334,13 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
     if (r && ch.action === 'equipeNon' && !activeTeamIds.includes(r.id)) return false;
     if (ch.action === 'decorer' && !(r && estRobotEnChambre(r) && chambreNeutrePrete())) return false;
   }
+  if (ch.action === 'desynchro' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){   // v730
+    const r = recrueDuPersonnage(activeCreature), m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;
+    if (!m || m.robotDepart || myRobotId !== 'modele:' + m.id) return false;
+  }
   if (ch.action === 'synchro' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){   // v727
     const r = recrueDuPersonnage(activeCreature), m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;
-    if (!modeleAvatarPret(m) || !panoplieComplete(r) || myRobotId === 'modele:' + m.id) return false;   // v728 : la panoplie complète
+    if (!modeleAvatarPret(m) || !(panoplieComplete(r) || (m && m.robotDepart)) || myRobotId === 'modele:' + m.id) return false;   // v728 : la panoplie complète ; v730 : le robot de départ, sans condition
   }
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
@@ -8558,6 +8562,7 @@ const ACTIONS_A_BORD = {
   decorer:     { nom:'🎨 Décorer sa chambre' },
   equipeOui:   { nom:'⭐ Le prendre dans l\'équipe (caché s\'il y est)' },
   equipeNon:   { nom:'👋 Le sortir de l\'équipe (caché s\'il n\'y est pas)' },
+  desynchro:   { nom:'⛓️‍💥 Se désynchroniser : reprendre l\'apparence par défaut (caché si ce n\'est pas son apparence)' },   // v730
   synchro:     { nom:'🔗 Se synchroniser : son apparence sur la carte (caché sans ses 5 vues de déplacement, ou si c\'est déjà la tienne)' },   // v727
 };
 /* v727 — LA SYNCHRONISATION. Dans sa chambre, le robot propose de se synchroniser : son apparence est
@@ -8686,7 +8691,8 @@ function executerActionABord(action, creature){
     return;
   }
   if (action === 'decorer'){ ouvrirDecoration(r); return; }
-  if (action === 'synchro'){ if (panoplieComplete(r)) synchroniserAvecModele(r.robotModeleId); return; }   // v727, v728
+  if (action === 'synchro'){ const md = ctModele(r.robotModeleId); if (panoplieComplete(r) || (md && md.robotDepart)) synchroniserAvecModele(r.robotModeleId); return; }   // v727, v728, v730
+  if (action === 'desynchro'){ setMyRobot(apparenceParDefaut()); showToast('🔗 Désynchronisé : tu reprends ton apparence par défaut'); return; }   // v730
   if (action === 'equipeOui' || action === 'equipeNon'){
     if (activeTeamIds.includes(r.id) !== (action === 'equipeNon')) return;   // déjà comme il faut
     toggleRecruitTeam(r);
@@ -30611,8 +30617,11 @@ function renderQuartersList(){
                       color:${dansEquipe ? '#fff' : 'var(--muted)'}; font-size:14px; line-height:1;
                       display:flex; align-items:center; justify-content:center;">${dansEquipe ? '★' : '☆'}</button>`
           : '';
+        /* v730 : 🔗 — celui avec qui on est synchronisé (son apparence est la nôtre sur la carte) */
+        const synchro = (!quartersReordering && r.robotModeleId && myRobotId === 'modele:' + r.robotModeleId)
+          ? '<span title="Synchronisé : c\'est ton apparence" style="position:absolute; top:2px; left:2px; z-index:2; width:28px; height:28px; border-radius:50%; background:var(--accent); color:#fff; font-size:14px; display:flex; align-items:center; justify-content:center; border:2px solid #fff;">🔗</span>' : '';
         return `<div class="btn-secondary" ${quartersReordering ? '' : `data-quarters-open="${r.id}"`} style="display:block; padding:8px 4px; text-align:center; position:relative; ${absent && !quartersReordering ? 'opacity:.45;' : ''}">
-          ${pastille}
+          ${pastille}${synchro}
           <div data-quarters-thumb="${r.id}" style="width:100%; aspect-ratio:1; border-radius:12px; background:rgba(0,0,0,.06); display:flex; align-items:center; justify-content:center; font-size:26px; overflow:hidden; ${absent ? 'filter:grayscale(1);' : ''}">${r.recruitType === 'combattant' ? '⚔️' : '🛠️'}</div>
           <div style="font-size:12px; font-weight:700; margin-top:5px; line-height:1.2;">${r.name}</div>
           ${(!etat || quartersReordering) && metierNom(r) ? `<div class="meta" style="font-size:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${metierNom(r)}</div>` : ''}
@@ -36879,6 +36888,18 @@ function stepsDialogueChambre(m, rep){
 /* v727 : les fiches de dialogue déjà écrites n'ont pas le choix « Synchronisons-nous » : on l'ajoute au
    moment de parler (avant « Il est temps… »), sans toucher à la fiche. Une fiche qui a déjà un choix
    🔗 (posé à la main dans l'éditeur des PNJ) est laissée telle quelle. */
+/* v730 : « Désynchronisons-nous » — ajouté au moment de parler, comme « Synchronisons-nous » */
+function avecDesynchro(f){
+  const steps = Array.isArray(f.dialogueSteps) ? f.dialogueSteps : [];
+  if (!steps.length || steps.some(st=> (st.choices || []).some(c=> c && c.action === 'desynchro'))) return f;
+  const s2 = steps.map(st=> Object.assign({}, st, { choices: (st.choices || []).slice() }));
+  s2.push({ text: 'Déconnexion… Voilà. Tu reprends ton apparence, et moi, je reste ici. Reviens me voir quand tu veux.', textVariants: [], choices: [
+    { id: 'cds1', label: 'Autre chose', next: 0 }, { id: 'cds2', label: 'À plus tard', next: null } ] });
+  const ch = s2[0].choices;
+  const i = ch.findIndex(x=> x && (x.action === 'renvoyer' || /propre vie/i.test(x.label || '')));
+  ch.splice(i >= 0 ? i : ch.length, 0, { id: 'cdsync', label: 'Désynchronisons-nous', next: s2.length - 1, action: 'desynchro' });
+  return Object.assign({}, f, { dialogueSteps: s2 });
+}
 /* v728 : « Qu'est-ce qui te ferait plaisir ? » — il réclame le premier objet de sa panoplie qui manque, par son indice */
 function avecEnvies(f, hab, m){
   const p = panoplieDuModele(m);
@@ -36895,6 +36916,7 @@ function avecEnvies(f, hab, m){
   return Object.assign({}, f, { dialogueSteps: s2 });
 }
 function avecSynchro(f, m){
+  f = avecDesynchro(f);   // v730
   const steps = Array.isArray(f.dialogueSteps) ? f.dialogueSteps : [];
   if (!steps.length || steps.some(st=> (st.choices || []).some(c=> c && c.action === 'synchro'))) return f;
   const s2 = JSON.parse(JSON.stringify(steps));
