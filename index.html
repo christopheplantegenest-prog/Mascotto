@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v728</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v729</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8607,7 +8607,35 @@ async function perdreSynchro(mid){
   if (!etait && !portee) return;
   if (playerSelfData) playerSelfData.apparencesDebloquees = deb.filter(x=> x !== mid);
   try { if (db && currentUser) await db.collection('players').doc(currentUser.uid).set({ apparencesDebloquees: firebase.firestore.FieldValue.arrayRemove(mid) }, { merge:true }); } catch(e){}
-  if (portee){ setMyRobot(null); showToast('🔗 Synchronisation perdue : tu reprends ton apparence par défaut'); }
+  if (portee){ setMyRobot(apparenceParDefaut()); showToast('🔗 Synchronisation perdue : tu reprends ton apparence par défaut'); }   // v729 : le robot de départ
+}
+/* v729 — LE ROBOT DE DÉPART (14/11). Le modèle coché ⭐ dans l'éditeur (le Duelliste) est donné à chaque
+   joueur, avec sa chambre ; on ne peut pas le renvoyer (on n'est jamais bloqué sans combattant) ; son
+   apparence est toujours débloquée et c'est l'apparence par défaut, reprise quand une synchronisation
+   est perdue. Un compte qui a déjà un robot de ce modèle le voit simplement désigné comme tel. */
+function modeleDepart(){ return (typeof robotsModeles !== 'undefined' ? robotsModeles : []).find(m=> m && m.robotDepart) || null; }
+function estRobotDepart(r){ return !!(r && r.robotDepart); }
+function apparenceParDefaut(){ const m = modeleDepart(); return m && modeleAvatarPret(m) ? 'modele:' + m.id : null; }
+let recruesChargees = false, robotDepartEnCours = false;
+async function verifierRobotDepart(){
+  const m = modeleDepart();
+  if (!m || robotDepartEnCours || !recruesChargees || !currentUser || !db || typeof playerSelfData === 'undefined' || !playerSelfData) return;
+  if (playerSelfData.robotDepartDonne) return;
+  robotDepartEnCours = true;
+  try {
+    playerSelfData.robotDepartDonne = true;
+    await db.collection('players').doc(currentUser.uid).set({ robotDepartDonne: true }, { merge:true });
+    const deja = (recruits || []).find(r=> r && r.robotModeleId === m.id);
+    if (deja){ await recruitsCol.doc(deja.id).update({ robotDepart: true }); return; }
+    const r = await recrueDepuisPlan({ id: 'depart', modeleId: m.id, ecart: {}, source: 'depart' });
+    if (!r) return;
+    r.robotDepart = true;
+    const ref = await recruitsCol.add(r);
+    if (playerDocRef && (activeTeamIds || []).length < 3) await playerDocRef.set({ activeTeamIds: (activeTeamIds || []).concat([ref.id]) }, { merge:true });
+    if (!myRobotId && apparenceParDefaut()) setMyRobot(apparenceParDefaut());
+    showToast('🤖 ' + (m.nom || 'Ton robot') + ' t\'a rejoint : il t\'attend dans le vaisseau');
+  } catch(e){ journal('erreur', 'robot de départ', e.message || String(e), true); }
+  finally { robotDepartEnCours = false; }
 }
 const modeleAvatarPret = (m)=> !!(m && m.vuesDeplacement && VUES_AVATAR.every(k=> m.vuesDeplacement[k]));
 function apparencesDebloquees(){ return new Set(((typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.apparencesDebloquees) || [])); }
@@ -8886,6 +8914,7 @@ function watchPlayerQuests(uid){
   if (!db) return;
   db.collection('players').doc(uid).onSnapshot((doc)=>{
     playerSelfData = doc.exists ? doc.data() : null;
+    setTimeout(()=>{ try { if (typeof verifierRobotDepart === 'function') verifierRobotDepart(); } catch(e){} }, 1500);   // v729
     /* v477 : le vaisseau actif dépend de la fiche joueur (vaisseauId). Même prudence que pour
        robotId juste en dessous : on ne recule jamais sur l'absence d'un champ — c'est le
        vaisseau de départ qui prend le relais, pas une remise à zéro. */
@@ -19666,6 +19695,7 @@ if (ultimesCol){
 if (robotsModelesCol){
   robotsModelesCol.onSnapshot((snap)=>{
     robotsModeles = snap.docs.map(d=> ({ id:d.id, ...d.data() }));
+    setTimeout(()=>{ try { if (typeof verifierRobotDepart === 'function') verifierRobotDepart(); } catch(e){} }, 1500);   // v729
     robotsModeles.sort((x, y)=> (CLES_VICES.indexOf(x.vice) - CLES_VICES.indexOf(y.vice)) || String(x.nom||'').localeCompare(String(y.nom||''), 'fr'));
     const st = document.getElementById('robotsModelesStatusTxt');
     if (st) st.textContent = robotsModeles.length ? robotsModeles.length + ' modèle(s)' : 'Aucun modèle pour le moment.';
@@ -20700,6 +20730,7 @@ function lireFormRobotModele(){
   f.pirFuite = num('rmPirFuite', 0, 100, PIRATAGE_DEFAUT.fuite);
   f.phraseNaissance = (document.getElementById('rmPhraseNaissance') || {}).value || '';   // v518
   f.apparence = ((document.getElementById('rmApparence') || {}).value || '').trim();   // v612
+  f.robotDepart = !!(document.getElementById('rmDepart') || {}).checked;   // v729
   f.fab = { processeur: num('rmFabProcesseur', 0, 20, FABRICATION_DEFAUT.processeur), chassis: num('rmFabChassis', 0, 20, FABRICATION_DEFAUT.chassis),
     articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
   return f;
@@ -20761,6 +20792,8 @@ function renderRobotModeleForm(){
     </label>
     <p class="meta" style="margin:4px 0 0; font-size:11px;">La phrase de la scène de naissance, quand il sort de l'atelier. Vide : une phrase passe-partout.</p>
     ${editingRobotModeleId ? '<button type="button" class="btn-secondary" id="rmDialogueBtn" style="width:100%; margin-top:8px;">💬 Son dialogue dans sa chambre (fiche PNJ)</button><p class="meta" style="margin:4px 0 0; font-size:11px;">Ce qu\'il dit quand on vient le voir, écrit dans l\'éditeur des PNJ. Les réponses peuvent montrer ses stats, décorer, gérer l\'équipe ou le renvoyer (🚀 Action à bord).</p>' : ''}
+    <label style="display:flex; gap:8px; align-items:center; margin:10px 0 0;"><input type="checkbox" id="rmDepart" style="width:auto;" ${f.robotDepart ? 'checked' : ''}> <b>⭐ Robot de départ</b></label>
+    <p class="meta" style="margin:2px 0 0; font-size:11px;">Donné à chaque joueur au début du jeu, avec sa chambre. On ne peut pas le renvoyer, et son apparence est toujours débloquée : c'est l'apparence par défaut. Un seul modèle à la fois.</p>
     <div class="field-label">🎁 Sa panoplie — pour se synchroniser avec lui</div>
     <p class="meta" style="margin:0 0 6px; font-size:11px;">Les objets précis qu'il veut dans sa chambre. Quand ils y sont TOUS posés, il propose « Synchronisons-nous » (il devient ton apparence) ; si l'un est retiré, la synchronisation est perdue. L'indice, c'est ce qu'il dit pour le réclamer (vide : un indice tiré de la catégorie de l'objet). Sans panoplie, pas de synchronisation.</p>
     <div id="rmPanoplie"></div>
@@ -20905,7 +20938,9 @@ function cablerFormRobotModele(){
       stats: f.stats ? Object.assign({}, f.stats) : (editingRobotModeleId ? firebase.firestore.FieldValue.delete() : null),   // v526
 
       ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
-      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', panoplie: (f.panoplie || []).filter(p=> p && p.itemId).map(p=> ({ itemId: p.itemId, indice: String(p.indice || '').trim() })), ...images, updatedAt: Date.now() };   // v728 : panoplie
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', panoplie: (f.panoplie || []).filter(p=> p && p.itemId).map(p=> ({ itemId: p.itemId, indice: String(p.indice || '').trim() })), robotDepart: !!f.robotDepart, ...images, updatedAt: Date.now() };   // v728 : panoplie ; v729 : robot de départ
+    /* v729 : un seul robot de départ — les autres modèles perdent l'étoile */
+    if (f.robotDepart) robotsModeles.filter(m=> m.robotDepart && m.id !== editingRobotModeleId).forEach(m=> robotsModelesCol.doc(m.id).set({ robotDepart: false }, { merge:true }).catch(()=>{}));
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -20943,7 +20978,7 @@ function renderRobotsModelesList(){
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', stats: statsValides(m.stats), trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
-      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '', repliques: Object.assign({}, m.repliques || {}), panoplie: (m.panoplie || []).map(p=> Object.assign({}, p)),   // v728   // v612 (la phrase ne se rechargeait pas) · v624 répliques
+      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '', repliques: Object.assign({}, m.repliques || {}), panoplie: (m.panoplie || []).map(p=> Object.assign({}, p)), robotDepart: !!m.robotDepart,   // v728, v729   // v612 (la phrase ne se rechargeait pas) · v624 répliques
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
       chambreImagePath:m.chambreImagePath||null, chambreImageRef:m.chambreImageRef||null, chambreImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
@@ -25817,6 +25852,7 @@ if (recruitsCol){
       });
     }
     allRecruitsRaw = snap.docs.map(d=> cacheRecrues.get(d.id)).filter(Boolean);
+    recruesChargees = true; setTimeout(()=>{ try { verifierRobotDepart(); } catch(e){} }, 3000);   // v729
     // Migration douce : les recrues créées avant l'ajout de l'appartenance n'ont pas d'ownerUid.
     // On les rattache une fois au joueur connecté qui les rencontre en premier.
     if (currentUser){
@@ -28101,6 +28137,7 @@ document.getElementById('recruitDismissBtn').addEventListener('click', ()=>{
 /* Renvoi définitif, extrait lui aussi pour servir aux icônes de chambre. */
 async function dismissRecruit(recruit, apres){
   if (!recruit) return;
+  if (estRobotDepart(recruit)){ showToast(recruit.name + ' est ton robot de départ : il reste avec toi'); return; }   // v729
   if (!(await appConfirm(`Renvoyer ${recruit.name} ? Cette action est définitive.`))) return;
   return executerRenvoi(recruit, apres);
 }
@@ -28122,6 +28159,7 @@ function viderBacsDeLAtelier(recruit){
 }
 function executerRenvoi(recruit, apres){
   if (!recruit) return;
+  if (estRobotDepart(recruit)){ showToast(recruit.name + ' est ton robot de départ : il reste avec toi'); return; }   // v729
   viderBacsDeLAtelier(recruit);
   recruitEquippedItems(recruit).forEach(it=> returnItemToStock(it.id));
   if (playerDocRef && activeTeamIds.includes(recruit.id)){
@@ -29176,7 +29214,7 @@ function renderRobotPicker(){
   wrap.innerHTML = '';
   const hint = document.getElementById('optionsRobotHint');
   const deb = apparencesDebloquees();   // v727 : seulement les robots avec qui on s'est synchronisé
-  const possedes = modelesAvatarPossedes().filter(m=> deb.has(m.id) || myRobotId === 'modele:' + m.id);
+  const possedes = modelesAvatarPossedes().filter(m=> deb.has(m.id) || m.robotDepart || myRobotId === 'modele:' + m.id);   // v729
   if (!robots.length && !possedes.length){
     if (hint) hint.textContent = "Aucun robot disponible pour l'instant.";
     return;
@@ -36908,7 +36946,12 @@ async function ouvrirDialogueRobot(hab){
   let f = ficheDialogueDuModele(m);
   f = f ? ficheJouable(f) : null;
   if (!f) f = { id: 'chambre_' + (m ? m.id : hab.id), name: '', interactionType: 'dialogue', chambreModeleId: m ? m.id : null, dialogueSteps: stepsDialogueChambre(m) };
-  const c = Object.assign({}, avecEnvies(avecSynchro(f, m), hab, m), { name: hab.name || f.name || (m && m.nom) || 'Robot' });
+  let c = Object.assign({}, avecEnvies(avecSynchro(f, m), hab, m), { name: hab.name || f.name || (m && m.nom) || 'Robot' });
+  if (estRobotDepart(hab) && Array.isArray(c.dialogueSteps) && c.dialogueSteps[0]){   // v729 : on ne lui propose pas de partir
+    const st = c.dialogueSteps.map(x=> Object.assign({}, x));
+    st[0].choices = (st[0].choices || []).filter(x=> !(x && (x.action === 'renvoyer' || /propre vie/i.test(x.label || ''))));
+    c = Object.assign({}, c, { dialogueSteps: st });
+  }
   /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours. */
   /* v694 : l'IMAGE DE BUSTE posée dans la fiche de dialogue passe en premier ; le cadrage du modèle
      ne sert que s'il n'y en a pas (avant, il la masquait) */
