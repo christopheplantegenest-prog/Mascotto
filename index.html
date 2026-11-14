@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v727</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v728</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8336,7 +8336,7 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
   }
   if (ch.action === 'synchro' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){   // v727
     const r = recrueDuPersonnage(activeCreature), m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;
-    if (!modeleAvatarPret(m) || myRobotId === 'modele:' + m.id) return false;
+    if (!modeleAvatarPret(m) || !panoplieComplete(r) || myRobotId === 'modele:' + m.id) return false;   // v728 : la panoplie complète
   }
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
@@ -8563,6 +8563,52 @@ const ACTIONS_A_BORD = {
 /* v727 — LA SYNCHRONISATION. Dans sa chambre, le robot propose de se synchroniser : son apparence est
    débloquée (pour toujours) et devient tout de suite celle du joueur sur la carte. Options → 🤖 Mon
    apparence ne propose plus que les robots débloqués ainsi. */
+/* v728 — LA PANOPLIE (14/11) : la synchronisation n'est possible que si TOUS les objets de la panoplie du
+   modèle sont posés dans la chambre du robot. Retirer l'un d'eux fait perdre la synchronisation : le
+   joueur reprend son apparence par défaut. Le robot réclame ses objets par indices (« Qu'est-ce qui te
+   ferait plaisir ? ») et réagit quand on pose ou retire l'un d'eux. */
+function panoplieDuModele(m){ return (m && Array.isArray(m.panoplie)) ? m.panoplie.filter(p=> p && p.itemId && objetDeco(p.itemId)) : []; }
+function panopliePresente(hab){
+  const m = hab && hab.robotModeleId ? ctModele(hab.robotModeleId) : null, p = panoplieDuModele(m);
+  const poses = new Set(Object.values((decoDeChambre(hab) || {}).objets || {}));
+  return p.filter(x=> poses.has(x.itemId)).map(x=> x.itemId);
+}
+function panoplieComplete(hab){
+  const m = hab && hab.robotModeleId ? ctModele(hab.robotModeleId) : null, p = panoplieDuModele(m);
+  return !!p.length && panopliePresente(hab).length === p.length;
+}
+const ARTICLES_CATEGORIE = { 'Affiche':'une affiche', 'Panneau':'un panneau', 'Écran':'un écran', 'Étagère':'une étagère', 'Armoire / rangement':'un rangement',
+  'Caisse / coffre':'un coffre', 'Machine':'une machine', 'Luminaire':'une lumière', 'Plante':'une plante', 'Tapis':'un tapis', 'Table':'une table',
+  'Siège':'un siège', 'Lit':'un lit', 'Objet sur socle':'un bel objet sur un socle' };
+function indiceParDefaut(it){
+  const c = categorieMobilier(it && it.mob && it.mob.categorie, it && it.name);
+  return 'Il me manque quelque chose dans ma chambre… ' + (ARTICLES_CATEGORIE[c] || 'un objet') + ', peut-être.';
+}
+const photosPanoplie = {};   // robot → les objets de sa panoplie posés, à la dernière vérification
+function photographierPanoplie(hab){ if (hab) photosPanoplie[hab.id] = panopliePresente(hab); }
+async function suivrePanoplie(hab){
+  const m = hab && hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
+  if (!panoplieDuModele(m).length) return;
+  const avant = photosPanoplie[hab.id], apres = panopliePresente(hab);
+  photosPanoplie[hab.id] = apres;
+  const nom = hab.name || m.nom || 'Ton robot';
+  if (avant){
+    const ajoute = apres.filter(i=> !avant.includes(i)), retire = avant.filter(i=> !apres.includes(i));
+    if (ajoute.length) showToast(nom + ' : « ' + (panoplieComplete(hab) ? 'C\'est parfait… Ma chambre est enfin complète. On pourrait se synchroniser, toi et moi.' : 'Oh ! C\'est exactement ce qu\'il me fallait !') + ' »');
+    else if (retire.length) showToast(nom + ' : « Hé… j\'aimais bien ça, moi. »');
+  }
+  if (!panoplieComplete(hab)) await perdreSynchro(m.id);
+}
+async function perdreSynchro(mid){
+  /* un autre robot du même modèle, à la panoplie complète, garde la synchronisation */
+  if ((recruits || []).some(r=> r && r.robotModeleId === mid && r.chambreNo && panoplieComplete(r))) return;
+  const deb = (typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.apparencesDebloquees) || [];
+  const etait = deb.includes(mid), portee = myRobotId === 'modele:' + mid;
+  if (!etait && !portee) return;
+  if (playerSelfData) playerSelfData.apparencesDebloquees = deb.filter(x=> x !== mid);
+  try { if (db && currentUser) await db.collection('players').doc(currentUser.uid).set({ apparencesDebloquees: firebase.firestore.FieldValue.arrayRemove(mid) }, { merge:true }); } catch(e){}
+  if (portee){ setMyRobot(null); showToast('🔗 Synchronisation perdue : tu reprends ton apparence par défaut'); }
+}
 const modeleAvatarPret = (m)=> !!(m && m.vuesDeplacement && VUES_AVATAR.every(k=> m.vuesDeplacement[k]));
 function apparencesDebloquees(){ return new Set(((typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.apparencesDebloquees) || [])); }
 async function synchroniserAvecModele(mid){
@@ -8612,7 +8658,7 @@ function executerActionABord(action, creature){
     return;
   }
   if (action === 'decorer'){ ouvrirDecoration(r); return; }
-  if (action === 'synchro'){ synchroniserAvecModele(r.robotModeleId); return; }   // v727
+  if (action === 'synchro'){ if (panoplieComplete(r)) synchroniserAvecModele(r.robotModeleId); return; }   // v727, v728
   if (action === 'equipeOui' || action === 'equipeNon'){
     if (activeTeamIds.includes(r.id) !== (action === 'equipeNon')) return;   // déjà comme il faut
     toggleRecruitTeam(r);
@@ -20715,6 +20761,9 @@ function renderRobotModeleForm(){
     </label>
     <p class="meta" style="margin:4px 0 0; font-size:11px;">La phrase de la scène de naissance, quand il sort de l'atelier. Vide : une phrase passe-partout.</p>
     ${editingRobotModeleId ? '<button type="button" class="btn-secondary" id="rmDialogueBtn" style="width:100%; margin-top:8px;">💬 Son dialogue dans sa chambre (fiche PNJ)</button><p class="meta" style="margin:4px 0 0; font-size:11px;">Ce qu\'il dit quand on vient le voir, écrit dans l\'éditeur des PNJ. Les réponses peuvent montrer ses stats, décorer, gérer l\'équipe ou le renvoyer (🚀 Action à bord).</p>' : ''}
+    <div class="field-label">🎁 Sa panoplie — pour se synchroniser avec lui</div>
+    <p class="meta" style="margin:0 0 6px; font-size:11px;">Les objets précis qu'il veut dans sa chambre. Quand ils y sont TOUS posés, il propose « Synchronisons-nous » (il devient ton apparence) ; si l'un est retiré, la synchronisation est perdue. L'indice, c'est ce qu'il dit pour le réclamer (vide : un indice tiré de la catégorie de l'objet). Sans panoplie, pas de synchronisation.</p>
+    <div id="rmPanoplie"></div>
     <label class="meta" style="display:block; margin-top:8px;">🎨 Apparence (pour dessiner ses images)
       <textarea id="rmApparence" class="field-input" rows="5" placeholder="Forme, dessus de la tête, ventre, dos, dessous, matière, couleurs…">${htmlEsc(f.apparence || '')}</textarea>
     </label>
@@ -20856,7 +20905,7 @@ function cablerFormRobotModele(){
       stats: f.stats ? Object.assign({}, f.stats) : (editingRobotModeleId ? firebase.firestore.FieldValue.delete() : null),   // v526
 
       ...(editingRobotModeleId ? { liste: firebase.firestore.FieldValue.delete() } : {}),   // v476 : l'ancienne liste apprenable s'efface
-      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', ...images, updatedAt: Date.now() };
+      pirCadenas:f.pirCadenas, pirVitesse:f.pirVitesse, pirZone:f.pirZone, pirFuite:f.pirFuite, fab: f.fab || Object.assign({}, FABRICATION_DEFAUT), apparence: f.apparence || '', phraseNaissance: f.phraseNaissance || '', panoplie: (f.panoplie || []).filter(p=> p && p.itemId).map(p=> ({ itemId: p.itemId, indice: String(p.indice || '').trim() })), ...images, updatedAt: Date.now() };   // v728 : panoplie
     const op = editingRobotModeleId ? robotsModelesCol.doc(editingRobotModeleId).set(data, { merge:true }) : robotsModelesCol.add({ ...data, createdAt: Date.now() });
     op.then(()=>{
       showToast(editingRobotModeleId ? 'Modèle mis à jour' : 'Modèle ajouté');
@@ -20894,7 +20943,7 @@ function renderRobotsModelesList(){
     editingRobotModeleId = m.id;
     rmBrouillon = { nom:m.nom||'', vice:m.vice||CLES_VICES[0], profil:m.profil||'equilibre', stats: statsValides(m.stats), trait:m.trait||'aucun', immunites:(m.immunites||[]).slice(), jeu:(m.jeu||[]).slice(),
       pirCadenas:m.pirCadenas!=null?m.pirCadenas:PIRATAGE_DEFAUT.cadenas, pirVitesse:m.pirVitesse!=null?m.pirVitesse:PIRATAGE_DEFAUT.vitesse, pirZone:m.pirZone!=null?m.pirZone:PIRATAGE_DEFAUT.zone, pirFuite:m.pirFuite!=null?m.pirFuite:PIRATAGE_DEFAUT.fuite,
-      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '', repliques: Object.assign({}, m.repliques || {}),   // v612 (la phrase ne se rechargeait pas) · v624 répliques
+      fab: fabricationDuModele(m), apparence: m.apparence || '', phraseNaissance: m.phraseNaissance || '', repliques: Object.assign({}, m.repliques || {}), panoplie: (m.panoplie || []).map(p=> Object.assign({}, p)),   // v728   // v612 (la phrase ne se rechargeait pas) · v624 répliques
       faceImagePath:m.faceImagePath||null, faceImageRef:m.faceImageRef||null, faceImageDataUrl:null, dosImagePath:m.dosImagePath||null, dosImageRef:m.dosImageRef||null, dosImageDataUrl:null,
       chambreImagePath:m.chambreImagePath||null, chambreImageRef:m.chambreImageRef||null, chambreImageDataUrl:null,
       imageScale:m.imageScale==null?100:m.imageScale, offsetFace:m.offsetFace||0, offsetDos:m.offsetDos||0, portraitCrop:m.portraitCrop||null };
@@ -22887,7 +22936,30 @@ function renderApercuCombatModele(){
   ['rmEchelle','rmOffsetFace','rmOffsetDos'].forEach((id, i)=>{ const el = document.getElementById(id); const val = [f.imageScale == null ? 100 : f.imageScale, f.offsetFace || 0, f.offsetDos || 0][i]; if (el && +el.value !== val) el.value = val; });
 }
 /* v628 — dans l'éditeur du modèle : ses cinq vues de déplacement, et sa fiche de dialogue */
+/* v728 — la panoplie du modèle : des objets précis de la bibliothèque, chacun avec son indice */
+function dessinerPanoplieModele(){
+  const box = document.getElementById('rmPanoplie'), f = rmBrouillon;
+  if (!box || !f) return;
+  f.panoplie = Array.isArray(f.panoplie) ? f.panoplie : [];
+  const meubles = (typeof items !== 'undefined' ? items : []).filter(it=> it && it.deco && TYPES_DECO[it.deco])
+    .sort((a, b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+  const pris = new Set(f.panoplie.map(p=> p.itemId));
+  box.innerHTML = f.panoplie.map((p, i)=>{
+    const it = objetDeco(p.itemId);
+    return `<div style="display:flex; gap:6px; align-items:flex-start; margin-bottom:6px; padding:6px; border-radius:10px; background:rgba(128,128,128,.12);">
+      ${it && urlImageItem(it) ? `<img src="${urlImageItem(it)}" style="width:40px; height:40px; object-fit:contain; flex:none;">` : '<div style="width:40px; height:40px; flex:none; display:flex; align-items:center; justify-content:center;">❔</div>'}
+      <div style="flex:1; min-width:0;"><div style="font-weight:700; font-size:12.5px;">${it ? TYPES_DECO[it.deco].emoji + ' ' + htmlEsc(it.name || 'Objet') : '⚠️ objet supprimé de la bibliothèque'}</div>
+        <input type="text" class="field-input" data-pano-indice="${i}" maxlength="160" value="${htmlEsc(p.indice || '')}" placeholder="${htmlEsc(it ? indiceParDefaut(it) : '')}" style="margin-top:4px; font-size:12px;"></div>
+      <button type="button" class="btn-secondary" data-pano-suppr="${i}" style="flex:none; padding:4px 8px;">🗑️</button></div>`;
+  }).join('') + `<select class="field-input" data-pano-ajout><option value="">➕ Ajouter un objet de la bibliothèque…</option>${Object.keys(TYPES_DECO).filter(t=> meubles.some(it=> it.deco === t)).map(t=>
+      `<optgroup label="${TYPES_DECO[t].emoji} ${htmlEsc(TYPES_DECO[t].nom)}">${meubles.filter(it=> it.deco === t && !pris.has(it.id)).map(it=> `<option value="${it.id}">${htmlEsc(it.name || 'Objet')}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  box.querySelectorAll('[data-pano-indice]').forEach(el=> el.addEventListener('input', ()=>{ const p = f.panoplie[+el.dataset.panoIndice]; if (p) p.indice = el.value; }));
+  box.querySelectorAll('[data-pano-suppr]').forEach(b=> b.addEventListener('click', ()=>{ f.panoplie.splice(+b.dataset.panoSuppr, 1); dessinerPanoplieModele(); }));
+  const sel = box.querySelector('[data-pano-ajout]');
+  if (sel) sel.addEventListener('change', ()=>{ if (sel.value){ f.panoplie.push({ itemId: sel.value, indice: '' }); dessinerPanoplieModele(); } });
+}
 function cablerVuesEtDialogueModele(){
+  dessinerPanoplieModele();   // v728
   const id = editingRobotModeleId;
   const d = document.getElementById('rmDialogueBtn');
   if (d) d.addEventListener('click', ()=>{ const m = robotsModeles.find(x=> x.id === id); ouvrirFicheDialogueDuModele(m); });
@@ -30787,6 +30859,7 @@ function openRecruitRoom(hab){
       document.getElementById('quartersOverlay').classList.remove('show');
       showToast((hab.recruitType === 'artisan' ? '🛠️ Atelier de ' : '🛏️ Chambre de ') + hab.name + (provisoire ? ' (pas encore aménagée)' : ''));
       roomNeutreOuverte = !!neutre;   // v624 : la chambre neutre se vit en dialogue
+      if (neutre) photographierPanoplie(hab);   // v728
       openSceneBigImage(url, true, neutre);
       /* Depuis sa chambre, on accède à sa fiche : équipement, craft, apprentissage. C'est ce qui
          fait de la chambre un lieu utile et pas seulement un décor à regarder. */
@@ -36528,6 +36601,7 @@ function decoDeChambre(hab, brute){
 async function enregistrerDecoChambre(hab, deco){
   if (!hab || !hab.chambreNo || !playerDocRef) return;
   if (playerSelfData){ playerSelfData.chambres = playerSelfData.chambres || {}; playerSelfData.chambres[hab.chambreNo] = deco; }
+  try { suivrePanoplie(hab); } catch(e){}   // v728 : réactions du robot, perte de la synchronisation
   /* v682 : la chambre est REMPLACÉE en entier. Avant, un set(merge) fusionnait les cartes : un objet
      retiré restait dans la sauvegarde et revenait s'afficher à son ancienne place. */
   try { await playerDocRef.update({ ['chambres.' + hab.chambreNo]: deco }); }
@@ -36767,6 +36841,21 @@ function stepsDialogueChambre(m, rep){
 /* v727 : les fiches de dialogue déjà écrites n'ont pas le choix « Synchronisons-nous » : on l'ajoute au
    moment de parler (avant « Il est temps… »), sans toucher à la fiche. Une fiche qui a déjà un choix
    🔗 (posé à la main dans l'éditeur des PNJ) est laissée telle quelle. */
+/* v728 : « Qu'est-ce qui te ferait plaisir ? » — il réclame le premier objet de sa panoplie qui manque, par son indice */
+function avecEnvies(f, hab, m){
+  const p = panoplieDuModele(m);
+  const steps = Array.isArray(f.dialogueSteps) ? f.dialogueSteps : [];
+  if (!p.length || !steps.length) return f;
+  const poses = new Set(panopliePresente(hab));
+  const manque = p.find(x=> !poses.has(x.itemId));
+  const texte = manque ? (manque.indice || indiceParDefaut(objetDeco(manque.itemId))) : 'Ma chambre est parfaite. Je me sens vraiment chez moi.';
+  const s2 = steps.map(st=> Object.assign({}, st, { choices: (st.choices || []).slice() }));
+  s2.push({ text: texte, textVariants: [], choices: [ { id: 'cen1', label: 'Autre chose', next: 0 }, { id: 'cen2', label: 'À plus tard', next: null } ] });
+  const ch = s2[0].choices;
+  const i = ch.findIndex(x=> x && (x.action === 'synchro' || x.action === 'renvoyer' || /propre vie/i.test(x.label || '')));
+  ch.splice(i >= 0 ? i : ch.length, 0, { id: 'cenv', label: 'Qu\'est-ce qui te ferait plaisir ?', next: s2.length - 1 });
+  return Object.assign({}, f, { dialogueSteps: s2 });
+}
 function avecSynchro(f, m){
   const steps = Array.isArray(f.dialogueSteps) ? f.dialogueSteps : [];
   if (!steps.length || steps.some(st=> (st.choices || []).some(c=> c && c.action === 'synchro'))) return f;
@@ -36819,7 +36908,7 @@ async function ouvrirDialogueRobot(hab){
   let f = ficheDialogueDuModele(m);
   f = f ? ficheJouable(f) : null;
   if (!f) f = { id: 'chambre_' + (m ? m.id : hab.id), name: '', interactionType: 'dialogue', chambreModeleId: m ? m.id : null, dialogueSteps: stepsDialogueChambre(m) };
-  const c = Object.assign({}, avecSynchro(f, m), { name: hab.name || f.name || (m && m.nom) || 'Robot' });
+  const c = Object.assign({}, avecEnvies(avecSynchro(f, m), hab, m), { name: hab.name || f.name || (m && m.nom) || 'Robot' });
   /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours. */
   /* v694 : l'IMAGE DE BUSTE posée dans la fiche de dialogue passe en premier ; le cadrage du modèle
      ne sert que s'il n'y en a pas (avant, il la masquait) */
