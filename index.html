@@ -1510,7 +1510,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v735</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v736</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -2235,6 +2235,7 @@
       <button class="btn-capture" id="mapIconEditBtn" style="width:100%; margin-bottom:8px;">✏️ Modifier</button>
       <button class="btn-secondary" id="mapIconResizeBtn" style="width:100%; margin-bottom:8px;">↔️ Redimensionner</button>
       <button class="btn-secondary" id="mapIconRotateBtn" style="width:100%;">🔄 Rotation</button>
+      <button class="btn-secondary" id="mapIconMiroirBtn" style="width:100%; margin-top:8px;">↔ Entrée à gauche</button>
     </div>
     <div id="mapIconResizePanel" style="display:none; text-align:center;">
       <p class="meta">Taille de l'image sur la carte</p>
@@ -7755,6 +7756,7 @@ function openMapIconMenu(c){
   document.getElementById('mapIconMenuMain').style.display = 'block';
   document.getElementById('mapIconResizePanel').style.display = 'none';
   document.getElementById('mapIconRotatePanel').style.display = 'none';
+  majBoutonMiroir(c);   // v736
   document.getElementById('mapIconMenuOverlay').classList.add('show');
 }
 document.getElementById('mapIconMenuCloseBtn').addEventListener('click', ()=>{
@@ -7772,7 +7774,7 @@ function applyMapIconTransform(c){
   const el = c.marker.getElement();
   if (!el) return;
   const img = el.querySelector('img, .creature-icon');
-  if (img) img.style.transform = `scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg)`;
+  if (img) img.style.transform = `scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg)` + (c.mapIconMiroir ? ' scaleX(-1)' : '');
 }
 function updateMapIconSizeLabel(c){
   document.getElementById('mapIconSizeLabel').textContent = Math.round((c.mapIconScale!=null?c.mapIconScale:1)*100) + '%';
@@ -7822,6 +7824,19 @@ function adjustMapIconRotation(delta){
   applyMapIconTransform(c);
   creatureCol.doc(c.id).update({ mapIconRotation: rot }).catch(()=>{});
 }
+/* v736 — le bâtiment retourné en miroir : son entrée (dessinée à droite) passe à gauche */
+function majBoutonMiroir(c){
+  const b = document.getElementById('mapIconMiroirBtn');
+  if (b) b.textContent = (c && c.mapIconMiroir) ? '↔ Entrée à droite' : '↔ Entrée à gauche';
+}
+document.getElementById('mapIconMiroirBtn').addEventListener('click', ()=>{
+  const c = creatures.find(x=>x.id===mapIconMenuCreatureId);
+  if (!c || !creatureCol) return;
+  c.mapIconMiroir = !c.mapIconMiroir;
+  applyMapIconTransform(c);
+  majBoutonMiroir(c);
+  creatureCol.doc(c.id).update({ mapIconMiroir: c.mapIconMiroir }).catch(()=>{});
+});
 document.getElementById('mapIconRotMinusBtn').addEventListener('click', ()=> adjustMapIconRotation(-15));
 document.getElementById('mapIconRotPlusBtn').addEventListener('click', ()=> adjustMapIconRotation(15));
 
@@ -7876,7 +7891,7 @@ function renderCreatureMarkers(){
   creatures.forEach(c=>{
     if (c.marker) return;
     const fallbackEmoji = c.interactionType === 'zone' ? '🗺️' : (c.emoji || (c.interactionType === 'concession' ? '🚀' : '🐾'));
-    const iconTransform = `transform:scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg);`;
+    const iconTransform = `transform:scale(${c.mapIconScale!=null?c.mapIconScale:1}) rotate(${c.mapIconRotation||0}deg)${c.mapIconMiroir ? ' scaleX(-1)' : ''};`;   // v736 : miroir
     const inner = c.imageUrl
       ? `<img src="${c.imageUrl}" id="icon-${c.id}" style="width:96px;height:96px;object-fit:contain;${iconTransform}">`
       : `<div class="creature-icon" id="icon-${c.id}" style="${iconTransform}">${fallbackEmoji}</div>`;
@@ -12194,6 +12209,19 @@ document.getElementById('bibleBtn').addEventListener('click', ouvrirBible);
 try { bibleFond(); } catch(e){}   // dès le démarrage : l'import et l'export sont rangés dans la Bible
 
 /* v711 — le bâtiment d'une zone vu sur la carte, quand le fichier d'import n'a pas donné son prompt */
+/* v736 — LE STANDARD DES BÂTIMENTS DE LA CARTE (demande du 14/11) : même angle, même gabarit, même
+   niveau de détail pour tous, et l'entrée TOUJOURS sur la face avant droite. Le jeu retourne l'image en
+   miroir quand l'entrée doit être à gauche (menu de l'icône sur la carte : ↔). Son image de référence
+   (ref-angle-batiment.jpg) part avec chaque prompt, pour l'angle seulement. */
+const REF_ANGLE_BATIMENT = 'ref-angle-batiment.jpg';
+const STANDARD_BATIMENT = `STANDARD DES BÂTIMENTS DE LA CARTE (le même pour tous, à respecter à la lettre) :
+ANGLE : exactement celui de l'image jointe — vue isométrique de jeu vidéo, de haut en trois-quarts, le bâtiment posé en losange : on voit la face avant GAUCHE, la face avant DROITE et le toit. Même hauteur de caméra, même inclinaison.
+L'IMAGE JOINTE ne sert QUE pour l'angle, le gabarit et le niveau de détail : ne reprends ni sa forme, ni ses couleurs, ni ses enseignes, ni ses objets.
+ENTRÉE : toujours sur la face avant DROITE, bien visible : un sas d'entrée, deux ou trois marches, deux petites bornes lumineuses. Aucune autre porte d'entrée visible.
+GABARIT : le bâtiment entier dans l'image, centré, avec une marge vide tout autour ; il occupe environ les deux tiers de la largeur. Il repose sur un socle sombre anthracite aux bords épais qui épouse son contour ; rien au-delà du socle (pas de terrain, pas de route).
+NIVEAU DE DÉTAIL : SIMPLE, pensé pour être lu en tout petit sur une carte de téléphone. De grands volumes nets aux bords bien épais, de grandes surfaces de couleur unie ; trois ou quatre éléments sur le toit au maximum (une verrière, un bloc technique, une antenne…) ; deux ou trois bacs de plantes au plus. Pas de petits objets (pas de banc, pas d'échelle, pas de coffret, pas de poubelle).
+INTERDITS : aucun texte, aucune lettre, aucun chiffre, aucun tag, aucun logo, aucune enseigne écrite (l'image peut être retournée en miroir) ; aucun personnage, aucun véhicule ; aucune ombre portée au sol autour du socle.
+FORMAT : image carrée, fond TRANSPARENT (PNG).`;
 function promptCarteParDefaut(z){
   const nom = (z && z.name) || 'le bâtiment', desc = String((z && (z.apparence || z.description)) || '').trim();
   return `Image pour la carte d'un jeu mobile : le bâtiment « ${nom} », vu de haut en trois-quarts (environ 45°), entier, isolé et centré, sur fond TRANSPARENT (PNG). Pas de sol autour, pas de route, pas de texte, pas d'ombre portée au loin.
@@ -13091,9 +13119,9 @@ async function ouvrirBrouillons(){
       const promptCarteZ = z.promptCarte || promptCarteParDefaut(z);
       let blocs = tache(okImgZone, '🏠 Image de « ' + esc(z.name) + ' » sur la carte',
         'C\'est le bâtiment que le joueur voit sur la carte, vu de haut en trois-quarts, sur fond transparent.',
-        '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, ajoute le dessin du bâtiment que Claude t\'a donné, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b>.',
+        '1. <b>📤 Envoyer à ChatGPT</b> (l\'image modèle d\'angle part avec), choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b>.<br>4. Sur la carte, si l\'entrée doit être à gauche : appui long sur le bâtiment → <b>↔ Entrée à gauche</b>.',
         bouton('data-envoi="carte|' + z.id + '"', '📤 Envoyer à ChatGPT', !okImgZone) + bouton('data-envoi-copie="carte|' + z.id + '"', '📋 Copier') + bouton('data-poser-img="' + z.id + '"', '📷 Choisir l\'image') + bouton('data-hebergee-img="' + z.id + '"', '📁 Image hébergée'));
-      envois['carte|' + z.id] = ()=> ({ texte: avecCharte(promptCarteZ, true), imgs: [] });
+      envois['carte|' + z.id] = ()=> ({ texte: avecCharte(promptCarteZ, true) + '\n\n' + STANDARD_BATIMENT, imgs: [fichierPourPartage('angle-batiment', REF_ANGLE_BATIMENT)] });
       blocs += tache(okPos, '📍 Placer « ' + esc(z.name) + ' » sur la carte',
         'Tant que la zone n\'a pas de position, personne ne peut y entrer.',
         '1. <b>✏️ Ouvrir la fiche</b> de la zone.<br>2. Règle sa position sur la carte (📍 dans la fiche).<br>3. <b>Enregistrer</b>, puis reviens au guide.',
@@ -15110,7 +15138,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
      tâches « à finir » apportées par l'import disparaîtraient au premier enregistrement. */
   const ficheAvant = editingId ? ficheParId(editingId) : null;
   if (ficheAvant){
-    ['apparence','aFaire','emplacementPrevu','promptCarte','pose','emplacementPointId','chambreModeleId'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
+    ['apparence','aFaire','emplacementPrevu','promptCarte','pose','emplacementPointId','chambreModeleId','mapIconMiroir'].concat(enCreation ? [] : ['aFaireFait']).forEach(k=>{ if (ficheAvant[k] !== undefined) data[k] = ficheAvant[k]; });
   }
   if (!(await controlerChevauchements(data, enCreation ? null : editingId))) return;
   const op = enCreation ? creatureCol.add({ ...data, createdAt: Date.now() }) : creatureCol.doc(editingId).set(data);
