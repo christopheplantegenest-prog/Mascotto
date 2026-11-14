@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v726</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v727</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -8334,6 +8334,10 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
     if (r && ch.action === 'equipeNon' && !activeTeamIds.includes(r.id)) return false;
     if (ch.action === 'decorer' && !(r && estRobotEnChambre(r) && chambreNeutrePrete())) return false;
   }
+  if (ch.action === 'synchro' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){   // v727
+    const r = recrueDuPersonnage(activeCreature), m = r && r.robotModeleId ? ctModele(r.robotModeleId) : null;
+    if (!modeleAvatarPret(m) || myRobotId === 'modele:' + m.id) return false;
+  }
   if (ch.once && choix[key]) return false;
   if (ch.questGive){
     const st = etatQuete(quetes, ch.questGive.questId);
@@ -8554,7 +8558,24 @@ const ACTIONS_A_BORD = {
   decorer:     { nom:'🎨 Décorer sa chambre' },
   equipeOui:   { nom:'⭐ Le prendre dans l\'équipe (caché s\'il y est)' },
   equipeNon:   { nom:'👋 Le sortir de l\'équipe (caché s\'il n\'y est pas)' },
+  synchro:     { nom:'🔗 Se synchroniser : son apparence sur la carte (caché sans ses 5 vues de déplacement, ou si c\'est déjà la tienne)' },   // v727
 };
+/* v727 — LA SYNCHRONISATION. Dans sa chambre, le robot propose de se synchroniser : son apparence est
+   débloquée (pour toujours) et devient tout de suite celle du joueur sur la carte. Options → 🤖 Mon
+   apparence ne propose plus que les robots débloqués ainsi. */
+const modeleAvatarPret = (m)=> !!(m && m.vuesDeplacement && VUES_AVATAR.every(k=> m.vuesDeplacement[k]));
+function apparencesDebloquees(){ return new Set(((typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.apparencesDebloquees) || [])); }
+async function synchroniserAvecModele(mid){
+  if (!mid) return;
+  if (typeof playerSelfData !== 'undefined' && playerSelfData){
+    const l = playerSelfData.apparencesDebloquees = playerSelfData.apparencesDebloquees || [];
+    if (!l.includes(mid)) l.push(mid);
+  }
+  try { if (db && currentUser) await db.collection('players').doc(currentUser.uid).set({ apparencesDebloquees: firebase.firestore.FieldValue.arrayUnion(mid) }, { merge:true }); }
+  catch(e){ showToast('Synchronisation non sauvegardée : ' + e.message); }
+  setMyRobot('modele:' + mid);
+  showToast('🔗 Synchronisé : c\'est son apparence sur la carte');
+}
 function recrueDuPersonnage(creature){
   if (!creature) return null;
   /* v628 : la fiche de dialogue d'un modèle parle pour le robot de la chambre ouverte */
@@ -8591,6 +8612,7 @@ function executerActionABord(action, creature){
     return;
   }
   if (action === 'decorer'){ ouvrirDecoration(r); return; }
+  if (action === 'synchro'){ synchroniserAvecModele(r.robotModeleId); return; }   // v727
   if (action === 'equipeOui' || action === 'equipeNon'){
     if (activeTeamIds.includes(r.id) !== (action === 'equipeNon')) return;   // déjà comme il faut
     toggleRecruitTeam(r);
@@ -13142,13 +13164,19 @@ async function ouvrirBrouillons(){
     envois['chciel'] = ()=> ({ texte: PROMPT_CIEL_VAISSEAU, imgs: [] });
     if (C.plancheCielRef) envois['chcielnuit'] = ()=> ({ texte: PROMPT_CIEL_NUIT, imgs: [fichierPourPartage('planche-ciels-jour', urlDeRef(C.plancheCielRef))] });
     envois['chsol'] = ()=> ({ texte: PROMPT_TEXTURES_SOL, imgs: [] });
-    if (C.imageRef) envois['chobj2'] = ()=> ({ texte: PROMPT_OBJETS_DECO_2, imgs: [fichierPourPartage('chambre-neutre', urlDeRef(C.imageRef))] });
+    if (refChambreModele()) envois['chobj2'] = ()=> ({ texte: PROMPT_OBJETS_DECO_2, imgs: [fichierPourPartage('chambre-neutre', urlDeRef(refChambreModele()))] });
+    /* v727 : l'image type de la chambre test — la chambre vide (caméra) et le couloir du vaisseau (style) partent avec */
+    envois['chtype'] = ()=> ({ texte: PROMPT_CHAMBRE_TYPE, imgs: [refChambreModele() ? fichierPourPartage('chambre-modele', urlDeRef(refChambreModele())) : null, fichierPourPartage('style-vaisseau', REF_STYLE_VAISSEAU)].filter(Boolean) });
     let ch = '<div style="font-weight:700; margin:14px 0 6px;">🛏️ Chambre des robots</div>'
       + '<p class="meta" style="font-size:12px;">La même chambre neutre pour tous les robots, que le joueur décore (🎨 dans la chambre). ' + objetsDeco.length + ' objet(s) de déco · ' + (C.textures || []).length + ' texture(s) de sol.</p>';
-    ch += tache(!!C.imageRef, '🛏️ Image de la CHAMBRE NEUTRE',
+    ch += tache(!!chambreRefActuelle, '🛏️ Image de la CHAMBRE NEUTRE',
       'La pièce vide, vue de face. Celle que tu m\'as montrée le 06/11 est parfaite : pose-la directement.',
       '<b>📷 Choisir l\'image</b>. (Pour en refaire une : 📤 Envoyer à ChatGPT.)',
-      bouton('data-poser-chambre="image"', '📷 Choisir l\'image', true) + bouton('data-envoi="chneutre"', '📤 Envoyer à ChatGPT'));
+      bouton('data-poser-chambre="imageactuelle"', '📷 Choisir l\'image', true) + bouton('data-envoi="chneutre"', '📤 Envoyer à ChatGPT'));
+    ch += tache(!!chambreRefTest, '🧪 Image de la CHAMBRE TEST',
+      'L\'image type déjà meublée, avec ses places libres (fenêtre, affiches, canapé, plantes, tapis). La chambre vide (pour la caméra) et le couloir du vaisseau (pour le style) partent avec le prompt. Laquelle des deux chambres le jeu montre : Édition → 🛏️ Chambre des robots.',
+      '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.',
+      bouton('data-envoi="chtype"', '📤 Envoyer à ChatGPT', !chambreRefTest) + bouton('data-envoi-copie="chtype"', '📋 Copier') + bouton('data-poser-chambre="imagetest"', '📷 Choisir l\'image'));
     if (C.imageRef) ch += '<p class="meta" style="margin:-2px 0 8px 22px; font-size:11px;">Les emplacements et l\'image se règlent dans Édition → 🛏️ Chambre des robots.</p>';
     ch += tache(cielsComplets > 0 && !cielsAttente, '☁️ SIX CIELS de jour',
       'Ce qu\'on voit par les fenêtres du vaisseau : six ciels neutres (nuages, brume, ciel dégagé…), sans soleil ni direction marquée pour aller sur n\'importe quelle fenêtre. Le ciel change chaque jour.',
@@ -29075,12 +29103,13 @@ function renderRobotPicker(){
   if (!wrap) return;
   wrap.innerHTML = '';
   const hint = document.getElementById('optionsRobotHint');
-  const possedes = modelesAvatarPossedes();   // v617
+  const deb = apparencesDebloquees();   // v727 : seulement les robots avec qui on s'est synchronisé
+  const possedes = modelesAvatarPossedes().filter(m=> deb.has(m.id) || myRobotId === 'modele:' + m.id);
   if (!robots.length && !possedes.length){
     if (hint) hint.textContent = "Aucun robot disponible pour l'instant.";
     return;
   }
-  if (hint) hint.textContent = 'Choisis le robot qui te représente sur la carte.';
+  if (hint) hint.textContent = 'Choisis le robot qui te représente sur la carte. Pour en débloquer un autre : parle-lui dans sa chambre → « Synchronisons-nous ».';
 
   const none = document.createElement('button');
   none.className = myRobotId ? '' : 'on';
@@ -35804,6 +35833,7 @@ function elementFenetre(pt, nuit, assombrir){
 let chambreVariante = 'actuelle';   // v724 : 'actuelle' ou 'test'
 /* v725 : la chambre ACTUELLE (vide) reste le MODÈLE DE PERSPECTIVE des meubles, même quand le jeu montre la chambre test */
 let chambreRefActuelle = null;
+let chambreRefTest = null;   // v727 : l'image type de la chambre test
 const refChambreModele = ()=> chambreRefActuelle || chambreConfig.imageRef;
 const REF_STYLE_VAISSEAU = 'ref-style-vaisseau.jpg';   // v725 : le couloir du vaisseau, référence de style (14/11)
 let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: [], plancheCielRef: null, placements: {} };
@@ -35815,7 +35845,7 @@ setTimeout(()=>{
       /* v724 : deux chambres à comparer — l'ACTUELLE (pièce vide + meubles posés) et la chambre TEST
          (image type déjà meublée par ChatGPT, quelques emplacements). Les ciels, textures, cadres et la
          lumière sont communs ; l'image, les emplacements et les réglages des meubles sont propres à chacune. */
-      chambreRefActuelle = d.imageRef || null;
+      chambreRefActuelle = d.imageRef || null; chambreRefTest = (d.test && d.test.imageRef) || null;
       const t = d.variante === 'test' ? (d.test || {}) : null;
       chambreVariante = t ? 'test' : 'actuelle';
       chambreConfig = { imageRef: (t ? t.imageRef : d.imageRef) || null, textures: d.textures || [], emplacements: (t ? t.emplacements : d.emplacements) || null,
@@ -35841,7 +35871,7 @@ async function enregistrerChambreConfig(){
 async function changerVarianteChambre(v){
   await chambreDoc().set({ variante: v === 'test' ? 'test' : null }, { merge:true });
   const d = (await chambreDoc().get()).data() || {};
-  chambreRefActuelle = d.imageRef || null;
+  chambreRefActuelle = d.imageRef || null; chambreRefTest = (d.test && d.test.imageRef) || null;
   const t = v === 'test' ? (d.test || {}) : null;
   chambreVariante = t ? 'test' : 'actuelle';
   Object.assign(chambreConfig, { imageRef: (t ? t.imageRef : d.imageRef) || null, emplacements: (t ? t.emplacements : d.emplacements) || null, placements: (t ? t.placements : d.placements) || {} });
@@ -36298,6 +36328,7 @@ const CLES_REPLIQUES = [
   { cle:'decorer',   nom:'« Décorons un peu ta chambre »',  ex:'Tu veux changer quelque chose ? Vas-y, je regarde.' },
   { cle:'equipeOui', nom:'« Viens dans mon équipe »',       ex:'Enfin. Je commençais à rouiller.' },
   { cle:'equipeNon', nom:'« J\'ai plus besoin de toi dans l\'équipe »', ex:'Comme tu veux. Je serai là.' },
+  { cle:'synchro',   nom:'« Synchronisons-nous » (il devient ton apparence)', ex:'Connexion établie. On ne fait plus qu\'un, capitaine.' },
   { cle:'adieu',     nom:'Quand on le renvoie (sa phrase d\'adieu)', ex:'Alors c\'est ici que nos routes se séparent. Prends soin de toi.' },
 ];
 const REPLIQUES_DEFAUT = {
@@ -36306,6 +36337,7 @@ const REPLIQUES_DEFAUT = {
   decorer: 'Ma chambre ? Fais comme chez toi… enfin, comme chez moi.',
   equipeOui: 'Je suis prêt. On y va quand tu veux.',
   equipeNon: 'Entendu. Je t\'attends ici.',
+  synchro: 'Synchronisation… c\'est fait. Sur la carte, c\'est moi qu\'on verra désormais.',   // v727
   adieu: 'Merci pour tout, capitaine. Je ne t\'oublierai pas.',
 };
 function repliqueDeModele(m, cle){
@@ -36357,9 +36389,8 @@ async function ouvrirReglagesChambre(){
       <button type="button" class="${chambreVariante === 'test' ? 'btn-primary' : 'btn-secondary'}" data-variante="test" style="flex:1;">🧪 Test</button>
     </div>
     <p class="meta" style="margin:0 0 8px; font-size:12px;">${chambreVariante === 'test'
-      ? '🧪 <b>Chambre test</b> : une image type déjà meublée par ChatGPT, avec quelques places laissées libres (fenêtre, affiches, canapé, plantes, tapis). Rien n\'est effacé de la chambre actuelle : repasse sur 🛏️ pour comparer.'
+      ? '🧪 <b>Chambre test</b> : une image type déjà meublée par ChatGPT, avec quelques places laissées libres (fenêtre, affiches, canapé, plantes, tapis). Rien n\'est effacé de la chambre actuelle : repasse sur 🛏️ pour comparer. Son image se demande dans 🧰 À finir.'
       : 'La même chambre neutre pour tous les robots ; chaque joueur décore celle de ses robots. Les planches (ciels, sols, objets) se font dans 🧰 À finir.'}</p>
-    ${chambreVariante === 'test' ? '<button type="button" class="btn-secondary" data-prompt-type style="width:100%; margin-bottom:8px;">📋 Prompt de l\'image type → ChatGPT</button>' : ''}
     ${url ? `<img src="${url}" style="width:100%; max-width:220px; display:block; margin:0 auto 8px; border-radius:8px;">` : '<p class="meta">Pas encore d\'image de chambre.</p>'}
     <div style="display:flex; flex-wrap:wrap; gap:6px;">
       <button type="button" class="btn-secondary" data-img style="flex:1 1 45%;">📷 ${url ? 'Changer l\'image' : 'Poser l\'image'}</button>
@@ -36382,9 +36413,6 @@ async function ouvrirReglagesChambre(){
     try { await changerVarianteChambre(b.dataset.variante); fond.remove(); ouvrirReglagesChambre(); showToast(chambreVariante === 'test' ? 'Le jeu montre la chambre test 🧪' : 'Le jeu montre la chambre actuelle 🛏️'); }
     catch(err){ showToast('Échec : ' + err.message); }
   }));
-  /* v725 : 📤 joint la chambre vide (caméra et forme) et le couloir du vaisseau (style) — préparés dès l'affichage */
-  const imgsType = chambreVariante === 'test' ? [refChambreModele() ? fichierPourPartage('chambre-modele', urlDeRef(refChambreModele())) : null, fichierPourPartage('style-vaisseau', REF_STYLE_VAISSEAU)].filter(Boolean) : [];
-  const bpt = fond.querySelector('[data-prompt-type]'); if (bpt) bpt.addEventListener('click', ()=> envoyerAChatGPT(PROMPT_CHAMBRE_TYPE, imgsType, bpt));
   fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
     chambreConfig.lumiere = { extinction: fond.querySelector('[data-ext]').value || '22:00', allumage: fond.querySelector('[data-all]').value || '07:00' };
     try { await enregistrerChambreConfig(); showToast('Enregistré ✅'); fond.remove(); } catch(err){ showToast('Échec : ' + err.message); }
@@ -36399,6 +36427,19 @@ async function poserPlancheChambre(quoi){
   const img = await choisirFichierImage();
   if (!img) return false;
   const t = Date.now();
+  if (quoi === 'imageactuelle' || quoi === 'imagetest'){   // v727 : depuis le guide, pour l'une ou l'autre chambre
+    const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1536, false));
+    if (!ref){ showToast('Échec : image non enregistrée'); return false; }
+    if (quoi === 'imagetest'){
+      try { await chambreDoc().update({ 'test.imageRef': ref }); } catch(e){ await chambreDoc().set({ test: { imageRef: ref } }, { merge:true }); }
+      chambreRefTest = ref; if (chambreVariante === 'test') chambreConfig.imageRef = ref;
+    } else {
+      await chambreDoc().set({ imageRef: ref }, { merge:true });
+      chambreRefActuelle = ref; if (chambreVariante !== 'test') chambreConfig.imageRef = ref;
+    }
+    chambreImageCache.clear();
+    showToast(quoi === 'imagetest' ? 'Image de la chambre test posée ✅' : 'Chambre neutre posée ✅'); return true;
+  }
   if (quoi === 'image'){
     const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1536, false));
     if (!ref){ showToast('Échec : image non enregistrée'); return false; }
@@ -36703,6 +36744,7 @@ function stepsDialogueChambre(m, rep){
       choix('Décorons un peu ta chambre', null, 'decorer'),
       choix('Viens dans mon équipe', 2, 'equipeOui'),
       choix('J\'ai plus besoin de toi dans l\'équipe', 3, 'equipeNon'),
+      choix('Synchronisons-nous', 6, 'synchro'),   // v727
       choix('Il est temps que tu vives ta propre vie', 4),
       choix('À plus tard', null),
     ] }, accueilApres ? { textApres: accueilApres } : {}),
@@ -36719,7 +36761,22 @@ function stepsDialogueChambre(m, rep){
       choix('Non, finalement, reste', 0),
     ] },
     { text: dit('adieu'), textVariants: [], choices: [ choix('Au revoir', null) ] },
+    { text: dit('synchro'), textVariants: [], choices: [ choix('Autre chose', 0), choix('À plus tard', null) ] },   // 6 — v727
   ];
+}
+/* v727 : les fiches de dialogue déjà écrites n'ont pas le choix « Synchronisons-nous » : on l'ajoute au
+   moment de parler (avant « Il est temps… »), sans toucher à la fiche. Une fiche qui a déjà un choix
+   🔗 (posé à la main dans l'éditeur des PNJ) est laissée telle quelle. */
+function avecSynchro(f, m){
+  const steps = Array.isArray(f.dialogueSteps) ? f.dialogueSteps : [];
+  if (!steps.length || steps.some(st=> (st.choices || []).some(c=> c && c.action === 'synchro'))) return f;
+  const s2 = JSON.parse(JSON.stringify(steps));
+  s2.push({ text: repliqueDeModele(m, 'synchro') || REPLIQUES_DEFAUT.synchro, textVariants: [], choices: [
+    { id: 'csy1', label: 'Autre chose', next: 0 }, { id: 'csy2', label: 'À plus tard', next: null } ] });
+  const ch = s2[0].choices = s2[0].choices || [];
+  const i = ch.findIndex(c=> c && c.action === 'renvoyer' || (c && /propre vie/i.test(c.label || '')));
+  ch.splice(i >= 0 ? i : ch.length, 0, { id: 'csync', label: 'Synchronisons-nous', next: s2.length - 1, action: 'synchro' });
+  return Object.assign({}, f, { dialogueSteps: s2 });
 }
 /* crée (ou remet à jour) la fiche de dialogue d'un modèle ; renvoie son identifiant */
 async function ecrireFicheDialogueChambre(m, rep, remplacer){
@@ -36762,7 +36819,7 @@ async function ouvrirDialogueRobot(hab){
   let f = ficheDialogueDuModele(m);
   f = f ? ficheJouable(f) : null;
   if (!f) f = { id: 'chambre_' + (m ? m.id : hab.id), name: '', interactionType: 'dialogue', chambreModeleId: m ? m.id : null, dialogueSteps: stepsDialogueChambre(m) };
-  const c = Object.assign({}, f, { name: hab.name || f.name || (m && m.nom) || 'Robot' });
+  const c = Object.assign({}, avecSynchro(f, m), { name: hab.name || f.name || (m && m.nom) || 'Robot' });
   /* sans buste à la fiche : le haut du robot, recadré comme dans la barre des tours. */
   /* v694 : l'IMAGE DE BUSTE posée dans la fiche de dialogue passe en premier ; le cadrage du modèle
      ne sert que s'il n'y en a pas (avant, il la masquait) */
@@ -38054,11 +38111,32 @@ document.getElementById('roomSac').addEventListener('click', ()=>{
   renderInventory();
   document.getElementById('inventoryOverlay').classList.add('show');
 });
+/* v727 : on parle au robot en le TOUCHANT, pas en touchant la pièce. Le toucher compte sur son dessin
+   (les pixels non transparents de son image), pas sur le vide autour. */
+function toucheLeRobot(ev){
+  const img = document.querySelector('#chambreNeutreVue .player-robot img');
+  if (!img || !img.naturalWidth) return false;
+  const r = img.getBoundingClientRect();
+  if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return false;
+  try {
+    /* l'image est en object-fit:contain calée en bas : on retrouve le pixel touché */
+    const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
+    const x0 = r.left + (r.width - w) / 2, y0 = r.bottom - h;
+    const px = (ev.clientX - x0) / k, py = (ev.clientY - y0) / k;
+    if (px < 0 || py < 0 || px >= img.naturalWidth || py >= img.naturalHeight) return false;
+    if (!img.__alpha){ const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const cx = c.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0); img.__alpha = cx; }
+    /* une petite marge autour du dessin : on cherche un pixel plein dans un rayon de 12 px */
+    const R = 12, d = img.__alpha.getImageData(Math.max(0, Math.round(px) - R), Math.max(0, Math.round(py) - R), R * 2, R * 2).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 40) return true;
+    return false;
+  } catch(err){ return true; }   // image d'une autre origine : la boîte suffit
+}
 document.getElementById('chambreNeutreVue').addEventListener('click', (e)=>{
   if (modePose) return;   // v666 : en train de poser un objet, on ne parle pas au robot
   if (Date.now() - appuiLongFait < 800) return;   // v667 : l'appui long ouvre « ranger », pas le dialogue
   if (!roomNeutreOuverte || !roomSheetRecruitId || isGhostTap()) return;
   if (Date.now() - sceneBigImageOpenedAt < 400) return;
+  if (!toucheLeRobot(e)) return;   // v727
   e.stopPropagation();
   const r = currentRecruitById(roomSheetRecruitId);
   if (r) ouvrirDialogueRobot(r);
