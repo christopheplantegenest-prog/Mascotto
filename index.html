@@ -1510,7 +1510,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v732</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v733</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -2916,6 +2916,14 @@
           <input type="number" id="itemGraineRestart" class="field-input" min="1" value="2">
           <p class="meta" style="margin:4px 0 0;">Numéro du stade auquel l'arbre revient après la cueillette — en général l'avant-dernier, l'arbre adulte sans fruits.</p>
         </div>
+      </div>
+
+      <!-- v733 — LE PUZZLE : un objet de quête qu'on reconstitue à partir de ses morceaux. -->
+      <div id="itemAssemblageBlock" style="display:none;">
+        <div class="field-label">🧩 Se reconstitue à partir de morceaux</div>
+        <p class="meta" style="margin:0 0 6px;">Pour une photo déchirée, un message en morceaux… Choisis ses morceaux <b>dans l'ordre</b> : de gauche à droite, puis de haut en bas. Chaque morceau prend tout seul son bout de l'image de cet objet ; le joueur les assemble depuis son Compartiment. Rien à mettre si ce n'est pas un puzzle.</p>
+        <div id="itemAssemblagePieces"></div>
+        <button type="button" class="btn-secondary" id="itemAssemblageAdd" style="width:100%; margin-top:6px;">＋ Ajouter un morceau</button>
       </div>
 
       <div class="field-label">Description</div>
@@ -15786,11 +15794,38 @@ document.getElementById('itemGraineStageFile').addEventListener('change', (e)=>{
   reader.readAsDataURL(file);
 });
 
+/* v733 — les morceaux d'un puzzle, dans l'éditeur d'objet */
+let currentAssemblage = [];
+function renderAssemblagePieces(){
+  const box = document.getElementById('itemAssemblagePieces');
+  if (!box) return;
+  box.innerHTML = currentAssemblage.map((id, i)=>{
+    const it = items.find(x=> x.id === id);
+    return `<div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <span class="meta" style="flex:none; width:22px; text-align:center; font-weight:700;">${i + 1}</span>
+      <button type="button" class="btn-secondary" data-asm-pick="${i}" style="flex:1; text-align:left;">${it ? String(it.name).replace(/</g,'&lt;') : '— choisir l\'objet —'}</button>
+      <button type="button" class="btn-secondary" data-asm-del="${i}" style="flex:none; width:40px;">✕</button></div>`;
+  }).join('');
+  box.querySelectorAll('[data-asm-pick]').forEach(b=> b.addEventListener('click', ()=>{
+    const i = +b.dataset.asmPick;
+    openRecipeItemChooser((itemId)=>{ currentAssemblage[i] = itemId; renderAssemblagePieces(); });
+  }));
+  box.querySelectorAll('[data-asm-del]').forEach(b=> b.addEventListener('click', ()=>{
+    currentAssemblage.splice(+b.dataset.asmDel, 1); renderAssemblagePieces();
+  }));
+}
+document.getElementById('itemAssemblageAdd').addEventListener('click', ()=>{
+  if (currentAssemblage.length >= 6){ showToast('Six morceaux au plus'); return; }
+  currentAssemblage.push(null); renderAssemblagePieces();
+});
+
 function majBlocComposant(){
   const type = document.getElementById('itemType').value;
   document.getElementById('itemComposantBlock').style.display = type === 'composant' ? 'block' : 'none';
   const gb = document.getElementById('itemGraineBlock');
   if (gb) gb.style.display = type === 'graine' ? 'block' : 'none';
+  const ab = document.getElementById('itemAssemblageBlock');   // v733
+  if (ab) ab.style.display = type === 'quete' ? 'block' : 'none';
   const fam = document.getElementById('itemComposantFamille').value;
   document.getElementById('itemComposantViceWrap').style.display = (type === 'composant' && fam === 'noyau') ? 'block' : 'none';
   const sel = document.getElementById('itemComposantVice');
@@ -16655,6 +16690,8 @@ function loadItemForEdit(id){
     document.getElementById('itemGraineRestart').value = c.restartStage || 2;
     renderGraineStages(); renderGraineLoot();
   }
+  currentAssemblage = (it.assemblage && Array.isArray(it.assemblage.pieces)) ? it.assemblage.pieces.slice() : [];   // v733
+  renderAssemblagePieces();
   majBlocComposant();
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
@@ -16719,6 +16756,7 @@ function resetItemForm(){
   document.getElementById('itemName').value = '';
   document.getElementById('itemType').value = 'ressource';
   currentGraineStages = []; currentGraineLoot = [];
+  currentAssemblage = []; renderAssemblagePieces();   // v733
   document.getElementById('itemGraineAfter').value = 'clear';
   document.getElementById('itemGraineRestartWrap').style.display = 'none';
   document.getElementById('itemGraineRestart').value = 2;
@@ -16814,6 +16852,11 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
     if (existingItem && existingItem.teachesAttackId) data.teachesAttackId = existingItem.teachesAttackId;
     if (existingItem && existingItem.teachesRecipeId) data.teachesRecipeId = existingItem.teachesRecipeId;
     if (existingItem && existingItem.deco){ data.deco = existingItem.deco; data.lumiere = !!existingItem.lumiere; }   // v623 : objet de chambre
+  }
+  {   /* v733 : les morceaux du puzzle (au moins deux), seulement sur un objet de quête */
+    const pcs = currentAssemblage.filter(Boolean);
+    data.assemblage = (type === 'quete' && pcs.length >= 2) ? { pieces: pcs } : null;
+    if (type === 'quete' && pcs.length === 1){ showToast('Un puzzle demande au moins deux morceaux'); return; }
   }
   if (type === 'mobilier'){   // v676 : la fiche de mobilier ; l'emplacement de chambre en découle
     data.mob = lireBlocMob();
@@ -17226,6 +17269,7 @@ function commandesObjet(it){
   if (it.equippable) c.push('equiper');
   if (it.deco) c.push('poser');
   if (it.type === 'graine' && cultureDeLaGraine(it.id)) c.push('planter');
+  if (assemblageDeLaPiece(it.id)) c.push('assembler');   // v733
   c.push('observer');
   if (it.type !== 'quete') c.push('jeter');
   return c;
@@ -17254,7 +17298,7 @@ function enteteObjetSac(it, qte, grand){
 function ouvrirMenuObjet(itemId){
   const it = items.find(i=> i.id === itemId) || null;
   const LIB = { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
-    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter' };
+    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter', assembler: '🧩 Assembler les morceaux' };
   /* Poser et Planter ne marchent qu'au bon endroit : ailleurs, le bouton dit où aller */
   const horsDePlace = { poser: chambrePourPoser() ? '' : 'dans la chambre d\'un robot', planter: bacsLibres().length ? '' : 'devant un bac libre' };
   const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId))
@@ -17268,10 +17312,112 @@ function ouvrirMenuObjet(itemId){
     const c = b.dataset.cmd;
     if (c === 'utiliser' || c === 'equiper') ouvrirRobotsPourObjet(itemId, c);
     else if (c === 'observer') observerObjet(it);
+    else if (c === 'assembler') ouvrirPuzzle(assemblageDeLaPiece(itemId));
     else if (c === 'poser'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPoseChambre(itemId); }
     else if (c === 'planter'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPlantation(itemId); }
     else if (c === 'jeter') jeterObjetSac(itemId);
   }));
+}
+/* ═══ v733 — LE PUZZLE. Un objet de quête (une photo, un message…) porte la liste de ses
+   morceaux ; chaque morceau est un objet de quête à part, trouvé dans la zone (coffre, armoire,
+   voyou battu…). Quand le joueur les a tous, « 🧩 Assembler » ouvre le plateau : les bouts sont
+   mélangés, on touche deux bouts pour les échanger. Reconstitué, l'objet entier remplace ses
+   morceaux dans le Compartiment — et il peut servir de clé (un interrupteur caché, une porte…)
+   par le verrouillage « objet requis » qui existe déjà. ═══ */
+function assemblageDeLaPiece(pieceId){
+  if (!pieceId) return null;
+  return items.find(r=> r && r.assemblage && Array.isArray(r.assemblage.pieces) && r.assemblage.pieces.includes(pieceId)) || null;
+}
+function grilleDePuzzle(n){
+  return ({ 2:[2,1], 3:[3,1], 4:[2,2], 5:[5,1], 6:[3,2] })[n] || [n, 1];
+}
+const fragmentsPuzzle = new Map();
+function fragmentDePuzzle(r, idx){
+  const src = r.imagePath ? resolveMediaPath(r.imagePath) : (r.imageUrl || '');
+  if (!src || idx < 0) return '';
+  const cle = src.slice(0, 200) + '#' + src.length + '#' + idx + '/' + r.assemblage.pieces.length;
+  const deja = fragmentsPuzzle.get(cle);
+  if (deja !== undefined) return deja;
+  fragmentsPuzzle.set(cle, '');
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = ()=>{
+    try {
+      const [cols, rows] = grilleDePuzzle(r.assemblage.pieces.length);
+      const w = img.naturalWidth / cols, h = img.naturalHeight / rows;
+      const k = Math.min(1, 320 / Math.max(w, h));
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext('2d').drawImage(img, (idx % cols) * w, Math.floor(idx / cols) * h, w, h, 0, 0, c.width, c.height);
+      fragmentsPuzzle.set(cle, c.toDataURL('image/png'));
+      if (typeof majQteAuSac === 'function') majQteAuSac();
+    } catch(e){}
+  };
+  img.src = src;
+  return '';
+}
+function ouvrirPuzzle(r){
+  if (!r || !r.assemblage) return;
+  const pieces = r.assemblage.pieces;
+  const n = pieces.length;
+  const [cols, rows] = grilleDePuzzle(n);
+  const src = r.imagePath ? resolveMediaPath(r.imagePath) : (r.imageUrl || '');
+  const eus = pieces.filter(id=> qteAuSac(id) > 0);
+  const tuile = (idx, extra)=> `background-image:url('${src}'); background-size:${cols * 100}% ${rows * 100}%;`
+    + ` background-position:${cols > 1 ? (idx % cols) / (cols - 1) * 100 : 0}% ${rows > 1 ? Math.floor(idx / cols) / (rows - 1) * 100 : 0}%;` + (extra || '');
+  /* Il en manque : on montre ce qu'on a, sans dire où ça va. */
+  if (eus.length < n){
+    fenetreSac(`<div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">🧩 ${eus.length} morceau${eus.length > 1 ? 'x' : ''} sur ${n}</h3><button class="sheet-x" data-fermer>✕</button></div>
+      <p class="meta" style="margin:6px 0 12px;">Il en manque encore ${n - eus.length}. Fouille bien : ils peuvent être n'importe où.</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center;">
+        ${eus.map(id=>{ const idx = pieces.indexOf(id); return src
+          ? `<div style="width:${Math.round(96 * Math.min(1, cols / rows))}px; aspect-ratio:${rows} / ${cols}; max-height:110px; border-radius:3px; box-shadow:0 2px 6px rgba(0,0,0,.25); ${tuile(idx, ' transform:rotate(' + (Math.random() * 10 - 5).toFixed(1) + 'deg);')}"></div>`
+          : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:80px; height:80px;">`; }).join('')}
+      </div>`);
+    return;
+  }
+  if (!src){ showToast('Ce puzzle n\'a pas encore son image'); return; }
+  /* Tout est là : le plateau. ordre[case] = morceau posé dans cette case ; jamais résolu d'entrée. */
+  let ordre = pieces.map((_, i)=> i);
+  do { for (let i = n - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ordre[i], ordre[j]] = [ordre[j], ordre[i]]; } }
+  while (ordre.every((v, i)=> v === i));
+  let choisi = -1, fini = false;
+  const f = fenetreSac(`<div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0;">🧩 ${escSac(r.name)}</h3><button class="sheet-x" data-fermer>✕</button></div>
+    <p class="meta" data-puz-aide style="margin:6px 0 10px;">Touche deux morceaux pour les échanger.</p>
+    <div data-puz style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:3px; width:100%; max-width:420px; margin:0 auto; background:rgba(0,0,0,.18); padding:3px; border-radius:8px;"></div>`);
+  const plateau = f.querySelector('[data-puz]');
+  const img = new Image();
+  img.onload = ()=>{ plateau.style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight; };
+  img.src = src;
+  const dessiner = ()=>{
+    plateau.innerHTML = ordre.map((idx, k)=> `<button type="button" data-case="${k}" style="border:none; padding:0; min-height:60px; border-radius:4px; ${tuile(idx,
+      ' outline:' + (k === choisi ? '3px solid var(--accent)' : 'none') + '; outline-offset:-3px; transform:' + (k === choisi ? 'scale(.95)' : 'none') + '; transition:transform .12s;')}"></button>`).join('');
+    plateau.querySelectorAll('[data-case]').forEach(b=> b.addEventListener('click', ()=>{
+      if (fini) return;
+      const k = +b.dataset.case;
+      if (choisi < 0){ choisi = k; dessiner(); return; }
+      if (choisi !== k) [ordre[choisi], ordre[k]] = [ordre[k], ordre[choisi]];
+      choisi = -1;
+      dessiner();
+      if (ordre.every((v, i)=> v === i)) reussi();
+    }));
+  };
+  const reussi = async ()=>{
+    fini = true;
+    plateau.style.gap = '0'; plateau.style.transition = 'gap .4s';
+    plateau.querySelectorAll('[data-case]').forEach(b=> b.style.borderRadius = '0');
+    f.querySelector('[data-puz-aide]').textContent = '✨ Reconstitué !';
+    if (currentUser && db){
+      const maj = { [r.id]: firebase.firestore.FieldValue.increment(1) };
+      pieces.forEach(id=> maj[id] = firebase.firestore.FieldValue.increment(-1));
+      try { await db.collection('players').doc(currentUser.uid).set({ inventory: maj }, { merge:true }); }
+      catch(e){ showToast('Échec : ' + e.message); return; }
+    }
+    setTimeout(()=>{ f.remove(); showToast('🧩 ' + r.name + ' reconstitué'); observerObjet(r); }, 1100);
+  };
+  dessiner();
 }
 function observerObjet(it){
   if (!it) return;
@@ -33601,6 +33747,7 @@ function renderSceneDetailTypeSpecific(pt){
         <option value="code" ${pt.lockType==='code'?'selected':''}>Code numérique</option>
       </select>
       <div data-sortie-lock-item-wrap style="display:${pt.lockType==='item'?'block':'none'}; margin-top:6px;">
+        <input type="text" data-sortie-lockmsg class="field-input" style="margin-bottom:6px;" placeholder="Message sans l'objet (vide : « Il te faut … »). Ex. Rien ne se passe." value="${(pt.lockMessage||'').replace(/"/g,'&quot;')}">
         <button type="button" class="btn-secondary" data-sortie-lock-item-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${lockIt ? (itemThumbHtml(lockIt)+' '+lockIt.name) : '— choisir l\'objet —'}</button>
       </div>
       <div data-sortie-lock-code-wrap style="display:${pt.lockType==='code'?'block':'none'}; margin-top:6px;">
@@ -33622,6 +33769,8 @@ function renderSceneDetailTypeSpecific(pt){
       pt.lockType = e.target.value;
       renderSceneEditorDetails();
     });
+    const lockMsg = typeWrap.querySelector('[data-sortie-lockmsg]');   // v733
+    if (lockMsg) lockMsg.addEventListener('input', (e)=>{ pt.lockMessage = e.target.value.trim() || null; });
     const lockItemBtn = typeWrap.querySelector('[data-sortie-lock-item-pick]');
     if (lockItemBtn) lockItemBtn.addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneEditorDetails(); });
@@ -35506,7 +35655,8 @@ async function renderSceneViewCurrentScene(){
               proceed();
             } else {
               const it = items.find(i=>i.id===pt.lockItemId);
-              showToast(`🔒 Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
+              /* v733 : un message choisi (« Rien ne se passe. ») garde le secret d'un passage caché */
+              showToast(pt.lockMessage || `🔒 Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
             }
           });
         } else if (pt.lockType === 'code'){
@@ -35617,7 +35767,7 @@ async function renderSceneViewCurrentScene(){
               ouvrir();
             } else {
               const it = items.find(i=>i.id===pt.lockItemId);
-              showToast('🔒 Il te faut ' + (it ? it.name : 'un objet particulier') + ' pour ouvrir');
+              showToast(pt.lockMessage || ('🔒 Il te faut ' + (it ? it.name : 'un objet particulier') + ' pour ouvrir'));
             }
           });
         } else if (pt.lockType === 'code'){
@@ -36306,7 +36456,14 @@ const PALETTE_CHAMBRE = [
 ];
 const couleurPalette = (id)=> (PALETTE_CHAMBRE.find(p=> p.id === id) || {}).c || null;
 function objetDeco(id){ return (typeof items !== 'undefined' ? items : []).find(i=> i.id === id) || null; }
-function urlImageItem(it){ return it ? (it.imagePath ? resolveMediaPath(it.imagePath) : (it.imageUrl || '')) : ''; }
+function urlImageItem(it){
+  if (!it) return '';
+  const u = it.imagePath ? resolveMediaPath(it.imagePath) : (it.imageUrl || '');
+  if (u) return u;
+  /* v733 : un morceau de puzzle sans image à lui montre son bout de l'image entière */
+  const r = typeof assemblageDeLaPiece === 'function' ? assemblageDeLaPiece(it.id) : null;
+  return r ? fragmentDePuzzle(r, r.assemblage.pieces.indexOf(it.id)) : '';
+}
 async function urlFaceModeleAsync(m){
   if (!m) return '';
   if (m.faceImagePath) return resolveMediaPath(m.faceImagePath);
@@ -42025,6 +42182,16 @@ async function importerScenario(sc){
     noter(cles.objets, o, await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal));
   }
 
+  /* v733 — les puzzles : `assemblage: ["morceau-1", "morceau-2", …]` (ou `{pieces:[…]}`), résolu
+     une fois TOUS les objets créés, un morceau pouvant être écrit après son puzzle. */
+  for (const o of (sc.objets||[])){
+    const liste = Array.isArray(o.assemblage) ? o.assemblage : (o.assemblage && o.assemblage.pieces);
+    if (!Array.isArray(liste) || !liste.length) continue;
+    const id = cles.objets[o.cle || o.name];
+    const pcs = liste.map(c=> importResoudre(cles.objets, c, items, journal, 'Puzzle « ' + o.name + ' »')).filter(Boolean);
+    if (id && pcs.length >= 2){ await itemsCol.doc(id).set({ assemblage: { pieces: pcs } }, { merge:true }); journal.push('🧩 « ' + o.name + ' » : ' + pcs.length + ' morceaux reliés'); }
+  }
+
   /* --- 2. Recettes (renvoient aux objets) --- */
   for (const r of (sc.recettes||[])){
     const data = {
@@ -42384,6 +42551,7 @@ async function importerScenario(sc){
           } else if (pt.lockCode){
             base.lockType = 'code'; base.lockCode = String(pt.lockCode).replace(/[^0-9]/g, '');   // v592
           } else if (pt.type === 'sortie'){ base.lockType = 'none'; }
+          if (pt.lockMessage || pt.messageVerrou) base.lockMessage = pt.lockMessage || pt.messageVerrou;   // v733
           if (pt.pnj) base.linkedPnjId = cles.pnj[pt.pnj] || null;
           /* v592 — tout ce qu'une zone dessinée par Claude a besoin d'écrire d'un coup :
              la flèche de sortie à sa place habituelle, l'apparence (miroir, rotation, invisible),
