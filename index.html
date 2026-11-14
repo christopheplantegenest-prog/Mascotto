@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v723</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v724</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -35801,25 +35801,45 @@ function elementFenetre(pt, nuit, assombrir){
      volume, couchage, plafond). Un luminaire reste allumé quand la pièce s'éteint.
    La décoration vit sur le recruté (`deco`). La géométrie (murs, sol) est celle de l'image de
    chambre validée le 06/11 (1024 × 1536, un point de fuite) ; elle suit l'image si sa taille change. */
+let chambreVariante = 'actuelle';   // v724 : 'actuelle' ou 'test'
 let chambreConfig = { imageRef: null, textures: [], emplacements: null, lumiere: { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: [], plancheCielRef: null, placements: {} };
 const chambreDoc = ()=> (typeof db !== 'undefined' && db) ? db.collection('app_config').doc('chambre_robots') : null;
 setTimeout(()=>{
   try {
     chambreDoc().onSnapshot(doc=>{
       const d = (doc && doc.exists && doc.data()) || {};
-      chambreConfig = { imageRef: d.imageRef || null, textures: d.textures || [], emplacements: d.emplacements || null,
+      /* v724 : deux chambres à comparer — l'ACTUELLE (pièce vide + meubles posés) et la chambre TEST
+         (image type déjà meublée par ChatGPT, quelques emplacements). Les ciels, textures, cadres et la
+         lumière sont communs ; l'image, les emplacements et les réglages des meubles sont propres à chacune. */
+      const t = d.variante === 'test' ? (d.test || {}) : null;
+      chambreVariante = t ? 'test' : 'actuelle';
+      chambreConfig = { imageRef: (t ? t.imageRef : d.imageRef) || null, textures: d.textures || [], emplacements: (t ? t.emplacements : d.emplacements) || null,
         lumiere: d.lumiere || { extinction: '22:00', allumage: '07:00' }, cielsSansNuit: d.cielsSansNuit || [], plancheCielRef: d.plancheCielRef || null,
-        placements: d.placements || {} };   // v681 : le réglage de chaque objet sur chaque emplacement
+        placements: (t ? t.placements : d.placements) || {} };   // v681 : le réglage de chaque objet sur chaque emplacement
     }, ()=>{});
   } catch(e){}
 }, 0);
 async function enregistrerChambreConfig(){
-  await chambreDoc().set({ imageRef: chambreConfig.imageRef || null, textures: chambreConfig.textures || [],
-    emplacements: chambreConfig.emplacements || null, lumiere: chambreConfig.lumiere,
-    cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null,
-    placements: chambreConfig.placements || {}, updatedAt: Date.now() }, { merge:true });
+  const communs = { textures: chambreConfig.textures || [], lumiere: chambreConfig.lumiere,
+    cielsSansNuit: chambreConfig.cielsSansNuit || [], plancheCielRef: chambreConfig.plancheCielRef || null, updatedAt: Date.now() };
+  const propres = { imageRef: chambreConfig.imageRef || null, emplacements: chambreConfig.emplacements || null, placements: chambreConfig.placements || {} };
+  if (chambreVariante === 'test'){   // v724 : la chambre test vit dans son propre champ, remplacé en entier
+    await chambreDoc().set(communs, { merge:true });
+    await chambreDoc().update({ test: propres });
+    return;
+  }
+  await chambreDoc().set(Object.assign({}, communs, propres), { merge:true });
   /* v689 : les réglages sont REMPLACÉS en entier (le merge gardait un coin ou un pli retiré) */
   try { await chambreDoc().update({ placements: chambreConfig.placements || {} }); } catch(e){}
+}
+/* v724 : passer d'une chambre à l'autre (Édition → 🛏️ Chambre des robots) ; c'est celle que le jeu montre */
+async function changerVarianteChambre(v){
+  await chambreDoc().set({ variante: v === 'test' ? 'test' : null }, { merge:true });
+  const d = (await chambreDoc().get()).data() || {};
+  const t = v === 'test' ? (d.test || {}) : null;
+  chambreVariante = t ? 'test' : 'actuelle';
+  Object.assign(chambreConfig, { imageRef: (t ? t.imageRef : d.imageRef) || null, emplacements: (t ? t.emplacements : d.emplacements) || null, placements: (t ? t.placements : d.placements) || {} });
+  chambreImageCache.clear();
 }
 /* v681 — LE PLACEMENT D'UN OBJET DANS LA CHAMBRE. Chaque emplacement accepte des catégories de la
    bibliothèque (e.categories, vide = toutes) ; chaque objet a, pour chaque emplacement, son réglage
@@ -35905,7 +35925,20 @@ const EMPLACEMENTS_CHAMBRE_DEFAUT = [
   { id:'robot2', type:'robot', x:40, y:88, w:26, h:22 },
   { id:'robot3', type:'robot', x:62, y:62, w:20, h:17 },
 ];
-function emplacementsChambre(){ return (chambreConfig.emplacements && chambreConfig.emplacements.length) ? chambreConfig.emplacements : EMPLACEMENTS_CHAMBRE_DEFAUT; }
+/* v724 : la chambre test — les places laissées libres dans l'image type (à ajuster avec 📐 une fois l'image posée) */
+const EMPLACEMENTS_CHAMBRE_TEST_DEFAUT = [
+  { id:'t_fen', type:'fenetre', x:50, y:34, w:30, h:16 },
+  { id:'t_mur1', type:'mur', x:31, y:36, w:8, h:12 },
+  { id:'t_mur2', type:'mur', x:69, y:36, w:8, h:12 },
+  { id:'t_canape', type:'couchage', x:50, y:58, w:34, h:12 },
+  { id:'t_vol1', type:'volume', x:27, y:58, w:9, h:16 },
+  { id:'t_vol2', type:'volume', x:73, y:58, w:9, h:16 },
+  { id:'t_tapis', type:'sol', x:50, y:78, w:44, h:12 },
+  { id:'t_lum', type:'plafond', x:50, y:10, w:16, h:12 },
+  { id:'t_robot', type:'robot', x:50, y:76, w:26, h:22 },
+];
+const emplacementsParDefautChambre = ()=> chambreVariante === 'test' ? EMPLACEMENTS_CHAMBRE_TEST_DEFAUT : EMPLACEMENTS_CHAMBRE_DEFAUT;
+function emplacementsChambre(){ return (chambreConfig.emplacements && chambreConfig.emplacements.length) ? chambreConfig.emplacements : emplacementsParDefautChambre(); }
 const PALETTE_CHAMBRE = [
   { id:'origine', nom:'D\'origine', c:null },
   { id:'sauge', nom:'Sauge', c:'#c4d4b2' }, { id:'ciel', nom:'Bleu ciel', c:'#b6d3ea' },
@@ -36024,12 +36057,13 @@ async function composerChambre(hab, opts){
   const deco = hab ? decoDeChambre(hab) : {};   // v627 : la déco appartient à la chambre
   // murs et sol, dans le repère de l'image d'origine
   ctx.save(); ctx.scale(W / CHAMBRE_GEO.W, H / CHAMBRE_GEO.H);
-  if (deco.solTexture){
+  if (chambreVariante === 'test'){}   // v724 : image type déjà meublée — on ne repeint ni murs ni sol
+  else if (deco.solTexture){
     const t = (chambreConfig.textures || []).find(x=> x.id === deco.solTexture);
     const im = t ? await chargerImage(await urlDeRef(t.ref)) : null;
     if (im) poserTextureSol(ctx, im);
   } else if (couleurPalette(deco.sol)) teinter(ctx, [CHAMBRE_GEO.sol], couleurPalette(deco.sol));
-  if (couleurPalette(deco.murs)) teinter(ctx, CHAMBRE_GEO.murs, couleurPalette(deco.murs));
+  if (chambreVariante !== 'test' && couleurPalette(deco.murs)) teinter(ctx, CHAMBRE_GEO.murs, couleurPalette(deco.murs));
   ctx.restore();
   // nuit : lumière éteinte (pièce) et soleil couché (fenêtres)
   const now = opts.maintenant || new Date();
@@ -36169,6 +36203,29 @@ LA PIÈCE EST TOTALEMENT VIDE : aucun meuble, aucune plante, aucun objet, aucune
 STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet. Murs en grands panneaux lisses blanc cassé à joints fins et quelques rivets, plafond à dalles lumineuses encastrées et treillis anthracite, sol en grandes dalles claires unies. Une pièce NEUTRE : blanc cassé, gris perle, un peu d'anthracite. Aucune couleur vive.
 
 N'écris aucun texte, aucune lettre, aucun numéro.`;
+/* v724 — l'image type de la chambre test (méthode du 8/11 : ChatGPT dessine la beauté et les gros meubles,
+   le jeu pose fenêtre, affiches, canapé, plantes, tapis et luminaire dans les places laissées libres) */
+const PROMPT_CHAMBRE_TYPE = `Dessine la CHAMBRE D'UN ROBOT à bord d'un VAISSEAU FUTURISTE, au format vertical 2:3 (1024 × 1536). C'est l'image type des chambres de robots de ce vaisseau : le jeu posera lui-même, par-dessus, quelques objets choisis par le joueur. Tu dessines la pièce et ses gros meubles, et tu LAISSES LIBRES les places décrites plus bas.
+
+CADRAGE (le plus important) : vue strictement DE FACE, caméra à hauteur d'homme au centre de la pièce, perspective à UN SEUL point de fuite situé au centre de l'image. Le mur du fond est un grand rectangle bien droit, face à nous ; les deux murs latéraux, le plafond et le sol partent en perspective symétrique vers lui. Le sol occupe le bas de l'image, environ un tiers de la hauteur. Les bords gauche et droit de l'image (environ un sixième de chaque côté) seront coupés sur téléphone : tout ce qui compte tient dans la bande centrale.
+
+CE QUE TU DESSINES (la beauté de la pièce) :
+— contre le mur de GAUCHE, une couchette de repos encastrée dans le mur, en alcôve arrondie, avec un fin liseré lumineux ;
+— contre le mur de DROITE, un grand rangement encastré dans le mur : panneaux lisses fermés, sans poignée visible ;
+— le mur du fond, les murs, le plafond et le sol soignés : grands panneaux lisses à joints fins et quelques rivets, fines lignes lumineuses le long des arêtes, plinthe, plafond à dalles lumineuses encastrées et treillis anthracite, sol en grandes dalles claires.
+
+LES PLACES À LAISSER LIBRES (mur nu ou sol nu, uni, sans rien dessus, sans ombre d'objet) :
+1. au centre du mur du fond, dans sa moitié haute : un grand rectangle de mur nu, plus large que haut (le jeu y pose une fenêtre) ;
+2. de chaque côté de ce rectangle, sur le mur du fond : un petit rectangle de mur nu, plus haut que large (le jeu y pose une affiche) ;
+3. en bas du mur du fond, sous la fenêtre : le pied du mur et le sol devant lui nus, sur toute la largeur du mur du fond (le jeu y pose un canapé contre le mur) ;
+4. dans les deux coins du fond, au sol : un espace nu (le jeu y pose une plante ou une sculpture) ;
+5. au centre du sol, au premier plan : une grande surface de sol nue et unie (le jeu y pose un tapis et le robot) ;
+6. au centre du plafond : une dalle nue (le jeu y suspend un luminaire).
+Donc : aucune fenêtre, aucune porte, aucun écran, aucune affiche, aucun tableau, aucune plante, aucun tapis, aucune lampe, aucun canapé, aucun fauteuil, aucun objet posé, aucun personnage, aucun robot.
+
+STYLE MASCOTTO : dessin de jeu vidéo, trait d'encre net, aplats unis, ombrage cel, aucun dégradé, aucun reflet. Couleurs : blanc cassé, gris perle, un peu d'anthracite, et UNE seule couleur d'accent, un cyan doux, sur les liserés lumineux et les coussins de la couchette.
+
+N'écris aucun texte, aucune lettre, aucun numéro.`;
 const PROMPT_CIEL_VAISSEAU = `Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec SIX RECTANGLES pleins au format paysage 4:3, en 2 rangées de 3, SÉPARÉS PAR DE GRANDS ESPACES VIDES (rien ne se touche).
 
 Chaque rectangle est ce qu'on voit par une fenêtre d'un vaisseau qui flotte très haut dans le ciel, EN PLEIN JOUR. Six ambiances différentes, toutes NEUTRES : AUCUN soleil visible, aucun rayon, aucune lumière venant d'un côté, aucun horizon marqué — un ciel qu'on peut mettre sur n'importe quelle fenêtre, à gauche comme à droite, sans que ça se voie :
@@ -36288,7 +36345,15 @@ async function ouvrirReglagesChambre(){
   const l = chambreConfig.lumiere || {};
   fond.innerHTML = `<div class="sheet" style="max-height:90vh; overflow-y:auto;">
     <div class="sheet-top"><h3 style="margin-top:0;">🛏️ Chambre des robots</h3><button class="sheet-x" data-x>✕</button></div>
-    <p class="meta" style="margin:0 0 8px; font-size:12px;">La même chambre neutre pour tous les robots ; chaque joueur décore celle de ses robots. Les planches (ciels, sols, objets) se font dans 🧰 À finir.</p>
+    <div class="field-label">Chambre montrée dans le jeu</div>
+    <div style="display:flex; gap:6px; margin-bottom:6px;">
+      <button type="button" class="${chambreVariante === 'test' ? 'btn-secondary' : 'btn-primary'}" data-variante="actuelle" style="flex:1;">🛏️ Actuelle</button>
+      <button type="button" class="${chambreVariante === 'test' ? 'btn-primary' : 'btn-secondary'}" data-variante="test" style="flex:1;">🧪 Test</button>
+    </div>
+    <p class="meta" style="margin:0 0 8px; font-size:12px;">${chambreVariante === 'test'
+      ? '🧪 <b>Chambre test</b> : une image type déjà meublée par ChatGPT, avec quelques places laissées libres (fenêtre, affiches, canapé, plantes, tapis, luminaire). Rien n\'est effacé de la chambre actuelle : repasse sur 🛏️ pour comparer.'
+      : 'La même chambre neutre pour tous les robots ; chaque joueur décore celle de ses robots. Les planches (ciels, sols, objets) se font dans 🧰 À finir.'}</p>
+    ${chambreVariante === 'test' ? '<button type="button" class="btn-secondary" data-prompt-type style="width:100%; margin-bottom:8px;">📋 Prompt de l\'image type → ChatGPT</button>' : ''}
     ${url ? `<img src="${url}" style="width:100%; max-width:220px; display:block; margin:0 auto 8px; border-radius:8px;">` : '<p class="meta">Pas encore d\'image de chambre.</p>'}
     <div style="display:flex; flex-wrap:wrap; gap:6px;">
       <button type="button" class="btn-secondary" data-img style="flex:1 1 45%;">📷 ${url ? 'Changer l\'image' : 'Poser l\'image'}</button>
@@ -36306,6 +36371,12 @@ async function ouvrirReglagesChambre(){
   fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-img]').addEventListener('click', async ()=>{ if (await poserPlancheChambre('image')){ fond.remove(); ouvrirReglagesChambre(); } });
   const e = fond.querySelector('[data-emp]'); if (e) e.addEventListener('click', ()=> ouvrirEditeurEmplacementsChambre());
+  fond.querySelectorAll('[data-variante]').forEach(b=> b.addEventListener('click', async ()=>{
+    if (b.dataset.variante === chambreVariante) return;
+    try { await changerVarianteChambre(b.dataset.variante); fond.remove(); ouvrirReglagesChambre(); showToast(chambreVariante === 'test' ? 'Le jeu montre la chambre test 🧪' : 'Le jeu montre la chambre actuelle 🛏️'); }
+    catch(err){ showToast('Échec : ' + err.message); }
+  }));
+  const bpt = fond.querySelector('[data-prompt-type]'); if (bpt) bpt.addEventListener('click', ()=> envoyerAChatGPT(PROMPT_CHAMBRE_TYPE, [], bpt));
   fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
     chambreConfig.lumiere = { extinction: fond.querySelector('[data-ext]').value || '22:00', allumage: fond.querySelector('[data-all]').value || '07:00' };
     try { await enregistrerChambreConfig(); showToast('Enregistré ✅'); fond.remove(); } catch(err){ showToast('Échec : ' + err.message); }
@@ -36325,7 +36396,7 @@ async function poserPlancheChambre(quoi){
     if (!ref){ showToast('Échec : image non enregistrée'); return false; }
     chambreConfig.imageRef = ref;
     await enregistrerChambreConfig();
-    showToast('Chambre neutre posée ✅'); return true;
+    showToast(chambreVariante === 'test' ? 'Image type posée ✅' : 'Chambre neutre posée ✅'); return true;
   }
   const n = { ciel: 6, cielnuit: 6, textures: 6, essai: 4, objets2: 6 }[quoi];
   const r = decouperGrille(img, n);
@@ -36544,13 +36615,31 @@ function cleChambreComposee(hab){
       soleilCouche(now), cielDuJour(now)]);
   } catch(err){ return null; }
 }
+/* v724 : la chambre composée est aussi GARDÉE SUR LE TÉLÉPHONE (Cache du navigateur) : après une
+   reconnexion, l'entrée redevient immédiate tant que rien n'a changé (même déco, même ciel, même heure
+   de lumière). Au plus 8 chambres gardées. */
+const CACHE_CHAMBRES = 'mascotto-chambres';
+function empreinteTexte(t){ let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < t.length; i++){ const c = t.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36); }
+async function chambreDuCache(cle){
+  try { if (!window.caches) return null; const c = await caches.open(CACHE_CHAMBRES); const r = await c.match('/__chambre/' + empreinteTexte(cle)); return r ? URL.createObjectURL(await r.blob()) : null; } catch(e){ return null; }
+}
+async function chambreVersCache(cle, canvas){
+  try {
+    if (!window.caches) return;
+    const blob = await new Promise(ok=> canvas.toBlob(ok, 'image/jpeg', 0.9)); if (!blob) return;
+    const c = await caches.open(CACHE_CHAMBRES);
+    await c.put('/__chambre/' + empreinteTexte(cle), new Response(blob, { headers: { 'Content-Type': 'image/jpeg' } }));
+    const k = await c.keys(); for (let i = 0; i < k.length - 8; i++) await c.delete(k[i]);
+  } catch(e){}
+}
 async function urlChambreComposee(hab){
   const cle = cleChambreComposee(hab);
   if (cle && chambreImageCache.has(cle)) return chambreImageCache.get(cle);
+  if (cle){ const g = await chambreDuCache(cle); if (g){ chambreImageCache.set(cle, g); return g; } }
   const c = await composerChambre(hab, { sansRobot: true });
   if (!c) return '';
   const u = c.toDataURL('image/jpeg', 0.9);
-  if (cle){ chambreImageCache.set(cle, u); while (chambreImageCache.size > 6) chambreImageCache.delete(chambreImageCache.keys().next().value); }
+  if (cle){ chambreImageCache.set(cle, u); while (chambreImageCache.size > 6) chambreImageCache.delete(chambreImageCache.keys().next().value); chambreVersCache(cle, c); }
   return u;
 }
 
@@ -37049,7 +37138,7 @@ async function ouvrirEditeurEmplacementsChambre(){
   fond.querySelector('[data-apercus]').addEventListener('click', ()=>{ voirApercus = !voirApercus; dessiner(); });
   fond.querySelector('[data-entiere]').addEventListener('click', ()=>{ imageEntiere = !imageEntiere; monter(); dessiner(); });
   fond.querySelector('[data-x]').addEventListener('click', ()=> fond.remove());
-  fond.querySelector('[data-origine]').addEventListener('click', ()=>{ emps = JSON.parse(JSON.stringify(EMPLACEMENTS_CHAMBRE_DEFAUT)); migrer(); sel = null; dessiner(); });
+  fond.querySelector('[data-origine]').addEventListener('click', ()=>{ emps = JSON.parse(JSON.stringify(emplacementsParDefautChambre())); migrer(); sel = null; dessiner(); });
   fond.querySelector('[data-ok]').addEventListener('click', async ()=>{
     chambreConfig.emplacements = emps;
     chambreConfig.placements = P;   // les réglages des meubles, réglés ici
@@ -37075,8 +37164,8 @@ async function ouvrirDecoration(hab){
       </div>
       <div data-onglets style="display:flex; gap:4px; margin-top:6px; flex:none;">
         <button type="button" class="btn-secondary" data-onglet="fenetres" style="flex:1; padding:5px 2px; font-size:12px;">🪟 Fenêtres</button>
-        <button type="button" class="btn-secondary" data-onglet="murs" style="flex:1; padding:5px 2px; font-size:12px;">🧱 Murs</button>
-        <button type="button" class="btn-secondary" data-onglet="sol" style="flex:1; padding:5px 2px; font-size:12px;">🟫 Sol</button>
+        ${chambreVariante === 'test' ? '' : `<button type="button" class="btn-secondary" data-onglet="murs" style="flex:1; padding:5px 2px; font-size:12px;">🧱 Murs</button>
+        <button type="button" class="btn-secondary" data-onglet="sol" style="flex:1; padding:5px 2px; font-size:12px;">🟫 Sol</button>`}
       </div>
       <div data-panneau style="flex:1; min-height:0; overflow-y:auto; margin-top:6px;"></div>
     </div>

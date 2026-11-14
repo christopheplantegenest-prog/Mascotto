@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v723";
+const CACHE_NAME = "mascotto-v724";
 const ASSETS = [
   "./",
   "./index.html",
@@ -29,7 +29,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       /* v590 : la voix Piper est retirée — son cache « mascotto-voix » (≈50 Mo) est supprimé comme les autres */
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== "mascotto-chambres").map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
