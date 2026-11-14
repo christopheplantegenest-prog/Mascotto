@@ -1510,7 +1510,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v734</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v735</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -11797,7 +11797,18 @@ CHAUSSURES : épaisses, futuristes, marquantes, à blocs de couleurs.`;
    aux prompts de personnage que si la case du guide est cochée — ChatGPT a tendance à recopier
    une référence au lieu de s'en inspirer, le texte du style suffit en temps normal. */
 const REF_STYLE_PERSO = 'ref-style-perso.jpg';
-function refStyleActive(){ try { return localStorage.getItem('mascotto_ref_style') === '1'; } catch(e){ return false; } }
+/* v735 — LE MODÈLE DE STYLE, C'EST MADO (demande du 14/11 : « qu'ils soient comme Mado »). Sa version
+   debout part avec chaque prompt de nouveau personnage, pour le trait, l'ombrage et les proportions ;
+   l'ancienne image (la médecin) ne sert plus que si Mado n'a pas d'image. Cochée par défaut. */
+const REF_STYLE_FICHE_ID = 'u9Y6GEEixuYaQ47OYOua';
+function imageRefStyle(){
+  const toutes = typeof toutesLesFiches === 'function' ? toutesLesFiches() : [];
+  const f = toutes.find(x=> x.id === REF_STYLE_FICHE_ID && aImagePrincipale(x))
+    || toutes.find(x=> x.name === 'Mado' && !x.pose && aImagePrincipale(x))
+    || toutes.find(x=> x.name === 'Mado' && aImagePrincipale(x));
+  return f ? urlImageDeFiche(f) : REF_STYLE_PERSO;
+}
+function refStyleActive(){ try { return localStorage.getItem('mascotto_ref_style_mado') !== '0'; } catch(e){ return true; } }
 
 /* v596 — LA CHARTE DE CONCEPTION (05/11 : « toutes ces règles-là, il faudrait une charte de
    conception dans le jeu, pour que j'aie pas besoin de te les répéter »). Un texte que Claude
@@ -12222,7 +12233,7 @@ FORMAT : une seule image, PNG à fond TRANSPARENT. Interdits : aucun décor, auc
 
 L'image jointe du personnage est la référence : ne change RIEN à son visage, sa coiffure, sa carrure ni au style de dessin ; seules la pose et la tenue décrites ici changent.` : ''}${(opts && opts.avecStyle) ? `
 
-L'image de style jointe ne sert QUE pour le trait, l'ombrage et les couleurs : ne reprends ni son visage, ni sa coiffure, ni sa tenue, ni sa pose.` : ''}`;
+L'image jointe montre Mado, un AUTRE personnage du jeu : c'est la référence de STYLE. Dessine ce nouveau personnage exactement dans le même style qu'elle : même épaisseur de trait, même ombrage en deux tons, mêmes proportions du corps et de la tête, même façon de dessiner le visage, les yeux, les mains, les plis des vêtements et les chaussures, même niveau de détail et même rendu des couleurs. Mais ce n'est PAS Mado : ne reprends ni son visage, ni sa coiffure, ni ses lunettes, ni sa tenue, ni ses couleurs, ni sa pose.` : ''}`;
 }
 function promptBustePnj(f){
   return `Avec l'image jointe (${f.name || 'le personnage'}), dessine son portrait en BUSTE sur fond TRANSPARENT (PNG).
@@ -12867,7 +12878,7 @@ async function ouvrirBrouillons(){
       <button class="btn-secondary" data-charte style="width:100%; margin-bottom:8px;">📘 Charte de conception</button>
       <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
         <input type="checkbox" data-ref-style ${refStyleActive() ? 'checked' : ''} style="width:auto;">
-        <span style="font-size:13px;">🎨 Joindre l'image de style aux personnages (seulement si le style ne suit pas)</span>
+        <span style="font-size:13px;">🎨 Joindre Mado comme modèle de style aux nouveaux personnages</span>
       </label>
       <div data-liste><p class="meta">Vérification en cours…</p></div>
       ${(enTravaux.length + zonesEnTravaux.length) ? '<button class="btn-capture" data-tout style="width:100%; margin-top:12px;">Tout publier</button>' : ''}
@@ -12879,8 +12890,8 @@ async function ouvrirBrouillons(){
   fond.querySelector('[data-fermer]').addEventListener('click', ()=> fond.remove());
   fond.querySelector('[data-charte]').addEventListener('click', ()=> ouvrirCharteConception());
   fond.querySelector('[data-ref-style]').addEventListener('change', (e)=>{
-    try { localStorage.setItem('mascotto_ref_style', e.target.checked ? '1' : '0'); } catch(err){}
-    showToast(e.target.checked ? 'L\'image de style sera jointe' : 'Le style passe par le texte seul');
+    try { localStorage.setItem('mascotto_ref_style_mado', e.target.checked ? '1' : '0'); } catch(err){}
+    showToast(e.target.checked ? 'Mado partira avec les prompts de personnage' : 'Le style passe par le texte seul');
     rouvrir();
   });
   fond.querySelector('[data-voir]').addEventListener('change', (e)=>{
@@ -12950,10 +12961,11 @@ async function ouvrirBrouillons(){
     const autreAvecImage = f.pose ? null : autreImg;
     const okImg = aImagePrincipale(f);
     if (!okImg) envois['img|' + f.id] = ()=>{
-      const avecVersion = !!(f.pose && autreImg), avecStyle = refStyleActive();
+      /* une autre version du même personnage est déjà la meilleure référence : Mado ne part qu'à défaut */
+      const avecVersion = !!(f.pose && autreImg), avecStyle = !avecVersion && refStyleActive();
       const imgs = [];
       if (avecVersion) imgs.push(fichierPourPartage('mascotto-' + autreImg.id, urlImageDeFiche(autreImg)));
-      if (avecStyle) imgs.push(fichierPourPartage('style-mascotto', REF_STYLE_PERSO));
+      if (avecStyle) imgs.push(fichierPourPartage('style-mado', imageRefStyle()));
       return { texte: promptImagePnj(f, { avecVersion, avecStyle }), imgs };
     };
     if (!okImg) manque++;
