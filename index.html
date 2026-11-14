@@ -1475,7 +1475,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v721</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v722</span>
       </div>
       <div class="brand-meta">
         <div class="clock" id="clock">--:--:--</div>
@@ -2824,7 +2824,7 @@
           <input type="number" id="itemMobH" class="field-input" min="1" max="20" step="0.5" value="" placeholder="haut." style="flex:1;" title="hauteur (v706)">
         </div>
         <div id="itemMobFlags" style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
-          <label style="display:flex; gap:8px; align-items:center; margin:0;"><input type="checkbox" id="itemMobRamassable" style="width:auto;"> 🎒 Se ramasse (va dans le compartiment, se pose dans une chambre)</label>
+          <input type="checkbox" id="itemMobRamassable" style="display:none;" checked><span class="meta" style="font-size:11.5px;">🎒 Tout meuble s'obtient et se pose dans la chambre des robots (sauf portes et fenêtres) — sa place y découle de sa pose et de sa catégorie.</span>
           <label style="display:flex; gap:8px; align-items:center; margin:0;"><input type="checkbox" id="itemMobOuvrable" style="width:auto;"> 🔓 S'ouvre (une image fermée, une image ouverte)</label>
           <label style="display:flex; gap:8px; align-items:center; margin:0;"><input type="checkbox" id="itemMobLumiere" style="width:auto;"> 💡 Reste allumé quand la pièce s'éteint</label>
           <label style="display:flex; gap:8px; align-items:center; margin:0;"><input type="checkbox" id="itemMobFenetre" style="width:auto;"> 🪟 Fenêtre (vitrage en magenta : on voit dehors, de jour ou de nuit)</label>
@@ -15644,6 +15644,8 @@ let editingItemId = null;
 if (itemsCol){
   itemsCol.onSnapshot((snap)=>{
     items = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
+    /* v722 : la place de chambre de chaque meuble découle de sa fiche (tous les meubles, plus seulement les « ramassables ») */
+    items.forEach(it=>{ if (!it.mob) return; const d = decoDeMob(it.mob); if (d){ it.deco = d; it.lumiere = !!it.mob.lumiere; } else delete it.deco; });
     try { coffresResoudreImages(); Object.keys(compoFenetreCache).forEach(k=>{ if (k.startsWith('fi_')) delete compoFenetreCache[k]; }); } catch(e){}   // v686
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
@@ -15698,7 +15700,7 @@ function categorieMobilier(cat, nom){
 const POSE_DE_DECO = { sol:'sol_plat', mur:'mur', plafond:'plafond', volume:'sol_debout', couchage:'sol_debout' };
 /* l'emplacement de chambre (ancien système `deco`) qui va avec une fiche de mobilier ramassable */
 function decoDeMob(mob){
-  if (!mob || !mob.ramassable || mob.porte || mob.fenetre) return null;
+  if (!mob || mob.porte || mob.fenetre) return null;   // v722 : tout meuble va dans la chambre (décision du 14/11)
   if (mob.pose === 'mur') return 'mur';
   if (mob.pose === 'plafond') return 'plafond';
   if (mob.pose === 'sol_plat') return 'sol';
@@ -15739,10 +15741,11 @@ function renderItemsListView(){
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'fr');
   });
   if (!liste.length){ listEl.innerHTML = `<p class="meta">${q ? 'Aucun objet ne porte ce nom.' : 'Aucune fiche dans cette famille.'}</p>`; return; }
-  listEl.innerHTML = ordre.map(g=> (g ? `<div style="font-weight:700; font-size:13px; margin:12px 0 6px;">${htmlEsc(g)} <span class="meta">${groupes[g].length}</span></div>` : '')
+  const legendeChambre = (!q && biblioFamille === 'mobilier') ? '<p class="meta" style="margin:4px 0 0; font-size:11px;">Place dans la chambre des robots : ' + Object.keys(TYPES_DECO).filter(t=> !['fenetre', 'robot'].includes(t)).map(t=> TYPES_DECO[t].emoji + ' ' + TYPES_DECO[t].nom.replace(/ \(.*\)/, '').toLowerCase()).join(' · ') + ' (portes et fenêtres : jamais)</p>' : '';
+  listEl.innerHTML = legendeChambre + ordre.map(g=> (g ? `<div style="font-weight:700; font-size:13px; margin:12px 0 6px;">${htmlEsc(g)} <span class="meta">${groupes[g].length}</span></div>` : '')
     + '<div class="biblio-grille">' + groupes[g].map(it=>{
       const m = it.mob || {};
-      const marques = (ficheADessiner(it) ? '✏️' : '') + (m.ouvrable ? '🔓' : '') + (m.lumiere ? '💡' : '') + (m.fenetre ? '🪟' : '') + (m.ramassable ? '🎒' : '');
+      const marques = (ficheADessiner(it) ? '✏️' : '') + (m.ouvrable ? '🔓' : '') + (m.lumiere ? '💡' : '') + (m.fenetre ? '🪟' : '') + (it.deco && TYPES_DECO[it.deco] ? TYPES_DECO[it.deco].emoji : '');
       const nbAngles = famileDe(it) === 'mobilier' ? Object.keys(m.vues || {}).filter(k=> m.vues[k] && (m.vues[k].ref || m.vues[k].path)).length : 0;
       return `<button type="button" class="biblio-case" data-edit="${it.id}">
         <span class="biblio-img"><img data-vignette="${it.id}" src="${it.imageUrl || ITEM_PLACEHOLDER_IMG}" alt=""></span>
@@ -16225,7 +16228,7 @@ function lireBlocMob(){
   m.w = Math.max(1, parseInt(document.getElementById('itemMobW').value, 10) || 1);
   m.p = Math.max(1, parseInt(document.getElementById('itemMobP').value, 10) || 1);
   { const h = parseFloat(document.getElementById('itemMobH').value); if (h > 0) m.hauteur = h; else delete m.hauteur; }   // v706
-  m.ramassable = document.getElementById('itemMobRamassable').checked;
+  m.ramassable = true;   // v722 : tout meuble s'obtient
   m.ouvrable = document.getElementById('itemMobOuvrable').checked;
   m.lumiere = document.getElementById('itemMobLumiere').checked;
   m.fenetre = document.getElementById('itemMobFenetre').checked;
@@ -36676,7 +36679,7 @@ async function ouvrirDialogueRobot(hab){
    que le joueur verra. Le réglage vaut pour toutes les chambres (elles sont identiques). */
 async function ouvrirPlacementChambre(itemId){
   const it = (typeof items !== 'undefined' ? items : []).find(i=> i.id === itemId);
-  if (!it || !it.deco){ showToast('Coche « 🎒 Se ramasse » et enregistre la fiche d\'abord'); return; }
+  if (!it || !it.deco){ showToast('Les portes et les fenêtres ne se posent pas dans la chambre'); return; }
   const url = await urlDeRef(chambreConfig.imageRef);
   const base = url ? await chargerImage(url) : null;
   if (!base){ showToast('Pose d\'abord l\'image de la chambre (Édition → 🛏️ Chambre des robots)'); return; }
@@ -36867,6 +36870,7 @@ async function ouvrirPlacementChambre(itemId){
    · une fenêtre se règle par ses 4 COINS, avec l'onglet ◇ de la palette — le même que l'éditeur de scène
      (l'ancien réglage en degrés est converti en coins à l'ouverture). */
 const apercusChambre = {};   // emplacement → id de l'objet / robot / cadre montré (pour la session)
+const apercusMasques = new Set();   // v722 : les emplacements dont on a caché l'aperçu (🙈)
 function coinsDePerspective(p){
   p = Number(p) || 0;
   if (!p) return null;
@@ -36909,7 +36913,7 @@ async function ouvrirEditeurEmplacementsChambre(){
         <button type="button" class="btn-secondary" data-x style="padding:5px 10px;">✕</button>
       </div>
       <div data-corps style="flex:1; min-height:0; overflow-y:auto; padding:0 12px max(10px, env(safe-area-inset-bottom));">
-        <p class="meta" style="margin:0 0 6px; font-size:11px;">La chambre telle que le joueur la voit. Touche un rectangle (ou ☰ dans la palette 🎛️) : ✥ le déplacer, ⤢ sa taille, ◇ les coins d'une fenêtre, ⟳ un autre objet en aperçu. Les aperçus ne sont pas enregistrés : ils servent à voir comment ça tombe.</p>
+        <p class="meta" style="margin:0 0 6px; font-size:11px;">La chambre telle que le joueur la voit. Touche un rectangle (ou ☰ dans la palette 🎛️) : ✥ le déplacer, ⤢ sa taille, ◇ les coins d'une fenêtre, ⟳ un autre objet en aperçu, 🙈 cacher cet aperçu. Les aperçus ne sont pas enregistrés : ils servent à voir comment ça tombe.</p>
         <div data-filtres style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;"></div>
         <div data-panneau></div>
         <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">${Object.keys(TYPES_DECO).map(t=> `<button type="button" class="btn-secondary" data-ajout="${t}" style="padding:6px 8px;">➕ ${TYPES_DECO[t].emoji}</button>`).join('')}</div>
@@ -36934,6 +36938,7 @@ async function ouvrirEditeurEmplacementsChambre(){
   /* ---- les aperçus : un calque par emplacement, mis à jour sur place ---- */
   const cacheAp = {};   // id d'emplacement → { cle, im, url, miroir, reglage, def, el, robot }
   const candidat = (e)=>{
+    if (apercusMasques.has(e.id)) return null;
     const l = candidatsApercuChambre(e);
     return l.find(c=> c.id === apercusChambre[e.id]) || l[0] || null;
   };
@@ -37063,11 +37068,15 @@ async function ouvrirEditeurEmplacementsChambre(){
       if (!cands.length){ showToast(e.type === 'robot' ? 'Aucun robot avec une image' : e.type === 'fenetre' ? 'La bibliothèque de fenêtres est vide' : 'Aucun objet de la bibliothèque n\'accepte cet emplacement'); return; }
       const i = cands.findIndex(c=> c.id === (occ && occ.id));
       apercusChambre[e.id] = cands[(i + 1) % cands.length].id;
+      apercusMasques.delete(e.id);
       if (!voirApercus) voirApercus = true;
       dessiner();
     };
     const emoAp = e ? (e.type === 'robot' ? '🤖' : e.type === 'fenetre' ? '🪟' : '🪑') : '🪑';
     const cAp = { l: emoAp + (cands.length > 1 ? '⟳' : ''), petit: true, titre: 'Aperçu : le suivant de ce type', act: suivant };
+    const masque = !!(e && apercusMasques.has(e.id));
+    const cMasque = { l: masque ? '👁️' : '🙈', petit: true, actif: masque, titre: masque ? 'Remontrer l\'aperçu de cet emplacement' : 'Cacher l\'aperçu de cet emplacement',
+      act: ()=>{ if (!e) { showToast('Choisis d\'abord un emplacement'); return; } if (masque) apercusMasques.delete(e.id); else apercusMasques.add(e.id); dessiner(); } };
     const choix = (k, l)=> ({ l, sel: k === etatPalEmp.coin, act: ()=>{ etatPalEmp.coin = k; dessiner(); } });
     const coin = (dx, dy)=> faire(x=>{
       x.coins = x.coins || {};
@@ -37083,18 +37092,19 @@ async function ouvrirEditeurEmplacementsChambre(){
       grilles: {
         placer: [null, { l:'▲', act: ()=> faire(x=> x.y = borne(x.y - pas, 0, 100)) }, null,
           { l:'◀', act: ()=> faire(x=> x.x = borne(x.x - pas, 0, 100)) }, cAp, { l:'▶', act: ()=> faire(x=> x.x = borne(x.x + pas, 0, 100)) },
-          null, { l:'▼', act: ()=> faire(x=> x.y = borne(x.y + pas, 0, 100)) }, null],
+          cMasque, { l:'▼', act: ()=> faire(x=> x.y = borne(x.y + pas, 0, 100)) }, null],
         taille: [{ l:'↔＋', petit:true, act: ()=> faire(x=> x.w = borne(x.w + pas, 1, 100)) }, { l:'＋', act: ()=> prop(1.04) }, { l:'↕＋', petit:true, act: ()=> faire(x=> x.h = borne(x.h + pas, 1, 100)) },
           { l:'↔－', petit:true, act: ()=> faire(x=> x.w = borne(x.w - pas, 1, 100)) }, { l:'－', act: ()=> prop(1 / 1.04) }, { l:'↕－', petit:true, act: ()=> faire(x=> x.h = borne(x.h - pas, 1, 100)) },
-          null, cAp, null],
+          cMasque, cAp, null],
         coins: [choix('tl', '◤'), { l:'▲', act: ()=> coin(0, -pasCoin) }, choix('tr', '◥'),
           { l:'◀', act: ()=> coin(-pasCoin, 0) }, { l:'⟲', petit:true, titre:'Remettre à plat', act: ()=> faire(x=>{ delete x.coins; delete x.perspective; }) }, { l:'▶', act: ()=> coin(pasCoin, 0) },
           choix('bl', '◣'), { l:'▼', act: ()=> coin(0, pasCoin) }, choix('br', '◢'),
-          null, cAp, null],
+          cMasque, cAp, null],
       },
       listes: { liste: visibles.map(x=> ({ l: TYPES_DECO[x.type].emoji + ' ' + TYPES_DECO[x.type].nom + ' ' + (emps.filter(y=> y.type === x.type).indexOf(x) + 1) + (x.categories && x.categories.length ? ' · ' + x.categories.join(', ') : ''),
         actif: x.id === sel, act: ()=>{ sel = x.id; dessiner(); } })) },
       pied: !e ? 'Touche un rectangle, ou choisis-le dans ☰'
+        : masque ? 'Aperçu caché (👁️ pour le remontrer)'
         : occ ? 'Aperçu : ' + htmlEsc(occ.nom) + (cands.length > 1 ? ' (' + (cands.indexOf(occ) + 1) + '/' + cands.length + ')' : '')
         : 'Aucun aperçu pour ce type',
       defaut: { right: 8, bottom: 200 }, redessiner: dessiner,
