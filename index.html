@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v750</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v751</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -2904,7 +2904,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
       </div>
 
       <div id="itemGraineBlock" style="display:none;">
-        <p class="meta" style="margin:4px 0 8px;">Cette graine se plante dans un <b>bac</b> de la serre. Tu décris ici sa croissance : une image par stade et le temps qu'il met à passer au suivant. <b>Le dernier stade est celui qu'on récolte</b> : il ne s'épuise pas tout seul, il attend le joueur.</p>
+        <p class="meta" style="margin:4px 0 8px;">Cette graine se plante dans un <b>bac</b> de la serre (un composant aussi, s'il a des stades : l'avaril se plante et reste un noyau). Tu décris ici sa croissance : une image par stade et le temps qu'il met à passer au suivant. <b>Le dernier stade est celui qu'on récolte</b> : il ne s'épuise pas tout seul, il attend le joueur.</p>
         <div class="field-label">Stades de croissance</div>
         <div id="itemGraineStages"></div>
         <button type="button" class="btn-secondary" id="itemGraineAddStage" style="width:100%; margin-top:6px;">＋ Ajouter un stade</button>
@@ -13256,6 +13256,18 @@ async function ouvrirBrouillons(){
           (p0 && p0.prompt ? bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okG) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') : '')
           + bouton('data-poser-recolte="' + z.id + '|' + encodeURIComponent(g) + '"', okG ? '📷 Changer la planche' : '📷 Choisir la planche'));
         if (p0 && p0.prompt) envois[cle] = ()=> ({ texte: p0.prompt, imgs: (p0.promptImages || []).map((u, k)=> fichierPourPartage('ref-' + gi + '-' + k, u)) });
+        /* v751 : les 4 stades de la planche font de l'objet récolté une graine — il se plante dans la serre du vaisseau */
+        const pS = pts.find(p=> Array.isArray(p.stadesRefs) && p.stadesRefs.length >= 2);
+        const lootId = ((pts[0] && pts[0].loot) || []).map(l=> l && l.itemId).find(Boolean);
+        const objR = lootId && items.find(i=> i.id === lootId);
+        if (pS && objR){
+          const okP = !!cultureDeLaGraine(objR.id);
+          if (!okP) manque++;
+          blocs += tache(okP, '🌱 « ' + esc(objR.name) + ' » se plante dans la serre',
+            'Les ' + pS.stadesRefs.length + ' stades de la planche deviennent sa croissance dans un bac du vaisseau. Il reste ce qu\'il est (un noyau pour les robots, s\'il en était un) : il se plante en plus.',
+            'Un seul bouton : <b>🌱 Le rendre plantable</b>.',
+            bouton('data-graine-recolte="' + z.id + '|' + encodeURIComponent(g) + '"', '🌱 Le rendre plantable', true));
+        }
       });
       /* v657 : les planches de décor de la zone — une image ChatGPT pour 4 à 6 objets */
       const ptsDePlanche = new Set();
@@ -13658,6 +13670,27 @@ async function ouvrirBrouillons(){
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
+  sur('[data-graine-recolte]', async (b)=>{   // v751
+    const [zid, gEnc] = b.dataset.graineRecolte.split('|'); const g = decodeURIComponent(gEnc);
+    const zd = await zonesCol.doc(zid).get(); const scenes = (zd.exists && zd.data().scenes) || [];
+    const pts = []; scenes.forEach(sc=> (sc.points || []).forEach(pt=>{ if (pt && pt.type === 'recolte' && pt.groupe === g) pts.push(pt); }));
+    const pS = pts.find(p=> Array.isArray(p.stadesRefs) && p.stadesRefs.length >= 2);
+    const lootL = ((pts[0] && pts[0].loot) || []).filter(l=> l && l.itemId);
+    if (!pS || !lootL.length){ showToast('Il manque la planche des stades ou l\'objet récolté'); return; }
+    b.disabled = true; b.textContent = '⏳ …';
+    const stages = [];
+    const minutes = [240, 360, 360, 360], echelles = [45, 70, 100, 100];
+    for (let k = 0; k < pS.stadesRefs.length; k++){
+      const im = await chargerImage(await urlDeRef(pS.stadesRefs[k]));
+      if (!im){ showToast('Stade ' + (k + 1) + ' illisible'); b.disabled = false; return; }
+      stages.push({ imageUrl: encoderImageSousLimite(im, 360, true) || '', imagePath: null, minutes: minutes[k] || 360, echelle: echelles[k] || 100 });
+    }
+    const n = stages.length;
+    const culture = { stages, loot: lootL.map(l=> ({ itemId: l.itemId, qty: l.qty || 1 })), after: 'restart', restartStage: Math.max(2, n - 1) };   // reprise à l'adulte sans fruit (stades comptés à partir de 1)
+    await itemsCol.doc(lootL[0].itemId).set({ culture, updatedAt: Date.now() }, { merge:true });
+    showToast('🌱 ' + ((items.find(i=> i.id === lootL[0].itemId) || {}).name || 'L\'objet') + ' se plante maintenant dans la serre');
+    ouvrirBrouillons();
+  });
   sur('[data-poser-recolte]', async (b)=>{   // v741 : la planche chargé / cueilli, sur tous les points du groupe
     const [zid, gEnc] = b.dataset.poserRecolte.split('|'); const g = decodeURIComponent(gEnc);
     const img = await choisirFichierImage();
@@ -16013,7 +16046,7 @@ function majBlocComposant(){
   const type = document.getElementById('itemType').value;
   document.getElementById('itemComposantBlock').style.display = type === 'composant' ? 'block' : 'none';
   const gb = document.getElementById('itemGraineBlock');
-  if (gb) gb.style.display = type === 'graine' ? 'block' : 'none';
+  if (gb) gb.style.display = (type === 'graine' || type === 'composant') ? 'block' : 'none';   // v751 : un composant (l'avaril) peut aussi se planter
   const ab = document.getElementById('itemAssemblageBlock');   // v733
   if (ab) ab.style.display = type === 'quete' ? 'block' : 'none';
   const fam = document.getElementById('itemComposantFamille').value;
@@ -17026,7 +17059,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
   const famC = document.getElementById('itemComposantFamille').value;
   const composant = type === 'composant' ? { famille: famC, vice: famC === 'noyau' ? (document.getElementById('itemComposantVice').value || null) : null } : null;
   let culture = null;
-  if (type === 'graine'){
+  if (type === 'graine' || (type === 'composant' && currentGraineStages.length)){   // v751
     const after = document.getElementById('itemGraineAfter').value;
     culture = {
       stages: currentGraineStages.map(st=> ({ imageUrl: st.imageUrl || '', imagePath: st.imagePath || null, minutes: parseInt(st.minutes,10) || 60, echelle: echelleDuStade(st) })),
@@ -17460,7 +17493,7 @@ function commandesObjet(it){
   if (isCareItem(it)) c.push('utiliser');
   if (it.equippable) c.push('equiper');
   if (it.deco) c.push('poser');
-  if (it.type === 'graine' && cultureDeLaGraine(it.id)) c.push('planter');
+  if (cultureDeLaGraine(it.id)) c.push('planter');   // v751 : tout objet qui a une culture se plante
   if (assemblageDeLaPiece(it.id)) c.push('assembler');   // v733
   c.push('observer');
   if (it.type !== 'quete') c.push('jeter');
@@ -34302,7 +34335,7 @@ function renderSceneDetailTypeSpecific(pt){
        s'affichera pas », alors que dans la scène rien n'est coupé). Rien de l'aperçu n'est
        enregistré : seuls les deux réglages (échelle, pied) sont sur le point. */
     const r = reglagesPlante(pt);
-    const graines = items.filter(it=> it.type === 'graine' && cultureDeLaGraine(it.id));
+    const graines = items.filter(it=> cultureDeLaGraine(it.id));   // v751
     if (apercuBac.seedId && !graines.some(g=> g.id === apercuBac.seedId)) apercuBac = { seedId:'', stade:-1 };
     if (!apercuBac.seedId && graines.length === 1) apercuBac = { seedId: graines[0].id, stade:-1 };
     const cSel = apercuBac.seedId ? cultureDeLaGraine(apercuBac.seedId) : null;
@@ -35376,7 +35409,7 @@ function ecrirePlantation(pt, rec){
   }, { merge:true });
 }
 function grainesDuSac(){
-  return items.filter(it=> it.type === 'graine' && cultureDeLaGraine(it.id) && (baseResources[it.id] || 0) > 0);
+  return items.filter(it=> cultureDeLaGraine(it.id) && (baseResources[it.id] || 0) > 0);   // v751
 }
 function toucherBac(pt){
   const etat = etatDuBac(pt);
