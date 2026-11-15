@@ -1,4 +1,4 @@
-const CACHE_NAME = "mascotto-v745";
+const CACHE_NAME = "mascotto-v746";
 const ASSETS = [
   "./",
   "./index.html",
@@ -45,15 +45,20 @@ self.addEventListener("fetch", (event) => {
     || url.pathname.endsWith("/index.html");
 
   if (estLaPage) {
-    // Réseau d'abord : on veut toujours la dernière version du jeu quand la connexion est là.
+    /* v746 : la COPIE DU TÉLÉPHONE d'abord. Au retour dans le jeu (Android a vidé la page), on
+       n'attend plus les 3 Mo du réseau : la page part tout de suite du cache, et le réseau la
+       remet à jour en arrière-plan pour la fois suivante. Une nouvelle version livrée change
+       aussi ce fichier : le nouveau service worker s'installe et la page se recharge une fois
+       (voir « controllerchange » dans index.html). Sans copie (première visite) : le réseau. */
     event.respondWith(
-      fetch(new Request(req, { cache: "reload" }))
-        .then((rep) => {
-          const copie = rep.clone();
-          caches.open(CACHE_NAME).then((c) => c.put("./index.html", copie));
+      caches.open(CACHE_NAME).then((cache) => cache.match("./index.html").then((copie) => {
+        const reseau = fetch(new Request(req, { cache: "reload" })).then((rep) => {
+          if (rep && rep.ok) cache.put("./index.html", rep.clone());
           return rep;
-        })
-        .catch(() => caches.match("./index.html").then((c) => c || caches.match("./")))
+        });
+        if (copie) { event.waitUntil(reseau.catch(() => {})); return copie; }
+        return reseau.catch(() => caches.match("./index.html").then((c) => c || caches.match("./")));
+      }))
     );
     return;
   }
