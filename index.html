@@ -1510,7 +1510,7 @@
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v744</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v745</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -16006,6 +16006,7 @@ if (itemsCol){
     items = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
     /* v722 : la place de chambre de chaque meuble découle de sa fiche (tous les meubles, plus seulement les « ramassables ») */
     items.forEach(it=>{ if (!it.mob) return; const d = decoDeMob(it.mob); if (d){ it.deco = d; it.lumiere = !!it.mob.lumiere; } else delete it.deco; });
+    try { items.forEach(r=>{ if (r && r.assemblage && Array.isArray(r.assemblage.pieces)) r.assemblage.pieces.forEach((p, k)=> fragmentDePuzzle(r, k)); }); } catch(e){}   // v745 : les morceaux de puzzle prêts avant d'être vus
     try { coffresResoudreImages(); Object.keys(compoFenetreCache).forEach(k=>{ if (k.startsWith('fi_')) delete compoFenetreCache[k]; }); } catch(e){}   // v686
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
@@ -17343,7 +17344,7 @@ function grilleObjetsHtml(liste, attr, minimum){
   return '<div class="comp-grille">' + liste.map(({ itemId, qty, it })=>{
     const pts = Math.round(poidsObjet(it));
     return `<button type="button" class="comp-case" ${attr}="${itemId}" aria-label="${it ? escSac(it.name) : 'objet'}">
-      <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" alt="">
+      <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${it ? it.id : ''}" alt="">
       ${pts >= 2 ? '<span class="poids">' + '<i></i>'.repeat(Math.min(3, pts)) + '</span>' : ''}
       ${qty > 1 ? '<span class="qte">' + qty + '</span>' : ''}
     </button>`;
@@ -17422,7 +17423,7 @@ function fenetreSac(html, bloquante){
 function enteteObjetSac(it, qte, grand){
   const t = grand ? 64 : 44;
   return `<div style="display:flex; gap:10px; align-items:center;">
-    <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" style="width:${t}px; height:${t}px; object-fit:contain; flex:none;">
+    <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${it ? it.id : ''}" style="width:${t}px; height:${t}px; object-fit:contain; flex:none;">
     <div style="flex:1; min-width:0;">
       <div style="font-weight:700;">${it ? escSac(it.name) : '(objet supprimé)'}</div>
       <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? '×' + qte + (it && it.type !== 'quete' ? ' · poids ' + fmtPoids(poidsObjet(it)) + (qte > 1 ? ' (' + fmtPoids(poidsObjet(it) * qte) + ' en tout)' : '') : '') : 'Il ne t\'en reste plus'}</div>
@@ -17484,10 +17485,15 @@ function fragmentDePuzzle(r, idx){
       const c = document.createElement('canvas');
       c.width = Math.round(w * k); c.height = Math.round(h * k);
       c.getContext('2d').drawImage(img, (idx % cols) * w, Math.floor(idx / cols) * h, w, h, 0, 0, c.width, c.height);
-      fragmentsPuzzle.set(cle, c.toDataURL('image/png'));
+      const u = c.toDataURL('image/png');
+      fragmentsPuzzle.set(cle, u);
+      /* v745 : le morceau déjà affiché (sac, objet ramassé, fiche) prend son image dès qu'elle est prête */
+      const pid = r.assemblage.pieces[idx];
+      if (pid) document.querySelectorAll('img[data-piece-img="' + pid + '"]').forEach(i=>{ i.src = u; });
       if (typeof majQteAuSac === 'function') majQteAuSac();
     } catch(e){}
   };
+  img.onerror = ()=> fragmentsPuzzle.delete(cle);   // v745 : on retentera au prochain affichage
   img.src = src;
   return '';
 }
@@ -17559,7 +17565,7 @@ function observerObjet(it){
   const effet = (it.equippable || it.combatUse) && typeof itemEffectSummary === 'function' ? itemEffectSummary(it) : '';
   fenetreSac(`<div style="display:flex; justify-content:flex-end;"><button class="sheet-x" data-fermer>✕</button></div>
     <div style="text-align:center;">
-      <img src="${urlImageItem(it) || ITEM_PLACEHOLDER_IMG}" style="width:min(70vw, 260px); height:min(70vw, 260px); object-fit:contain;">
+      <img src="${urlImageItem(it) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${it.id}" style="width:min(70vw, 260px); height:min(70vw, 260px); object-fit:contain;">
       <h3 style="margin:8px 0 2px;">${escSac(it.name)}</h3>
       <div class="meta" style="font-size:12px;">${it.deco ? 'Décoration de chambre' : (TYPES_OBJET_SAC[it.type] || 'Objet')}</div>
     </div>
