@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v748</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v749</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -16044,7 +16044,7 @@ if (itemsCol){
     items = snap.docs.map(d=> applyMediaPath({ id: d.id, ...d.data() }));
     /* v722 : la place de chambre de chaque meuble découle de sa fiche (tous les meubles, plus seulement les « ramassables ») */
     items.forEach(it=>{ if (!it.mob) return; const d = decoDeMob(it.mob); if (d){ it.deco = d; it.lumiere = !!it.mob.lumiere; } else delete it.deco; });
-    try { items.forEach(r=>{ if (r && r.assemblage && Array.isArray(r.assemblage.pieces)) r.assemblage.pieces.forEach((p, k)=> fragmentDePuzzle(r, k)); }); } catch(e){}   // v745 : les morceaux de puzzle prêts avant d'être vus
+    try { enregistrerMorceauxDechires(); } catch(e){}   // v749 : les morceaux déchirés reçoivent leur image pour de bon
     try { coffresResoudreImages(); Object.keys(compoFenetreCache).forEach(k=>{ if (k.startsWith('fi_')) delete compoFenetreCache[k]; }); } catch(e){}   // v686
     document.getElementById('itemsStatus').textContent = items.length ? items.length + ' objet(s)' : 'Aucun objet pour le moment.';
     renderItemsListView();
@@ -17505,98 +17505,235 @@ function assemblageDeLaPiece(pieceId){
 function grilleDePuzzle(n){
   return ({ 2:[2,1], 3:[3,1], 4:[2,2], 5:[5,1], 6:[3,2] })[n] || [n, 1];
 }
+/* ═══ v749 — LE PAPIER DÉCHIRÉ (système réutilisable pour toutes les énigmes à morceaux).
+   L'image entière de l'objet est déchirée en N morceaux (2 à 6) le long de lignes irrégulières,
+   toujours les mêmes pour un même objet (tirage fixé par son identifiant). Chaque morceau a de
+   vrais bords déchirés : contour en dents de scie, liseré de papier blanc. Ces morceaux deviennent
+   l'IMAGE des objets-morceaux (enregistrée sur leur fiche : on peut les voir dans le sac, les poser
+   sur un meuble…). Le plateau 🧩 : on fait glisser chaque morceau à sa place dans le cadre ; il
+   s'aimante quand il est proche. Tous posés, les déchirures se referment et l'objet entier apparaît. ═══ */
+function aleaFixe(texte){
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < texte.length; i++) h = Math.imul(h ^ texte.charCodeAt(i), 16777619) >>> 0;
+  return ()=>{ h = (h + 0x6D2B79F5) >>> 0; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+/* une ligne de déchirure : position de base + marche aléatoire + petites dents */
+function ligneDechiree(longueur, base, ampl, alea){
+  const v = new Float32Array(longueur);
+  let p = 0, vit = 0;
+  for (let i = 0; i < longueur; i++){
+    vit += (alea() - 0.5) * ampl * 0.06; vit *= 0.94;
+    p += vit; p *= 0.995;
+    if (p > ampl) { p = ampl; vit = -Math.abs(vit); } if (p < -ampl) { p = -ampl; vit = Math.abs(vit); }
+    v[i] = base + p + (alea() - 0.5) * Math.max(1.5, ampl * 0.09);
+  }
+  return v;
+}
+const decoupesDechirees = new Map();
+function sourceImageObjet(r){ return r ? (r.imagePath ? resolveMediaPath(r.imagePath) : (r.imageUrl || '')) : ''; }
+function signatureDecoupe(r){ const s = sourceImageObjet(r); return s ? (s.length + ':' + s.slice(-60) + ':' + r.assemblage.pieces.length) : ''; }
+function decouperPhoto(r){
+  const src = sourceImageObjet(r);
+  if (!src || !r.assemblage || !Array.isArray(r.assemblage.pieces)) return Promise.resolve(null);
+  const sig = signatureDecoupe(r);
+  if (decoupesDechirees.has(sig)) return decoupesDechirees.get(sig);
+  const p = new Promise((ok)=>{
+    const img = new Image();
+    if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
+    img.onerror = ()=>{ decoupesDechirees.delete(sig); ok(null); };
+    img.onload = ()=>{
+      try {
+        const n = r.assemblage.pieces.length;
+        const [cols, rows] = grilleDePuzzle(n);
+        const k = Math.min(1, 900 / Math.max(img.naturalWidth, img.naturalHeight));
+        const W = Math.round(img.naturalWidth * k), H = Math.round(img.naturalHeight * k);
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const cx = c.getContext('2d', { willReadFrequently:true });
+        cx.drawImage(img, 0, 0, W, H);
+        const src = cx.getImageData(0, 0, W, H).data;
+        const alea = aleaFixe(r.id + '|' + n);
+        const amplV = W / cols * 0.10, amplH = H / rows * 0.10;
+        const vert = []; for (let i = 1; i < cols; i++) vert.push(ligneDechiree(H, W * i / cols, amplV, alea));
+        const hori = []; for (let j = 1; j < rows; j++) hori.push(ligneDechiree(W, H * j / rows, amplH, alea));
+        /* à quel morceau appartient chaque pixel */
+        const qui = new Uint8Array(W * H);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+          let ci = 0; for (const v of vert) if (x >= v[y]) ci++;
+          let rj = 0; for (const h of hori) if (y >= h[x]) rj++;
+          qui[y * W + x] = rj * cols + ci;
+        }
+        /* le liseré blanc : épaisseur 1 à 4 px qui varie le long du bord */
+        const bruit = new Float32Array(W + H); for (let i = 0; i < bruit.length; i++) bruit[i] = alea();
+        const morceaux = [];
+        for (let m = 0; m < n; m++){
+          let x0 = W, y0 = H, x1 = -1, y1 = -1;
+          for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (qui[y * W + x] === m){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          const pw = x1 - x0 + 1, ph = y1 - y0 + 1;
+          const pc = document.createElement('canvas'); pc.width = pw; pc.height = ph;
+          const pcx = pc.getContext('2d');
+          const out = pcx.createImageData(pw, ph), d = out.data;
+          for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++){
+            const i = y * W + x; if (qui[i] !== m) continue;
+            const o = ((y - y0) * pw + (x - x0)) * 4, s4 = i * 4;
+            let R = src[s4], G = src[s4 + 1], B = src[s4 + 2];
+            /* distance au bord déchiré le plus proche (pas aux bords d'origine de l'image) */
+            const ep = 1 + Math.floor((bruit[(x + y) % bruit.length] * 0.6 + bruit[(x * 7 + y * 3) % bruit.length] * 0.4) * 3.6);
+            let bord = 0;
+            for (let t = 1; t <= ep && !bord; t++){
+              if ((x - t >= 0 && qui[i - t] !== m) || (x + t < W && qui[i + t] !== m) || (y - t >= 0 && qui[i - t * W] !== m) || (y + t < H && qui[i + t * W] !== m)) bord = t;
+            }
+            let A = 255;
+            if (bord){
+              const f = bord === 1 ? 0.92 : (bord === 2 ? 0.75 : 0.45);
+              R = Math.round(R + (246 - R) * f); G = Math.round(G + (241 - G) * f); B = Math.round(B + (229 - B) * f);
+              if (bord === 1 && bruit[(x * 13 + y * 5) % bruit.length] < 0.35) A = 160;   // fibres
+            }
+            d[o] = R; d[o + 1] = G; d[o + 2] = B; d[o + 3] = A;
+          }
+          pcx.putImageData(out, 0, 0);
+          morceaux.push({ url: pc.toDataURL('image/png'), x: x0, y: y0, w: pw, h: ph, canvas: pc });
+        }
+        ok({ sig, W, H, cols, rows, morceaux, complete: c.toDataURL('image/jpeg', 0.92) });
+      } catch(e){ decoupesDechirees.delete(sig); ok(null); }
+    };
+    img.src = src;
+  });
+  decoupesDechirees.set(sig, p);
+  return p;
+}
+/* L'image d'un morceau, en attendant qu'elle soit enregistrée sur sa fiche */
 const fragmentsPuzzle = new Map();
 function fragmentDePuzzle(r, idx){
-  const src = r.imagePath ? resolveMediaPath(r.imagePath) : (r.imageUrl || '');
-  if (!src || idx < 0) return '';
-  const cle = src.slice(0, 200) + '#' + src.length + '#' + idx + '/' + r.assemblage.pieces.length;
-  const deja = fragmentsPuzzle.get(cle);
-  if (deja !== undefined) return deja;
+  if (!r || idx < 0) return '';
+  const sig = signatureDecoupe(r); if (!sig) return '';
+  const cle = sig + '#' + idx;
+  if (fragmentsPuzzle.has(cle)) return fragmentsPuzzle.get(cle);
   fragmentsPuzzle.set(cle, '');
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = ()=>{
-    try {
-      const [cols, rows] = grilleDePuzzle(r.assemblage.pieces.length);
-      const w = img.naturalWidth / cols, h = img.naturalHeight / rows;
-      const k = Math.min(1, 320 / Math.max(w, h));
-      const c = document.createElement('canvas');
-      c.width = Math.round(w * k); c.height = Math.round(h * k);
-      c.getContext('2d').drawImage(img, (idx % cols) * w, Math.floor(idx / cols) * h, w, h, 0, 0, c.width, c.height);
-      const u = c.toDataURL('image/png');
-      fragmentsPuzzle.set(cle, u);
-      /* v745 : le morceau déjà affiché (sac, objet ramassé, fiche) prend son image dès qu'elle est prête */
-      const pid = r.assemblage.pieces[idx];
-      if (pid) document.querySelectorAll('img[data-piece-img="' + pid + '"]').forEach(i=>{ i.src = u; });
-      if (typeof majQteAuSac === 'function') majQteAuSac();
-    } catch(e){}
-  };
-  img.onerror = ()=> fragmentsPuzzle.delete(cle);   // v745 : on retentera au prochain affichage
-  img.src = src;
+  decouperPhoto(r).then((dc)=>{
+    if (!dc || !dc.morceaux[idx]) { fragmentsPuzzle.delete(cle); return; }
+    const u = dc.morceaux[idx].url;
+    fragmentsPuzzle.set(cle, u);
+    const pid = r.assemblage.pieces[idx];
+    if (pid) document.querySelectorAll('img[data-piece-img="' + pid + '"]').forEach(i=>{ i.src = u; });
+    if (typeof majQteAuSac === 'function') majQteAuSac();
+  });
   return '';
+}
+/* Les morceaux reçoivent leur image pour de bon (fiche de l'objet) — une fois par image source */
+const decoupesEnregistrees = new Set();
+function enregistrerMorceauxDechires(){
+  if (!itemsCol) return;
+  (items || []).forEach(r=>{
+    if (!r || !r.assemblage || !Array.isArray(r.assemblage.pieces) || r.assemblage.pieces.length < 2) return;
+    const sig = signatureDecoupe(r); if (!sig) return;
+    const aFaire = r.assemblage.pieces.filter(id=>{ const p = items.find(i=> i.id === id); return p && !p.imagePath && (!p.imageUrl || (p.decoupeSig && p.decoupeSig !== sig)); });   // une image posée à la main n'est jamais écrasée
+    if (!aFaire.length || decoupesEnregistrees.has(sig)) return;
+    decoupesEnregistrees.add(sig);
+    decouperPhoto(r).then((dc)=>{
+      if (!dc) { decoupesEnregistrees.delete(sig); return; }
+      r.assemblage.pieces.forEach((id, k)=>{
+        if (!aFaire.includes(id) || !dc.morceaux[k]) return;
+        let u = dc.morceaux[k].url;
+        if (u.length > 900000) u = encoderImageSousLimite(dc.morceaux[k].canvas, 420, true) || u;
+        itemsCol.doc(id).set({ imageUrl: u, imagePath: null, decoupeSig: sig, updatedAt: Date.now() }, { merge:true }).catch(()=>{});
+      });
+    });
+  });
 }
 function ouvrirPuzzle(r){
   if (!r || !r.assemblage) return;
   const pieces = r.assemblage.pieces;
   const n = pieces.length;
-  const [cols, rows] = grilleDePuzzle(n);
-  const src = r.imagePath ? resolveMediaPath(r.imagePath) : (r.imageUrl || '');
   const eus = pieces.filter(id=> qteAuSac(id) > 0);
-  const tuile = (idx, extra)=> `background-image:url('${src}'); background-size:${cols * 100}% ${rows * 100}%;`
-    + ` background-position:${cols > 1 ? (idx % cols) / (cols - 1) * 100 : 0}% ${rows > 1 ? Math.floor(idx / cols) / (rows - 1) * 100 : 0}%;` + (extra || '');
-  /* Il en manque : on montre ce qu'on a, sans dire où ça va. */
-  if (eus.length < n){
-    fenetreSac(`<div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3 style="margin:0;">🧩 ${eus.length} morceau${eus.length > 1 ? 'x' : ''} sur ${n}</h3><button class="sheet-x" data-fermer>✕</button></div>
-      <p class="meta" style="margin:6px 0 12px;">Il en manque encore ${n - eus.length}. Fouille bien : ils peuvent être n'importe où.</p>
-      <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center;">
-        ${eus.map(id=>{ const idx = pieces.indexOf(id); return src
-          ? `<div style="width:${Math.round(96 * Math.min(1, cols / rows))}px; aspect-ratio:${rows} / ${cols}; max-height:110px; border-radius:3px; box-shadow:0 2px 6px rgba(0,0,0,.25); ${tuile(idx, ' transform:rotate(' + (Math.random() * 10 - 5).toFixed(1) + 'deg);')}"></div>`
-          : `<img src="${ITEM_PLACEHOLDER_IMG}" style="width:80px; height:80px;">`; }).join('')}
-      </div>`);
-    return;
-  }
-  if (!src){ showToast('Ce puzzle n\'a pas encore son image'); return; }
-  /* Tout est là : le plateau. ordre[case] = morceau posé dans cette case ; jamais résolu d'entrée. */
-  let ordre = pieces.map((_, i)=> i);
-  do { for (let i = n - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [ordre[i], ordre[j]] = [ordre[j], ordre[i]]; } }
-  while (ordre.every((v, i)=> v === i));
-  let choisi = -1, fini = false;
+  if (!sourceImageObjet(r)){ showToast('Ce puzzle n\'a pas encore son image'); return; }
   const f = fenetreSac(`<div style="display:flex; justify-content:space-between; align-items:center;">
-      <h3 style="margin:0;">🧩 ${escSac(r.name)}</h3><button class="sheet-x" data-fermer>✕</button></div>
-    <p class="meta" data-puz-aide style="margin:6px 0 10px;">Touche deux morceaux pour les échanger.</p>
-    <div data-puz style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:3px; width:100%; max-width:420px; margin:0 auto; background:rgba(0,0,0,.18); padding:3px; border-radius:8px;"></div>`);
+      <h3 style="margin:0;">🧩 ${eus.length < n ? eus.length + ' morceau' + (eus.length > 1 ? 'x' : '') + ' sur ' + n : escSac(r.name)}</h3><button class="sheet-x" data-fermer>✕</button></div>
+    <p class="meta" data-puz-aide style="margin:6px 0 10px;">${eus.length < n ? 'Il en manque encore ' + (n - eus.length) + '. Fouille bien : ils peuvent être n\'importe où.' : 'Fais glisser chaque morceau à sa place.'}</p>
+    <div data-puz style="position:relative; width:100%; max-width:420px; margin:0 auto; touch-action:none; user-select:none; -webkit-user-select:none;"><p class="meta" style="text-align:center;">✂️ …</p></div>`);
   const plateau = f.querySelector('[data-puz]');
-  const img = new Image();
-  img.onload = ()=>{ plateau.style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight; };
-  img.src = src;
-  const dessiner = ()=>{
-    plateau.innerHTML = ordre.map((idx, k)=> `<button type="button" data-case="${k}" style="border:none; padding:0; min-height:60px; border-radius:4px; ${tuile(idx,
-      ' outline:' + (k === choisi ? '3px solid var(--accent)' : 'none') + '; outline-offset:-3px; transform:' + (k === choisi ? 'scale(.95)' : 'none') + '; transition:transform .12s;')}"></button>`).join('');
-    plateau.querySelectorAll('[data-case]').forEach(b=> b.addEventListener('click', ()=>{
-      if (fini) return;
-      const k = +b.dataset.case;
-      if (choisi < 0){ choisi = k; dessiner(); return; }
-      if (choisi !== k) [ordre[choisi], ordre[k]] = [ordre[k], ordre[choisi]];
-      choisi = -1;
-      dessiner();
-      if (ordre.every((v, i)=> v === i)) reussi();
-    }));
-  };
-  const reussi = async ()=>{
-    fini = true;
-    plateau.style.gap = '0'; plateau.style.transition = 'gap .4s';
-    plateau.querySelectorAll('[data-case]').forEach(b=> b.style.borderRadius = '0');
-    f.querySelector('[data-puz-aide]').textContent = '✨ Reconstitué !';
-    if (currentUser && db){
-      const maj = { [r.id]: firebase.firestore.FieldValue.increment(1) };
-      pieces.forEach(id=> maj[id] = firebase.firestore.FieldValue.increment(-1));
-      try { await db.collection('players').doc(currentUser.uid).set({ inventory: maj }, { merge:true }); }
-      catch(e){ showToast('Échec : ' + e.message); return; }
+  decouperPhoto(r).then((dc)=>{
+    if (!dc || !f.isConnected){ if (f.isConnected) plateau.innerHTML = '<p class="meta">Image illisible.</p>'; return; }
+    const L = plateau.clientWidth || 320;
+    const VH = window.innerHeight || 700;
+    const s = Math.min(L * 0.86 / dc.W, VH * 0.40 / dc.H), cadreW = dc.W * s, cadreH = dc.H * s;   // tout le plateau tient à l'écran
+    const cadreX = (L - cadreW) / 2, cadreY = 8;
+    const trayY = cadreY + cadreH + 16, trayH = Math.max(140, Math.min(VH * 0.30, 280));
+    plateau.style.height = (eus.length < n ? Math.max(170, trayH + 20) : trayY + trayH) + 'px';
+    plateau.innerHTML = '';
+    const alea = Math.random;
+    if (eus.length < n){   // il en manque : ses morceaux étalés, sans le cadre
+      eus.forEach((id, k)=>{
+        const m = dc.morceaux[pieces.indexOf(id)]; if (!m) return;
+        const sc = Math.min(1, 140 / Math.max(m.w, m.h)) ;
+        const im = document.createElement('img'); im.src = m.url;
+        im.style.cssText = `position:absolute; width:${m.w * sc}px; left:${10 + (k % 3) * (L / 3)}px; top:${10 + Math.floor(k / 3) * 150}px; transform:rotate(${(alea() * 16 - 8).toFixed(1)}deg); filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));`;
+        plateau.appendChild(im);
+      });
+      return;
     }
-    setTimeout(()=>{ f.remove(); showToast('🧩 ' + r.name + ' reconstitué'); observerObjet(r); }, 1100);
-  };
-  dessiner();
+    const cadre = document.createElement('div');
+    cadre.style.cssText = `position:absolute; left:${cadreX}px; top:${cadreY}px; width:${cadreW}px; height:${cadreH}px; border:2px dashed rgba(128,128,128,.55); border-radius:4px; background:rgba(128,128,128,.10);`;
+    plateau.appendChild(cadre);
+    let poses = 0;
+    const etat = dc.morceaux.map((m, k)=>{
+      const el = document.createElement('img');
+      el.src = m.url; el.draggable = false;
+      const w = m.w * s, h = m.h * s;
+      const cibleX = cadreX + m.x * s, cibleY = cadreY + m.y * s;
+      let x = Math.max(0, Math.min(L - w, alea() * (L - w)));
+      let y = trayY + alea() * Math.max(0, trayH - h);
+      const rot = (alea() * 24 - 12);
+      el.style.cssText = `position:absolute; width:${w}px; height:${h}px; left:0; top:0; transform:translate(${x}px, ${y}px) rotate(${rot}deg); filter:drop-shadow(0 3px 5px rgba(0,0,0,.35)); cursor:grab; transition:transform .18s, filter .18s; z-index:${2 + k};`;
+      plateau.appendChild(el);
+      const st = { el, x, y, w, h, cibleX, cibleY, pose:false, rot };
+      let dx = 0, dy = 0, id = null;
+      el.addEventListener('pointerdown', (e)=>{
+        if (st.pose) return;
+        id = e.pointerId; el.setPointerCapture(id);
+        const pr = plateau.getBoundingClientRect();
+        dx = e.clientX - pr.left - st.x; dy = e.clientY - pr.top - st.y;
+        el.style.transition = 'filter .18s'; el.style.zIndex = 50; el.style.filter = 'drop-shadow(0 8px 10px rgba(0,0,0,.4))';
+        st.rot = 0; el.style.transform = `translate(${st.x}px, ${st.y}px) scale(1.04)`;
+      });
+      el.addEventListener('pointermove', (e)=>{
+        if (id !== e.pointerId || st.pose) return;
+        const pr = plateau.getBoundingClientRect();
+        st.x = e.clientX - pr.left - dx; st.y = e.clientY - pr.top - dy;
+        el.style.transform = `translate(${st.x}px, ${st.y}px) scale(1.04)`;
+      });
+      const lacher = (e)=>{
+        if (id !== e.pointerId) return; id = null;
+        el.style.transition = 'transform .22s ease-out, filter .22s';
+        el.style.filter = 'drop-shadow(0 3px 5px rgba(0,0,0,.35))';
+        if (Math.hypot(st.x - st.cibleX, st.y - st.cibleY) < Math.max(26, L * 0.07)){
+          st.x = st.cibleX; st.y = st.cibleY; st.pose = true; poses++;
+          el.style.zIndex = 1; el.style.cursor = 'default'; el.style.filter = 'none';
+          el.style.transform = `translate(${st.x}px, ${st.y}px)`;
+          try { navigator.vibrate && navigator.vibrate(15); } catch(_){}
+          if (poses === dc.morceaux.length) setTimeout(reussi, 260);
+        } else el.style.transform = `translate(${st.x}px, ${st.y}px)`;
+      };
+      el.addEventListener('pointerup', lacher); el.addEventListener('pointercancel', lacher);
+      return st;
+    });
+    const reussi = async ()=>{
+      f.querySelector('[data-puz-aide]').textContent = '✨ Les déchirures se referment…';
+      cadre.style.transition = 'opacity .4s'; cadre.style.opacity = '0';
+      const entier = document.createElement('img'); entier.src = dc.complete;
+      entier.style.cssText = `position:absolute; left:${cadreX}px; top:${cadreY}px; width:${cadreW}px; height:${cadreH}px; opacity:0; z-index:60; border-radius:3px; transition:opacity .9s ease, transform .9s ease, box-shadow .9s; box-shadow:0 0 0 rgba(255,230,140,0);`;
+      plateau.appendChild(entier);
+      requestAnimationFrame(()=>{ entier.style.opacity = '1'; entier.style.transform = 'scale(1.03)'; entier.style.boxShadow = '0 0 34px rgba(255,225,130,.85)'; });
+      setTimeout(()=>{ entier.style.transform = 'scale(1)'; entier.style.boxShadow = '0 6px 16px rgba(0,0,0,.35)'; etat.forEach(t=> t.el.style.opacity = '0'); }, 900);
+      if (currentUser && db){
+        const maj = { [r.id]: firebase.firestore.FieldValue.increment(1) };
+        pieces.forEach(id=> maj[id] = firebase.firestore.FieldValue.increment(-1));
+        try { await db.collection('players').doc(currentUser.uid).set({ inventory: maj }, { merge:true }); }
+        catch(e){ showToast('Échec : ' + e.message); return; }
+      }
+      setTimeout(()=>{ if (f.isConnected) f.querySelector('[data-puz-aide]').textContent = '📸 ' + r.name + ' !'; }, 1000);
+      setTimeout(()=>{ f.remove(); showToast('🧩 ' + r.name + ' reconstitué'); observerObjet(r); }, 2300);
+    };
+  });
 }
 function observerObjet(it){
   if (!it) return;
