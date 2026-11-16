@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v756</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v757</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -3947,6 +3947,14 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <input type="time" id="variantCondEndTime" class="field-input">
       </div>
     </div>
+    <div class="field-label">Dans le jeu (v757) — en plus de l'heure</div>
+    <select id="variantCondJeu" class="field-input" style="margin:0;">
+      <option value="">— rien de plus —</option>
+      <option value="won">une fois tel personnage battu</option>
+      <option value="not_won">tant que tel personnage n'est pas battu</option>
+      <option value="quest">selon l'état d'une quête</option>
+    </select>
+    <div id="variantCondJeuDetail" style="display:flex; gap:6px; margin-top:6px;"></div>
     <p class="meta" id="variantCondSummary" style="margin-top:8px;"></p>
     <button class="btn-capture" id="variantCondSaveBtn" style="width:100%; margin-top:10px;">✅ Enregistrer</button>
   </div>
@@ -11923,7 +11931,8 @@ MÉTHODE DE CONCEPTION — à dérouler AVANT toute image ou tout objet (Claude 
 18. CE QUI SE CUEILLE SE VOIT, CE QUI SE VOIT SE CUEILLE (14/11). Une plante qui porte des fruits ramassables (l'avaril…) n'est JAMAIS dessinée dans la pièce : ChatGPT dessine le support vide (bac, pot, sol), et le jeu pose des points « 🌱 Récolte » d'un même groupe. Une seule planche par plante : ses 4 STADES de croissance (pousse, jeune, adulte cueilli, adulte chargé), à la même échelle, image du fruit jointe ; le guide la découpe et pose l'adulte chargé / cueilli sur tous les points du groupe. Peu de fruits dessinés (2 ou 3) : le nombre de fruits dessinés = le nombre récolté. Aucune autre plante à fruits dans les décors.
 19. NE JAMAIS NOMMER CE QUI NE DOIT PAS ÊTRE DESSINÉ (15/11). ChatGPT dessine tout ce que le prompt nomme, même pour l'interdire : « aucune plante à fruits » ou « des fruits écrasés au sol » lui ont fait dessiner des arbustes chargés dans le couloir de la ferme. Un prompt de décor ne décrit QUE ce qui doit y être, en positif (« le décor n'est fait que de métal, de tuyaux et de caisses »). Et chaque élément numéroté est décrit au mur où le schéma le met (gauche, fond, droite) : relire chaque numéro contre le schéma avant de livrer. Le paragraphe des FENÊTRES (vitres magenta) ne part QUE dans les pièces dont le schéma a des vitres ; les autres reçoivent seulement « Les murs sont pleins, du sol au plafond. » (sinon ChatGPT dessine une fenêtre, comme dans la serre hydroponique).
 20. PAS DE BOUCLE ENTRE LES PIÈCES (15/11). Une zone se construit en ARBRE : chaque pièce a UNE flèche qui ramène toujours à la pièce d'où l'on vient, et ses portes ne mènent QU'à des pièces nouvelles, plus loin. Jamais deux portes qui se renvoient l'une à l'autre (ex. serre hydroponique ↔ vestiaires) : dans une boucle, la flèche ne ramène plus en arrière dans un des deux sens, et le joueur se perd. Une porte qui mènerait en arrière est condamnée (verrou + message « Fermée de l'autre côté. »).
-21. VITRES ENTRE DEUX PIÈCES (15/11). Une baie vitrée qui donne sur une autre pièce de la zone (la serre derrière la boutique) : vitre magenta comme les fenêtres, et la scène porte « vitresVers » = le nom de cette pièce — le jeu y montre son image (de jour ou de nuit), jamais un paysage du dehors.`;
+21. VITRES ENTRE DEUX PIÈCES (15/11). Une baie vitrée qui donne sur une autre pièce de la zone (la serre derrière la boutique) : vitre magenta comme les fenêtres, et la scène porte « vitresVers » = le nom de cette pièce — le jeu y montre son image (de jour ou de nuit), jamais un paysage du dehors.
+22. UN SEUL OUTIL PAR BESOIN (16/11). L'éditeur de scène est l'endroit principal où l'on fabrique une pièce. Quand il faut une possibilité nouvelle, on l'ajoute à l'outil qui existe déjà au lieu de créer un système à part : une pièce qui change après un événement (boss battu, quête finie) est une VARIANTE de la scène (🔀), avec sa condition de jeu — elle peut tout changer, image ET points (un personnage qui part, un autre qui arrive, un coffre, une porte). Jamais une image « à côté » qui ne change que le fond.`;
 const CHARTE_CONCEPTION_DEFAUT = `CHARTE DE CONCEPTION MASCOTTO — règles à appliquer à toute nouvelle zone, pièce ou personnage.
 
 UNIVERS
@@ -13035,6 +13044,7 @@ async function ouvrirBrouillons(){
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)
         || (sc.imageApres && sc.imageApres.prompt && !sc.imageApres.ref)   // v755
+        || (sc.variants || []).some(v=> v && v.prompt && !(v.imageRef || v.imageUrl || v.imagePath))   // v757 : variante à dessiner
         || (sc.prompt && sc.structureRef && sc.imageRef === sc.structureRef)   // v756 : une pièce encore au dessin de structure (pièce ajoutée)
         /* v753 : une zone publiée revient aussi pour ses RÉCOLTES : planche des 4 stades pas encore posée,
            ou objet récolté pas encore plantable alors que les stades sont là */
@@ -13322,17 +13332,21 @@ async function ouvrirBrouillons(){
         if (sc.prompt) envois['scene|' + z.id + '|' + sc.id] = ()=> ({ texte: avecCharte(sc.prompt), imgs: sc.structureRef ? [fichierPourPartage('structure-' + sc.id, internalizeSceneImage(sc.structureRef))] : [] });
         /* v755 : l'image « APRÈS » d'une pièce (la cloche vide une fois la souche-mère prise) — une
            retouche de l'image actuelle, qui prend le relais quand sa condition est remplie */
-        if (sc.imageApres && sc.imageApres.prompt && ok){
-          const okA = !!sc.imageApres.ref;
-          if (!okA) manque++;
-          const cleA = 'apres|' + z.id + '|' + sc.id;
-          const btnsA = bouton('data-envoi="' + cleA + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="' + cleA + '"', '📋 Copier') + bouton('data-poser-apres="' + z.id + '|' + sc.id + '"', '📷 Choisir l\'image');
-          blocs += tache(okA, '🖼️ « ' + esc(sc.name) + ' » — ' + esc(sc.imageApres.label || 'après'),
-            'La même pièce, retouchée : elle remplace l\'image actuelle ' + esc(sc.imageApres.quandTexte || 'quand sa condition est remplie') + '.',
+        /* v757 : une VARIANTE de la scène qui attend son image (créée par un import, avec son prompt) :
+           une retouche de l'image actuelle, faite par ChatGPT, posée sur la variante */
+        migrerImageApres([sc]);
+        (sc.variants || []).forEach(v=>{
+          if (!v || !v.prompt || !ok) return;
+          const okV = !!(v.imageRef || v.imageUrl || v.imagePath);
+          if (!okV) manque++;
+          const cleV = 'var|' + z.id + '|' + sc.id + '|' + v.id;
+          const btnsV = bouton('data-envoi="' + cleV + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="' + cleV + '"', '📋 Copier') + bouton('data-poser-variante="' + z.id + '|' + sc.id + '|' + v.id + '"', '📷 Choisir l\'image');
+          blocs += tache(okV, '🔀 « ' + esc(sc.name) + ' » — variante « ' + esc(v.label || 'variante') + ' »',
+            'La même pièce, retouchée : cette variante prend le relais ' + esc(v.quandTexte || summarizeVariantConditions(v)) + '. Ses points se règlent dans l\'éditeur de scène → 🔀 Variantes.',
             '1. <b>📤 Envoyer à ChatGPT</b> : l\'image actuelle de la pièce part avec, il n\'y change qu\'une chose.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.',
-            btnsA, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + btnsA + '</div>');
-          envois[cleA] = ()=> ({ texte: sc.imageApres.prompt, imgs: [fichierPourPartage('piece-' + sc.id, sc.imageRef ? internalizeSceneImage(sc.imageRef) : (sc.imageUrl || ''))] });
-        }
+            btnsV, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + btnsV + '</div>');
+          envois[cleV] = ()=> ({ texte: v.prompt, imgs: [fichierPourPartage('piece-' + sc.id, sc.imageRef ? internalizeSceneImage(sc.imageRef) : (sc.imageUrl || ''))] });
+        });
         /* v598 : une fois la VRAIE image posée, tous les points se recalent à l'œil — mes positions
            sont estimées sur le schéma (rectangles, objets, coffres, sorties, photo). */
         if (sc.prompt && ok && (sc.points || []).length){
@@ -13707,17 +13721,20 @@ async function ouvrirBrouillons(){
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
-  sur('[data-poser-apres]', async (b)=>{   // v755
-    const [zid, sid] = b.dataset.poserApres.split('|');
+  sur('[data-poser-variante]', async (b)=>{   // v757
+    const [zid, sid, vid] = b.dataset.poserVariante.split('|');
     const img = await choisirFichierImage(); if (!img) return;
     const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1400, false));
     if (!ref){ showToast('Échec : image non enregistrée'); return; }
     const zd = await zonesCol.doc(zid).get(); const scenes = (zd.exists && zd.data().scenes) || [];
-    const sc = scenes.find(x=> x && x.id === sid); if (!sc || !sc.imageApres){ showToast('Pièce introuvable'); return; }
-    sc.imageApres.ref = ref;
+    migrerImageApres(scenes);
+    const sc = scenes.find(x=> x && x.id === sid);
+    const v = sc && (sc.variants || []).find(x=> x && x.id === vid);
+    if (!v){ showToast('Variante introuvable'); return; }
+    v.imageRef = ref; v.imageUrl = ''; v.imagePath = null;
     await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(zid);
-    showToast('🖼️ Image « après » posée');
+    showToast('🔀 Image de la variante posée');
     ouvrirBrouillons();
   });
   sur('[data-graine-recolte]', async (b)=>{   // v751
@@ -32555,7 +32572,27 @@ function rafraichirCopiesPnjDesPoints(scenesArr, pourEditeur){
 }
 
 /* Remplace en place les imageRef par de vraies dataURL (résolution), pour que le reste du code n'ait rien à changer */
+/* v757 : l'« image après » de la v755 devient une VRAIE VARIANTE de la scène (même outil pour tout).
+   Ses points sont une copie de ceux de la scène : un décor collé sur l'ancienne image (le fruit de la
+   cloche) se retire de la variante dans l'éditeur. Écrit pour de bon au prochain « Enregistrer ». */
+function migrerImageApres(scenesArr){
+  let n = 0;
+  (scenesArr || []).forEach(sc=>{
+    const ia = sc && sc.imageApres;
+    if (!ia) return;
+    if (!Array.isArray(sc.variants)) sc.variants = [];
+    if (!sc.variants.some(v=> v && v.depuisImageApres)){
+      sc.variants.unshift({ id: genSceneId(), label: ia.label || 'après', imageUrl: '', imageRef: ia.ref || null,
+        points: ia.ref ? JSON.parse(JSON.stringify(sc.points || [])) : [], prompt: ia.prompt || '', quandTexte: ia.quandTexte || '',
+        conds: ia.conds || [], daysOfWeek: [], startDate: '', endDate: '', startTime: '', endTime: '', depuisImageApres: true });
+      n++;
+    }
+    delete sc.imageApres;
+  });
+  return n;
+}
 async function resolveImageRefsInScenes(scenesArr, pourEditeur){
+  if (migrerImageApres(scenesArr) && pourEditeur){ try { showToast('🔀 L\'image « après » est devenue une variante de la scène : vérifie-la (🔀 Variantes) puis Enregistrer'); } catch(e){} }
   /* AVANT la résolution des références, pas après : une copie rafraîchie doit l'emporter sur
      l'ancienne référence, et `resolvePointImageRefJobs` ne remplit que ce qui est encore vide. */
   rafraichirCopiesPnjDesPoints(scenesArr, pourEditeur);
@@ -32898,6 +32935,13 @@ function summarizeVariantConditions(v){
   }
   if (v.startDate || v.endDate) parts.push(`${v.startDate||'…'} → ${v.endDate||'…'}`);
   if (v.startTime || v.endTime) parts.push(`${v.startTime||'00:00'}-${v.endTime||'23:59'}`);
+  (v.conds || []).forEach(c=>{   // v757 : conditions de jeu
+    if (!c) return;
+    const f = c.creatureId && typeof ficheParId === 'function' ? ficheParId(c.creatureId) : null;
+    const q = c.questId ? (quests || []).find(x=> x && x.id === c.questId) : null;
+    if (c.kind === 'combat') parts.push((c.state === 'not_won' ? 'tant que ' : 'une fois ') + ((f && f.name) || '?') + (c.state === 'not_won' ? ' pas battu' : ' battu'));
+    else if (c.kind === 'quest') parts.push('quête « ' + ((q && q.name) || '?') + ' » ' + ({ active:'en cours', completed:'finie', not_started:'pas commencée' }[c.state] || c.state || ''));
+  });
   return parts.length ? parts.join(' · ') : 'Aucune condition (toujours active)';
 }
 
@@ -32950,6 +32994,36 @@ function renderSceneVariantOverlay(){
   });
 }
 let variantCondEditingId = null;
+let variantCondJeu = null;   // v757 : { kind:'combat', creatureId, state } | { kind:'quest', questId, state }
+function peindreVariantCondJeu(){
+  const k = document.getElementById('variantCondJeu').value;
+  const d = document.getElementById('variantCondJeuDetail'); d.innerHTML = '';
+  if (!k){ variantCondJeu = null; return; }
+  if (k === 'won' || k === 'not_won'){
+    if (!variantCondJeu || variantCondJeu.kind !== 'combat') variantCondJeu = { kind:'combat', creatureId:null };
+    variantCondJeu.state = k;
+    const fs = toutesLesFiches().filter(f=> (f.interactionType || 'dialogue') !== 'zone').sort((a, b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+    const sel = document.createElement('select'); sel.className = 'field-input'; sel.style.margin = '0';
+    sel.innerHTML = '<option value="">— quel personnage ? —</option>' + fs.map(f=> '<option value="' + f.id + '">' + String(f.name || '?').replace(/</g, '&lt;') + ((f.pieceCommune && f.pieceCommune.nom) ? ' · ' + String(f.pieceCommune.nom).replace(/</g, '&lt;') : '') + '</option>').join('');
+    sel.value = variantCondJeu.creatureId || '';
+    sel.addEventListener('change', ()=>{ variantCondJeu.creatureId = sel.value || null; updateVariantCondSummary(); });
+    d.appendChild(sel);
+  } else {
+    if (!variantCondJeu || variantCondJeu.kind !== 'quest') variantCondJeu = { kind:'quest', questId:null, state:'completed' };
+    const qs = (quests || []).slice().sort((a, b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+    const sq = document.createElement('select'); sq.className = 'field-input'; sq.style.cssText = 'margin:0; flex:2;';
+    sq.innerHTML = '<option value="">— quelle quête ? —</option>' + qs.map(q=> '<option value="' + q.id + '">' + String(q.name || '?').replace(/</g, '&lt;') + '</option>').join('');
+    sq.value = variantCondJeu.questId || '';
+    sq.addEventListener('change', ()=>{ variantCondJeu.questId = sq.value || null; updateVariantCondSummary(); });
+    const se = document.createElement('select'); se.className = 'field-input'; se.style.cssText = 'margin:0; flex:1;';
+    se.innerHTML = '<option value="active">en cours</option><option value="completed">finie</option><option value="not_started">pas commencée</option>';
+    se.value = variantCondJeu.state || 'completed';
+    se.addEventListener('change', ()=>{ variantCondJeu.state = se.value; updateVariantCondSummary(); });
+    d.appendChild(sq); d.appendChild(se);
+  }
+  updateVariantCondSummary();
+}
+document.getElementById('variantCondJeu').addEventListener('change', peindreVariantCondJeu);
 let variantCondSelectedDays = new Set();
 function setVariantCondDays(days){
   variantCondSelectedDays = new Set(days || []);
@@ -32971,9 +33045,10 @@ function updateVariantCondSummary(){
     startDate: document.getElementById('variantCondStartDate').value,
     endDate: document.getElementById('variantCondEndDate').value,
     startTime: document.getElementById('variantCondStartTime').value,
-    endTime: document.getElementById('variantCondEndTime').value
+    endTime: document.getElementById('variantCondEndTime').value,
+    conds: (document.getElementById('variantCondJeu').value && variantCondJeu) ? [variantCondJeu] : []
   };
-  document.getElementById('variantCondSummary').textContent = 'Aperçu : ' + summarizeVariantConditions(fake) + (isActiveNow(fake) ? ' — active maintenant ✅' : ' — pas active maintenant');
+  document.getElementById('variantCondSummary').textContent = 'Aperçu : ' + summarizeVariantConditions(fake) + (varianteActive(fake) ? ' — active maintenant ✅' : ' — pas active maintenant');
 }
 ['variantCondStartDate','variantCondEndDate','variantCondStartTime','variantCondEndTime'].forEach(id=>{
   document.getElementById(id).addEventListener('input', updateVariantCondSummary);
@@ -32989,6 +33064,11 @@ function openVariantCondOverlay(variantId){
   document.getElementById('variantCondEndDate').value = v.endDate || '';
   document.getElementById('variantCondStartTime').value = v.startTime || '';
   document.getElementById('variantCondEndTime').value = v.endTime || '';
+  /* v757 : la condition de jeu (personnage battu, quête) */
+  const c0 = (v.conds || [])[0] || null;
+  variantCondJeu = c0 ? { ...c0 } : null;
+  document.getElementById('variantCondJeu').value = !c0 ? '' : (c0.kind === 'quest' ? 'quest' : (c0.state === 'not_won' ? 'not_won' : 'won'));
+  peindreVariantCondJeu();
   updateVariantCondSummary();
   document.getElementById('sceneVariantCondOverlay').classList.add('show');
 }
@@ -33005,6 +33085,8 @@ document.getElementById('variantCondSaveBtn').addEventListener('click', ()=>{
   v.endDate = document.getElementById('variantCondEndDate').value;
   v.startTime = document.getElementById('variantCondStartTime').value;
   v.endTime = document.getElementById('variantCondEndTime').value;
+  const k = document.getElementById('variantCondJeu').value;   // v757
+  v.conds = (k && variantCondJeu && (variantCondJeu.creatureId || variantCondJeu.questId)) ? [variantCondJeu] : [];
   document.getElementById('sceneVariantCondOverlay').classList.remove('show');
   renderSceneVariantOverlay();
 });
@@ -35956,10 +36038,15 @@ function conditionsDeSceneRemplies(conds){
       inventaire: (playerSelfData && playerSelfData.inventory) || {}, combats: playerCombatsWon });
   } catch(e){ return false; }
 }
+/* v757 : une variante est active si son horaire l'est ET ses conditions de jeu (personnage battu, quête) */
+function varianteActive(v){
+  if (!isActiveNow(v)) return false;
+  return !(Array.isArray(v.conds) && v.conds.length) || conditionsDeSceneRemplies(v.conds);
+}
 function resolveSceneContent(sc){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
   for (const v of variants){
-    if (isActiveNow(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points,
+    if (varianteActive(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points,
       fond: (v.imageRef || v.imagePath || v.imageUrl) ? v : sc, photo: v.photo || null };   // v663
   }
   return { imageUrl: sc.imageUrl, points: sc.points, fond: sc, photo: sc.photo || null };
@@ -35985,17 +36072,11 @@ async function renderSceneViewCurrentScene(){
      La photo de la pièce est celle du jour : de nuit, on remonte la pièce point par point. */
   const urlNuit = (sc.fond === scRaw && scRaw.imageNuitRef && etatDeNuit(scRaw).fenetres) ? await urlDeRef(scRaw.imageNuitRef) : '';
   if (urlNuit) photo = null;
-  /* v755 : l'image « après » (la cloche vide…) prend le relais quand sa condition est remplie */
-  let urlApres = '';
-  if (sc.fond === scRaw && scRaw.imageApres && scRaw.imageApres.ref && conditionsDeSceneRemplies(scRaw.imageApres.conds)){
-    urlApres = await urlDeRef(scRaw.imageApres.ref);
-    if (urlApres) photo = null;
-  }
 
   // On prépare tout (image de fond + vérification des PNJ déjà recrutés) AVANT d'afficher quoi que ce
   // soit, pour que le fond et les PNJ apparaissent ensemble d'un coup, plutôt que le fond seul puis les
   // PNJ après (la vérification des PNJ prenait un peu de temps en plus, une fois le fond déjà affiché).
-  const fondSrc = await fondAvecVitres(urlApres || urlNuit || (photo ? photo.url : sc.imageUrl), scRaw, etatDeNuit(scRaw).fenetres);   // v740 · v748 nuit · v755 après
+  const fondSrc = await fondAvecVitres(urlNuit || (photo ? photo.url : sc.imageUrl), scRaw, etatDeNuit(scRaw).fenetres);   // v740 · v748 nuit
   if (sceneViewCurrentSceneId !== scRaw.id) return;
   const imgReady = new Promise((resolve)=>{
     const im = new Image();
@@ -42401,16 +42482,23 @@ async function importerMiseAJour(sc){
       const scn = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.name || '').trim().toLowerCase());
       if (!scn){ journal.push('⚠️ « ' + z.name + ' » : scène « ' + s.name + ' » introuvable'); continue; }
       if (typeof s.prompt === 'string'){ scn.prompt = s.prompt; touche = true; journal.push('📝 « ' + scn.name + ' » : prompt mis à jour'); }
-      /* v755 : « imageApres » — { label, quandTexte, prompt, conditions:[{ kind:'combat', pnj, state } …] } */
-      if (s.imageApres && typeof s.imageApres === 'object'){
-        const conds = (s.imageApres.conditions || []).map(c=>{
+      /* v757 : « variante » (ou l'ancien « imageApres ») — { label, quandTexte, prompt, conditions:[{ kind:'combat', pnj, state } | { kind:'quest', questName, state }] }
+         → une VARIANTE de la scène (l'outil 🔀 de l'éditeur), son image à faire dans le guide. Même nom = mise à jour. */
+      const vDef = s.variante || s.imageApres;
+      if (vDef && typeof vDef === 'object'){
+        migrerImageApres([scn]);
+        const conds = (vDef.conditions || []).map(c=>{
           const x = { ...c };
           if (x.pnj){ const f = fiches.find(ff=> ff.id === x.pnj) || fiches.find(ff=> ff.name === x.pnj && (ff.interactionType || 'dialogue') !== 'zone'); x.creatureId = f ? f.id : null; if (!f) journal.push('⚠️ « ' + scn.name + ' » : personnage « ' + x.pnj + ' » introuvable'); delete x.pnj; }
           if (x.questName){ const q = (quests || []).find(qq=> qq && String(qq.name || '').trim().toLowerCase() === String(x.questName).trim().toLowerCase()); x.questId = q ? q.id : null; delete x.questName; }
           return x;
         });
-        scn.imageApres = { ...(scn.imageApres || {}), label: s.imageApres.label || 'après', quandTexte: s.imageApres.quandTexte || '', prompt: s.imageApres.prompt || '', conds };
-        touche = true; journal.push('🖼️ « ' + scn.name + ' » : image « ' + scn.imageApres.label + ' » à faire (guide)');
+        if (!Array.isArray(scn.variants)) scn.variants = [];
+        const label = vDef.label || 'variante';
+        let v = scn.variants.find(x=> x && x.label === label);
+        if (!v){ v = { id: genSceneId(), label, imageUrl: '', imageRef: null, points: [], daysOfWeek: [], startDate: '', endDate: '', startTime: '', endTime: '' }; scn.variants.unshift(v); }
+        v.prompt = vDef.prompt || v.prompt || ''; v.quandTexte = vDef.quandTexte || v.quandTexte || ''; v.conds = conds;
+        touche = true; journal.push('🔀 « ' + scn.name + ' » : variante « ' + label + ' »' + ((v.imageRef || v.imageUrl) ? ' mise à jour' : ' — son image est à faire (guide)'));
       }
       /* v748 : « vitresVers » — les vitres magenta donnent sur une autre scène de la zone */
       if (s.vitresVers !== undefined){
