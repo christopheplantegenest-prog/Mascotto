@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v754</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v755</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -8030,7 +8030,18 @@ function handleCreatureClick(c){
 let activeShopCreature = null;
 function openShopWindow(c){
   activeShopCreature = c;
-  document.getElementById('shopEmoji').innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🛒');
+  /* v755 : le marchand se montre en BUSTE quand il en a un (comme dans les dialogues), sinon en pied */
+  const imgPied = c.imageUrl || (c.imagePath ? resolveMediaPath(c.imagePath) : '');
+  const peindreMarchand = ()=>{
+    if (activeShopCreature !== c) return;
+    const u = bustUrlPourFiche(c) || (bustEnAttente(c) ? '' : imgPied);
+    document.getElementById('shopEmoji').innerHTML = u ? `<img src="${u}" style="width:112px;height:112px;object-fit:contain;max-width:100%;">` : (bustEnAttente(c) ? '' : (c.emoji || '🛒'));
+  };
+  peindreMarchand();
+  if (bustEnAttente(c)){
+    internalizeSceneImage(c.bustImageRef).then((url)=>{ bustImageCache[c.bustImageRef] = url || false; peindreMarchand(); })
+      .catch(()=>{ bustImageCache[c.bustImageRef] = false; peindreMarchand(); });
+  }
   document.getElementById('shopName').textContent = c.name || 'Boutique';
   const phraseEl = document.getElementById('shopPhrase');
   if (c.shopPhrase){ phraseEl.textContent = '« ' + c.shopPhrase + ' »'; phraseEl.style.display = 'block'; }
@@ -13023,6 +13034,7 @@ async function ouvrirBrouillons(){
         || (sc.points || []).some(pt=> decorQuiNeSeVoitPas(pt, sc.points))   // v664
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)
+        || (sc.imageApres && sc.imageApres.prompt && !sc.imageApres.ref)   // v755
         /* v753 : une zone publiée revient aussi pour ses RÉCOLTES : planche des 4 stades pas encore posée,
            ou objet récolté pas encore plantable alors que les stades sont là */
         || (sc.points || []).some(pt=> pt && pt.type === 'recolte' && pt.groupe && pt.prompt && (
@@ -13307,6 +13319,19 @@ async function ouvrirBrouillons(){
           sc.prompt ? '<div style="font-size:12px; line-height:1.4;">1. <b>📤 Envoyer à ChatGPT</b> (le prompt à jour et le schéma partent avec).<br>2. Enregistre l\'image.<br>3. <b>🗺️ Ouvrir la pièce</b> → 🖼️ Image, choisis-la, puis <b>Enregistrer la scène</b>. Les points déjà ajustés restent à leur place.</div><div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">'
             + bouton('data-envoi="scene|' + z.id + '|' + sc.id + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="scene|' + z.id + '|' + sc.id + '"', '📋 Copier') + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce') + '</div>' : '');
         if (sc.prompt) envois['scene|' + z.id + '|' + sc.id] = ()=> ({ texte: avecCharte(sc.prompt), imgs: sc.structureRef ? [fichierPourPartage('structure-' + sc.id, internalizeSceneImage(sc.structureRef))] : [] });
+        /* v755 : l'image « APRÈS » d'une pièce (la cloche vide une fois la souche-mère prise) — une
+           retouche de l'image actuelle, qui prend le relais quand sa condition est remplie */
+        if (sc.imageApres && sc.imageApres.prompt && ok){
+          const okA = !!sc.imageApres.ref;
+          if (!okA) manque++;
+          const cleA = 'apres|' + z.id + '|' + sc.id;
+          const btnsA = bouton('data-envoi="' + cleA + '"', '📤 Envoyer à ChatGPT', true) + bouton('data-envoi-copie="' + cleA + '"', '📋 Copier') + bouton('data-poser-apres="' + z.id + '|' + sc.id + '"', '📷 Choisir l\'image');
+          blocs += tache(okA, '🖼️ « ' + esc(sc.name) + ' » — ' + esc(sc.imageApres.label || 'après'),
+            'La même pièce, retouchée : elle remplace l\'image actuelle ' + esc(sc.imageApres.quandTexte || 'quand sa condition est remplie') + '.',
+            '1. <b>📤 Envoyer à ChatGPT</b> : l\'image actuelle de la pièce part avec, il n\'y change qu\'une chose.<br>2. Enregistre l\'image.<br>3. <b>📷 Choisir l\'image</b>.',
+            btnsA, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + btnsA + '</div>');
+          envois[cleA] = ()=> ({ texte: sc.imageApres.prompt, imgs: [fichierPourPartage('piece-' + sc.id, sc.imageRef ? internalizeSceneImage(sc.imageRef) : (sc.imageUrl || ''))] });
+        }
         /* v598 : une fois la VRAIE image posée, tous les points se recalent à l'œil — mes positions
            sont estimées sur le schéma (rectangles, objets, coffres, sorties, photo). */
         if (sc.prompt && ok && (sc.points || []).length){
@@ -13681,6 +13706,19 @@ async function ouvrirBrouillons(){
   });
   sur('[data-envoi-copie]', (b)=>{ const e = envoiPrepare[b.dataset.envoiCopie]; if (e) copierAvecRepli(e.texte, b); });
   sur('[data-poser-img]', async (b)=>{ if (await poserImageDepuisGuide(b.dataset.poserImg, 'image')) rouvrir(); });
+  sur('[data-poser-apres]', async (b)=>{   // v755
+    const [zid, sid] = b.dataset.poserApres.split('|');
+    const img = await choisirFichierImage(); if (!img) return;
+    const ref = await externalizeSceneImage(encoderImageSousLimite(img, 1400, false));
+    if (!ref){ showToast('Échec : image non enregistrée'); return; }
+    const zd = await zonesCol.doc(zid).get(); const scenes = (zd.exists && zd.data().scenes) || [];
+    const sc = scenes.find(x=> x && x.id === sid); if (!sc || !sc.imageApres){ showToast('Pièce introuvable'); return; }
+    sc.imageApres.ref = ref;
+    await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+    oublierScenesDeZone(zid);
+    showToast('🖼️ Image « après » posée');
+    ouvrirBrouillons();
+  });
   sur('[data-graine-recolte]', async (b)=>{   // v751
     const [zid, gEnc] = b.dataset.graineRecolte.split('|'); const g = decodeURIComponent(gEnc);
     const zd = await zonesCol.doc(zid).get(); const scenes = (zd.exists && zd.data().scenes) || [];
@@ -35908,6 +35946,15 @@ async function figerPhotosDesScenes(clean, live){
   }
   return n;
 }
+/* v755 : les conditions d'une pièce (mêmes règles que les choix de dialogue : quête, choix, combat) */
+function conditionsDeSceneRemplies(conds){
+  if (!Array.isArray(conds) || !conds.length) return false;
+  try {
+    return choixVisible({ showIfList: conds }, 'scene', null, {
+      choix: playerUsedChoices, quetes: playerQuestsState,
+      inventaire: (playerSelfData && playerSelfData.inventory) || {}, combats: playerCombatsWon });
+  } catch(e){ return false; }
+}
 function resolveSceneContent(sc){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
   for (const v of variants){
@@ -35937,11 +35984,17 @@ async function renderSceneViewCurrentScene(){
      La photo de la pièce est celle du jour : de nuit, on remonte la pièce point par point. */
   const urlNuit = (sc.fond === scRaw && scRaw.imageNuitRef && etatDeNuit(scRaw).fenetres) ? await urlDeRef(scRaw.imageNuitRef) : '';
   if (urlNuit) photo = null;
+  /* v755 : l'image « après » (la cloche vide…) prend le relais quand sa condition est remplie */
+  let urlApres = '';
+  if (sc.fond === scRaw && scRaw.imageApres && scRaw.imageApres.ref && conditionsDeSceneRemplies(scRaw.imageApres.conds)){
+    urlApres = await urlDeRef(scRaw.imageApres.ref);
+    if (urlApres) photo = null;
+  }
 
   // On prépare tout (image de fond + vérification des PNJ déjà recrutés) AVANT d'afficher quoi que ce
   // soit, pour que le fond et les PNJ apparaissent ensemble d'un coup, plutôt que le fond seul puis les
   // PNJ après (la vérification des PNJ prenait un peu de temps en plus, une fois le fond déjà affiché).
-  const fondSrc = await fondAvecVitres(urlNuit || (photo ? photo.url : sc.imageUrl), scRaw, etatDeNuit(scRaw).fenetres);   // v740 · v748 nuit
+  const fondSrc = await fondAvecVitres(urlApres || urlNuit || (photo ? photo.url : sc.imageUrl), scRaw, etatDeNuit(scRaw).fenetres);   // v740 · v748 nuit · v755 après
   if (sceneViewCurrentSceneId !== scRaw.id) return;
   const imgReady = new Promise((resolve)=>{
     const im = new Image();
@@ -36567,13 +36620,33 @@ function fondAvecVitres(url, scRaw, nuit){
         }
       }
       if (x1 < 0) return url;
+      /* v755 : la vitre de ChatGPT n'est pas toujours d'un magenta franc — ombrée, plus sombre, plus
+         rose par endroits. On part du magenta franc et on GAGNE de proche en proche les pixels
+         « magenta-ish » qui le touchent : la vitre entière part, mais pas une fleur rose isolée. */
+      {
+        const lache = (r, g, b)=> Math.min(r, b) - g > 45 && Math.max(r, b) > 95 && Math.abs(r - b) < 110;
+        let h = 0, t = 0;
+        for (let i = 0; i < W * H; i++) if (garde[i]) pile[t++] = i;
+        while (h < t){
+          const k = pile[h++]; const x = k % W;
+          const vois = [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, k - W, k + W];
+          for (const v of vois){
+            if (v < 0 || v >= W * H || garde[v]) continue;
+            if (lache(px[v*4], px[v*4+1], px[v*4+2])){
+              garde[v] = 1; pile[t++] = v;
+              const vx = v % W, vy = (v / W) | 0;
+              if (vx < x0) x0 = vx; if (vx > x1) x1 = vx; if (vy < y0) y0 = vy; if (vy > y1) y1 = vy;
+            }
+          }
+        }
+      }
       /* le liseré rosé entre le magenta et le trait */
       const masque = garde.slice();
-      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++){
+      for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++){
         const i = y * W + x;
-        if (!garde[i] && (garde[i-1] || garde[i+1] || garde[i-W] || garde[i+W])){
+        if (!garde[i] && (garde[i-1] || garde[i+1] || garde[i-W] || garde[i+W] || garde[i-2] || garde[i+2] || garde[i-2*W] || garde[i+2*W])){
           const r = px[i*4], g = px[i*4+1], b = px[i*4+2];
-          if (r - g > 40 && b - g > 40) masque[i] = 1;
+          if (r - g > 30 && b - g > 30) masque[i] = 1;   // v755 : liseré sur 2 px, un peu plus tolérant
         }
       }
       for (let i = 0; i < W * H; i++) if (masque[i]) px[i*4+3] = 0;
@@ -42287,6 +42360,17 @@ async function importerMiseAJour(sc){
       const scn = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.name || '').trim().toLowerCase());
       if (!scn){ journal.push('⚠️ « ' + z.name + ' » : scène « ' + s.name + ' » introuvable'); continue; }
       if (typeof s.prompt === 'string'){ scn.prompt = s.prompt; touche = true; journal.push('📝 « ' + scn.name + ' » : prompt mis à jour'); }
+      /* v755 : « imageApres » — { label, quandTexte, prompt, conditions:[{ kind:'combat', pnj, state } …] } */
+      if (s.imageApres && typeof s.imageApres === 'object'){
+        const conds = (s.imageApres.conditions || []).map(c=>{
+          const x = { ...c };
+          if (x.pnj){ const f = fiches.find(ff=> ff.id === x.pnj) || fiches.find(ff=> ff.name === x.pnj && (ff.interactionType || 'dialogue') !== 'zone'); x.creatureId = f ? f.id : null; if (!f) journal.push('⚠️ « ' + scn.name + ' » : personnage « ' + x.pnj + ' » introuvable'); delete x.pnj; }
+          if (x.questName){ const q = (quests || []).find(qq=> qq && String(qq.name || '').trim().toLowerCase() === String(x.questName).trim().toLowerCase()); x.questId = q ? q.id : null; delete x.questName; }
+          return x;
+        });
+        scn.imageApres = { ...(scn.imageApres || {}), label: s.imageApres.label || 'après', quandTexte: s.imageApres.quandTexte || '', prompt: s.imageApres.prompt || '', conds };
+        touche = true; journal.push('🖼️ « ' + scn.name + ' » : image « ' + scn.imageApres.label + ' » à faire (guide)');
+      }
       /* v748 : « vitresVers » — les vitres magenta donnent sur une autre scène de la zone */
       if (s.vitresVers !== undefined){
         const cible = s.vitresVers ? scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(s.vitresVers).trim().toLowerCase()) : null;
