@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v755</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v756</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13035,6 +13035,7 @@ async function ouvrirBrouillons(){
         /* v598 : une pièce importée (elle a un prompt) dont la vraie image est posée mais les points pas encore recalés */
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)
         || (sc.imageApres && sc.imageApres.prompt && !sc.imageApres.ref)   // v755
+        || (sc.prompt && sc.structureRef && sc.imageRef === sc.structureRef)   // v756 : une pièce encore au dessin de structure (pièce ajoutée)
         /* v753 : une zone publiée revient aussi pour ses RÉCOLTES : planche des 4 stades pas encore posée,
            ou objet récolté pas encore plantable alors que les stades sont là */
         || (sc.points || []).some(pt=> pt && pt.type === 'recolte' && pt.groupe && pt.prompt && (
@@ -42354,6 +42355,46 @@ async function importerMiseAJour(sc){
         if (pls.length) await zonesCol.doc(zf.id).set({ planchesDecor: pls }, { merge:true });
       }
       if (!doublons.size) journal.push('✅ « ' + zf.name + ' » : aucune pièce en double');
+      touche = true;
+    }
+    /* v756 — `nouvellesScenes` : de NOUVELLES pièces ajoutées à une zone déjà construite (nom, prompt,
+       dessin de structure, points simples : sorties par nom de pièce, flèche à sa place habituelle).
+       Une pièce qui existe déjà sous ce nom n'est pas touchée. */
+    const parNomZ = (n)=> scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(n || '').trim().toLowerCase());
+    const ajoutees = [];
+    for (const ns of (Array.isArray(z.nouvellesScenes) ? z.nouvellesScenes : [])){
+      if (!ns || !ns.name) continue;
+      if (parNomZ(ns.name)){ journal.push('ℹ️ « ' + zf.name + ' » : la pièce « ' + ns.name + ' » existe déjà — pas recréée'); continue; }
+      const nsc = { id: genSceneId(), name: ns.name, prompt: ns.prompt || '', imageUrl: '', imagePath: null, points: [] };
+      if (typeof ns.image === 'string' && ns.image.startsWith('data:')){
+        const ref = await externalizeSceneImage(ns.image);
+        if (ref){ nsc.imageRef = ref; nsc.structureRef = ref; }
+      }
+      scenes.push(nsc); ajoutees.push([nsc, ns]);
+      journal.push('🆕 « ' + zf.name + ' » : nouvelle pièce « ' + ns.name + ' » (son image est à faire dans le guide)');
+      touche = true;
+    }
+    ajoutees.forEach(([nsc, ns], k)=>{
+      nsc.points = (ns.points || []).map((pt, i)=>{
+        const base = { id: 'pt_' + Date.now() + '_' + k + '_' + i + '_' + Math.floor(Math.random() * 1000), type: pt.type || 'decor',
+          x: typeof pt.x === 'number' ? pt.x : 50, y: typeof pt.y === 'number' ? pt.y : 50, w: pt.w || 18, h: pt.h || 18, rotation: 0, flipped: false };
+        if (pt.scene){ const c = parNomZ(pt.scene); base.targetSceneId = c ? c.id : null; if (!c) journal.push('⚠️ « ' + ns.name + ' » : sortie vers « ' + pt.scene + ' » — pièce introuvable'); }
+        if (base.type === 'sortie') base.lockType = 'none';
+        if (pt.fleche && (base.type === 'sortie' || base.type === 'sortie_zone')) poserFlecheALaPlaceHabituelle(base);
+        if (pt.invisible || pt.hideIcon) base.hideIcon = true;
+        if (pt.nom) base.label = String(pt.nom);
+        return base;
+      });
+    });
+    /* v756 — `redirections` : [{ dans, vers, nouvelle }] — dans la pièce « dans », la PORTE (pas la flèche)
+       qui menait à « vers » mène désormais à « nouvelle » (casser une boucle). */
+    for (const r of (Array.isArray(z.redirections) ? z.redirections : [])){
+      const dans = parNomZ(r.dans), vers = parNomZ(r.vers), nouv = parNomZ(r.nouvelle);
+      if (!dans || !nouv){ journal.push('⚠️ « ' + zf.name + ' » : redirection « ' + r.dans + ' » → « ' + r.nouvelle + ' » — pièce introuvable'); continue; }
+      const portes = (dans.points || []).filter(pt=> pt && pt.type === 'sortie' && !pt.useExitArrow && (!vers || pt.targetSceneId === vers.id));
+      if (!portes.length){ journal.push('ℹ️ « ' + dans.name + ' » : aucune porte vers « ' + r.vers + ' » (déjà changée ?)'); continue; }
+      portes.forEach(pt=>{ pt.targetSceneId = nouv.id; });
+      journal.push('🚪 « ' + dans.name + ' » : la porte mène maintenant à « ' + nouv.name + ' »');
       touche = true;
     }
     for (const s of (z.scenes || [])){
