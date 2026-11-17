@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v761</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v762</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -32958,6 +32958,10 @@ function loadVariantIntoEditorState(variantId){
   } else {
     const v = (sc.variants||[]).find(x=>x.id===variantId);
     if (!v) return;
+    /* v762 : une variante « sans tel personnage » devient, à l'ouverture dans l'éditeur, une copie des points actuels */
+    if (!(v.points && v.points.length) && Array.isArray(v.retirerPoints) && v.retirerPoints.length){
+      v.points = JSON.parse(JSON.stringify(pointsDeVariante(sc, v))); delete v.retirerPoints;
+    }
     sceneEditorImageDataUrl = v.imageUrl || null;
     sceneEditorImagePath = v.imagePath || null;
     sceneEditorPoints = v.points || [];
@@ -36314,10 +36318,19 @@ function varianteActive(v){
   if (!isActiveNow(v)) return false;
   return !(Array.isArray(v.conds) && v.conds.length) || conditionsDeSceneRemplies(v.conds);
 }
+/* v762 : une variante « sans tel personnage » (retirerPoints, par nom de point) reprend les points de la pièce tels qu'ils sont */
+function pointsDeVariante(sc, v){
+  if (v.points && v.points.length) return v.points;
+  if (Array.isArray(v.retirerPoints) && v.retirerPoints.length){
+    const sans = new Set(v.retirerPoints.map(n=> String(n).trim().toLowerCase()));
+    return (sc.points || []).filter(pt=> pt && !sans.has(String(pt.label || '').trim().toLowerCase()));
+  }
+  return sc.points;
+}
 function resolveSceneContent(sc){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
   for (const v of variants){
-    if (varianteActive(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: (v.points && v.points.length) ? v.points : sc.points,
+    if (varianteActive(v)) return { imageUrl: v.imageUrl || sc.imageUrl, points: pointsDeVariante(sc, v),
       fond: (v.imageRef || v.imagePath || v.imageUrl) ? v : sc, photo: v.photo || null };   // v663
   }
   return { imageUrl: sc.imageUrl, points: sc.points, fond: sc, photo: sc.photo || null };
@@ -42717,6 +42730,21 @@ async function importerMiseAJour(sc){
   const advParNom = await importerAdversaires(sc.adversaires, journal);
   const idDeFiche = (nom)=> advParNom[nom] || ((toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat') || {}).id) || null;
   const fiches = toutesLesFiches();
+  /* v762 — une quête du fichier qui n'existe pas encore est CRÉÉE ici, avant les dialogues qui la
+     donnent ou la valident : { name, description, objectives: [{ objet: "Nom", qty }] }. */
+  for (const q of (Array.isArray(sc.quetes) ? sc.quetes : [])){
+    if (!q || !q.name || !questsCol) continue;
+    const ex = (quests || []).find(x=> x && String(x.name || '').trim().toLowerCase() === String(q.name).trim().toLowerCase());
+    if (ex) continue;
+    const objs = (q.objectives || []).map(o=>{ const n = (typeof o === 'string') ? o : (o.objet || o.itemName); const it = (items || []).find(i=> i && (i.id === n || cleNom(i.name) === cleNom(n))); if (!it) journal.push('⚠️ Quête « ' + q.name + ' » : objet « ' + n + ' » introuvable'); return it ? { itemId: it.id, qty: parseInt((o && o.qty) || 1, 10) || 1 } : null; }).filter(Boolean);
+    const data = { name: q.name, description: q.description || '', objectives: objs, objectiveMode: 'all', rewards: [], nextQuestId: null, showInJournal: q.showInJournal !== false, createdAt: Date.now() };
+    try {
+      const ref = await questsCol.add(data);
+      if (Array.isArray(quests) && !quests.some(x=> x.id === ref.id)) quests.push({ id: ref.id, ...data });
+      journal.push('📜 Quête « ' + q.name + ' » créée' + (objs.length ? ' (' + objs.length + ' objet(s) à rapporter)' : ''));
+      q._creee = true;
+    } catch(e){ journal.push('⚠️ Quête « ' + q.name + ' » : ' + e.message); }
+  }
   const scenesMaj = {};   // zoneId → scènes telles qu'écrites
   for (const z of (sc.zones || [])){
     const zf = fiches.find(f=> (f.interactionType || '') === 'zone' && f.name === z.name);
@@ -42813,7 +42841,13 @@ async function importerMiseAJour(sc){
         let v = scn.variants.find(x=> x && x.label === label);
         if (!v){ v = { id: genSceneId(), label, imageUrl: '', imageRef: null, points: [], daysOfWeek: [], startDate: '', endDate: '', startTime: '', endTime: '' }; scn.variants.unshift(v); }
         v.prompt = vDef.prompt || v.prompt || ''; v.quandTexte = vDef.quandTexte || v.quandTexte || ''; v.conds = conds;
-        touche = true; journal.push('🔀 « ' + scn.name + ' » : variante « ' + label + ' »' + ((v.imageRef || v.imageUrl) ? ' mise à jour' : ' — son image est à faire (guide)'));
+        /* v762 : `retirerPoints: ["Tison"]` — la variante garde la même image et les points de la pièce, sauf ceux-là
+           (par leur nom) : un personnage qui part. Mêmes identifiants, donc les personnages restent branchés. */
+        if (Array.isArray(vDef.retirerPoints)){
+          const sans = new Set(vDef.retirerPoints.map(n=> String(n).trim().toLowerCase()));
+          v.retirerPoints = Array.from(sans); v.points = [];   // les points de la pièce sont relus à l'affichage : un recalage les suit
+        }
+        touche = true; journal.push('🔀 « ' + scn.name + ' » : variante « ' + label + ' »' + ((v.imageRef || v.imageUrl) ? ' mise à jour' : (v.prompt ? ' — son image est à faire (guide)' : ' — même image que la pièce')) + (Array.isArray(v.retirerPoints) && v.retirerPoints.length ? ' (sans ' + v.retirerPoints.join(', ') + ')' : ''));
       }
       /* v748 : « vitresVers » — les vitres magenta donnent sur une autre scène de la zone */
       if (s.vitresVers !== undefined){
@@ -43051,6 +43085,12 @@ async function importerMiseAJour(sc){
           if (typeof ch.questValidate === 'string'){ const id = queteId(ch.questValidate); ch.questValidate = id ? { questId: id } : null; }
           if (ch.showIf && ch.showIf.questName){ const id = queteId(ch.showIf.questName); ch.showIf = id ? { kind:'quest', questId: id, state: ch.showIf.state || 'completed' } : null; }
           (ch.showIfList || []).forEach(cond);
+          /* v762 : `combat: { adversaires: ["Nom", …], gagne, perdu }` — comme l'import complet */
+          if (ch.combat && Array.isArray(ch.combat.adversaires)){
+            const ids = ch.combat.adversaires.slice(0, 3).map(n=>{ const id = idDeFiche(n); if (!id) rien.push('adversaire « ' + n + ' »'); return id; }).filter(Boolean);
+            const g = ch.combat.gagne, pd = ch.combat.perdu;
+            ch.combat = ids.length ? { creatureIds: ids, attackIds: [], stepWin: (g == null ? null : parseInt(g, 10)), stepLose: (pd == null ? null : parseInt(pd, 10)) } : null;
+          }
         });
       });
       if (rien.length) journal.push('⚠️ ' + qui + ' : introuvable dans le dialogue — ' + Array.from(new Set(rien)).join(', ') + ' (dialogue non appliqué)');
@@ -43085,6 +43125,7 @@ async function importerMiseAJour(sc){
   }
   /* v750 : le texte d'une quête existante (description), retrouvée par son nom */
   for (const q of (Array.isArray(sc.quetes) ? sc.quetes : [])){
+    if (q._creee) continue;   // v762 : créée plus haut
     const ex = (quests || []).find(x=> x && String(x.name || '').trim().toLowerCase() === String(q.name || '').trim().toLowerCase());
     if (!ex || !questsCol){ journal.push('⚠️ Quête « ' + q.name + ' » introuvable'); continue; }
     const majQ = {}; if (typeof q.description === 'string') majQ.description = q.description;
