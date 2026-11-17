@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v762</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v763</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -33205,7 +33205,7 @@ function renderSceneLumiereOverlay(){
   selS.innerHTML = '<option value="">— non, le dehors —</option>' + sceneEditorScenes.filter(x=> x.id !== sc.id).map(x=> `<option value="${x.id}" ${sc.vueScene === x.id ? 'selected' : ''}>${String(x.name || 'Scène').replace(/</g,'&lt;')}</option>`).join('');
   document.getElementById('sceneLumNuitEtat').textContent = sc.imageNuitRef ? '✅ image de nuit posée' : 'aucune image de nuit';
   document.getElementById('sceneLumNuitSuppr').style.display = sc.imageNuitRef ? '' : 'none';
-  selV.innerHTML = vues.length ? vues.map((v, i)=> `<option value="${v.id}" ${cour && cour.id === v.id ? 'selected' : ''}>${String(v.nom || v.name || ('Vue ' + (i + 1))).replace(/</g,'&lt;')}${v.nuitRef ? '' : ' (sans nuit)'}</option>`).join('') : '<option value="">— aucune vue dans la bibliothèque —</option>';
+  selV.innerHTML = '<option value="__ciel" ' + (sc.vueFenetres === '__ciel' ? 'selected' : '') + '>☁️ Le ciel du jour (comme le vaisseau)</option>' + (vues.length ? vues.map((v, i)=> `<option value="${v.id}" ${sc.vueFenetres !== '__ciel' && cour && cour.id === v.id ? 'selected' : ''}>${String(v.nom || v.name || ('Vue ' + (i + 1))).replace(/</g,'&lt;')}${v.nuitRef ? '' : ' (sans nuit)'}</option>`).join('') : '');
 }
 function lireSceneLumiere(){
   const sc = sceneEditeurCourante(); if (!sc) return;
@@ -36939,6 +36939,8 @@ function composerFenetre(cadreId, vueId, nuit, assombrir){
 const compoPieceCache = new Map();
 function vueFenetresDeScene(scRaw){
   const vues = fenetresBiblio.vues || [];
+  /* v763 : « le ciel du jour » — le même ciel que les fenêtres du vaisseau (une terrasse, un toit…) */
+  if (scRaw && scRaw.vueFenetres === '__ciel'){ const id = cielDuJour(); const v = id && vues.find(x=> x.id === id); if (v) return v; }
   return (scRaw && scRaw.vueFenetres && vues.find(v=> v.id === scRaw.vueFenetres)) || vues.find(v=> v && v.nuitRef) || vues[0] || null;
 }
 /* v748 : les vitres peuvent donner sur UNE AUTRE SCÈNE de la zone (la boutique voit la serre
@@ -42848,6 +42850,13 @@ async function importerMiseAJour(sc){
           v.retirerPoints = Array.from(sans); v.points = [];   // les points de la pièce sont relus à l'affichage : un recalage les suit
         }
         touche = true; journal.push('🔀 « ' + scn.name + ' » : variante « ' + label + ' »' + ((v.imageRef || v.imageUrl) ? ' mise à jour' : (v.prompt ? ' — son image est à faire (guide)' : ' — même image que la pièce')) + (Array.isArray(v.retirerPoints) && v.retirerPoints.length ? ' (sans ' + v.retirerPoints.join(', ') + ')' : ''));
+      }
+      /* v763 : « vueDehors » — ce qu'on voit dans le magenta : « ciel » (le ciel du jour, comme le vaisseau) ou le nom d'une vue */
+      if (s.vueDehors){
+        const nomV = String(s.vueDehors).trim().toLowerCase();
+        const vv = nomV === 'ciel' ? { id: '__ciel', nom: 'le ciel du jour' } : (fenetresBiblio.vues || []).find(x=> x && String(x.nom || x.name || '').trim().toLowerCase() === nomV);
+        if (!vv) journal.push('⚠️ « ' + scn.name + ' » : vue « ' + s.vueDehors + ' » introuvable');
+        else { scn.vueFenetres = vv.id; scn.vueScene = null; touche = true; journal.push('☁️ « ' + scn.name + ' » : le dehors montre ' + (vv.id === '__ciel' ? 'le ciel du jour, comme le vaisseau' : '« ' + (vv.nom || vv.name) + ' »')); }
       }
       /* v748 : « vitresVers » — les vitres magenta donnent sur une autre scène de la zone */
       if (s.vitresVers !== undefined){
