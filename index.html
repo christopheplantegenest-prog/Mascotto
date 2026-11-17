@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v768</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v769</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13454,6 +13454,7 @@ async function ouvrirBrouillons(){
            dessiner, le pose à sa place, puis on l'ajuste avec les 4 coins. */
         (sc.points || []).forEach(pt=>{
           if (!pt || pt.type !== 'decor' || !pt.prompt || ptsDePlanche.has(pt.id)) return;   // v657 : un objet de planche n'a pas sa propre tâche
+          if (pt.label && (sc.points || []).some(q=> q && q !== pt && q.type === 'decor' && q.prompt && q.label === pt.label && sc.points.indexOf(q) < sc.points.indexOf(pt))) return;   // v769 : un seul dessin pour les décors du même nom
           const okPt = !!(pt.imageRef || pt.imageUrl || pt.imagePath);
           if (!okPt) manque++;
           const cle = 'pt|' + z.id + '|' + sc.id + '|' + pt.id;
@@ -13461,7 +13462,10 @@ async function ouvrirBrouillons(){
             'Un élément qu\'on pose nous-mêmes sur une zone magenta du schéma. Il arrive dessiné de face ; c\'est toi qui le mets en perspective avec les 4 coins.',
             '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b> : le jeu retire le fond, la recadre et la pose à sa place.<br>4. <b>🗺️ Ouvrir la pièce</b>, touche-la et règle ses 4 coins (onglet ◇) pour la coller au mur, puis <b>Enregistrer la scène</b>.',
             bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okPt) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pt="' + z.id + '|' + sc.id + '|' + pt.id + '"', okPt ? '📷 Remplacer l\'image' : '📷 Choisir l\'image')
-            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt) + bouton('data-recup-img="' + z.id + '|' + sc.id + '|' + pt.id + '"', '🛟 Images récentes'));
+            + bouton('data-ouvrir-piece="' + z.id + '|' + sc.id + '"', '🗺️ Ouvrir la pièce', okPt) + bouton('data-recup-img="' + z.id + '|' + sc.id + '|' + pt.id + '"', '🛟 Images récentes'),
+            false,
+            /* v769 : déjà fait, il se REFAIT (le prompt part avec l'image de la pièce) */
+            '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + bouton('data-envoi="' + cle + '"', '📤 Redemander à ChatGPT (avec la pièce)', true) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') + bouton('data-poser-pt="' + z.id + '|' + sc.id + '|' + pt.id + '"', '📷 Remplacer l\'image') + '</div>');
           /* v768 : l'image de la PIÈCE part avec le prompt (quand elle est faite) — l'objet est dessiné
              à la bonne échelle et dans la bonne perspective, pas au hasard */
           const vraiePiece = (sc.imageRef && sc.imageRef !== sc.structureRef) || sc.imageUrl || sc.imagePath;
@@ -13722,9 +13726,14 @@ async function ouvrirBrouillons(){
       const refD = await externalizeSceneImage(compressPointImageDataUrl(det.img));
       if (!refD){ showToast('Échec : image non enregistrée'); return; }
       pt.imageRef = refD; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false;
+      /* v769 : les décors DU MÊME NOM dans la zone (« mange-debout » ×2) prennent la même image d'un coup */
+      let jumeaux = 0;
+      if (pt.label) scenes.forEach(sc=> (sc && sc.points || []).forEach(q=>{
+        if (q && q !== pt && q.type === 'decor' && q.label === pt.label){ q.imageRef = refD; q.imageUrl = ''; q.imagePath = null; q.hideIcon = false; jumeaux++; }
+      }));
       await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
       oublierScenesDeZone(zid);
-      showToast('Image posée ✅ — règle ses 4 coins dans la pièce'); rouvrir();
+      showToast('Image posée ✅' + (jumeaux ? ' (et sur ' + jumeaux + ' autre(s) « ' + pt.label + ' »)' : '') + ' — règle-la dans la pièce'); rouvrir();
       return;
     }
     const ref = await externalizeSceneImage(compressPointImageDataUrl(img));
@@ -34937,8 +34946,13 @@ function renderSceneDetailTypeSpecific(pt){
         <option value="pnj" ${!pt.pourRobots ? 'selected' : ''}>🧍 Un personnage (sa version marquée ici)</option>
         <option value="robots" ${pt.pourRobots ? 'selected' : ''}>🤖 Un robot de l'équipage, de temps en temps</option>
       </select>
+      ${pt.pourRobots ? `<div class="field-label" style="color:rgba(255,255,255,.75);">Le robot est tourné</div>
+      <select data-emp-vue class="field-input">${VUES_PLACE_ROBOT.map(([k, l])=> `<option value="${k}" ${(pt.vueRobot || 'face') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <p class="meta" style="color:rgba(255,255,255,.6); margin:4px 0 0;">Ses vues de déplacement regardent vers la GAUCHE : 🔃 (onglet ✥ de la palette) le tourne vers la droite. Autour d'une table, chacun la regarde.</p>` : ''}
       <p class="meta" style="color:rgba(255,255,255,.6); margin:6px 0 0;">Derrière un comptoir, une table : pose le meuble en point de décor PLACÉ APRÈS ce rectangle dans la liste — il passe devant le personnage.</p>`;
-    typeWrap.querySelector('[data-emp-qui]').addEventListener('change', (e)=>{ pt.pourRobots = e.target.value === 'robots'; renderSceneEditorPoints(); });
+    typeWrap.querySelector('[data-emp-qui]').addEventListener('change', (e)=>{ pt.pourRobots = e.target.value === 'robots'; renderSceneDetailTypeSpecific(pt); renderSceneEditorPoints(); });
+    const sv = typeWrap.querySelector('[data-emp-vue]');
+    if (sv) sv.addEventListener('change', ()=>{ pt.vueRobot = sv.value; renderSceneEditorPoints(); });
     return;
   }
 
@@ -36323,6 +36337,11 @@ async function prechargerImagesDeZone(zoneId, scenes){
       const m = ctModele(r.robotModeleId);
       if (m && m.faceImageRef && typeof faceModeleCache[m.faceImageRef] !== 'string'){ urlFaceModele(m); faces.push(Promise.resolve(faceModeleCache[m.faceImageRef]).then(u=>{ if (u) urls.add(u); })); }
       else { const u = urlFaceModele(m); if (u) urls.add(u); }
+      /* v769 : ses vues de déplacement, pour les places qui le tournent vers une table */
+      if (m && m.vuesDeplacement) VUES_PLACE_ROBOT.forEach(([k])=>{
+        const ref = m.vuesDeplacement[k]; if (!ref || k === 'face' || vuesRobotCache[m.id + '|' + k]) return;
+        faces.push(internalizeSceneImage(ref).then(u=>{ if (u){ vuesRobotCache[m.id + '|' + k] = u; urls.add(u); } }).catch(()=>{}));
+      });
     });
   } catch(e){}
   await Promise.race([Promise.all(faces), new Promise(r=> setTimeout(r, 8000))]);
@@ -39394,6 +39413,8 @@ function candidatsEmplacements(sceneId, now){
 /* v765 — LES ROBOTS DE L'ÉQUIPAGE DE PASSAGE. Un rectangle 🧍 « pour les robots » reçoit de temps en
    temps un des robots du joueur (la face de son modèle) : la cafétéria où ils viennent manger. Le
    tirage change toutes les 20 minutes et reste le même entre-temps (on peut aller et venir). */
+const vuesRobotCache = {};   // v769 : modeleId|vue → url (préchargé à l'entrée de la zone)
+const VUES_PLACE_ROBOT = [['face', 'De face'], ['av34', 'Trois-quarts avant'], ['profil', 'De profil'], ['ar34', 'Trois-quarts arrière'], ['dos', 'De dos']];
 function remplirPlacesRobots(placesR, sceneId, attribution){
   if (!placesR.length) return;
   const robots = (typeof recruits !== 'undefined' ? recruits : []).filter(r=> r && r.recruitType === 'combattant' && r.robotModeleId);
@@ -39403,7 +39424,10 @@ function remplirPlacesRobots(placesR, sceneId, attribution){
   placesR.forEach(p=>{
     if (!tas.length || alea() > 0.65) return;   // une place sur trois environ reste libre
     const r = tas.shift();
-    attribution[p.id] = { id: 'robot_' + r.id, name: r.name || 'Robot', emoji: '🤖', interactionType: 'robotVisiteur', combatStats: { robotModeleId: r.robotModeleId }, _recrue: r };
+    /* v769 : la place dit comment le robot est tourné (face, profil… : ses vues de DÉPLACEMENT), et 🔃 le retourne —
+       les robots autour d'une table la regardent. Sans ces vues, sa face. */
+    const vueU = (p.vueRobot && p.vueRobot !== 'face') ? (vuesRobotCache[r.robotModeleId + '|' + p.vueRobot] || '') : '';
+    attribution[p.id] = Object.assign({ id: 'robot_' + r.id, name: r.name || 'Robot', emoji: '🤖', interactionType: 'robotVisiteur', combatStats: { robotModeleId: r.robotModeleId }, _recrue: r }, vueU ? { imageUrl: vueU } : {});
   });
 }
 function attribuerEmplacements(sc, sceneId, now){
@@ -42866,6 +42890,7 @@ function optionsPointImport(pt, base){
   }
   if (base.type === 'emplacement'){
     if (pt.pourRobots) base.pourRobots = true;
+    if (pt.vueRobot) base.vueRobot = String(pt.vueRobot);   // v769 : face, av34, profil, ar34, dos (+ miroir)
   }
 }
 function champsCommandeImport(pt, base){
