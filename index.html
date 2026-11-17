@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v764</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v765</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -33875,7 +33875,7 @@ function renderSceneEditorPoints(){
       /* v589 : APERÇU de l'occupant, dessiné exactement comme en jeu (pieds au bas du rectangle,
          hauteur = hauteur du rectangle, miroir du rectangle) — demandé le 31/10 pour régler la
          taille en voyant le résultat. Sans image sur la fiche : une silhouette grise. */
-      const occ = apercuOccupant(pt);
+      const occ = pt.pourRobots ? apercuRobotDePassage() : apercuOccupant(pt);   // v765
       if (occ){
         if (urlImageDeFiche(occ)){
           const im = imageOccupantEmplacement(occ, pt);
@@ -34009,6 +34009,10 @@ function candidatsApercu(){
   if (!sid) return [];
   return toutesLesFiches().filter(f=> f && f.pieceCommune && f.pieceCommune.sceneId === sid)
     .sort((a,b)=> (a.name || '').localeCompare(b.name || '', 'fr'));
+}
+function apercuRobotDePassage(){   // v765 : l'aperçu d'une place 🤖 — le premier robot de l'équipage
+  const r = (recruits || []).find(x=> x && x.recruitType === 'combattant' && x.robotModeleId);
+  return r ? { id: 'robot_' + r.id, name: 'robot de passage', emoji: '🤖', combatStats: { robotModeleId: r.robotModeleId } } : { id: 'robot_', name: 'robot de passage', emoji: '🤖' };
 }
 function apercuOccupant(pt){
   const c = candidatsApercu();
@@ -34877,7 +34881,18 @@ function renderSceneDetailTypeSpecific(pt){
     pt.hideIcon = true;
     typeWrap.innerHTML = `
       <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Une place pour un personnage. Le jeu y met lui-même un personnage dont une version est marquée sur cet emplacement (🧍 sur la fiche) et active à cette heure — un personnage recrutable seulement s'il est à bord — calé par les pieds au bas du rectangle, à l'échelle de sa hauteur, sans déformation. Le dialogue est celui de cette version.</p>
-      <p class="meta" style="color:rgba(255,255,255,.6); margin:0;">Un emplacement ne tient qu'un personnage, et un personnage n'occupe qu'un emplacement. Quand il y a plus de candidats que de places, les derniers ne s'affichent pas — le détail est dans 🧾 Boîte noire.</p>`;
+      <p class="meta" style="color:rgba(255,255,255,.6); margin:0;">Un emplacement ne tient qu'un personnage, et un personnage n'occupe qu'un emplacement. Quand il y a plus de candidats que de places, les derniers ne s'affichent pas — le détail est dans 🧾 Boîte noire.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Qui s'y tient</div>
+      <select data-emp-qui class="field-input">
+        <option value="pnj" ${!pt.pourRobots ? 'selected' : ''}>🧍 Un personnage (sa version marquée ici)</option>
+        <option value="robots" ${pt.pourRobots ? 'selected' : ''}>🤖 Un robot de l'équipage, de temps en temps</option>
+      </select>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">🪑 Derrière un meuble : bas caché <b data-emp-derriere-val>${pt.derriere || 0} %</b></div>
+      <input type="range" data-emp-derriere min="0" max="80" step="1" value="${pt.derriere || 0}" style="width:100%;">
+      <p class="meta" style="color:rgba(255,255,255,.6); margin:4px 0 0;">Pour un personnage derrière un comptoir, une table : le bas du rectangle ne se dessine pas, on voit le meuble de l'image par-dessus. Règle jusqu'à ce que la coupe tombe pile sur le bord du meuble.</p>`;
+    typeWrap.querySelector('[data-emp-qui]').addEventListener('change', (e)=>{ pt.pourRobots = e.target.value === 'robots'; renderSceneEditorPoints(); });
+    const rg = typeWrap.querySelector('[data-emp-derriere]');
+    rg.addEventListener('input', ()=>{ pt.derriere = parseInt(rg.value, 10) || 0; typeWrap.querySelector('[data-emp-derriere-val]').textContent = pt.derriere + ' %'; renderSceneEditorPoints(); });
     return;
   }
 
@@ -36253,6 +36268,15 @@ async function prechargerImagesDeZone(zoneId, scenes){
         urlFaceModele(m);
         faces.push(Promise.resolve(faceModeleCache[m.faceImageRef]).then(u=>{ if (u) urls.add(u); }));
       } else { const u = urlFaceModele(m); if (u) urls.add(u); }
+    });
+  } catch(e){}
+  /* v765 : une place 🤖 dans la zone — les faces des robots de l'équipage, qui peuvent y passer */
+  try {
+    const aPlacesR = (sceneViewScenes || []).some(sc=> (sc && sc.points || []).some(p=> p && p.type === 'emplacement' && p.pourRobots));
+    if (aPlacesR) (recruits || []).filter(r=> r && r.recruitType === 'combattant' && r.robotModeleId).forEach(r=>{
+      const m = ctModele(r.robotModeleId);
+      if (m && m.faceImageRef && typeof faceModeleCache[m.faceImageRef] !== 'string'){ urlFaceModele(m); faces.push(Promise.resolve(faceModeleCache[m.faceImageRef]).then(u=>{ if (u) urls.add(u); })); }
+      else { const u = urlFaceModele(m); if (u) urls.add(u); }
     });
   } catch(e){}
   await Promise.race([Promise.all(faces), new Promise(r=> setTimeout(r, 8000))]);
@@ -39318,9 +39342,26 @@ function candidatsEmplacements(sceneId, now){
   return out;
 }
 
+/* v765 — LES ROBOTS DE L'ÉQUIPAGE DE PASSAGE. Un rectangle 🧍 « pour les robots » reçoit de temps en
+   temps un des robots du joueur (la face de son modèle) : la cafétéria où ils viennent manger. Le
+   tirage change toutes les 20 minutes et reste le même entre-temps (on peut aller et venir). */
+function remplirPlacesRobots(placesR, sceneId, attribution){
+  if (!placesR.length) return;
+  const robots = (typeof recruits !== 'undefined' ? recruits : []).filter(r=> r && r.recruitType === 'combattant' && r.robotModeleId);
+  if (!robots.length) return;
+  const alea = aleaFixe(String(sceneId) + '|' + Math.floor(Date.now() / (20 * 60000)));
+  const tas = robots.slice().sort(()=> alea() - 0.5);
+  placesR.forEach(p=>{
+    if (!tas.length || alea() > 0.65) return;   // une place sur trois environ reste libre
+    const r = tas.shift();
+    attribution[p.id] = { id: 'robot_' + r.id, name: r.name || 'Robot', emoji: '🤖', interactionType: 'robotVisiteur', combatStats: { robotModeleId: r.robotModeleId }, _recrue: r };
+  });
+}
 function attribuerEmplacements(sc, sceneId, now){
-  const places = (sc.points || []).filter(p=> p && p.type === 'emplacement');
+  const toutes = (sc.points || []).filter(p=> p && p.type === 'emplacement');
+  const places = toutes.filter(p=> !p.pourRobots);
   const attribution = {};
+  remplirPlacesRobots(toutes.filter(p=> p.pourRobots), sceneId, attribution);   // v765
   if (!places.length) return attribution;
   const cand = candidatsEmplacements(sceneId, now);
   /* v594 : une version liée à SON rectangle (emplacementPointId : Mado au plan de travail le matin,
@@ -39434,6 +39475,14 @@ function imageOccupantEmplacement(f, pt){
       const W = el.clientWidth, H = el.clientHeight;
       if (!W || !H){ requestAnimationFrame(poser); return; }
       caler(img, W, H, { w: img.naturalWidth, h: img.naturalHeight }, bornesOpaques(img));
+      /* v765 : « derrière un meuble » — le bas du rectangle est masqué (Brann derrière son comptoir :
+         on voit le comptoir de l'image de la pièce, et lui au-dessus) */
+      const cache = Math.max(0, Math.min(90, (pt && pt.derriere) || 0));
+      if (cache > 0 && img.offsetHeight){
+        const coupe = H * (1 - cache / 100);
+        const pc = Math.max(0, Math.min(100, (coupe - img.offsetTop) / img.offsetHeight * 100));
+        img.style.clipPath = `polygon(-50% -50%, 150% -50%, 150% ${pc}%, -50% ${pc}%)`;
+      } else img.style.clipPath = '';
       img.style.visibility = '';
     };
     poser();
@@ -39454,6 +39503,12 @@ function boiteOpaqueAffichee(img){
 function toucherEmplacement(pt){
   const f = emplacementsSceneCourante && emplacementsSceneCourante.attribution[pt.id];
   if (!f) return;
+  if (f.interactionType === 'robotVisiteur'){   // v765 : un robot de l'équipage de passage
+    const pa = (typeof platActif === 'function') ? platActif(f._recrue) : null;
+    const phrases = [' fait une pause.', ' traîne un peu ici.', ' regarde le ciel par la baie.', ' attend son tour au comptoir.'];
+    showToast('🤖 ' + f.name + (pa ? ' savoure encore « ' + pa.nom + ' » (' + minutesRestantesPlat(pa) + ' min).' : phrases[Math.floor(Math.random() * phrases.length)]));
+    return;
+  }
   if (f.interactionType === 'shop'){ openShopWindow(f); return; }
   document.getElementById('overlay').style.zIndex = '4200';
   openSheet(f);
@@ -42761,6 +42816,18 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal, forcerAjout){
 /* v760 — commandes à deux états et verrou « commandes », depuis un fichier d'import.
    Commande : { type:'commande', groupe:'fourneau', attendu:true|false, etatInitial:false, teinte:'#7ff6ff', visuel:'cristal', prompt }
    Porte / coffre : { lockCommandes:'fourneau', lockMessage:'Le fourneau n\'est pas réglé.', unlockMessage:'Le passage s\'est ouvert' } */
+/* v765 — options d'un point communes aux imports : la flèche « droite » (le miroir de la place
+   habituelle, pour une deuxième flèche), un rectangle 🧍 pour les robots, ou derrière un meuble */
+function optionsPointImport(pt, base){
+  if (pt.fleche === 'droite' && (base.type === 'sortie' || base.type === 'sortie_zone')){
+    poserFlecheALaPlaceHabituelle(base);
+    base.x = 100 - base.x; base.flipped = !base.flipped; base.rotation = -(base.rotation || 0);
+  }
+  if (base.type === 'emplacement'){
+    if (pt.pourRobots) base.pourRobots = true;
+    if (pt.derriere) base.derriere = Math.max(0, Math.min(80, parseInt(pt.derriere, 10) || 0));
+  }
+}
 function champsCommandeImport(pt, base){
   if (base.type === 'commande'){
     base.attendu = !(pt.attendu === false || pt.attendu === 'eteinte' || pt.attendu === 0);
@@ -42920,10 +42987,17 @@ async function importerMiseAJour(sc){
         if (pt.scene){ const c = parNomZ(pt.scene); base.targetSceneId = c ? c.id : null; if (!c) journal.push('⚠️ « ' + ns.name + ' » : sortie vers « ' + pt.scene + ' » — pièce introuvable'); }
         if (base.type === 'sortie') base.lockType = 'none';
         if (pt.fleche && (base.type === 'sortie' || base.type === 'sortie_zone')) poserFlecheALaPlaceHabituelle(base);
-        if (pt.invisible || pt.hideIcon) base.hideIcon = true;
+        if (pt.invisible || pt.hideIcon || base.type === 'emplacement') base.hideIcon = true;
         if (pt.nom) base.label = String(pt.nom);
+        if (pt.rotation) base.rotation = pt.rotation;
+        optionsPointImport(pt, base);   // v765
         return base;
       });
+      if (ns.vueDehors){   // v765 : « ciel » — le ciel du jour du vaisseau dans le magenta
+        const nomV = String(ns.vueDehors).trim().toLowerCase();
+        const vv = nomV === 'ciel' ? { id: '__ciel' } : (fenetresBiblio.vues || []).find(x=> x && String(x.nom || x.name || '').trim().toLowerCase() === nomV);
+        if (vv) nsc.vueFenetres = vv.id; else journal.push('⚠️ « ' + ns.name + ' » : vue « ' + ns.vueDehors + ' » introuvable');
+      }
     });
     /* v756 — `redirections` : [{ dans, vers, nouvelle }] — dans la pièce « dans », la PORTE (pas la flèche)
        qui menait à « vers » mène désormais à « nouvelle » (casser une boucle). */
@@ -42983,11 +43057,12 @@ async function importerMiseAJour(sc){
         const t = await externalizeScenesForSave([{ id: scn.id + '_schema', name: scn.name, imageUrl: s.image, points: [] }]);
         const ref = t[0] && t[0].imageRef;
         if (ref){
-          const encoreSchema = (!scn.imageRef && !scn.imageUrl && !scn.imagePath) || (scn.structureRef && scn.imageRef === scn.structureRef);
+          const encoreSchema = !!s.remettreSchema || (!scn.imageRef && !scn.imageUrl && !scn.imagePath) || (scn.structureRef && scn.imageRef === scn.structureRef);   // v765 : remettreSchema — la pièce est redessinée de zéro
           scn.structureRef = ref;
           if (encoreSchema){ scn.imageRef = ref; scn.imageUrl = ''; scn.imagePath = null; }
           touche = true;
-          journal.push('📐 « ' + scn.name + ' » : nouveau schéma' + (encoreSchema ? '' : ' (ta vraie image est gardée ; le schéma sert si tu la refais)'));
+          if (s.remettreSchema){ scn.pointsAjustes = false; delete scn.photo; }
+          journal.push('📐 « ' + scn.name + ' » : nouveau schéma' + (s.remettreSchema ? ' — la pièce repart de zéro, son image est à refaire dans le guide' : (encoreSchema ? '' : ' (ta vraie image est gardée ; le schéma sert si tu la refais)')));
         }
       }
       /* v619 : la lumière et les rencontres de la scène */
@@ -43055,6 +43130,13 @@ async function importerMiseAJour(sc){
           }
           if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
           champsCommandeImport(pt, base);   // v760
+          /* v765 : une sortie vers une pièce de la zone (par son nom) et la flèche à sa place */
+          if (base.type === 'sortie' || base.type === 'sortie_zone'){
+            if (base.type === 'sortie' && !base.lockType) base.lockType = 'none';
+            if (pt.scene){ const c = scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(pt.scene).trim().toLowerCase()); base.targetSceneId = c ? c.id : null; if (!c) journal.push('⚠️ « ' + scn.name + ' » : sortie vers « ' + pt.scene + ' » — pièce introuvable'); }
+            if (pt.fleche === true) poserFlecheALaPlaceHabituelle(base);
+          }
+          optionsPointImport(pt, base);   // v765
           if (base.type === 'fenetre'){   // v656 : une fenêtre = un cadre + une vue (jour ET nuit), jamais un décor dessiné
             base.perspective = 0;
             const cad = pt.cadre && cadresTous().find(c=> c && (c.nom || c.name || '') === pt.cadre);
@@ -43070,7 +43152,7 @@ async function importerMiseAJour(sc){
             ['imageRef', 'imageUrl', 'imagePath', 'cadreId', 'vueId'].forEach(k=>{ if (ancien[k]) base[k] = ancien[k]; });
             if (ancien.imageRef || ancien.imageUrl || ancien.imagePath) base.hideIcon = false;
           }
-          if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit', 'fenetre', 'objet', 'recolte', 'coffre', 'commande'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
+          if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit', 'fenetre', 'objet', 'recolte', 'coffre', 'commande', 'sortie', 'sortie_zone', 'etabli'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
           return base;
         });
         scn.points = gardes.concat(neufs);
@@ -43895,6 +43977,7 @@ async function importerScenario(sc){
             if (typeof pt.x === 'number') base.x = pt.x;   // une place donnée explicitement l'emporte
             if (typeof pt.y === 'number') base.y = pt.y;
           }
+          optionsPointImport(pt, base);   // v765
           if (pt.hideIcon || pt.invisible) base.hideIcon = true;
           if (pt.flipped || pt.miroir) base.flipped = true;
           if (typeof pt.rotation === 'number') base.rotation = pt.rotation;
