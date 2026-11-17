@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v765</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v766</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13297,8 +13297,26 @@ async function ouvrirBrouillons(){
       }));
       /* v734 : les OBJETS de la zone à dessiner (objet de quête, photo d'un puzzle…) : leur prompt vient
          du fichier d'import ; une pièce nommée peut partir avec (une photo prise DANS cette pièce). */
+      /* v766 : les ICÔNES d'objets regroupées en UNE planche (it.planche = son nom, it.dessin = ce qu'on
+         dessine) : une seule demande à ChatGPT, le jeu découpe et pose chaque icône sur son objet. */
+      const planchesObj = {};
+      (typeof items !== 'undefined' ? items : []).forEach(it=>{ if (it && it.planche && it.dessin && memeNom(it.dessinZone, z.name)) (planchesObj[it.planche] = planchesObj[it.planche] || []).push(it); });
+      Object.keys(planchesObj).forEach((nomP, kp)=>{
+        const its = planchesObj[nomP].slice().sort((a, b)=> (a.plancheOrdre || 0) - (b.plancheOrdre || 0) || String(a.name).localeCompare(String(b.name), 'fr'));
+        const okP = its.every(it=> it.imageUrl || it.imagePath);
+        if (!okP) manque++;
+        const cle = 'objp|' + z.id + '|' + kp;
+        const btnsP = bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okP) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier')
+          + bouton('data-poser-planche-obj="' + its.map(it=> it.id).join(',') + '"', okP ? '📷 Changer la planche' : '📷 Choisir la planche');
+        blocs += tache(okP, '🎁 Planche « ' + esc(nomP) + ' » — ' + its.length + ' icônes (' + its.map(it=> esc(it.name)).join(', ') + ')',
+          'Une seule image ChatGPT pour toutes ces icônes : le jeu la découpe et pose chaque dessin sur son objet, dans l\'ordre.',
+          '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir la planche</b>.',
+          btnsP, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + btnsP + '</div>');
+        envois[cle] = ()=> ({ texte: promptPlancheObjets(its), imgs: [] });
+      });
       (typeof items !== 'undefined' ? items : []).forEach(it=>{
         if (!it || !it.promptImage || !memeNom(it.dessinZone, z.name)) return;
+        if (it.planche && it.dessin) return;   // v766 : il est sur une planche
         const okO = !!(it.imageUrl || it.imagePath);
         if (!okO) manque++;
         const scJ = it.dessinScene ? scenes.find(sc=> sc && memeNom(sc.name, it.dessinScene)) : null;
@@ -13877,6 +13895,19 @@ async function ouvrirBrouillons(){
     await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(zid);
     showToast('🎛️ ' + k + ' posé sur ' + n + ' commande(s) ✅'); rouvrir();
+  });
+  sur('[data-poser-planche-obj]', async (b)=>{   // v766 : la planche d'icônes → une image par objet, dans l'ordre
+    const ids = b.dataset.poserPlancheObj.split(',').filter(Boolean);
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const r = decouperGrille(img, ids.length);
+    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Il faut ' + ids.length + ' dessins bien séparés, fond transparent.'); return; }
+    for (let i = 0; i < ids.length; i++){
+      const url = encoderImageSousLimite(r.vues[i], 400, true);
+      if (!url){ showToast('Image trop lourde même réduite'); return; }
+      await itemsCol.doc(ids[i]).set({ imageUrl: url, imagePath: null }, { merge:true });
+    }
+    showToast('🎁 ' + ids.length + ' icônes posées ✅'); rouvrir();
   });
   sur('[data-poser-objet]', async (b)=>{   // v734 : l'image d'un objet, comme le champ Photo de l'éditeur d'objets
     const img = await choisirFichierImage();
@@ -17129,6 +17160,18 @@ function loadItemForEdit(id){
   document.getElementById('itemDeleteBtn').style.display = 'block';
 }
 /* v764 — LES PLATS. it.plat = { atk, def (en %), vit (+), regen (2 premiers tours), immunite, minutes, equipe } */
+/* v766 — le prompt d'une planche d'icônes : 2 par rangée, lues de gauche à droite puis de haut en bas */
+function promptPlancheObjets(its){
+  const n = its.length, parRang = n <= 3 ? n : 2;
+  const pos = (i)=> n <= 3 ? ['à gauche', 'au milieu', 'à droite'].slice(0, n)[i] || ('n°' + (i + 1))
+    : ['en haut à gauche', 'en haut à droite', 'en bas à gauche', 'en bas à droite', 'en dessous à gauche', 'en dessous à droite'][i] || ('n°' + (i + 1));
+  return 'Dessine UNE SEULE IMAGE : une planche sur fond TRANSPARENT (PNG) avec ' + n + ' petites icônes d\'objets pour un jeu vidéo, '
+    + (n <= 3 ? 'côte à côte sur une seule rangée' : 'en grille de ' + Math.ceil(n / parRang) + ' rangées de ' + parRang)
+    + ', à la même échelle, chacune entière et bien séparée des autres par du vide (elles ne se touchent pas). Dans cet ordre :\n'
+    + its.map((it, i)=> (i + 1) + '. ' + pos(i).toUpperCase() + ' : ' + it.dessin).join('\n')
+    + '\nStyle : dessin de jeu vidéo, trait d\'encre noir net, aplats de couleurs unis, ombrage cel en deux tons aux bords tranchés, aucun dégradé, aucun reflet, univers futuriste. Chaque objet isolé, centré dans sa case, vu de face légèrement en plongée, sans ombre portée au sol.\n'
+    + 'LIVRABLE : une seule image, PNG à fond TRANSPARENT. Aucun cadre, aucun numéro, aucun texte.';
+}
 function remplirChampsPlat(pl){
   pl = pl || {};
   const v = (id, x)=>{ const el = document.getElementById(id); if (el) el.value = x; };
@@ -34887,12 +34930,8 @@ function renderSceneDetailTypeSpecific(pt){
         <option value="pnj" ${!pt.pourRobots ? 'selected' : ''}>🧍 Un personnage (sa version marquée ici)</option>
         <option value="robots" ${pt.pourRobots ? 'selected' : ''}>🤖 Un robot de l'équipage, de temps en temps</option>
       </select>
-      <div class="field-label" style="color:rgba(255,255,255,.75);">🪑 Derrière un meuble : bas caché <b data-emp-derriere-val>${pt.derriere || 0} %</b></div>
-      <input type="range" data-emp-derriere min="0" max="80" step="1" value="${pt.derriere || 0}" style="width:100%;">
-      <p class="meta" style="color:rgba(255,255,255,.6); margin:4px 0 0;">Pour un personnage derrière un comptoir, une table : le bas du rectangle ne se dessine pas, on voit le meuble de l'image par-dessus. Règle jusqu'à ce que la coupe tombe pile sur le bord du meuble.</p>`;
+      <p class="meta" style="color:rgba(255,255,255,.6); margin:6px 0 0;">Derrière un comptoir, une table : pose le meuble en point de décor PLACÉ APRÈS ce rectangle dans la liste — il passe devant le personnage.</p>`;
     typeWrap.querySelector('[data-emp-qui]').addEventListener('change', (e)=>{ pt.pourRobots = e.target.value === 'robots'; renderSceneEditorPoints(); });
-    const rg = typeWrap.querySelector('[data-emp-derriere]');
-    rg.addEventListener('input', ()=>{ pt.derriere = parseInt(rg.value, 10) || 0; typeWrap.querySelector('[data-emp-derriere-val]').textContent = pt.derriere + ' %'; renderSceneEditorPoints(); });
     return;
   }
 
@@ -39475,14 +39514,6 @@ function imageOccupantEmplacement(f, pt){
       const W = el.clientWidth, H = el.clientHeight;
       if (!W || !H){ requestAnimationFrame(poser); return; }
       caler(img, W, H, { w: img.naturalWidth, h: img.naturalHeight }, bornesOpaques(img));
-      /* v765 : « derrière un meuble » — le bas du rectangle est masqué (Brann derrière son comptoir :
-         on voit le comptoir de l'image de la pièce, et lui au-dessus) */
-      const cache = Math.max(0, Math.min(90, (pt && pt.derriere) || 0));
-      if (cache > 0 && img.offsetHeight){
-        const coupe = H * (1 - cache / 100);
-        const pc = Math.max(0, Math.min(100, (coupe - img.offsetTop) / img.offsetHeight * 100));
-        img.style.clipPath = `polygon(-50% -50%, 150% -50%, 150% ${pc}%, -50% ${pc}%)`;
-      } else img.style.clipPath = '';
       img.style.visibility = '';
     };
     poser();
@@ -42817,7 +42848,7 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal, forcerAjout){
    Commande : { type:'commande', groupe:'fourneau', attendu:true|false, etatInitial:false, teinte:'#7ff6ff', visuel:'cristal', prompt }
    Porte / coffre : { lockCommandes:'fourneau', lockMessage:'Le fourneau n\'est pas réglé.', unlockMessage:'Le passage s\'est ouvert' } */
 /* v765 — options d'un point communes aux imports : la flèche « droite » (le miroir de la place
-   habituelle, pour une deuxième flèche), un rectangle 🧍 pour les robots, ou derrière un meuble */
+   habituelle, pour une deuxième flèche), un rectangle 🧍 pour les robots */
 function optionsPointImport(pt, base){
   if (pt.fleche === 'droite' && (base.type === 'sortie' || base.type === 'sortie_zone')){
     poserFlecheALaPlaceHabituelle(base);
@@ -42825,7 +42856,6 @@ function optionsPointImport(pt, base){
   }
   if (base.type === 'emplacement'){
     if (pt.pourRobots) base.pourRobots = true;
-    if (pt.derriere) base.derriere = Math.max(0, Math.min(80, parseInt(pt.derriere, 10) || 0));
   }
 }
 function champsCommandeImport(pt, base){
@@ -42912,6 +42942,17 @@ async function importerMiseAJour(sc){
   const idDeFiche = (nom)=> advParNom[nom] || ((toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat') || {}).id) || null;
   const fiches = toutesLesFiches();
   await creerMetiersImport(sc.metiers, journal);   // v764
+  /* v766 — `objets` : [{ name, planche, dessin, plancheOrdre, dessinZone }] — régler un objet existant (sa planche d'icônes) */
+  for (const o of (Array.isArray(sc.objets) ? sc.objets : [])){
+    const it = o && (items || []).find(i=> i && cleNom(i.name) === cleNom(o.name));
+    if (!it){ if (o) journal.push('⚠️ Objet « ' + o.name + ' » introuvable'); continue; }
+    const m = {};
+    ['planche', 'dessin', 'dessinZone', 'description'].forEach(k=>{ if (typeof o[k] === 'string') m[k] = o[k]; });
+    if (o.plancheOrdre != null) m.plancheOrdre = parseInt(o.plancheOrdre, 10) || 0;
+    if (!Object.keys(m).length || !itemsCol) continue;
+    await itemsCol.doc(it.id).set(m, { merge:true }); Object.assign(it, m);
+    journal.push('🎁 Objet « ' + it.name + ' » : ' + Object.keys(m).join(', '));
+  }
   /* v762 — une quête du fichier qui n'existe pas encore est CRÉÉE ici, avant les dialogues qui la
      donnent ou la valident : { name, description, objectives: [{ objet: "Nom", qty }] }. */
   for (const q of (Array.isArray(sc.quetes) ? sc.quetes : [])){
@@ -43520,6 +43561,7 @@ async function importerScenario(sc){
       effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false && o.type !== 'quete',   // v748 : la quête ne se vend pas
       basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
       plat: (o.type === 'plat' && o.plat) ? Object.assign({ atk:0, def:0, vit:0, regen:false, immunite:null, minutes:30, equipe:false }, o.plat) : null,   // v764
+      planche: o.planche || null, dessin: o.dessin || null, plancheOrdre: o.plancheOrdre || 0,   // v766 : icônes regroupées en une planche
     };
     /* v734 : un objet à faire dessiner — son prompt, et la zone dans le guide 🧰 de laquelle il apparaît */
     if (o.prompt){ data.promptImage = String(o.prompt); data.dessinZone = o.zoneDessin || o.zone || ''; data.dessinScene = o.sceneDessin || ''; }
