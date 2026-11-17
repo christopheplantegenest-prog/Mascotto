@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v763</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v764</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -2864,7 +2864,25 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <option value="composant">Composant de robot</option>
         <option value="graine">Graine à planter</option>
         <option value="mobilier">Mobilier (meuble, décor : ça se pose)</option>
+        <option value="plat">🍲 Plat cuisiné (renforce un robot un moment)</option>
       </select>
+      <!-- v764 — LE PLAT : on le donne à un robot depuis le sac, il le renforce pendant un temps réel ; un plat chasse l'autre. -->
+      <div id="itemPlatBlock" style="display:none;">
+        <div class="field-label">🍲 Ce que le plat donne au robot qui le mange</div>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;"><div class="meta" style="font-size:11px;">Attaque (%)</div><input type="number" id="itemPlatAtk" class="field-input" value="0" min="0" max="100"></div>
+          <div style="flex:1;"><div class="meta" style="font-size:11px;">Défense (%)</div><input type="number" id="itemPlatDef" class="field-input" value="0" min="0" max="100"></div>
+          <div style="flex:1;"><div class="meta" style="font-size:11px;">Vitesse (+)</div><input type="number" id="itemPlatVit" class="field-input" value="0" min="0" max="20"></div>
+        </div>
+        <label style="display:flex; gap:8px; align-items:center; margin:8px 0 0;"><input type="checkbox" id="itemPlatRegen" style="width:auto;"> 🌱 Régénération les 2 premiers tours de chaque combat</label>
+        <div class="field-label">Immunité</div>
+        <select id="itemPlatImmunite" class="field-input"></select>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;"><div class="field-label">Durée (minutes de jeu réel)</div><input type="number" id="itemPlatMinutes" class="field-input" value="30" min="1"></div>
+        </div>
+        <label style="display:flex; gap:8px; align-items:center; margin:8px 0 0;"><input type="checkbox" id="itemPlatEquipe" style="width:auto;"> 👥 Banquet : servi d'un coup à toute l'équipe</label>
+        <p class="meta" style="margin:6px 0 0;">Dans le sac, « 🍽️ Donner » le sert à un robot (ou à toute l'équipe pour un banquet). L'effet vaut pour tous ses combats pendant la durée ; un nouveau plat remplace l'ancien.</p>
+      </div>
       <div id="itemMobBlock" style="display:none;">
         <div class="field-label">Catégorie</div>
         <select id="itemMobCategorie" class="field-input"></select>
@@ -13242,6 +13260,8 @@ async function ouvrirBrouillons(){
         'Tant que la zone n\'a pas de position, personne ne peut y entrer.',
         '1. <b>✏️ Ouvrir la fiche</b> de la zone.<br>2. Règle sa position sur la carte (📍 dans la fiche).<br>3. <b>Enregistrer</b>, puis reviens au guide.',
         bouton('data-fiche="' + z.id + '"', '✏️ Ouvrir la fiche', true));
+      /* v764 : une pièce À BORD (la cuisine derrière la porte de Brann) n'a ni bâtiment ni place sur la carte */
+      if (typeof zoneEstABord === 'function' && zoneEstABord(z.id)){ blocs = ''; manque = 0; }
       /* v659 : les ROBOTS de la zone (rencontres, adversaires posés) — leurs images se font plus bas,
          dans « 🤖 Robots », mais on les montre ici pour ne pas les chercher parmi tous les modèles */
       const idsAdv = new Set();
@@ -16177,6 +16197,12 @@ function majBlocComposant(){
   document.getElementById('itemComposantBlock').style.display = type === 'composant' ? 'block' : 'none';
   const gb = document.getElementById('itemGraineBlock');
   if (gb) gb.style.display = (type === 'graine' || type === 'composant') ? 'block' : 'none';   // v751 : un composant (l'avaril) peut aussi se planter
+  const pb = document.getElementById('itemPlatBlock');   // v764
+  if (pb){
+    pb.style.display = type === 'plat' ? 'block' : 'none';
+    const si = document.getElementById('itemPlatImmunite');
+    if (si && !si.options.length) si.innerHTML = '<option value="">— aucune —</option>' + STATUTS_NEGATIFS.map(k=> `<option value="${k}">${LIB_STATUTS[k] || ''} ${NOM_STATUTS[k] || k}</option>`).join('');
+  }
   const ab = document.getElementById('itemAssemblageBlock');   // v733
   if (ab) ab.style.display = type === 'quete' ? 'block' : 'none';
   const fam = document.getElementById('itemComposantFamille').value;
@@ -17047,6 +17073,7 @@ function loadItemForEdit(id){
   currentAssemblage = (it.assemblage && Array.isArray(it.assemblage.pieces)) ? it.assemblage.pieces.slice() : [];   // v733
   renderAssemblagePieces();
   majBlocComposant();
+  remplirChampsPlat(it.plat);   // v764
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
   document.getElementById('itemPoids').value = [0.1, 0.5, 1, 2, 3].includes(+it.poids) ? String(+it.poids) : '';   // v669
@@ -17101,6 +17128,49 @@ function loadItemForEdit(id){
   document.getElementById('itemCancelBtn').style.display = 'block';
   document.getElementById('itemDeleteBtn').style.display = 'block';
 }
+/* v764 — LES PLATS. it.plat = { atk, def (en %), vit (+), regen (2 premiers tours), immunite, minutes, equipe } */
+function remplirChampsPlat(pl){
+  pl = pl || {};
+  const v = (id, x)=>{ const el = document.getElementById(id); if (el) el.value = x; };
+  v('itemPlatAtk', pl.atk || 0); v('itemPlatDef', pl.def || 0); v('itemPlatVit', pl.vit || 0);
+  v('itemPlatMinutes', pl.minutes || 30);
+  const r = document.getElementById('itemPlatRegen'); if (r) r.checked = !!pl.regen;
+  const e = document.getElementById('itemPlatEquipe'); if (e) e.checked = !!pl.equipe;
+  majBlocComposant();
+  v('itemPlatImmunite', pl.immunite || '');
+}
+function lireChampsPlat(){
+  const n = (id, mx)=> Math.max(0, Math.min(mx, parseInt(document.getElementById(id).value, 10) || 0));
+  return { atk: n('itemPlatAtk', 100), def: n('itemPlatDef', 100), vit: n('itemPlatVit', 20),
+    regen: document.getElementById('itemPlatRegen').checked, immunite: document.getElementById('itemPlatImmunite').value || null,
+    minutes: Math.max(1, n('itemPlatMinutes', 1440)), equipe: document.getElementById('itemPlatEquipe').checked };
+}
+function texteEffetPlat(pl){
+  if (!pl) return '';
+  const t = [];
+  if (pl.atk) t.push('+' + pl.atk + ' % attaque');
+  if (pl.def) t.push('+' + pl.def + ' % défense');
+  if (pl.vit) t.push('+' + pl.vit + ' vitesse');
+  if (pl.regen) t.push('🌱 régénération les 2 premiers tours');
+  if (pl.immunite) t.push('immunité ' + (LIB_STATUTS[pl.immunite] || '') + ' ' + (NOM_STATUTS[pl.immunite] || pl.immunite));
+  return (t.join(', ') || 'aucun effet') + ' · ' + (pl.minutes || 30) + ' min' + (pl.equipe ? ' · toute l\'équipe' : '');
+}
+/* le plat actif d'un robot (rien s'il a fini de le digérer) */
+function platActif(r){
+  const p = r && r.plat;
+  return (p && p.jusqua && p.jusqua > Date.now()) ? p : null;
+}
+function minutesRestantesPlat(p){ return Math.max(1, Math.ceil((p.jusqua - Date.now()) / 60000)); }
+async function servirPlat(robots, it){
+  if (!it || !it.plat || !robots.length || qteAuSac(it.id) <= 0) return false;
+  const pl = it.plat, jusqua = Date.now() + (pl.minutes || 30) * 60000;
+  const plat = { itemId: it.id, nom: it.name, effets: { atk: pl.atk || 0, def: pl.def || 0, vit: pl.vit || 0, regen: !!pl.regen, immunite: pl.immunite || null }, jusqua };
+  await playerDocRef.set({ inventory: { [it.id]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true });
+  for (const r of robots){ r.plat = plat; await recruitsCol.doc(r.id).update({ plat }); }
+  showToast('🍽️ ' + (robots.length > 1 ? 'L\'équipe savoure' : escSac(robots[0].name) + ' savoure') + ' « ' + it.name + ' » : ' + texteEffetPlat(pl).split(' · ')[0] + ', ' + (pl.minutes || 30) + ' min');
+  try { navigator.vibrate && navigator.vibrate([20, 40, 20]); } catch(e){}
+  return true;
+}
 function resetItemForm(){
   editingItemId = null;
   uploadedItemImageDataUrl = null;
@@ -17116,6 +17186,7 @@ function resetItemForm(){
   document.getElementById('itemGraineRestart').value = 2;
   renderGraineStages(); renderGraineLoot();
   majBlocComposant();
+  remplirChampsPlat(null);   // v764
   document.getElementById('itemDescription').value = '';
   document.getElementById('itemPoids').value = '';   // v669 : automatique
   document.getElementById('itemEquippableRow').style.display = 'flex';
@@ -17200,6 +17271,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
     if (culture.stages.length < 2){ showToast('Une graine demande au moins deux stades'); return; }
   }
   const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, poids: parseFloat(document.getElementById('itemPoids').value) || null, updatedAt: Date.now() };
+  data.plat = type === 'plat' ? lireChampsPlat() : null;   // v764
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -17548,7 +17620,7 @@ const CHARGE_MAX = 20;
 let pocheCompartiment = 'objets';
 /* v669 : un poids par défaut selon le type (une graine ne pèse presque rien, un meuble beaucoup) ;
    le champ de la fiche le remplace pour un objet précis. */
-const POIDS_PAR_TYPE = { graine:0.1, ressource:0.5, consommable:0.5, apprentissage:0.5, composant:1, equipement:2, mobilier:3 };
+const POIDS_PAR_TYPE = { graine:0.1, ressource:0.5, consommable:0.5, plat:0.5, apprentissage:0.5, composant:1, equipement:2, mobilier:3 };
 function poidsObjet(it){
   if (!it || it.type === 'quete') return 0;
   const p = parseFloat(it.poids);
@@ -17621,6 +17693,7 @@ function commandesObjet(it){
   if (!it) return ['jeter'];
   const c = [];
   if (isCareItem(it)) c.push('utiliser');
+  if (it.type === 'plat' && it.plat) c.push('servir');   // v764
   if (it.equippable) c.push('equiper');
   if (it.deco) c.push('poser');
   if (cultureDeLaGraine(it.id)) c.push('planter');   // v751 : tout objet qui a une culture se plante
@@ -17653,7 +17726,7 @@ function enteteObjetSac(it, qte, grand){
 function ouvrirMenuObjet(itemId){
   const it = items.find(i=> i.id === itemId) || null;
   const LIB = { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
-    equiper: '🛡️ Équiper', observer: '🔍 Observer', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter', assembler: '🧩 Assembler les morceaux' };
+    equiper: '🛡️ Équiper', observer: '🔍 Observer', servir: (it && it.plat && it.plat.equipe) ? '🍽️ Servir à toute l\'équipe' : '🍽️ Donner à un robot', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter', assembler: '🧩 Assembler les morceaux' };
   /* Poser et Planter ne marchent qu'au bon endroit : ailleurs, le bouton dit où aller */
   const horsDePlace = { poser: chambrePourPoser() ? '' : 'dans la chambre d\'un robot', planter: bacsLibres().length ? '' : 'devant un bac libre' };
   const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId))
@@ -17665,7 +17738,13 @@ function ouvrirMenuObjet(itemId){
   f.querySelectorAll('[data-cmd]').forEach(b=> b.addEventListener('click', ()=>{
     f.remove();
     const c = b.dataset.cmd;
-    if (c === 'utiliser' || c === 'equiper') ouvrirRobotsPourObjet(itemId, c);
+    if (c === 'servir' && it.plat && it.plat.equipe){   // v764 : le banquet, pour toute l'équipe d'un coup
+      const equipe = (activeTeamIds || []).map(id=> recruits.find(r=> r.id === id)).filter(r=> r && r.recruitType === 'combattant');
+      if (!equipe.length){ showToast('Ton équipe est vide'); return; }
+      servirPlat(equipe, it).then(()=> renderInventory()).catch((err)=> showToast('Échec : ' + err.message));
+      return;
+    }
+    if (c === 'utiliser' || c === 'equiper' || c === 'servir') ouvrirRobotsPourObjet(itemId, c);
     else if (c === 'observer') observerObjet(it);
     else if (c === 'assembler') ouvrirPuzzle(assemblageDeLaPiece(itemId));
     else if (c === 'poser'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPoseChambre(itemId); }
@@ -17983,14 +18062,18 @@ function ouvrirRobotsPourObjet(itemId, mode){
     if (!document.body.contains(f)) return;
     const reste = qteAuSac(itemId);
     f.querySelector('[data-haut]').innerHTML = enteteObjetSac(it, reste)
-      + '<div class="meta" style="font-size:12px; margin-top:6px;">' + escSac(mode === 'equiper' ? itemEffectSummary(it) : (it.combatUse.mode === 'revive' ? 'Réanime un robot K.O.' : it.combatUse.mode === 'mana' ? 'Recharge la charge 🔷 d\'un robot' : 'Rend des PV à un robot blessé')) + '</div>';
+      + '<div class="meta" style="font-size:12px; margin-top:6px;">' + escSac(mode === 'servir' ? texteEffetPlat(it.plat) : mode === 'equiper' ? itemEffectSummary(it) : (it.combatUse.mode === 'revive' ? 'Réanime un robot K.O.' : it.combatUse.mode === 'mana' ? 'Recharge la charge 🔷 d\'un robot' : 'Rend des PV à un robot blessé')) + '</div>';
     f.querySelectorAll('[data-fermer]').forEach(b=> b.onclick = ()=> f.remove());
     const robots = (recruits || []).filter(r=> r.recruitType === 'combattant')
       .sort((a, b)=> ((activeTeamIds || []).includes(b.id) - (activeTeamIds || []).includes(a.id)) || String(a.name).localeCompare(String(b.name), 'fr'));
     if (!robots.length){ f.querySelector('[data-robots]').innerHTML = '<p class="meta">Tu n\'as encore aucun robot.</p>'; return; }
     f.querySelector('[data-robots]').innerHTML = robots.map(r=>{
       let ok = reste > 0, libelle = '', note = '';
-      if (mode === 'utiliser'){
+      if (mode === 'servir'){   // v764
+        const pa = platActif(r);
+        libelle = pa ? '🔁 Remplacer' : '🍽️ Donner';
+        note = pa ? '🍽️ ' + escSac(pa.nom) + ' — encore ' + minutesRestantesPlat(pa) + ' min' : 'rien mangé';
+      } else if (mode === 'utiliser'){
         const cu = it.combatUse, hp = recruitEffectiveHp(r), max = recruitMaxHp(r);
         if (cu.mode === 'revive'){ libelle = '✨ Réanimer'; if (hp > 0){ ok = false; note = 'pas K.O.'; } }
         else if (cu.mode === 'mana'){ libelle = '🔷 Recharger'; if (hp <= 0){ ok = false; note = 'K.O.'; } else if (!recruitMaxMana(r)){ ok = false; note = 'sans charge'; } else if (recruitEffectiveMana(r) >= recruitMaxMana(r)){ ok = false; note = 'déjà plein'; } }
@@ -18014,6 +18097,7 @@ function ouvrirRobotsPourObjet(itemId, mode){
       if (!r || qteAuSac(itemId) <= 0) return;
       b.disabled = true;
       if (mode === 'utiliser'){ useHealingItemOnRecruit(r, it); dessiner(); return; }
+      if (mode === 'servir'){ servirPlat([r], it).then(()=>{ dessiner(); renderInventory(); }).catch((err)=>{ showToast('Échec : ' + err.message); dessiner(); }); return; }
       const slots = recruitEquipSlots(r), prev = slots[cat];
       playerDocRef.set({ inventory: { [itemId]: firebase.firestore.FieldValue.increment(-1) } }, { merge:true }).then(()=>{
         if (prev) returnItemToStock(prev);   // l'objet qu'il portait revient au sac
@@ -23502,6 +23586,12 @@ function creerCombattant(cfg, side, idx){
   if (side === 'enemy' && cfg.multStats && cfg.multStats !== 1){   // étape 3 : la catégorie de la fiche (commun ×0,8, boss ×2,5…)
     ['hp','atk','def','matk','mdef'].forEach(k=> stats[k] = Math.max(1, Math.round(stats[k] * cfg.multStats)));
   }
+  const plat = cfg.plat || null;   // v764 : le plat de la cuisine du vaisseau
+  if (plat){
+    if (plat.atk) ['atk','matk'].forEach(k=> stats[k] = Math.max(1, Math.round(stats[k] * (1 + plat.atk / 100))));
+    if (plat.def) ['def','mdef'].forEach(k=> stats[k] = Math.max(1, Math.round(stats[k] * (1 + plat.def / 100))));
+    if (plat.vit) stats.speed = (stats.speed || 0) + plat.vit;
+  }
   const f = {
     profil: cfg.profil || 'equilibre',
     uid: (side === 'player' ? 'p' : 'e') + idx,
@@ -23550,6 +23640,11 @@ function creerCombattant(cfg, side, idx){
     f.mana = Math.max(0, Math.min(f.maxMana, cfg.manaInit));
   }
   if (cfg.ultimeNom) f.ultimeNom = cfg.ultimeNom;   // v533 : l'ultime de l'objet equipe
+  if (plat){   // v764
+    f.platNom = plat.nom || 'un plat';
+    if (plat.immunite && !f.immunites.includes(plat.immunite)) f.immunites.push(plat.immunite);
+    if (plat.regen) f.statuts.regen = { tours: 2, paliers: 0, valeur: 0.06 };
+  }
   return f;
 }
 /* Démarre un combat SUR l'objet combatState du jeu (déjà créé par l'enveloppe avec ses champs
@@ -23569,6 +23664,7 @@ function demarrer(etat, config){
     enemy:  (config.objets && config.objets.enemy)  || stockInitial(),
   };
   combat.objetsDef = config.objetsDef || OBJETS;
+  combat.fighters.forEach(f=>{ if (f.platNom) log(`🍽️ ${f.nom} a mangé « ${f.platNom} » : il se sent en forme.`); });   // v764
   ['player','enemy'].forEach(side=>{
     const vus = {};
     combat.fighters.filter(f=> f.side === side).forEach(f=>{
@@ -24587,6 +24683,7 @@ function m2CfgDepuisRecrue(r){
     hpInit: Math.max(0, Math.min(st.hp, recruitEffectiveHp(r))),
     manaInit: Math.max(0, Math.min(st.mana, recruitEffectiveMana(r))),   // v525
     sourceId: r.id, modeleId: m.id, ...m2ImagesDepuisModele(m),
+    plat: platActif(r) ? Object.assign({ nom: r.plat.nom }, r.plat.effets) : null,   // v764 : le plat qu'il digère encore
   };
 }
 function m2CfgDepuisFiche(c, nomAffiche){
@@ -42610,6 +42707,21 @@ function importConflitDemande(typeLabel, nom){
 /* Écrit un document, en demandant quoi faire si un homonyme existe.
    Renvoie TOUJOURS un identifiant utilisable : même en cas de « garder l'existant »,
    c'est celui de l'existant, pour que les renvois du scénario pointent sur quelque chose. */
+/* v764 — les métiers : retrouvés par leur nom (ou leur id), créés à la demande */
+function idDeMetier(ref, journal, ctx){
+  const m = (metiers || []).find(x=> x.id === ref || String(x.name || '').trim().toLowerCase() === String(ref || '').trim().toLowerCase());
+  if (!m && journal) journal.push('⚠️ ' + ctx + ' : métier « ' + ref + ' » introuvable');
+  return m ? m.id : null;
+}
+async function creerMetiersImport(liste, journal){
+  for (const nom of (Array.isArray(liste) ? liste : [])){
+    if (!nom || idDeMetier(nom)) continue;
+    if (!metiersCol){ journal.push('⚠️ Métier « ' + nom + ' » : Firebase indisponible'); continue; }
+    const ref = await metiersCol.add({ name: String(nom), createdAt: Date.now() });
+    if (!metiers.some(x=> x.id === ref.id)) metiers.push({ id: ref.id, name: String(nom) });
+    journal.push('🧑‍🍳 Métier « ' + nom + ' » créé');
+  }
+}
 async function importEcrireDoc(col, nom, data, typeLabel, journal, forcerAjout){
   if (!col) throw new Error('Firebase indisponible');
   /* v585 : `forcerAjout` — une VERSION d'un personnage créé par ce même fichier porte le même nom
@@ -42732,6 +42844,7 @@ async function importerMiseAJour(sc){
   const advParNom = await importerAdversaires(sc.adversaires, journal);
   const idDeFiche = (nom)=> advParNom[nom] || ((toutesLesFiches().find(f=> f.name === nom && f.interactionType === 'combat') || {}).id) || null;
   const fiches = toutesLesFiches();
+  await creerMetiersImport(sc.metiers, journal);   // v764
   /* v762 — une quête du fichier qui n'existe pas encore est CRÉÉE ici, avant les dialogues qui la
      donnent ou la valident : { name, description, objectives: [{ objet: "Nom", qty }] }. */
   for (const q of (Array.isArray(sc.quetes) ? sc.quetes : [])){
@@ -42929,6 +43042,12 @@ async function importerMiseAJour(sc){
           if (pt.resetMode) base.resetMode = pt.resetMode;
           if (pt.resetMinutes) base.resetMinutes = parseInt(pt.resetMinutes, 10) || 0;
           if (pt.objet) base.itemId = objParNom(pt.objet);
+          if (estCoffre(base) && pt.coffre){   // v764 : un coffre du catalogue, par son nom (comme l'import complet)
+            const voulu = String(pt.coffre).trim().toLowerCase();
+            const mc = coffresTous().find(x=> String(x.nom || '').trim().toLowerCase() === voulu);
+            if (!mc) journal.push('⚠️ « ' + scn.name + ' » : coffre « ' + pt.coffre + ' » absent du catalogue');
+            else { const va = String(pt.angle || '').trim().toLowerCase(); const a = (mc.angles || []).find(x=> String(x.nom || '').trim().toLowerCase() === va) || (mc.angles || [])[0]; base.coffreModele = mc.id; base.coffreAngle = a ? a.id : null; base.hideIcon = false; }
+          }
           if (estCoffre(base)){
             base.loot = (pt.loot || []).map(l=>{ const id = objParNom(typeof l === 'string' ? l : l.objet); return id ? { itemId: id, qty: parseInt((l && l.qty) || 1, 10) || 1, chance: (l && l.chance != null) ? parseInt(l.chance, 10) : 100 } : null; }).filter(Boolean);
             if (pt.message) base.message = pt.message;
@@ -42951,7 +43070,7 @@ async function importerMiseAJour(sc){
             ['imageRef', 'imageUrl', 'imagePath', 'cadreId', 'vueId'].forEach(k=>{ if (ancien[k]) base[k] = ancien[k]; });
             if (ancien.imageRef || ancien.imageUrl || ancien.imagePath) base.hideIcon = false;
           }
-          if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit', 'fenetre', 'objet', 'recolte'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
+          if (!['emplacement', 'decor', 'dialogue', 'image', 'nuit', 'fenetre', 'objet', 'recolte', 'coffre', 'commande'].includes(base.type)) journal.push('⚠️ « ' + scn.name + ' » : la mise à jour ne sait poser que des rectangles 🧍, décors et textes — point « ' + base.type + ' » à régler à la main');
           return base;
         });
         scn.points = gardes.concat(neufs);
@@ -43044,7 +43163,9 @@ async function importerMiseAJour(sc){
   for (const p of (sc.pnj || [])){
     if (p.cherche || p.nouvelleVersion) continue;   // v651 : déjà traités ci-dessus
     /* v737 : `estZone: true` vise la fiche d'une ZONE (pour lui changer son prompt de carte) */
-    const memes = fiches.filter(f=> (p.estZone ? (f.interactionType || '') === 'zone' : (f.interactionType || '') !== 'zone') && f.name === p.name);
+    let memes = fiches.filter(f=> (p.estZone ? (f.interactionType || '') === 'zone' : (f.interactionType || '') !== 'zone') && f.name === p.name);
+    /* v764 : `dans: "La Table d'Orbe"` — la version qui se tient dans cette zone (Brann du restaurant, pas celui de la cuisine) */
+    if (p.dans){ const zd = fiches.find(x=> (x.interactionType || '') === 'zone' && x.name === p.dans); memes = memes.filter(f=> zd && f.pieceCommune && f.pieceCommune.zoneId === zd.id); }
     const debut = (Array.isArray(p.timeRanges) && p.timeRanges[0] && p.timeRanges[0].start) || null;
     let f = memes.length > 1 && debut ? memes.find(x=> Array.isArray(x.timeRanges) && x.timeRanges[0] && x.timeRanges[0].start === debut) : memes[0];
     /* v754 : `ficheId` vise UNE version précise (Keira à bord, Keira aux Jardins…). Avant, la mise à
@@ -43070,6 +43191,9 @@ async function importerMiseAJour(sc){
     if (!f){ journal.push('⚠️ ' + qui + ' introuvable' + (memes.length > 1 ? ' : ' + memes.length + ' versions, aucune ne commence à ' + debut : '') + ' — rien changé'); continue; }
     const maj = {}; const quoi = [];
     ['apparence', 'pose', 'fonction', 'promptCarte'].forEach(k=>{ if (typeof p[k] === 'string'){ maj[k] = p[k]; quoi.push(k); } });
+    /* v764 : son MÉTIER (par nom) et son ATELIER à bord (la zone derrière sa porte d'habitant, par nom) */
+    if (p.metier){ const mid = idDeMetier(p.metier, journal, qui); if (mid){ maj.metier = mid; quoi.push('métier ' + p.metier); } }
+    if (p.atelier){ const az = fiches.find(x=> (x.interactionType || '') === 'zone' && x.name === p.atelier); if (az){ maj.atelierZoneId = az.id; quoi.push('atelier « ' + p.atelier + ' »'); } else journal.push('⚠️ ' + qui + ' : atelier « ' + p.atelier + ' » introuvable'); }
     if (Array.isArray(p.dialogueSteps)){
       /* La mise à jour ne résout aucune référence : un dialogue qui renvoie à une quête, un métier
          ou un autre personnage passe par l'import normal. */
@@ -43094,6 +43218,12 @@ async function importerMiseAJour(sc){
           if (typeof ch.questValidate === 'string'){ const id = queteId(ch.questValidate); ch.questValidate = id ? { questId: id } : null; }
           if (ch.showIf && ch.showIf.questName){ const id = queteId(ch.showIf.questName); ch.showIf = id ? { kind:'quest', questId: id, state: ch.showIf.state || 'completed' } : null; }
           (ch.showIfList || []).forEach(cond);
+          /* v764 : `recruit: "Cuisinier"` — le recrutement avec ce métier */
+          if (typeof ch.recruit === 'string' || ch.recruit === true){
+            const mid = idDeMetier(typeof ch.recruit === 'string' ? ch.recruit : 'combattant');
+            if (!mid) rien.push('métier « ' + ch.recruit + ' »');
+            ch.recruit = mid ? { metierId: mid } : null;
+          }
           /* v762 : `combat: { adversaires: ["Nom", …], gagne, perdu }` — comme l'import complet */
           if (ch.combat && Array.isArray(ch.combat.adversaires)){
             const ids = ch.combat.adversaires.slice(0, 3).map(n=>{ const id = idDeFiche(n); if (!id) rien.push('adversaire « ' + n + ' »'); return id; }).filter(Boolean);
@@ -43295,6 +43425,8 @@ async function importerScenario(sc){
      « ferraille-saine » ou « Ferraille saine », les deux marchent. */
   const noter = (table, el, id)=>{ if (el.cle) table[el.cle] = id; if (el.name) table[el.name] = id; return id; };
 
+  /* v764 — les MÉTIERS nommés par le fichier (« Cuisinier ») sont créés s'ils n'existent pas */
+  await creerMetiersImport(sc.metiers, journal);
   /* --- 1. Objets --- */
   for (const o of (sc.objets||[])){
     const data = {
@@ -43305,6 +43437,7 @@ async function importerScenario(sc){
       effectDuration:o.effectDuration || 'permanent', effectSeconds:o.effectSeconds || 0,
       effectMetiers:o.effectMetiers || [], sellable:o.sellable !== false && o.type !== 'quete',   // v748 : la quête ne se vend pas
       basePrice:o.basePrice || 0, combatUse:o.combatUse || null,
+      plat: (o.type === 'plat' && o.plat) ? Object.assign({ atk:0, def:0, vit:0, regen:false, immunite:null, minutes:30, equipe:false }, o.plat) : null,   // v764
     };
     /* v734 : un objet à faire dessiner — son prompt, et la zone dans le guide 🧰 de laquelle il apparaît */
     if (o.prompt){ data.promptImage = String(o.prompt); data.dessinZone = o.zoneDessin || o.zone || ''; data.dessinScene = o.sceneDessin || ''; }
@@ -43357,7 +43490,7 @@ async function importerScenario(sc){
       outputItemId: importResoudre(cles.objets, r.output, items, journal, 'Recette « ' + r.name + ' »'),
       outputQty: parseInt(r.outputQty,10) || 1,
       duration: parseInt(r.duration,10) || 600,
-      allowedMetiers: r.allowedMetiers || [],
+      allowedMetiers: (r.allowedMetiers || []).map(x=> idDeMetier(x, journal, 'Recette « ' + r.name + ' »')).filter(Boolean),   // v764 : par nom ou id
       requiresLearning: !!r.requiresLearning,
       learnDuration: parseInt(r.learnDuration,10) || 0,
     };
@@ -43623,7 +43756,8 @@ async function importerScenario(sc){
     }
     /* v585 : deuxième version d'un personnage de CE fichier (même nom, même `groupe`) → pas de
        question « existe déjà », elle est ajoutée telle quelle ; la passe 9 la rattache au groupe. */
-    const versionDuFichier = !!p.groupe && (sc.pnj||[]).some(q=> q !== p && q.name === p.name && q.groupe === p.groupe && cles.pnj[q.cle || q.name]);
+    const versionDuFichier = (!!p.groupe && (sc.pnj||[]).some(q=> q !== p && q.name === p.name && q.groupe === p.groupe && cles.pnj[q.cle || q.name]))
+      || !!p.versionDe;   // v764 : une nouvelle version d'un personnage DÉJÀ en jeu (Brann dans sa cuisine)
     /* v655 : un personnage à plusieurs versions (`groupe`) déjà en jeu : chaque version est
        retrouvée par son nom ET le début de son premier créneau — avant, la recherche par le seul nom
        tombait sur n'importe quelle version, et les suivantes étaient ajoutées en double. Si la
@@ -43919,6 +44053,11 @@ async function importerScenario(sc){
     if (p.groupe){
       if (!premierDuGroupe[p.groupe]) premierDuGroupe[p.groupe] = id;
       else maj.dupeGroup = premierDuGroupe[p.groupe];
+    }
+    if (p.versionDe){   // v764 : rattachée au groupe du personnage existant de ce nom
+      const orig = toutesFiches.find(x=> x.id !== id && x.name === p.versionDe && (x.interactionType || 'dialogue') !== 'zone' && !x.dupeGroup) || toutesFiches.find(x=> x.id !== id && x.name === p.versionDe && (x.interactionType || 'dialogue') !== 'zone');
+      if (orig){ maj.dupeGroup = orig.dupeGroup || orig.id; p.groupe = p.groupe || p.versionDe; }
+      else journal.push('⚠️ PNJ « ' + p.name + ' » : personnage « ' + p.versionDe + ' » introuvable — version seule');
     }
     if (p.emplacement && (p.emplacement.zone || p.emplacement.scene)){
       const zoneId = cles.zones[p.emplacement.zone] || (toutesFiches.find(x=> (x.interactionType || '') === 'zone' && (x.name === p.emplacement.zone || x.id === p.emplacement.zone)) || {}).id;
