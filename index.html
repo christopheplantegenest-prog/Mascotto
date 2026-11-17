@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v759</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v760</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -3964,6 +3964,14 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
 <style>
 /* v479 : le panneau holographique posé sur une porte d'habitant. Pas d'image : du texte lumineux,
    une bordure fine et un léger balayage, pour se fondre dans n'importe quel décor. */
+/* v760 : la commande à deux états — enfoncement, rebond, éclat */
+.scene-point.cmd-on > img{ animation: cmdOn .55s ease-out; }
+.scene-point.cmd-off > img{ animation: cmdOff .35s ease-out; }
+@keyframes cmdOn{ 0%{ scale:1; filter:none; } 22%{ scale:.88; filter:brightness(.75); } 55%{ scale:1.09; filter:brightness(1.7) drop-shadow(0 0 16px var(--cmd, #7ff6ff)); } 100%{ scale:1; filter:none; } }
+@keyframes cmdOff{ 0%{ scale:1; } 35%{ scale:.9; filter:brightness(.6); } 100%{ scale:1; filter:none; } }
+.cmd-onde{ position:absolute; left:50%; top:50%; width:100%; height:100%; transform:translate(-50%,-50%) scale(.4); border-radius:50%;
+  border:3px solid var(--cmd, #7ff6ff); box-shadow:0 0 18px var(--cmd, #7ff6ff), inset 0 0 12px var(--cmd, #7ff6ff); pointer-events:none; animation: cmdOnde .75s ease-out forwards; }
+@keyframes cmdOnde{ 0%{ opacity:.95; transform:translate(-50%,-50%) scale(.4); } 100%{ opacity:0; transform:translate(-50%,-50%) scale(1.9); } }
 .holo-panel{ position:absolute; left:50%; transform:translate(-50%,-50%); pointer-events:none;
   padding:.28em .6em; border-radius:.35em; white-space:nowrap; text-align:center; line-height:1.15;
   font-family:"Segoe UI",Roboto,Arial,sans-serif; letter-spacing:.06em; font-weight:800;
@@ -8455,6 +8463,7 @@ function etatQueteCorrespond(regle, etat){
   if (regle === 'completed') return etat === 'completed';
   if (regle === 'not_started') return etat === 'none';
   if (regle === 'not_active') return etat !== 'active';
+  if (regle === 'not_completed') return etat !== 'completed';   // v760 : « tant qu'elle n'est pas finie »
   return true;
 }
 /* A1 : un don d'objet se résout par l'IDENTIFIANT ; le nom n'est qu'un repli (anciennes fiches,
@@ -13047,6 +13056,7 @@ async function ouvrirBrouillons(){
         || (sc.prompt && (sc.imageUrl || sc.imagePath || sc.imageRef) && !(sc.structureRef && sc.imageRef === sc.structureRef) && (sc.points || []).length && !sc.pointsAjustes)
         || (sc.imageApres && sc.imageApres.prompt && !sc.imageApres.ref)   // v755
         || (sc.variants || []).some(v=> v && v.prompt && !(v.imageRef || v.imageUrl || v.imagePath))   // v757 : variante à dessiner
+        || (sc.points || []).some(pt=> pt && pt.type === 'commande' && pt.prompt && !((pt.imageRef || pt.imageUrl || pt.imagePath) && (pt.openImageRef || pt.openImageUrl || pt.openImagePath)))   // v760
         || (sc.prompt && sc.structureRef && sc.imageRef === sc.structureRef)   // v756 : une pièce encore au dessin de structure (pièce ajoutée)
         /* v753 : une zone publiée revient aussi pour ses RÉCOLTES : planche des 4 stades pas encore posée,
            ou objet récolté pas encore plantable alors que les stades sont là */
@@ -13270,6 +13280,23 @@ async function ouvrirBrouillons(){
           ((!scJ || vraieJ) ? bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okO) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') : '')
           + bouton('data-poser-objet="' + it.id + '"', okO ? '📷 Changer l\'image' : '📷 Choisir l\'image'));
         envois[cle] = ()=> ({ texte: it.promptImage, imgs: vraieJ ? [fichierPourPartage('piece-' + scJ.id, scJ.imageUrl || (scJ.imagePath ? resolveMediaPath(scJ.imagePath) : urlDeRef(scJ.imageRef)))] : [] });
+      });
+      /* v760 : les COMMANDES (boutons, cristaux…) qui se ressemblent partagent UNE planche : à gauche
+         éteinte, à droite allumée. Posée une fois, elle va sur toutes les commandes du même visuel. */
+      const visuelsCmd = {};
+      scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{ if (pt && pt.type === 'commande'){ const k = pt.visuel || pt.groupe || 'commande'; (visuelsCmd[k] = visuelsCmd[k] || []).push(pt); } }));
+      Object.keys(visuelsCmd).forEach((k, ki)=>{
+        const pts = visuelsCmd[k], p0 = pts.find(p=> p.prompt) || pts[0];
+        const okC = pts.every(p=> (p.imageRef || p.imageUrl || p.imagePath) && (p.openImageRef || p.openImageUrl || p.openImagePath));
+        if (!okC) manque++;
+        const cle = 'cmd|' + z.id + '|' + ki;
+        const boutonsC = (p0 && p0.prompt ? bouton('data-envoi="' + cle + '"', '📤 Envoyer à ChatGPT', !okC) + bouton('data-envoi-copie="' + cle + '"', '📋 Copier') : '')
+          + bouton('data-poser-commande="' + z.id + '|' + encodeURIComponent(k) + '"', okC ? '📷 Changer la planche' : '📷 Choisir la planche');
+        blocs += tache(okC, '🎛️ ' + esc(k) + ' — éteint et allumé (' + pts.length + ' dans la zone)',
+          'Une seule planche, deux dessins côte à côte : à gauche la commande éteinte, à droite la même allumée. Le jeu la découpe et la pose sur les ' + pts.length + ' commandes de ce visuel ; tu règles ensuite chacune avec la palette 🎛️ (place, taille, 4 coins).',
+          '1. <b>📤 Envoyer à ChatGPT</b>, envoie.<br>2. Enregistre l\'image sur ton téléphone.<br>3. <b>📷 Choisir la planche</b>.',
+          boutonsC, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + boutonsC + '</div>');
+        if (p0 && p0.prompt) envois[cle] = ()=> ({ texte: p0.prompt, imgs: (p0.promptImages || []).map((u, j)=> fichierPourPartage('ref-cmd-' + ki + '-' + j, u)) });
       });
       /* v741 : les RÉCOLTES d'un même groupe (arbuste d'avaril…) partagent UNE planche : à gauche la
          plante chargée, à droite la même cueillie (v742 : 4 stades). Posée une fois, elle va sur tous les points du groupe. */
@@ -13796,6 +13823,29 @@ async function ouvrirBrouillons(){
     await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
     oublierScenesDeZone(zid);
     showToast('🌿 ' + g + ' posé sur ' + n + ' point(s) ✅'); rouvrir();
+  });
+  sur('[data-poser-commande]', async (b)=>{   // v760 : la planche éteinte / allumée, sur toutes les commandes du visuel
+    const [zid, kEnc] = b.dataset.poserCommande.split('|'); const k = decodeURIComponent(kEnc);
+    const img = await choisirFichierImage();
+    if (!img) return;
+    const r = decouperGrille(img, 2);
+    if (r.erreur){ showToast('Planche refusée : ' + r.erreur + '. Il faut 2 dessins bien séparés, côte à côte, fond transparent.'); return; }
+    const refOff = await externalizeSceneImage(encoderImageSousLimite(r.vues[0], 420, true));
+    const refOn = await externalizeSceneImage(encoderImageSousLimite(r.vues[1], 420, true));
+    if (!refOff || !refOn){ showToast('Échec : image non enregistrée'); return; }
+    const doc = await zonesCol.doc(zid).get();
+    const scenes = (doc.exists && doc.data().scenes) || [];
+    let n = 0;
+    const poser = (pt)=>{
+      if (!pt || pt.type !== 'commande' || (pt.visuel || pt.groupe || 'commande') !== k) return;
+      pt.imageRef = refOff; pt.imageUrl = ''; pt.imagePath = null;
+      pt.openImageRef = refOn; pt.openImageUrl = ''; pt.openImagePath = null;
+      pt.hideIcon = false; n++;
+    };
+    scenes.forEach(sc=>{ (sc && sc.points || []).forEach(poser); ((sc && sc.variants) || []).forEach(v=> (v.points || []).forEach(poser)); });
+    await zonesCol.doc(zid).set({ scenes, updatedAt: Date.now() }, { merge:true });
+    oublierScenesDeZone(zid);
+    showToast('🎛️ ' + k + ' posé sur ' + n + ' commande(s) ✅'); rouvrir();
   });
   sur('[data-poser-objet]', async (b)=>{   // v734 : l'image d'un objet, comme le champ Photo de l'éditeur d'objets
     const img = await choisirFichierImage();
@@ -32206,6 +32256,7 @@ const SCENE_POINT_TYPES = [
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
   { id:'fenetre', label:'🪟 Fenêtre (jour / nuit)' },   // v622
   { id:'rangement', label:'🗄️ Rangement (vaisseau)' },   // v669
+  { id:'commande', label:'🎛️ Commande à 2 états (bouton, cristal, levier…)' },   // v760
 ];
 
 /* Flèche de sortie fournie par le jeu : une image SVG légère, embarquée dans le code.
@@ -32942,7 +32993,7 @@ function summarizeVariantConditions(v){
     const f = c.creatureId && typeof ficheParId === 'function' ? ficheParId(c.creatureId) : null;
     const q = c.questId ? (quests || []).find(x=> x && x.id === c.questId) : null;
     if (c.kind === 'combat') parts.push((c.state === 'not_won' ? 'tant que ' : 'une fois ') + ((f && f.name) || '?') + (c.state === 'not_won' ? ' pas battu' : ' battu'));
-    else if (c.kind === 'quest') parts.push('quête « ' + ((q && q.name) || '?') + ' » ' + ({ active:'en cours', completed:'finie', not_started:'pas commencée' }[c.state] || c.state || ''));
+    else if (c.kind === 'quest') parts.push('quête « ' + ((q && q.name) || '?') + ' » ' + ({ active:'en cours', completed:'finie', not_started:'pas commencée', not_completed:'pas finie' }[c.state] || c.state || ''));
   });
   return parts.length ? parts.join(' · ') : 'Aucune condition (toujours active)';
 }
@@ -33238,6 +33289,7 @@ function renderSceneEncounterOverlay(){
       <select class="field-input" data-renc-moment="${i}" style="margin-top:4px;">${MOMENTS_RENCONTRE.map(m=> `<option value="${m.id}" ${(r.moment || 'toujours') === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
       ${r.moment === 'horaires' ? `<div style="display:flex; gap:6px; align-items:center; margin-top:4px;">de <input type="time" value="${esc(r.debut || '')}" data-renc-debut="${i}" class="field-input" style="margin:0;"> à <input type="time" value="${esc(r.fin || '')}" data-renc-fin="${i}" class="field-input" style="margin:0;"></div>` : ''}
       ${r.moment === 'eteinte' && !(lumiereDeScene(sc).eteinte) ? '<p class="meta" style="color:var(--danger);">💡 La lumière de cette scène ne s\'éteint jamais : règle ses heures dans 💡 Lumière.</p>' : ''}
+      ${htmlCondRencontre(r, i, esc)}
     </div>`).join('') || '<p class="meta">Aucune rencontre dans cette scène.</p>';
   const total = rencs.reduce((t, r)=> t + (((r.adversaires || []).length && r.chance > 0) ? r.chance : 0), 0);
   totalEl.innerHTML = total > 100 ? `<span style="color:var(--danger);">Total ${total} % : au-delà de 100 %, les dernières rencontres ne sortiront jamais.</span>` : `Total ${total} % · rien ne se passe : ${100 - total} %`;
@@ -33249,6 +33301,35 @@ function renderSceneEncounterOverlay(){
   ici('[data-renc-moment]', 'change', el=>{ rencs[+el.dataset.rencMoment].moment = el.value; renderSceneEncounterOverlay(); });
   ici('[data-renc-debut]', 'change', el=>{ rencs[+el.dataset.rencDebut].debut = el.value; });
   ici('[data-renc-fin]', 'change', el=>{ rencs[+el.dataset.rencFin].fin = el.value; });
+  /* v760 : la condition de jeu d'une rencontre */
+  ici('[data-renc-cond]', 'change', el=>{
+    const r = rencs[+el.dataset.rencCond], k = el.value;
+    if (!k) delete r.conds;
+    else if (k === 'quest') r.conds = [{ kind:'quest', questId:null, state:'not_completed' }];
+    else r.conds = [{ kind:'combat', creatureId:null, state:k }];
+    renderSceneEncounterOverlay();
+  });
+  ici('[data-renc-cond-cible]', 'change', el=>{ const c = (rencs[+el.dataset.rencCondCible].conds || [])[0]; if (!c) return; if (c.kind === 'quest') c.questId = el.value || null; else c.creatureId = el.value || null; });
+  ici('[data-renc-cond-etat]', 'change', el=>{ const c = (rencs[+el.dataset.rencCondEtat].conds || [])[0]; if (c) c.state = el.value; });
+}
+function htmlCondRencontre(r, i, esc){
+  const c = (Array.isArray(r.conds) && r.conds[0]) || null;
+  const k = !c ? '' : (c.kind === 'quest' ? 'quest' : (c.state === 'won' ? 'won' : 'not_won'));
+  let detail = '';
+  if (k === 'quest'){
+    const qs = (quests || []).slice().sort((a, b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+    detail = `<div style="display:flex; gap:6px; margin-top:4px;"><select class="field-input" data-renc-cond-cible="${i}" style="margin:0; flex:2;"><option value="">— quelle quête ? —</option>${qs.map(q=> `<option value="${q.id}" ${q.id === c.questId ? 'selected' : ''}>${esc(q.name || '?')}</option>`).join('')}</select>
+      <select class="field-input" data-renc-cond-etat="${i}" style="margin:0; flex:1;">${[['not_completed','pas finie'],['active','en cours'],['completed','finie'],['not_started','pas commencée']].map(([v, l])=> `<option value="${v}" ${c.state === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
+  } else if (k){
+    const fs = toutesLesFiches().filter(f=> (f.interactionType || 'dialogue') !== 'zone').sort((a, b)=> String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
+    detail = `<select class="field-input" data-renc-cond-cible="${i}" style="margin-top:4px;"><option value="">— quel personnage ? —</option>${fs.map(f=> `<option value="${f.id}" ${f.id === c.creatureId ? 'selected' : ''}>${esc(f.name || '?')}</option>`).join('')}</select>`;
+  }
+  return `<select class="field-input" data-renc-cond="${i}" style="margin-top:4px;">
+      <option value="" ${!k ? 'selected' : ''}>🎲 Sans condition de jeu</option>
+      <option value="quest" ${k === 'quest' ? 'selected' : ''}>📜 Selon une quête (ex. tant qu'elle n'est pas finie)</option>
+      <option value="not_won" ${k === 'not_won' ? 'selected' : ''}>⚔️ Tant qu'un personnage n'est pas battu</option>
+      <option value="won" ${k === 'won' ? 'selected' : ''}>🏆 Une fois un personnage battu</option>
+    </select>${detail}`;
 }
 document.getElementById('sceneVariantAddBtn').addEventListener('click', ()=>{
   syncCurrentVariantFromEditorState();
@@ -33391,6 +33472,121 @@ let chestVisualState = {}; // pointId -> 'open' | 'closed'
 /* v474 : un point de RÉCOLTE est un coffre à deux images (plein / récolté) qui se remplit à
    nouveau après un délai, pour chaque joueur. Tout le mécanisme du coffre lui sert. */
 function estCoffre(pt){ return !!pt && (pt.type === 'coffre' || pt.type === 'recolte'); }
+/* v760 — éditeur : les groupes de commandes de la zone en cours d'édition, et le bloc du verrou */
+function groupesDeCommandesEditeur(){
+  const set = new Set();
+  (typeof sceneEditorScenes !== 'undefined' ? sceneEditorScenes : []).forEach(sc=> ((sc && sc.points) || []).concat(...(((sc && sc.variants) || []).map(v=> v.points || [])))
+    .forEach(p=>{ if (p && p.type === 'commande' && String(p.groupe || '').trim()) set.add(String(p.groupe).trim()); }));
+  return Array.from(set).sort();
+}
+function htmlVerrouCommandes(pt){
+  const esc = (t)=> String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const gs = groupesDeCommandesEditeur();
+  const nb = pt.lockGroupe ? (typeof sceneEditorScenes !== 'undefined' ? sceneEditorScenes : []).reduce((t, sc)=> t + ((sc.points || []).filter(p=> p && p.type === 'commande' && cleGroupeCommande(p.groupe) === cleGroupeCommande(pt.lockGroupe)).length), 0) : 0;
+  return `<div style="margin-top:6px;">
+    <select data-lock-cmd-groupe class="field-input">
+      <option value="">— quel groupe de commandes ? —</option>
+      ${gs.map(g=> `<option value="${esc(g)}" ${g === pt.lockGroupe ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+      ${pt.lockGroupe && !gs.includes(pt.lockGroupe) ? `<option value="${esc(pt.lockGroupe)}" selected>${esc(pt.lockGroupe)} (aucune commande)</option>` : ''}
+    </select>
+    ${!gs.length ? '<p class="meta" style="color:rgba(255,255,255,.6); margin:4px 0 0;">Aucune commande dans la zone : pose d\'abord des points « 🎛️ Commande » avec un groupe.</p>' : (pt.lockGroupe ? `<p class="meta" style="color:rgba(255,255,255,.6); margin:4px 0 0;">${nb} commande(s) de ce groupe dans la zone (variantes non comptées).</p>` : '')}
+    <input type="text" data-lock-cmd-msg class="field-input" style="margin-top:6px;" placeholder="Message tant que ce n'est pas réglé (vide : « Rien ne se passe. »)" value="${esc(pt.lockMessage || '')}">
+    <input type="text" data-lock-cmd-ok class="field-input" style="margin-top:6px;" placeholder="Message quand la combinaison est trouvée (vide : « Quelque chose s'est déverrouillé. »)" value="${esc(pt.unlockMessage || '')}">
+  </div>`;
+}
+function brancherVerrouCommandes(wrap, pt){
+  const g = wrap.querySelector('[data-lock-cmd-groupe]');
+  if (g) g.addEventListener('change', ()=>{ pt.lockGroupe = g.value || null; });
+  const m = wrap.querySelector('[data-lock-cmd-msg]');
+  if (m) m.addEventListener('input', ()=>{ pt.lockMessage = m.value.trim() || null; });
+  const o = wrap.querySelector('[data-lock-cmd-ok]');
+  if (o) o.addEventListener('input', ()=>{ pt.unlockMessage = o.value.trim() || null; });
+}
+
+/* v760 — LA COMMANDE À DEUX ÉTATS (bouton, cristal, levier…). Le joueur la touche : elle passe
+   d'éteinte à allumée (2e image, celle « ouverte » du coffre) et inversement. Son état est gardé
+   pour chaque joueur, avec les coffres fouillés (sceneItemsTaken de la zone). Les commandes d'un
+   même GROUPE forment une combinaison : une porte ou un coffre verrouillé « par les commandes »
+   s'ouvre quand chacune est dans l'état attendu. Une fois trouvée, la combinaison reste acquise. */
+function cleGroupeCommande(g){ return String(g || '').trim().replace(/[.~*\/\[\]]/g, '_'); }
+function etatCommande(pt){
+  const v = sceneViewTakenMap['cmd_' + pt.id];
+  return (v === undefined || v === null) ? !!pt.etatInitial : !!v;
+}
+function commandeImageActiveeUrl(pt){
+  if (pt.openImageUrl) return pt.openImageUrl;
+  if (pt.openImagePath) return resolveMediaPath(pt.openImagePath);
+  return '';
+}
+function commandesDuGroupe(groupe, scenesArr){
+  const g = cleGroupeCommande(groupe), vus = new Set(), res = [];
+  if (!g) return res;
+  (scenesArr || sceneViewScenes || []).forEach(sc=>{
+    if (!sc) return;
+    const pts = (typeof resolveSceneContent === 'function' ? resolveSceneContent(sc).points : sc.points) || [];
+    pts.forEach(p=>{ if (p && p.type === 'commande' && cleGroupeCommande(p.groupe) === g && !vus.has(p.id)){ vus.add(p.id); res.push(p); } });
+  });
+  return res;
+}
+function commandesReglees(groupe){
+  const cs = commandesDuGroupe(groupe);
+  return cs.length > 0 && cs.every(c=> etatCommande(c) === (c.attendu !== false));
+}
+function commandesOuvertes(groupe){
+  const g = cleGroupeCommande(groupe);
+  if (!g) return true;
+  return !!sceneViewTakenMap['cmdok_' + g] || commandesReglees(groupe);
+}
+function verrousDuGroupe(groupe){
+  const g = cleGroupeCommande(groupe), res = [];
+  (sceneViewScenes || []).forEach(sc=> ((sc && sc.points) || []).concat(...(((sc && sc.variants) || []).map(v=> v.points || [])))
+    .forEach(p=>{ if (p && p.lockType === 'commandes' && cleGroupeCommande(p.lockGroupe) === g) res.push(p); }));
+  return res;
+}
+function enregistrerEtatCommande(cle, val){
+  sceneViewTakenMap[cle] = val;
+  if (!currentUser || !db || !sceneViewCreature) return;
+  db.collection('players').doc(currentUser.uid).set({ sceneItemsTaken: { [sceneViewCreature.id]: { [cle]: val } } }, { merge:true }).catch(()=>{});
+}
+function dessinerCommande(el, pt){
+  if (!el) return;
+  const url = pt.hideIcon ? null : pointEffectiveImageUrl(pt);
+  if (!url) return;
+  ensurePointPixelCache(url);
+  el.querySelectorAll('img').forEach(x=> x.remove());
+  if (coinsActifs(pt)) poserImageEnCoins(el, url, pt);
+  else el.insertAdjacentHTML('afterbegin', `<img src="${url}" style="width:100%; height:100%; object-fit:contain; ${positionImagePoint(pt)} transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`);
+}
+function toucherCommande(pt, el){
+  const g = cleGroupeCommande(pt.groupe);
+  const dejaOuvert = g ? commandesOuvertes(pt.groupe) : false;
+  const allume = !etatCommande(pt);
+  enregistrerEtatCommande('cmd_' + pt.id, allume ? 1 : 0);
+  dessinerCommande(el, pt);
+  if (el){
+    el.style.overflow = 'visible';
+    if (pt.teinte) el.style.setProperty('--cmd', pt.teinte);
+    el.classList.remove('cmd-on', 'cmd-off'); void el.offsetWidth;
+    el.classList.add(allume ? 'cmd-on' : 'cmd-off');
+    if (allume){
+      const onde = document.createElement('span'); onde.className = 'cmd-onde';
+      el.appendChild(onde); setTimeout(()=> onde.remove(), 800);
+    }
+  }
+  try { navigator.vibrate && navigator.vibrate(allume ? [14, 40, 22] : 12); } catch(e){}
+  if (allume){ nsNote(0, 660, 0.07, 0.05, 'sine'); nsNote(0.05, 990, 0.16, 0.045, 'sine'); }
+  else nsNote(0, 300, 0.1, 0.05, 'triangle');
+  if (pt.message) showToast(pt.message);
+  if (g && !dejaOuvert && commandesReglees(pt.groupe)){
+    enregistrerEtatCommande('cmdok_' + g, 1);
+    const v = verrousDuGroupe(pt.groupe).find(x=> x.unlockMessage) || null;
+    setTimeout(()=>{
+      [523, 659, 784, 1047].forEach((f, i)=> nsNote(i * 0.07, f, 0.5, 0.05, 'sine'));
+      try { navigator.vibrate && navigator.vibrate([30, 60, 30, 60, 80]); } catch(e){}
+      showToast('🔓 ' + ((v && v.unlockMessage) || 'Quelque chose s\'est déverrouillé.'));
+    }, 450);
+  }
+}
 function chestOpenImageUrl(pt){
   if (pt.coffreModele){ const u = coffreFaceUrl(coffreDuCatalogue(pt), 'ouvert'); if (u) return u; }   // v591
   if (pt.openImageUrl) return pt.openImageUrl;
@@ -33412,6 +33608,10 @@ function pointEffectiveImageUrl(pt){
   if (estCoffre(pt) && isChestOpen(pt)){
     const ouverte = chestOpenImageUrl(pt);
     if (ouverte) return ouverte;
+  }
+  if (pt.type === 'commande' && etatCommande(pt)){   // v760
+    const allumee = commandeImageActiveeUrl(pt);
+    if (allumee) return allumee;
   }
   if (pt.type === 'objet' && !pt.useCustomImage){
     const it = items.find(i=>i.id===pt.itemId);
@@ -34282,7 +34482,9 @@ function renderSceneDetailTypeSpecific(pt){
         <option value="none" ${pt.lockType==='none'?'selected':''}>Aucun</option>
         <option value="item" ${pt.lockType==='item'?'selected':''}>Objet requis (à posséder, pas consommé)</option>
         <option value="code" ${pt.lockType==='code'?'selected':''}>Code numérique</option>
+        <option value="commandes" ${pt.lockType==='commandes'?'selected':''}>🎛️ Combinaison de commandes (boutons, cristaux…)</option>
       </select>
+      ${pt.lockType==='commandes' ? htmlVerrouCommandes(pt) : ''}
       <div data-sortie-lock-item-wrap style="display:${pt.lockType==='item'?'block':'none'}; margin-top:6px;">
         <input type="text" data-sortie-lockmsg class="field-input" style="margin-bottom:6px;" placeholder="Message sans l'objet (vide : « Il te faut … »). Ex. Rien ne se passe." value="${(pt.lockMessage||'').replace(/"/g,'&quot;')}">
         <button type="button" class="btn-secondary" data-sortie-lock-item-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${lockIt ? (itemThumbHtml(lockIt)+' '+lockIt.name) : '— choisir l\'objet —'}</button>
@@ -34306,6 +34508,7 @@ function renderSceneDetailTypeSpecific(pt){
       pt.lockType = e.target.value;
       renderSceneEditorDetails();
     });
+    brancherVerrouCommandes(typeWrap, pt);   // v760
     const lockMsg = typeWrap.querySelector('[data-sortie-lockmsg]');   // v733
     if (lockMsg) lockMsg.addEventListener('input', (e)=>{ pt.lockMessage = e.target.value.trim() || null; });
     const lockItemBtn = typeWrap.querySelector('[data-sortie-lock-item-pick]');
@@ -34744,7 +34947,9 @@ function renderSceneDetailTypeSpecific(pt){
         <option value="none" ${pt.lockType==='none'?'selected':''}>Aucun</option>
         <option value="item" ${pt.lockType==='item'?'selected':''}>Objet requis (à posséder, pas consommé)</option>
         <option value="code" ${pt.lockType==='code'?'selected':''}>Code numérique</option>
+        <option value="commandes" ${pt.lockType==='commandes'?'selected':''}>🎛️ Combinaison de commandes (boutons, cristaux…)</option>
       </select>
+      ${pt.lockType==='commandes' ? htmlVerrouCommandes(pt) : ''}
       <div data-coffre-lock-item-wrap style="display:${pt.lockType==='item'?'block':'none'}; margin-top:6px;">
         <button type="button" class="btn-secondary" data-coffre-lock-item-pick style="width:100%; background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important; justify-content:flex-start; display:flex; align-items:center; gap:8px;">${lockIt ? (itemThumbHtml(lockIt)+' '+lockIt.name) : '— choisir l\'objet —'}</button>
       </div>
@@ -34864,6 +35069,7 @@ function renderSceneDetailTypeSpecific(pt){
     typeWrap.querySelector('[data-coffre-lock]').addEventListener('change', (e)=>{
       pt.lockType = e.target.value; renderSceneDetailTypeSpecific(pt);
     });
+    brancherVerrouCommandes(typeWrap, pt);   // v760
     const lockPick = typeWrap.querySelector('[data-coffre-lock-item-pick]');
     if (lockPick) lockPick.addEventListener('click', ()=>{
       openRecipeItemChooser((itemId)=>{ pt.lockItemId = itemId; renderSceneDetailTypeSpecific(pt); });
@@ -34892,6 +35098,57 @@ function renderSceneDetailTypeSpecific(pt){
     });
     const rm = typeWrap.querySelector('[data-coffre-reset-min]');
     if (rm) rm.addEventListener('input', (e)=>{ pt.resetMinutes = Math.max(1, +e.target.value || 1); });
+    return;
+  }
+
+  if (pt.type === 'commande'){   // v760
+    const allumee = commandeImageActiveeUrl(pt);
+    const groupes = groupesDeCommandesEditeur();
+    const btn = 'background:rgba(255,255,255,.12); color:#fff; border-color:rgba(255,255,255,.35) !important;';
+    const esc = (t)=> String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    typeWrap.innerHTML = `
+      <p class="meta" style="color:rgba(255,255,255,.75); margin:0 0 8px;">Le joueur la touche : elle s'allume (2e image, avec un éclat lumineux, un son et une vibration), un nouveau toucher l'éteint. Son état est gardé pour chaque joueur. L'image ÉTEINTE est celle réglée dans « Apparence du point » ; place-la, règle sa taille et ses 4 coins avec la palette 🎛️ comme n'importe quel point.</p>
+      <div class="field-label" style="color:rgba(255,255,255,.75); margin-top:0;">Image une fois allumée</div>
+      ${allumee ? `<img src="${allumee}" style="width:100%; max-height:140px; object-fit:contain; border-radius:8px; background:rgba(0,0,0,.35); margin-bottom:8px;">` : `<p class="meta" style="margin:0 0 8px;">Aucune image allumée : la commande gardera la même image (seul l'éclat montrera le changement).</p>`}
+      <button type="button" class="btn-secondary" data-cmd-img-github style="width:100%; margin-bottom:6px; ${btn}">📁 Image hébergée</button>
+      <button type="button" class="btn-secondary" data-cmd-img-pick style="width:100%; margin-bottom:6px; ${btn}">🖼️ Importer depuis le téléphone</button>
+      ${allumee ? `<button type="button" class="btn-secondary" data-cmd-img-clear style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">✕ Retirer l'image</button>` : ''}
+      <input type="file" data-cmd-img-file accept="image/*" style="display:none;">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Groupe (la combinaison dont elle fait partie)</div>
+      <input type="text" data-cmd-groupe class="field-input" list="cmdGroupesListe" placeholder="Ex. fourneau" value="${esc(pt.groupe || '')}">
+      <datalist id="cmdGroupesListe">${groupes.map(g=> `<option value="${esc(g)}">`).join('')}</datalist>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Pour ouvrir, elle doit être</div>
+      <select data-cmd-attendu class="field-input">
+        <option value="1" ${pt.attendu !== false ? 'selected' : ''}>💡 Allumée</option>
+        <option value="0" ${pt.attendu === false ? 'selected' : ''}>⚫ Éteinte</option>
+      </select>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Au départ, elle est</div>
+      <select data-cmd-initial class="field-input">
+        <option value="0" ${!pt.etatInitial ? 'selected' : ''}>⚫ Éteinte</option>
+        <option value="1" ${pt.etatInitial ? 'selected' : ''}>💡 Allumée</option>
+      </select>
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Couleur de l'éclat</div>
+      <input type="color" data-cmd-teinte class="field-input" value="${esc(pt.teinte || '#7ff6ff')}" style="height:38px; padding:2px;">
+      <div class="field-label" style="color:rgba(255,255,255,.75);">Message à chaque toucher (facultatif)</div>
+      <input type="text" data-cmd-msg class="field-input" placeholder="Vide : rien, juste le déclic" value="${esc(pt.message || '')}">
+      <p class="meta" style="color:rgba(255,255,255,.6); margin-top:6px;">La porte ou le coffre à ouvrir se règle de son côté : Verrouillage → 🎛️ Combinaison de commandes, même groupe.</p>
+    `;
+    const fi = typeWrap.querySelector('[data-cmd-img-file]');
+    typeWrap.querySelector('[data-cmd-img-github]').addEventListener('click', ()=> openGithubFilePicker(null, (item)=>{ pt.openImagePath = item.path; pt.openImageUrl = resolveMediaPath(item.path); pt.openImageRef = null; renderSceneDetailTypeSpecific(pt); }));
+    typeWrap.querySelector('[data-cmd-img-pick]').addEventListener('click', ()=> fi.click());
+    fi.addEventListener('change', (e)=>{
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev)=>{ const im = new Image(); im.onload = ()=>{ pt.openImageUrl = compressPointImageDataUrl(im); pt.openImagePath = null; pt.openImageRef = null; renderSceneDetailTypeSpecific(pt); }; im.src = ev.target.result; };
+      reader.readAsDataURL(file);
+    });
+    const clr = typeWrap.querySelector('[data-cmd-img-clear]');
+    if (clr) clr.addEventListener('click', ()=>{ pt.openImageUrl = null; pt.openImagePath = null; pt.openImageRef = null; renderSceneDetailTypeSpecific(pt); });
+    typeWrap.querySelector('[data-cmd-groupe]').addEventListener('input', (e)=>{ pt.groupe = e.target.value.trim(); });
+    typeWrap.querySelector('[data-cmd-attendu]').addEventListener('change', (e)=>{ pt.attendu = e.target.value === '1'; });
+    typeWrap.querySelector('[data-cmd-initial]').addEventListener('change', (e)=>{ pt.etatInitial = e.target.value === '1'; });
+    typeWrap.querySelector('[data-cmd-teinte]').addEventListener('input', (e)=>{ pt.teinte = e.target.value; });
+    typeWrap.querySelector('[data-cmd-msg]').addEventListener('input', (e)=>{ pt.message = e.target.value; });
     return;
   }
 
@@ -35735,6 +35992,7 @@ function isScenePointAvailable(pt){
   /* Un point PNJ sans réglage explicite reste disponible : il n'y a rien à « prendre » chez
      quelqu'un à qui on parle. Sans ça, un point ayant servi à autre chose autrefois, ou un
      combat gagné une seule fois, faisait disparaître le personnage à jamais et sans message. */
+  if (pt.type === 'commande') return true;   // v760 : une commande ne se « prend » pas
   const mode = pt.resetMode || (pt.type === 'pnj' ? 'unlimited' : 'perPlayer');
   if (mode === 'unlimited') return true;
   if (mode === 'perPlayer') return !sceneViewTakenMap[pt.id];
@@ -36222,6 +36480,9 @@ async function renderSceneViewCurrentScene(){
              le joueur réessaie sur place au lieu de retoucher la porte à chaque tentative. */
           demanderCode('🔒 Porte verrouillée', 'Entre le code', (saisi)=> saisi === (pt.lockCode || ''))
             .then((saisi)=>{ if (saisi !== null) proceed(); });
+        } else if (pt.lockType === 'commandes'){   // v760 : la combinaison des commandes du groupe
+          if (commandesOuvertes(pt.lockGroupe)) proceed();
+          else showToast(pt.lockMessage || 'Rien ne se passe.');
         } else {
           proceed();
         }
@@ -36240,6 +36501,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> openAtelier();
     } else if (pt.type === 'rangement'){
       wrapPointActions[pt.id] = ()=> ouvrirRangement();   // v669
+    } else if (pt.type === 'commande'){
+      wrapPointActions[pt.id] = ()=> toucherCommande(pt, el);   // v760
     } else if (pt.type === 'bac'){
       wrapPointActions[pt.id] = ()=> toucherBac(pt);   // v491
     } else if (pt.type === 'emplacement'){
@@ -36331,6 +36594,9 @@ async function renderSceneViewCurrentScene(){
         } else if (pt.lockType === 'code'){
           demanderCode('🔒 Coffre verrouillé', 'Entre le code', (saisi)=> saisi === (pt.lockCode || ''))
             .then((saisi)=>{ if (saisi !== null) ouvrir(); });
+        } else if (pt.lockType === 'commandes'){   // v760
+          if (commandesOuvertes(pt.lockGroupe)) ouvrir();
+          else showToast(pt.lockMessage || 'Rien ne se passe.');
         } else {
           ouvrir();
         }
@@ -41173,6 +41439,10 @@ function momentRencontreOk(scRaw, r, now){
   }
   return true;
 }
+/* v760 : une rencontre peut dépendre du jeu (« tant que la quête n'est pas finie », « tant que X n'est pas battu ») */
+function rencontreCondsOk(r){
+  return !(Array.isArray(r && r.conds) && r.conds.length) || conditionsDeSceneRemplies(r.conds);
+}
 function rencontresValides(sc){
   return Array.isArray(sc && sc.rencontres) ? sc.rencontres.filter(r=> r && (r.adversaires || []).length && (r.chance || 0) > 0) : [];
 }
@@ -41184,7 +41454,7 @@ function rollSceneEncounter(){
     if (!latestSnap) return;
     const parId = {};
     latestSnap.forEach(doc=> parId[doc.id] = { id: doc.id, ...doc.data() });
-    const possibles = rencontresValides(sc).filter(r=> momentRencontreOk(sc, r));
+    const possibles = rencontresValides(sc).filter(r=> momentRencontreOk(sc, r) && rencontreCondsOk(r));   // v760
     const x = Math.random() * 100;
     let cumul = 0, tiree = null;
     for (const r of possibles){ cumul += r.chance; if (x < cumul){ tiree = r; break; } if (cumul >= 100) break; }
@@ -42350,6 +42620,26 @@ async function importEcrireDoc(col, nom, data, typeLabel, journal, forcerAjout){
 
 /* Résolution d'une référence : d'abord les clés du fichier en cours, sinon un élément
    déjà présent dans le jeu retrouvé par son nom. Sans quoi on renvoie null et on le dit. */
+/* v760 — commandes à deux états et verrou « commandes », depuis un fichier d'import.
+   Commande : { type:'commande', groupe:'fourneau', attendu:true|false, etatInitial:false, teinte:'#7ff6ff', visuel:'cristal', prompt }
+   Porte / coffre : { lockCommandes:'fourneau', lockMessage:'Le fourneau n\'est pas réglé.', unlockMessage:'Le passage s\'est ouvert' } */
+function champsCommandeImport(pt, base){
+  if (base.type === 'commande'){
+    base.attendu = !(pt.attendu === false || pt.attendu === 'eteinte' || pt.attendu === 0);
+    base.etatInitial = !!(pt.etatInitial === true || pt.etatInitial === 'allumee' || pt.etatInitial === 1);
+    if (pt.groupe) base.groupe = String(pt.groupe);
+    if (pt.visuel) base.visuel = String(pt.visuel);
+    if (pt.teinte) base.teinte = String(pt.teinte);
+    if (pt.message) base.message = String(pt.message);
+    base.resetMode = 'unlimited';
+  }
+  const g = pt.lockCommandes || pt.verrouCommandes;
+  if (g && (base.type === 'sortie' || estCoffre(base))){
+    base.lockType = 'commandes'; base.lockGroupe = String(g);
+    if (pt.lockMessage || pt.messageVerrou) base.lockMessage = pt.lockMessage || pt.messageVerrou;
+    if (pt.unlockMessage || pt.messageOuvert) base.unlockMessage = pt.unlockMessage || pt.messageOuvert;
+  }
+}
 function importResoudre(table, ref, listeExistante, journal, contexte){
   if (!ref) return null;
   if (table[ref]) return table[ref];
@@ -42591,6 +42881,7 @@ async function importerMiseAJour(sc){
             if (!base.resetMode) base.resetMode = base.type === 'recolte' ? 'timedPerPlayer' : 'perPlayer';
           }
           if (pt.coins && typeof pt.coins === 'object') base.coins = JSON.parse(JSON.stringify(pt.coins));   // v654 : les 4 coins d'un élément posé
+          champsCommandeImport(pt, base);   // v760
           if (base.type === 'fenetre'){   // v656 : une fenêtre = un cadre + une vue (jour ET nuit), jamais un décor dessiné
             base.perspective = 0;
             const cad = pt.cadre && cadresTous().find(c=> c && (c.nom || c.name || '') === pt.cadre);
@@ -43427,6 +43718,7 @@ async function importerScenario(sc){
             if (!base.resetMode) base.resetMode = 'perPlayer';   // chaque joueur a son coffre, comme dans l'éditeur
           }
           if (pt.type === 'dialogue' && pt.text) base.text = pt.text;
+          champsCommandeImport(pt, base);   // v760 : après le verrou ordinaire, qu'il remplace
           return base;
         }),
       encounterChance: parseInt(s.encounterChance,10) || 0,
@@ -43435,7 +43727,14 @@ async function importerScenario(sc){
       rencontres: Array.isArray(s.rencontres) ? s.rencontres.map((r, i)=>{
         const ids = (r.adversaires || []).slice(0, 3).map(n=>{ const id = idAdversaire(n); if (!id) journal.push('⚠️ « ' + s.name + ' » : adversaire « ' + n + ' » introuvable'); return id; }).filter(Boolean);
         const moment = ['toujours','nuit','eteinte','horaires'].includes(r.moment) ? r.moment : 'toujours';
-        return ids.length ? { id: 'renc_' + Date.now() + '_' + i, adversaires: ids, chance: Math.max(0, Math.min(100, parseInt(r.chance, 10) || 0)), moment, debut: r.debut || '', fin: r.fin || '' } : null;
+        /* v760 : `conditions` — [{ kind:'quest', quete:'Nom', state:'not_completed' } | { kind:'combat', pnj:'Nom', state:'not_won' }] */
+        const conds = (Array.isArray(r.conditions) ? r.conditions : []).map(c=>{
+          if (!c) return null;
+          if (c.kind === 'quest' || c.quete || c.questName){ const qid = importResoudre(cles.quetes, c.quete || c.questName || c.questId, quests, journal, 'Rencontre de « ' + s.name + ' »'); return qid ? { kind:'quest', questId: qid, state: c.state || 'not_completed' } : null; }
+          if (c.kind === 'combat' || c.pnj){ const cid = cles.pnj[c.pnj] || c.creatureId || null; if (!cid) journal.push('⚠️ « ' + s.name + ' » : condition de rencontre sur « ' + c.pnj + ' » introuvable'); return cid ? { kind:'combat', creatureId: cid, state: c.state === 'won' ? 'won' : 'not_won' } : null; }
+          return null;
+        }).filter(Boolean);
+        return ids.length ? Object.assign({ id: 'renc_' + Date.now() + '_' + i, adversaires: ids, chance: Math.max(0, Math.min(100, parseInt(r.chance, 10) || 0)), moment, debut: r.debut || '', fin: r.fin || '' }, conds.length ? { conds } : {}) : null;
       }).filter(Boolean) : undefined,
     }));
     scenes.forEach(x=>{ if (x.rencontres === undefined) delete x.rencontres; });
@@ -44167,7 +44466,13 @@ function verifierScenario(modele){
         }
         if (pt.lockType === 'code' && !String(pt.lockCode || '').trim()) dire('erreur', cp, n, 'Verrou « code » sans code réglé : impossible à ouvrir.');
         if (pt.lockType === 'code' && String(pt.lockCode || '').trim()) dire('info', cp, n, 'Code numérique « ' + pt.lockCode + ' » : vérifie qu\'un indice le donne au joueur.');
+        if (pt.lockType === 'commandes'){   // v760
+          const nbC = pointsZ.filter(({ pt: q })=> q.type === 'commande' && cleGroupeCommande(q.groupe) === cleGroupeCommande(pt.lockGroupe)).length;
+          if (!pt.lockGroupe) dire('erreur', cp, n, 'Verrou « commandes » sans groupe choisi : impossible à ouvrir.');
+          else if (!nbC) dire('erreur', cp, n, 'Verrou sur le groupe « ' + pt.lockGroupe + ' », mais aucune commande de ce groupe dans la zone.');
+        }
       }
+      if (pt.type === 'commande' && !String(pt.groupe || '').trim()) dire('avert', cp, n, 'Commande sans groupe : elle s\'allume mais n\'ouvre rien.');
       if (estCoffre(pt)){
         if (!pt.openImageUrl && !pt.openImagePath && !pt.openImageRef && !coffreDuCatalogue(pt)) dire('avert', cp, n, 'Coffre sans image d\'ouverture : il gardera son image fermée une fois ouvert.');
         const loot = (pt.loot || []).filter(l=> l && l.itemId);
@@ -44447,7 +44752,7 @@ function simJouerDialogue(P, e0, f, couverture, origineLibelle){
 function simVerrouOuvert(pt, e){
   if (pt.lockType === 'item') return !pt.lockItemId || (e.inv[pt.lockItemId] || 0) > 0;
   if (pt.lockType === 'code') return !!String(pt.lockCode || '').trim();   // code supposé connu du joueur
-  return true;
+  return true;   // v760 : « commandes » — la combinaison est supposée trouvée sur place
 }
 function simContenuScene(P, sc, etat){
   const variants = Array.isArray(sc.variants) ? sc.variants : [];
