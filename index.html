@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v770</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v771</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -8065,7 +8065,7 @@ let activeShopCreature = null;
 function openShopWindow(c){
   activeShopCreature = c;
   /* v755 : le marchand se montre en BUSTE quand il en a un (comme dans les dialogues), sinon en pied */
-  const imgPied = c.imageUrl || (c.imagePath ? resolveMediaPath(c.imagePath) : '');
+  const imgPied = urlImageDeFiche(c);   // v771
   const peindreMarchand = ()=>{
     if (activeShopCreature !== c) return;
     const u = bustUrlPourFiche(c) || (bustEnAttente(c) ? '' : imgPied);
@@ -8376,7 +8376,19 @@ function indexDepartDialogue(c, steps){
    Une image hébergée se résout tout de suite ; une image stockée à part (ref) arrive
    en différé et rafraîchit la fiche quand elle est là. */
 let bustImageCache = {}; // ref -> url
+/* v771 — UNE VERSION SANS IMAGE PREND CELLE D'UNE AUTRE VERSION DU MÊME PERSONNAGE (Brann dans la
+   cuisine du vaisseau = Brann du restaurant). Plus besoin de « ↪ Reprendre » : c'est automatique,
+   et une image posée sur la version passe toujours devant. */
+function versionImagee(f, quoi){
+  if (!f) return f;
+  const a = quoi === 'buste' ? aImageBuste : aImagePrincipale;
+  if (a(f)) return f;
+  const g = groupeDeFiche(f);
+  const autre = g && (typeof toutesLesFiches === 'function' ? toutesLesFiches() : []).find(x=> x && x.id !== f.id && groupeDeFiche(x) === g && a(x));
+  return autre || f;
+}
 function bustUrlPourFiche(c){
+  c = versionImagee(c, 'buste');   // v771
   if (!c) return null;
   if (c.bustImagePath) return resolveMediaPath(c.bustImagePath);
   if (c.bustImageRef) return bustImageCache[c.bustImageRef] || null;
@@ -8385,17 +8397,20 @@ function bustUrlPourFiche(c){
 /* v608 : le buste est attendu mais pas encore arrivé (ni échoué). Pendant ce court instant,
    on n'affiche RIEN plutôt que l'image en pied — c'est elle qui « clignotait » avant le buste. */
 function bustEnAttente(c){
+  c = versionImagee(c, 'buste');   // v771
   return !!(c && c.bustImageRef && !c.bustImagePath && bustImageCache[c.bustImageRef] === undefined);
 }
 function prechargerBuste(c){
+  const demande = c;
+  c = versionImagee(c, 'buste');   // v771
   if (!c || !c.bustImageRef || c.bustImagePath) return;
   if (bustImageCache[c.bustImageRef]) return;
   internalizeSceneImage(c.bustImageRef).then((url)=>{
     bustImageCache[c.bustImageRef] = url || false;
-    try { if (activeCreature && activeCreature.id === c.id) renderSheet(); } catch(e){}
+    try { if (activeCreature && (activeCreature.id === c.id || activeCreature.id === (demande && demande.id))) renderSheet(); } catch(e){}
   }).catch(()=>{
     bustImageCache[c.bustImageRef] = false;   // v608 : échec → on retombe sur l'image en pied
-    if (activeCreature && activeCreature.id === c.id) renderSheet();
+    if (activeCreature && (activeCreature.id === c.id || activeCreature.id === (demande && demande.id))) renderSheet();
   });
 }
 
@@ -8646,7 +8661,7 @@ function renderSheet(){
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
   const emojiEl = document.getElementById('sheetEmoji');
   const buste = bustUrlPourFiche(c);
-  const portrait = buste || c.imageUrl;
+  const portrait = buste || urlImageDeFiche(c);   // v771 : l'image d'une autre version si besoin
   emojiEl.innerHTML = bustEnAttente(c)
     ? `<div style="width:160px;height:160px;max-width:100%;margin:0 auto;"></div>`   // v608 : place réservée, pas de clignotement
     : (portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾'));
@@ -13126,7 +13141,7 @@ async function ouvrirBrouillons(){
     /* v594 : une version qui a SA pose (f.pose) ne reprend pas l'image de l'autre : elle se dessine
        à partir d'elle, pour que ce soit le même personnage dans une autre attitude. */
     const autreAvecImage = f.pose ? null : autreImg;
-    const okImg = aImagePrincipale(f);
+    const okImg = aImagePrincipale(f) || !!autreAvecImage;   // v771 : sans pose à elle, elle prend AUTOMATIQUEMENT l'image de l'autre version
     if (!okImg) envois['img|' + f.id] = ()=>{
       /* une autre version du même personnage est déjà la meilleure référence : Mado ne part qu'à défaut */
       const avecVersion = !!(f.pose && autreImg), avecStyle = !avecVersion && refStyleActive();
@@ -13139,24 +13154,22 @@ async function ouvrirBrouillons(){
     out.push(tache(okImg, '🖼️ Image de ' + nom + ' en pied',
       /* v596 : le texte suit la pose de la version (« debout » était faux pour Mado en yoga). */
       (f.pose ? 'C\'est l\'image qu\'on voit dans la pièce : ' + nom + ' ' + esc(String(f.pose).split(/[,;]/)[0]) + '. Un PNG à fond transparent, le corps entier.' : 'C\'est l\'image qu\'on voit dans la scène et sur la carte. Un PNG à fond transparent, le corps entier.'),
-      autreAvecImage
-        ? 'L\'autre version de ' + nom + ' a déjà son image : appuie sur <b>↪ Reprendre</b>, c\'est tout.'
+      (autreAvecImage && !aImagePrincipale(f))
+        ? 'Elle prend toute seule l\'image de l\'autre version de ' + nom + ' : rien à faire. (📷 si tu veux lui en donner une à elle.)'
         : (f.pose && autreImg
           ? 'Cette version a sa propre pose : l\'image de l\'autre version part avec le prompt, pour que ce soit bien le même personnage.<br>1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne.<br>3. <b>📷 Choisir l\'image</b>.'
           : '1. <b>📤 Envoyer à ChatGPT</b>, choisis ChatGPT, envoie.<br>2. Enregistre l\'image qu\'il te donne sur ton téléphone.<br>3. <b>📷 Choisir l\'image</b> et prends-la dans ta galerie.'),
-      (autreAvecImage ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecImage.id + '" data-quoi="image"', '↪ Reprendre celle de l\'autre version', true) : '')
-      + bouton('data-envoi="img|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecImage) + bouton('data-envoi-copie="img|' + f.id + '"', '📋 Copier') + bouton('data-poser-img="' + f.id + '"', '📷 Choisir l\'image')
+      bouton('data-envoi="img|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecImage) + bouton('data-envoi-copie="img|' + f.id + '"', '📋 Copier') + bouton('data-poser-img="' + f.id + '"', '📷 Choisir l\'image')
       + bouton('data-hebergee-img="' + f.id + '"', '📁 Image hébergée')));
     /* 2. Buste */
     const autreAvecBuste = f.pose ? null : versions.find(v=> v.id !== f.id && aImageBuste(v));   // v594 : une pose propre = une tenue propre
-    const okBuste = aImageBuste(f);
+    const okBuste = aImageBuste(f) || !!autreAvecBuste;   // v771 : automatique aussi
     out.push(tache(okBuste, '👤 Buste de ' + nom,
       'C\'est le portrait affiché en grand pendant que ' + nom + ' parle.',
-      autreAvecBuste
-        ? 'L\'autre version a déjà son buste : <b>↪ Reprendre</b>.'
+      (autreAvecBuste && !aImageBuste(f))
+        ? 'Elle prend tout seul le buste de l\'autre version : rien à faire.'
         : (okImg ? '1. <b>📤 Envoyer à ChatGPT</b> : l\'image en pied de ' + nom + ' part avec le prompt.<br>2. Enregistre le buste qu\'il te donne.<br>3. <b>📷 Choisir le buste</b>.' : 'Fais d\'abord l\'image en pied : le buste se dessine à partir d\'elle.'),
-      (autreAvecBuste ? bouton('data-reprendre="' + f.id + '" data-source="' + autreAvecBuste.id + '" data-quoi="buste"', '↪ Reprendre celui de l\'autre version', true) : '')
-      + (okImg ? bouton('data-envoi="buste|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecBuste) + bouton('data-envoi-copie="buste|' + f.id + '"', '📋 Copier') : '')
+      (okImg ? bouton('data-envoi="buste|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecBuste) + bouton('data-envoi-copie="buste|' + f.id + '"', '📋 Copier') : '')
       + (okImg || autreAvecBuste ? bouton('data-poser-buste="' + f.id + '"', '📷 Choisir le buste') : ''), true));
     if (okImg && !okBuste) envois['buste|' + f.id] = ()=> ({ texte: promptBustePnj(f), imgs: [fichierPourPartage('mascotto-' + f.id, urlImageDeFiche(f))] });
     }
@@ -36330,7 +36343,8 @@ async function prechargerImagesDeZone(zoneId, scenes){
   try {
     toutesLesFiches().forEach(f=>{
       if (!f || !f.pieceCommune || f.pieceCommune.zoneId !== zoneId) return;
-      const propre = f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+      const fv = versionImagee(f, 'image');   // v771 : l'image d'une autre version si besoin
+      const propre = fv.imagePath ? resolveMediaPath(fv.imagePath) : (fv.imageUrl || '');
       if (propre){ urls.add(propre); return; }
       const m = modeleDeFiche(f);
       if (m && m.faceImageRef && typeof faceModeleCache[m.faceImageRef] !== 'string'){
@@ -39471,7 +39485,8 @@ function attribuerEmplacements(sc, sceneId, now){
 
 function urlImageDeFiche(f){
   if (!f) return '';
-  const propre = f.imagePath ? resolveMediaPath(f.imagePath) : (f.imageUrl || '');
+  const fi = versionImagee(f, 'image');   // v771 : sans image à elle, celle d'une autre version
+  const propre = fi.imagePath ? resolveMediaPath(fi.imagePath) : (fi.imageUrl || '');
   return propre || faceModeleDeFicheSync(f);   // v621 : sans image à elle, celle de son robot
 }
 /* v621 — L'IMAGE PAR DÉFAUT D'UNE FICHE DE ROBOT. Une fiche sans image à elle montre la face de
