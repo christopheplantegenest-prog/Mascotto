@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v771</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v772</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -3987,6 +3987,9 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
 .scene-point.cmd-off > img{ animation: cmdOff .35s ease-out; }
 @keyframes cmdOn{ 0%{ scale:1; filter:none; } 22%{ scale:.88; filter:brightness(.75); } 55%{ scale:1.09; filter:brightness(1.7) drop-shadow(0 0 16px var(--cmd, #7ff6ff)); } 100%{ scale:1; filter:none; } }
 @keyframes cmdOff{ 0%{ scale:1; } 35%{ scale:.9; filter:brightness(.6); } 100%{ scale:1; filter:none; } }
+/* v772 : l'état se voit en permanence — allumée, un halo de sa couleur ; éteinte, plus sombre et terne */
+.scene-point.cmd-allume img{ filter: brightness(1.2) drop-shadow(0 0 6px var(--cmd, #7ff6ff)) drop-shadow(0 0 16px var(--cmd, #7ff6ff)); }
+.scene-point.cmd-eteint img{ filter: brightness(.55) saturate(.45); }
 .cmd-onde{ position:absolute; left:50%; top:50%; width:100%; height:100%; transform:translate(-50%,-50%) scale(.4); border-radius:50%;
   border:3px solid var(--cmd, #7ff6ff); box-shadow:0 0 18px var(--cmd, #7ff6ff), inset 0 0 12px var(--cmd, #7ff6ff); pointer-events:none; animation: cmdOnde .75s ease-out forwards; }
 @keyframes cmdOnde{ 0%{ opacity:.95; transform:translate(-50%,-50%) scale(.4); } 100%{ opacity:0; transform:translate(-50%,-50%) scale(1.9); } }
@@ -8414,7 +8417,31 @@ function prechargerBuste(c){
   });
 }
 
+/* v772 — RENVOYER UN PERSONNAGE À BORD, DEPUIS SA PIÈCE. Un artisan recruté (Brann dans sa cuisine)
+   n'avait aucun moyen de quitter le vaisseau si l'auteur n'avait pas écrit le choix dans sa fiche.
+   Comme pour les robots, le jeu l'ajoute au moment de parler, sans toucher à la fiche : seulement
+   quand on lui parle DANS SA PIÈCE du vaisseau, et seulement si la fiche n'a pas déjà son choix 🚪. */
+function avecRenvoiABord(c){
+  if (!c || c.chambreModeleId || !Array.isArray(c.dialogueSteps) || !c.dialogueSteps.length) return c;
+  if (typeof sceneViewAnnexe === 'undefined' || !sceneViewAnnexe || !sceneViewAnnexe.recruitId) return c;
+  const r = recrueDuPersonnage(c);
+  if (!r || r.id !== sceneViewAnnexe.recruitId || estRobotDepart(r)) return c;
+  if (c.dialogueSteps.some(st=> (st && st.choices || []).some(x=> x && x.action === 'renvoyer'))) return c;
+  const s2 = c.dialogueSteps.map(st=> Object.assign({}, st, { choices: ((st && st.choices) || []).slice() }));
+  const depart = (s2[0].firstOnly && Number.isInteger(s2[0].thenStep) && s2[s2[0].thenStep]) ? s2[0].thenStep : 0;
+  const iQuestion = s2.length, iAdieu = s2.length + 1;
+  s2.push({ text: 'Partir ? Pour de bon ?', textVariants: [], choices: [
+    { id: 'crv_oui', label: 'Oui, adieu (il quitte le vaisseau pour toujours)', next: iAdieu, action: 'renvoyer' },
+    { id: 'crv_non', label: 'Non, finalement, reste', next: depart } ] });
+  s2.push({ text: 'Bon. Merci pour tout. Si un jour tu as besoin de moi, tu sais où me trouver.', textVariants: [], choices: [
+    { id: 'crv_bye', label: 'Au revoir', next: null } ] });
+  const ch = s2[depart].choices;
+  const iBye = ch.map(x=> x && x.next == null && !x.action).lastIndexOf(true);
+  ch.splice(iBye >= 0 ? iBye : ch.length, 0, { id: 'crv_partir', label: 'Il est temps que tu reprennes ta route', next: iQuestion });
+  return Object.assign({}, c, { dialogueSteps: s2 });
+}
 function openSheet(c){
+  c = avecRenvoiABord(c);   // v772
   activeCreature = c;
   prechargerBuste(c);
   activeSteps = (Array.isArray(c.dialogueSteps) && c.dialogueSteps.length) ? c.dialogueSteps : parseDialogueScript(c.dialogueScript);
@@ -24891,6 +24918,17 @@ async function startCombatM2(config, arenaBgUrl, opts){
   } else {
     M2.demarrer(combatState, { allies: config.allies, ennemis: config.ennemis, objets: config.objets, objetsDef: config.objetsDef });
     cfgs = { player: config.allies, enemy: config.ennemis };
+    /* v772 : les vraies stats de chaque combattant, dans la boîte noire — pour comprendre un combat
+       qui paraît déséquilibré sans devoir le rejouer (vice, multiplicateur de catégorie, plat, PV de départ). */
+    try {
+      (combatState.fighters || []).forEach(f=>{
+        const s = f.stats || {}, v = VICES[f.vice] || {};
+        journal('combat', (f.side === 'player' ? '🟦 ' : '🟥 ') + f.nom + ' — ' + (v.emoji || '') + ' ' + (v.nom || f.vice || '?'),
+          'PV ' + f.hp + '/' + f.maxHp + ' · ATQ ' + s.atk + ' · DEF ' + s.def + ' · ATQ.É ' + s.matk + ' · DEF.É ' + s.mdef + ' · VIT ' + s.speed
+          + (f.multStats && f.multStats !== 1 ? ' · catégorie ×' + f.multStats : '') + (f.platNom ? ' · plat « ' + f.platNom + ' »' : '')
+          + ' · attaques : ' + (f.main || []).map(a=> (a.nom || '?') + ' (' + (a.famille === 'ener' ? 'É' : 'M') + (a.puissance || 0) + (a.vice && a.vice !== f.vice ? ', ' + ((VICES[a.vice] || {}).nom || a.vice) : '') + ')').join(', '), true);
+      });
+    } catch(e){}
   }
   /* `log.push` et non `unshift` : le journal se lit du plus récent en haut, ces lignes sont donc
      les plus anciennes du combat. Jamais à la reprise — le journal sauvegardé les contient déjà. */
@@ -33747,6 +33785,13 @@ function dessinerCommande(el, pt){
   if (coinsActifs(pt)) poserImageEnCoins(el, url, pt);
   else el.insertAdjacentHTML('afterbegin', `<img src="${url}" style="width:100%; height:100%; ${fitImagePoint(pt)} transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`);
 }
+function marquerEtatCommande(el, pt){   // v772 : le halo (allumée) ou la pénombre (éteinte), en permanence
+  if (!el || !pt) return;
+  if (pt.teinte) el.style.setProperty('--cmd', pt.teinte);
+  const on = etatCommande(pt);
+  el.classList.toggle('cmd-allume', on);
+  el.classList.toggle('cmd-eteint', !on);
+}
 function toucherCommande(pt, el){
   const g = cleGroupeCommande(pt.groupe);
   const dejaOuvert = g ? commandesOuvertes(pt.groupe) : false;
@@ -33758,6 +33803,7 @@ function toucherCommande(pt, el){
     if (pt.teinte) el.style.setProperty('--cmd', pt.teinte);
     el.classList.remove('cmd-on', 'cmd-off'); void el.offsetWidth;
     el.classList.add(allume ? 'cmd-on' : 'cmd-off');
+    marquerEtatCommande(el, pt);   // v772
     if (allume){
       const onde = document.createElement('span'); onde.className = 'cmd-onde';
       el.appendChild(onde); setTimeout(()=> onde.remove(), 800);
@@ -36632,6 +36678,8 @@ async function renderSceneViewCurrentScene(){
       /* v507 : sans image, rien à montrer au joueur — le point reste touchable sur son rectangle */
       el.style.cssText = `position:absolute; min-width:20px; min-height:20px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; pointer-events:none;`;
     }
+
+    if (pt.type === 'commande') marquerEtatCommande(el, pt);   // v772 : après le style, qui l'effacerait
 
     if (pt.type === 'bac'){
       /* v492 : la plante par-dessus le bac (aussi quand le bac est dessiné dans le décor et
