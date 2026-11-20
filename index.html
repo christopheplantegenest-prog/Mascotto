@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v774</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v775</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -1699,6 +1699,12 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
     <p class="meta" id="concessionPhrase" style="font-style:italic; display:none;"></p>
     <div class="meta" id="concessionCoinsLabel">💰 —</div>
     <div class="meta" id="concessionActuel" style="margin-top:4px;"></div>
+    <!-- v775 : le concessionnaire devient le chantier naval — vaisseaux, pièces toutes faites ou leur plan, matériaux -->
+    <div id="concessionOnglets" style="display:flex; gap:6px; margin-top:10px;">
+      <button class="btn-secondary" data-conc-onglet="vaisseaux" style="flex:1;">🚀 Vaisseaux</button>
+      <button class="btn-secondary" data-conc-onglet="pieces" style="flex:1;">🏗️ Pièces</button>
+      <button class="btn-secondary" data-conc-onglet="materiaux" style="flex:1;">🧱 Matériaux</button>
+    </div>
     <div id="concessionList" style="margin-top:10px;"></div>
   </div>
 </div>
@@ -2880,7 +2886,12 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <button type="button" class="btn-secondary" id="itemPlanMatAdd" style="width:100%; margin-top:6px;">+ Un matériau</button>
         <div class="field-label">Durée des travaux (heures)</div>
         <input type="number" id="itemPlanHeures" class="field-input" value="1" min="0.1" step="0.5">
-        <p class="meta" style="margin:6px 0 0;">Le plan n'est pas consommé : on peut reconstruire après une démolition. Un artisan de ce métier ne monte à bord que si cette pièce l'attend.</p>
+        <div class="field-label">🚀 Chez le concessionnaire (0 = pas en vente)</div>
+        <div style="display:flex; gap:8px;">
+          <label style="flex:1; font-size:12px;">Pièce toute faite 💰<input type="number" id="itemPlanPrixPiece" class="field-input" value="0" min="0"></label>
+          <label style="flex:1; font-size:12px;">Le plan seul 💰<input type="number" id="itemPlanPrixPlan" class="field-input" value="0" min="0"></label>
+        </div>
+        <p class="meta" style="margin:6px 0 0;">Le plan n'est pas consommé : on peut reconstruire après une démolition. Un artisan de ce métier ne monte à bord que si cette pièce l'attend. Toute faite, la pièce est livrée tout de suite, sans plan ni matériaux.</p>
       </div>
       <!-- v764 — LE PLAT : on le donne à un robot depuis le sac, il le renforce pendant un temps réel ; un plat chasse l'autre. -->
       <div id="itemPlatBlock" style="display:none;">
@@ -8214,6 +8225,7 @@ function bilanVaisseau(f, coins, inv){
 }
 function openConcessionWindow(c){
   activeConcessionCreature = c;
+  concessionOnglet = 'vaisseaux';   // v775
   document.getElementById('concessionEmoji').innerHTML = c.imageUrl ? `<img src="${c.imageUrl}" style="width:96px;height:96px;object-fit:contain;max-width:100%;">` : (c.emoji || '🚀');
   document.getElementById('concessionName').textContent = c.name || 'Concessionnaire';
   const phraseEl = document.getElementById('concessionPhrase');
@@ -8230,10 +8242,15 @@ document.getElementById('concessionCloseBtn').addEventListener('click', ()=>{
   document.getElementById('concessionOverlay').classList.remove('show');
   activeConcessionCreature = null;
 });
+let concessionOnglet = 'vaisseaux';   // v775
+document.querySelectorAll('[data-conc-onglet]').forEach(b=> b.addEventListener('click', ()=>{ concessionOnglet = b.dataset.concOnglet; renderConcession(); }));
 function renderConcession(){
   const c = activeConcessionCreature;
   const wrap = document.getElementById('concessionList');
   if (!c) return;
+  document.querySelectorAll('[data-conc-onglet]').forEach(b=>{ const on = b.dataset.concOnglet === concessionOnglet; b.className = on ? 'btn-primary' : 'btn-secondary'; });
+  if (concessionOnglet === 'pieces'){ renderConcessionPieces(wrap); return; }
+  if (concessionOnglet === 'materiaux'){ renderConcessionMateriaux(wrap); return; }
   if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
   wrap.innerHTML = '<p class="meta">Chargement…</p>';
   db.collection('players').doc(currentUser.uid).get().then((doc)=>{
@@ -8272,6 +8289,105 @@ function renderConcession(){
     });
   }).catch((err)=>{ wrap.innerHTML = '<p class="meta">Échec : ' + err.message + '</p>'; });
 }
+/* ═══ v775 — LES PIÈCES ET LES MATÉRIAUX CHEZ LE CONCESSIONNAIRE. Un plan de pièce dont le prix
+   « toute faite » ou « le plan seul » n'est pas nul est en vitrine. Toute faite : plus cher, livrée
+   tout de suite derrière la porte libre qu'on choisit, sans plan ni matériaux. Les matériaux en
+   vente sont ceux que demande au moins un plan de pièce, à leur prix de base. ═══ */
+function plansEnVitrine(){ return plansDePiece().filter(it=> (it.planPiece.prixPiece || 0) > 0 || (it.planPiece.prixPlan || 0) > 0); }
+function materiauxEnVitrine(){
+  const ids = new Set(); plansDePiece().forEach(it=> (it.planPiece.materiaux || []).forEach(m=> ids.add(m.itemId)));
+  return (items || []).filter(it=> it && ids.has(it.id) && (it.basePrice || 0) > 0).sort((a, b)=> (a.name || '').localeCompare(b.name || '', 'fr'));
+}
+async function soldeRelu(){
+  const doc = await db.collection('players').doc(currentUser.uid).get();
+  return (doc.exists && typeof doc.data().coins === 'number') ? doc.data().coins : 0;
+}
+async function renderConcessionPieces(wrap){
+  if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
+  const coins = await soldeRelu(); playerCoins = coins;
+  document.getElementById('concessionCoinsLabel').textContent = '💰 ' + coins;
+  const plans = plansEnVitrine();
+  if (!plans.length){ wrap.innerHTML = '<p class="meta">Aucune pièce en vitrine pour le moment.</p>'; return; }
+  wrap.innerHTML = '<p class="meta" style="margin:0 0 6px;">Toute faite, la pièce est livrée tout de suite derrière une porte libre. Avec son plan, tu la construis toi-même au module 🏗️ du couloir (moins cher, mais avec des matériaux et un peu d\'attente).</p>'
+    + plans.map((it, idx)=>{
+      const pp = it.planPiece, aLePlan = qteABord(it.id) > 0;
+      const bPiece = pp.prixPiece > 0 ? `<button class="btn-primary" data-conc-piece="${idx}" style="flex:1;${coins >= pp.prixPiece ? '' : ' opacity:.45;'}" ${coins >= pp.prixPiece ? '' : 'disabled'}>Toute faite 💰 ${pp.prixPiece}</button>` : '';
+      const bPlan = pp.prixPlan > 0 ? (aLePlan ? '<span class="meta" style="flex:1; align-self:center; text-align:center;">📐 plan déjà à bord</span>'
+        : `<button class="btn-secondary" data-conc-plan="${idx}" style="flex:1;${coins >= pp.prixPlan ? '' : ' opacity:.45;'}" ${coins >= pp.prixPlan ? '' : 'disabled'}>Le plan 💰 ${pp.prixPlan}</button>`) : '';
+      const mats = (pp.materiaux || []).map(m=>{ const mi = items.find(x=> x.id === m.itemId); return (mi ? mi.name : '?') + ' ×' + (m.qty || 1); }).join(', ');
+      return `<div class="editor-list-item" style="flex-direction:column; align-items:stretch; gap:6px;">
+        <div style="display:flex; gap:8px; align-items:center;"><div class="thumb" style="flex:none;">${itemThumbHtml(it)}</div>
+          <div style="flex:1;"><div style="font-weight:700;">${escSac(nomDePiece({ zoneId: pp.zoneId, nom: pp.nomPiece }))}</div>
+          <span class="meta" style="display:block;">pour : ${escSac(nomMetierParId(pp.metierId))}</span>
+          <span class="meta" style="display:block; font-size:11px;">à construire : ${escSac(mats || 'rien')} · ${pp.heures || 1} h</span></div></div>
+        <div style="display:flex; gap:6px;">${bPiece}${bPlan}</div></div>`;
+    }).join('');
+  wrap.querySelectorAll('[data-conc-piece]').forEach(b=> b.addEventListener('click', ()=> acheterPieceToutefaite(plans[+b.dataset.concPiece].id)));
+  wrap.querySelectorAll('[data-conc-plan]').forEach(b=> b.addEventListener('click', ()=> acheterPlanDePiece(plans[+b.dataset.concPlan].id)));
+}
+async function acheterPlanDePiece(planId){
+  const it = items.find(x=> x.id === planId); if (!it || !it.planPiece || !currentUser || !db) return;
+  const prix = it.planPiece.prixPlan || 0;
+  try {
+    const coins = await soldeRelu();
+    if (coins < prix){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${prix})`); return; }
+    await db.collection('players').doc(currentUser.uid).set({ coins: firebase.firestore.FieldValue.increment(-prix), inventory: { [it.id]: firebase.firestore.FieldValue.increment(1) } }, { merge:true });
+    baseResources[it.id] = (baseResources[it.id] || 0) + 1;
+    journal('vaisseau', 'achat de plan', it.name + ' pour 💰 ' + prix);
+    showToast('📐 Acheté : ' + it.name + ' — construis la pièce au module 🏗️ du couloir');
+    renderConcession();
+  } catch(e){ showToast('Échec : ' + e.message); }
+}
+async function acheterPieceToutefaite(planId){
+  const it = items.find(x=> x.id === planId); if (!it || !it.planPiece || !currentUser || !db) return;
+  const pp = it.planPiece, prix = pp.prixPiece || 0;
+  const portes = portesLibres(await portesDuVaisseau());
+  if (!portes.length){ showToast('Aucune porte libre dans ton vaisseau : démolis une pièce, ou prends un vaisseau plus grand'); return; }
+  const f = fenetreSac(`<div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; font-weight:700;">🏗️ Derrière quelle porte livrer « ${escSac(nomDePiece({ zoneId: pp.zoneId, nom: pp.nomPiece }))} » ?</div><button class="sheet-x" data-fermer>✕</button></div>`
+    + portes.map((p, i)=> `<button class="btn-secondary" data-livrer="${i}" style="width:100%; margin-top:6px; text-align:left;">${escSac(p.sceneName || 'Vaisseau')} — porte libre ${i + 1}</button>`).join(''));
+  f.querySelectorAll('[data-livrer]').forEach(b=> b.addEventListener('click', async ()=>{
+    f.remove();
+    const po = portes[+b.dataset.livrer];
+    try {
+      const coins = await soldeRelu();
+      if (coins < prix){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${prix})`); return; }
+      if (piecesDuJoueur()[po.pointId] || habitantDeLaPorte(po.pointId)){ showToast('Cette porte n\'est plus libre'); return; }
+      const now = Date.now(), z = pp.zoneId ? ficheParId(pp.zoneId) : null;
+      const pc = { planId: it.id, zoneId: pp.zoneId || null, metierId: pp.metierId || null, nom: pp.nomPiece || (z && z.name) || it.name, sceneId: po.sceneId || null, debut: now, fin: now, livree: true };
+      await db.collection('players').doc(currentUser.uid).set({ coins: firebase.firestore.FieldValue.increment(-prix), piecesConstruites: { [po.pointId]: pc } }, { merge:true });
+      if (playerSelfData) playerSelfData.piecesConstruites = Object.assign({}, playerSelfData.piecesConstruites || {}, { [po.pointId]: pc });
+      journal('vaisseau', 'pièce toute faite', pc.nom + ' pour 💰 ' + prix, true);
+      showToast('🏗️ « ' + pc.nom + ' » est livrée à bord — son artisan peut maintenant venir');
+      renderConcession(); redessinerSceneSiVisible();
+    } catch(e){ showToast('Échec : ' + e.message); }
+  }));
+}
+async function renderConcessionMateriaux(wrap){
+  if (!currentUser || !db){ wrap.innerHTML = '<p class="meta">Connexion requise.</p>'; return; }
+  const coins = await soldeRelu(); playerCoins = coins;
+  document.getElementById('concessionCoinsLabel').textContent = '💰 ' + coins;
+  const mats = materiauxEnVitrine();
+  if (!mats.length){ wrap.innerHTML = '<p class="meta">Aucun matériau en vente pour le moment.</p>'; return; }
+  wrap.innerHTML = mats.map((it, idx)=> `<div class="editor-list-item" style="align-items:center;">
+      <div class="thumb">${itemThumbHtml(it)}</div>
+      <div class="name" style="flex:1;">${escSac(it.name)}<span class="meta" style="display:block;">💰 ${it.basePrice}/u. · à bord : ${qteABord(it.id)}</span></div>
+      <input type="number" min="1" value="1" class="field-input" data-conc-mat-qty="${idx}" style="width:56px; margin:0; flex:none;">
+      <button class="btn-secondary" data-conc-mat="${idx}" style="flex:none;">Acheter</button></div>`).join('');
+  wrap.querySelectorAll('[data-conc-mat]').forEach(b=> b.addEventListener('click', async ()=>{
+    const it = mats[+b.dataset.concMat];
+    const qty = Math.max(1, parseInt(wrap.querySelector(`[data-conc-mat-qty="${b.dataset.concMat}"]`).value, 10) || 1);
+    const total = (it.basePrice || 0) * qty;
+    try {
+      const coins = await soldeRelu();
+      if (coins < total){ showToast(`Pas assez de pièces (tu as 💰 ${coins}, il faut 💰 ${total})`); return; }
+      await db.collection('players').doc(currentUser.uid).set({ coins: firebase.firestore.FieldValue.increment(-total), inventory: { [it.id]: firebase.firestore.FieldValue.increment(qty) } }, { merge:true });
+      baseResources[it.id] = (baseResources[it.id] || 0) + qty;
+      showToast('Acheté : ' + qty + ' × ' + it.name);
+      renderConcession();
+    } catch(e){ showToast('Échec : ' + e.message); }
+  }));
+}
+
 /* L'achat. Le solde et le sac sont RELUS juste avant (jamais la variable en mémoire), comme
    pour la boutique. Une seule écriture : pièces, matériaux, et le nouveau vaisseau. */
 async function acheterVaisseau(zoneId){
@@ -17303,12 +17419,14 @@ function remplirChampsPlan(pp){
   remplirSelectsPlan();
   const v = (id, x)=>{ const el = document.getElementById(id); if (el) el.value = x; };
   v('itemPlanZone', pp.zoneId || ''); v('itemPlanMetier', pp.metierId || ''); v('itemPlanNom', pp.nomPiece || ''); v('itemPlanHeures', pp.heures || 1);
+  v('itemPlanPrixPiece', pp.prixPiece || 0); v('itemPlanPrixPlan', pp.prixPlan || 0);
   currentPlanMats = JSON.parse(JSON.stringify(pp.materiaux || []));
   renderPlanMats();
 }
 function lireChampsPlan(){
   return { zoneId: document.getElementById('itemPlanZone').value || null, metierId: document.getElementById('itemPlanMetier').value || null,
     nomPiece: document.getElementById('itemPlanNom').value.trim() || '', heures: Math.max(0.1, parseFloat(document.getElementById('itemPlanHeures').value) || 1),
+    prixPiece: Math.max(0, parseInt(document.getElementById('itemPlanPrixPiece').value, 10) || 0), prixPlan: Math.max(0, parseInt(document.getElementById('itemPlanPrixPlan').value, 10) || 0),
     materiaux: currentPlanMats.filter(m=> m && m.itemId).map(m=> ({ itemId: m.itemId, qty: Math.max(1, m.qty || 1) })) };
 }
 function remplirChampsPlat(pl){
@@ -31252,7 +31370,7 @@ function comNotifications(){
     const pc = piecesDuJoueur()[pid];
     if (!pc || !pc.fin || pieceEnTravaux(pc)) return;
     out.push({ cle:'chantier:' + pid + '#' + pc.fin, type:'atelier', quand: pc.fin,
-      t1:'Construction terminée', t2: nomDePiece(pc) + " — le module 🏗️ du couloir" });
+      t1: pc.livree ? 'Pièce livrée' : 'Construction terminée', t2: nomDePiece(pc) + " — le module 🏗️ du couloir" });
   });
 
   // 5. Les négociations en attente. SEULE notification qui ouvre son écran : une négociation
@@ -31969,6 +32087,8 @@ function texteHoloPiece(pc){
 }
 /* les plans de pièce (objets du type « planPiece ») */
 function plansDePiece(){ return (items || []).filter(it=> it && it.type === 'planPiece' && it.planPiece); }
+/* v775 : à bord, on compte le sac ET le rangement (comme le concessionnaire) */
+function qteABord(itemId){ return Math.max(0, (baseResources[itemId] || 0)) + Math.max(0, ((typeof baseRangement !== 'undefined' && baseRangement) ? (baseRangement[itemId] || 0) : 0)); }
 function nomPieceDuMetier(mid){
   const it = plansDePiece().find(x=> x.planPiece.metierId === mid);
   if (!it) return nomMetierParId(mid);
@@ -32005,12 +32125,12 @@ function ouvrirModuleConstruction(){
   f.querySelectorAll('[data-mc-demenager]').forEach(b=> b.addEventListener('click', ()=>{ f.remove(); demenagerPiece(b.dataset.mcDemenager); }));
 }
 function choisirPlanAConstruire(pointId, sceneId){
-  const plans = plansDePiece().filter(it=> qteAuSac(it.id) > 0);
+  const plans = plansDePiece().filter(it=> qteABord(it.id) > 0);
   if (!plans.length){ showToast('Il te faut le plan d\'une pièce : on en trouve en exploration, ou chez un artisan'); return; }
   const ligne = (it)=>{
     const pp = it.planPiece, mats = pp.materiaux || [];
-    const ok = mats.every(m=> qteAuSac(m.itemId) >= (m.qty || 1));
-    const detail = mats.map(m=>{ const mi = items.find(x=> x.id === m.itemId); const a = qteAuSac(m.itemId);
+    const ok = mats.every(m=> qteABord(m.itemId) >= (m.qty || 1));
+    const detail = mats.map(m=>{ const mi = items.find(x=> x.id === m.itemId); const a = qteABord(m.itemId);
       return `<span style="white-space:nowrap; color:${a >= (m.qty || 1) ? 'inherit' : '#ff8a80'};">${escSac(mi ? mi.name : '?')} ${a}/${m.qty || 1}</span>`; }).join(' · ');
     return `<div style="border:1px solid rgba(255,255,255,.15); border-radius:10px; padding:8px 10px; margin-top:8px;">
       <div style="display:flex; gap:8px; align-items:center;"><img src="${urlImageItem(it) || ITEM_PLACEHOLDER_IMG}" style="width:40px; height:40px; object-fit:contain;">
@@ -32026,14 +32146,15 @@ async function construirePiece(planId, pointId, sceneId){
   if (!it || !it.planPiece || !playerDocRef) return;
   const pp = it.planPiece, mats = pp.materiaux || [];
   if (piecesDuJoueur()[pointId] || habitantDeLaPorte(pointId)){ showToast('Cette porte n\'est plus libre'); return; }
-  if (!mats.every(m=> qteAuSac(m.itemId) >= (m.qty || 1))){ showToast('Il manque des matériaux'); return; }
+  if (!mats.every(m=> qteABord(m.itemId) >= (m.qty || 1))){ showToast('Il manque des matériaux'); return; }
   const debut = Date.now(), fin = debut + Math.max(1, Math.round((+pp.heures || 1) * 60)) * 60000;
   const z = pp.zoneId ? ficheParId(pp.zoneId) : null;
   const pc = { planId, zoneId: pp.zoneId || null, metierId: pp.metierId || null, nom: pp.nomPiece || (z && z.name) || it.name, sceneId: sceneId || null, debut, fin };
-  const maj = { piecesConstruites: { [pointId]: pc }, inventory: {} };
-  mats.forEach(m=>{ maj.inventory[m.itemId] = firebase.firestore.FieldValue.increment(-(m.qty || 1)); });
+  const conso = {}; mats.forEach(m=>{ conso[m.itemId] = (conso[m.itemId] || 0) + (m.qty || 1); });
   try {
-    await playerDocRef.set(maj, { merge:true });
+    await playerDocRef.set({ piecesConstruites: { [pointId]: pc } }, { merge:true });
+    const prelev = prelevementABord(conso);   // v775 : le sac d'abord, puis le rangement du vaisseau
+    if (Object.keys(prelev).length) await playerDocRef.update(prelev);
     if (playerSelfData){ playerSelfData.piecesConstruites = Object.assign({}, playerSelfData.piecesConstruites || {}, { [pointId]: pc }); }
     journal('base', 'construction lancée', pc.nom + ' · ' + (pp.heures || 1) + ' h');
     showToast('🏗️ Travaux lancés : ' + pc.nom + ' — prête dans ' + dureeRestante(fin));
@@ -44032,7 +44153,8 @@ async function importerScenario(sc){
     if (!z) journal.push('⚠️ Plan « ' + o.name + ' » : pièce « ' + o.plan.piece + ' » introuvable');
     if (!m) journal.push('⚠️ Plan « ' + o.name + ' » : métier « ' + o.plan.metier + ' » introuvable');
     const mats = (o.plan.materiaux || []).map(x=>{ const mid = importResoudre(cles.objets, x.objet || x.itemName, items, journal, 'Plan « ' + o.name + ' »'); return mid ? { itemId: mid, qty: Math.max(1, parseInt(x.qty, 10) || 1) } : null; }).filter(Boolean);
-    const planPiece = { zoneId: z ? z.id : null, metierId: m ? m.id : null, nomPiece: o.plan.nomPiece || '', heures: Math.max(0.1, +o.plan.heures || 1), materiaux: mats };
+    const planPiece = { zoneId: z ? z.id : null, metierId: m ? m.id : null, nomPiece: o.plan.nomPiece || '', heures: Math.max(0.1, +o.plan.heures || 1), materiaux: mats,
+      prixPiece: Math.max(0, parseInt(o.plan.prixToutFait, 10) || 0), prixPlan: Math.max(0, parseInt(o.plan.prixPlan, 10) || 0) };   // v775
     await itemsCol.doc(id).set({ planPiece }, { merge:true });
     const it = (items || []).find(x=> x.id === id); if (it) it.planPiece = planPiece;
     journal.push('🏗️ Plan « ' + o.name + ' » : ' + (z ? z.name : '?') + ' · ' + mats.length + ' matériau(x) · ' + planPiece.heures + ' h');
