@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v773</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v774</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -2865,7 +2865,23 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <option value="graine">Graine à planter</option>
         <option value="mobilier">Mobilier (meuble, décor : ça se pose)</option>
         <option value="plat">🍲 Plat cuisiné (renforce un robot un moment)</option>
+        <option value="planPiece">🏗️ Plan de pièce (pour construire une pièce du vaisseau)</option>
       </select>
+      <!-- v774 — LE PLAN DE PIÈCE : il reste dans le sac ; au module 🏗️ du couloir, il construit sa pièce avec des matériaux. -->
+      <div id="itemPlanBlock" style="display:none;">
+        <div class="field-label">🏗️ La pièce qu'il construit</div>
+        <select id="itemPlanZone" class="field-input"></select>
+        <div class="field-label">Le métier qui s'y installe</div>
+        <select id="itemPlanMetier" class="field-input"></select>
+        <div class="field-label">Nom sur la porte (facultatif — sinon celui de la pièce)</div>
+        <input type="text" id="itemPlanNom" class="field-input" placeholder="Cuisine">
+        <div class="field-label">Matériaux à fournir</div>
+        <div id="itemPlanMats"></div>
+        <button type="button" class="btn-secondary" id="itemPlanMatAdd" style="width:100%; margin-top:6px;">+ Un matériau</button>
+        <div class="field-label">Durée des travaux (heures)</div>
+        <input type="number" id="itemPlanHeures" class="field-input" value="1" min="0.1" step="0.5">
+        <p class="meta" style="margin:6px 0 0;">Le plan n'est pas consommé : on peut reconstruire après une démolition. Un artisan de ce métier ne monte à bord que si cette pièce l'attend.</p>
+      </div>
       <!-- v764 — LE PLAT : on le donne à un robot depuis le sac, il le renforce pendant un temps réel ; un plat chasse l'autre. -->
       <div id="itemPlatBlock" style="display:none;">
         <div class="field-label">🍲 Ce que le plat donne au robot qui le mange</div>
@@ -8576,6 +8592,7 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
   if (ch.recruit && etat && etat.recrutes && etat.recrutes.has && (etat.recrutes.has(creatureId) || (typeof personnageRecrute === 'function' && personnageRecrute(creatureId)))) return false;   // v503 : par groupe de versions
   /* v502 : une action à bord (renvoyer, déplacer, fabrication, équipement) n'a de sens que si
      le personnage est effectivement recruté. */
+  if (ch.action === 'deplacer') return false;   // v774 : déménager une pièce se fait au module 🏗 du couloir
   if (ch.action && typeof recrueDuPersonnage === 'function' && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId && !recrueDuPersonnage(activeCreature)) return false;
   /* v628 : l'équipe ne propose que ce qui change quelque chose ; décorer, seulement un robot en chambre */
   if ((ch.action === 'equipeOui' || ch.action === 'equipeNon' || ch.action === 'decorer') && typeof activeCreature !== 'undefined' && activeCreature && activeCreature.id === creatureId){
@@ -8808,7 +8825,6 @@ let apresFermetureDialogue = null;
    choix n'apparaît que si le personnage est À BORD (une recrue de son groupe existe). */
 const ACTIONS_A_BORD = {
   renvoyer:    { nom:'🚪 Le renvoyer du vaisseau' },
-  deplacer:    { nom:'🚪 Le changer de porte (déplacer sa pièce)' },
   fabrication: { nom:'🔧 Ouvrir sa fabrication (recettes)' },
   equipement:  { nom:'🎒 Ouvrir son équipement' },
   /* v628 : les gestes de la chambre d'un robot */
@@ -9074,6 +9090,23 @@ function recruitCreature(creature, metierId){
      Un vaisseau sans aucune porte posée (l'auteur n'a pas encore fait ce travail) recrute
      comme avant, sans porte : la règle ne doit jamais bloquer un vaisseau non aménagé. */
   if (!isCombattant){
+    /* v774 — LES PIÈCES SE CONSTRUISENT. Un artisan dont le métier a un plan de pièce ne monte à
+       bord que si une pièce de son métier, construite et libre, l'attend. Les autres, comme avant. */
+    const mid = metierId || creature.metier || null;
+    if (mid && metierDemandeUnePiece(mid)){
+      portesDuVaisseau().then((portes)=>{
+        const pcs = piecesDuJoueur();
+        const libres = portes.filter(p=> pcs[p.pointId] && pcs[p.pointId].metierId === mid && !pieceEnTravaux(pcs[p.pointId]) && !habitantDeLaPorte(p.pointId));
+        if (!libres.length){
+          const enCours = portes.some(p=> pcs[p.pointId] && pcs[p.pointId].metierId === mid && pieceEnTravaux(pcs[p.pointId]));
+          showToast(enCours ? '🏗️ Sa pièce est encore en travaux : ' + (creature.name || 'il') + ' viendra quand elle sera finie'
+            : (creature.name || 'Cet artisan') + ' a besoin de sa pièce à bord (' + nomPieceDuMetier(mid) + ') : construis-la depuis le module 🏗️ du couloir');
+          return;
+        }
+        recruitCreatureEcrire(creature, mid, { sceneId: libres[0].sceneId, pointId: libres[0].pointId });
+      });
+      return;
+    }
     portesDuVaisseau().then((portes)=>{
       if (portes.length){
         const libres = portesLibres(portes);
@@ -16288,6 +16321,7 @@ function renderAssemblagePieces(){
     currentAssemblage.splice(+b.dataset.asmDel, 1); renderAssemblagePieces();
   }));
 }
+document.getElementById('itemPlanMatAdd').addEventListener('click', ()=>{ currentPlanMats.push({ itemId:null, qty:1 }); renderPlanMats(); });   // v774
 document.getElementById('itemAssemblageAdd').addEventListener('click', ()=>{
   if (currentAssemblage.length >= 6){ showToast('Six morceaux au plus'); return; }
   currentAssemblage.push(null); renderAssemblagePieces();
@@ -16304,6 +16338,8 @@ function majBlocComposant(){
     const si = document.getElementById('itemPlatImmunite');
     if (si && !si.options.length) si.innerHTML = '<option value="">— aucune —</option>' + STATUTS_NEGATIFS.map(k=> `<option value="${k}">${LIB_STATUTS[k] || ''} ${NOM_STATUTS[k] || k}</option>`).join('');
   }
+  const plb = document.getElementById('itemPlanBlock');   // v774
+  if (plb){ plb.style.display = type === 'planPiece' ? 'block' : 'none'; if (type === 'planPiece' && !document.getElementById('itemPlanZone').options.length) remplirSelectsPlan(); }
   const ab = document.getElementById('itemAssemblageBlock');   // v733
   if (ab) ab.style.display = type === 'quete' ? 'block' : 'none';
   const fam = document.getElementById('itemComposantFamille').value;
@@ -17175,6 +17211,7 @@ function loadItemForEdit(id){
   renderAssemblagePieces();
   majBlocComposant();
   remplirChampsPlat(it.plat);   // v764
+  remplirChampsPlan(it.planPiece);   // v774
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
   document.getElementById('itemPoids').value = [0.1, 0.5, 1, 2, 3].includes(+it.poids) ? String(+it.poids) : '';   // v669
@@ -17242,6 +17279,38 @@ function promptPlancheObjets(its){
     + '\nStyle : dessin de jeu vidéo, trait d\'encre noir net, aplats de couleurs unis, ombrage cel en deux tons aux bords tranchés, aucun dégradé, aucun reflet, univers futuriste. Chaque objet isolé, centré dans sa case, vu de face légèrement en plongée, sans ombre portée au sol.\n'
     + 'LIVRABLE : une seule image, PNG à fond TRANSPARENT. Aucun cadre, aucun numéro, aucun texte.';
 }
+/* v774 — les champs du plan de pièce */
+let currentPlanMats = [];
+function remplirSelectsPlan(){
+  const zs = document.getElementById('itemPlanZone'), ms = document.getElementById('itemPlanMetier');
+  if (!zs || !ms) return;
+  const pieces = toutesLesFiches().filter(f=> f && (f.interactionType || '') === 'zone' && ficheEstPiece(f));
+  zs.innerHTML = '<option value="">— choisir la pièce —</option>' + pieces.map(f=> `<option value="${f.id}">${escSac(f.name || '(sans nom)')}</option>`).join('');
+  ms.innerHTML = '<option value="">— choisir le métier —</option>' + (metiers || []).map(m=> `<option value="${m.id}">${escSac(m.name || '')}</option>`).join('');
+}
+function renderPlanMats(){
+  const box = document.getElementById('itemPlanMats'); if (!box) return;
+  box.innerHTML = currentPlanMats.map((m, i)=>{ const it = items.find(x=> x.id === m.itemId);
+    return `<div style="display:flex; gap:6px; margin-top:6px;"><button type="button" class="btn-secondary" data-pm-pick="${i}" style="flex:1; text-align:left;">${it ? escSac(it.name) : '— choisir —'}</button>
+      <input type="number" class="field-input" data-pm-qty="${i}" value="${m.qty || 1}" min="1" style="width:70px; flex:none;">
+      <button type="button" class="btn-secondary" data-pm-del="${i}" style="flex:none;">✕</button></div>`; }).join('');
+  box.querySelectorAll('[data-pm-pick]').forEach(b=> b.addEventListener('click', ()=> openRecipeItemChooser((id)=>{ currentPlanMats[+b.dataset.pmPick].itemId = id; renderPlanMats(); })));
+  box.querySelectorAll('[data-pm-qty]').forEach(b=> b.addEventListener('change', ()=>{ currentPlanMats[+b.dataset.pmQty].qty = Math.max(1, parseInt(b.value, 10) || 1); }));
+  box.querySelectorAll('[data-pm-del]').forEach(b=> b.addEventListener('click', ()=>{ currentPlanMats.splice(+b.dataset.pmDel, 1); renderPlanMats(); }));
+}
+function remplirChampsPlan(pp){
+  pp = pp || {};
+  remplirSelectsPlan();
+  const v = (id, x)=>{ const el = document.getElementById(id); if (el) el.value = x; };
+  v('itemPlanZone', pp.zoneId || ''); v('itemPlanMetier', pp.metierId || ''); v('itemPlanNom', pp.nomPiece || ''); v('itemPlanHeures', pp.heures || 1);
+  currentPlanMats = JSON.parse(JSON.stringify(pp.materiaux || []));
+  renderPlanMats();
+}
+function lireChampsPlan(){
+  return { zoneId: document.getElementById('itemPlanZone').value || null, metierId: document.getElementById('itemPlanMetier').value || null,
+    nomPiece: document.getElementById('itemPlanNom').value.trim() || '', heures: Math.max(0.1, parseFloat(document.getElementById('itemPlanHeures').value) || 1),
+    materiaux: currentPlanMats.filter(m=> m && m.itemId).map(m=> ({ itemId: m.itemId, qty: Math.max(1, m.qty || 1) })) };
+}
 function remplirChampsPlat(pl){
   pl = pl || {};
   const v = (id, x)=>{ const el = document.getElementById(id); if (el) el.value = x; };
@@ -17300,6 +17369,7 @@ function resetItemForm(){
   renderGraineStages(); renderGraineLoot();
   majBlocComposant();
   remplirChampsPlat(null);   // v764
+  remplirChampsPlan(null);   // v774
   document.getElementById('itemDescription').value = '';
   document.getElementById('itemPoids').value = '';   // v669 : automatique
   document.getElementById('itemEquippableRow').style.display = 'flex';
@@ -17385,6 +17455,8 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
   }
   const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, poids: parseFloat(document.getElementById('itemPoids').value) || null, updatedAt: Date.now() };
   data.plat = type === 'plat' ? lireChampsPlat() : null;   // v764
+  data.planPiece = type === 'planPiece' ? lireChampsPlan() : null;   // v774
+  if (type === 'planPiece' && (!data.planPiece.zoneId || !data.planPiece.metierId)){ showToast('Un plan de pièce : choisis la pièce et le métier'); return; }
   if (editingItemId){
     // Préserve le lien caché d'un manuel généré automatiquement (attaque/recette), sinon une simple édition (image, prix...) le casse silencieusement.
     const existingItem = items.find(i=>i.id===editingItemId);
@@ -17653,6 +17725,7 @@ document.getElementById('inventoryBtn').addEventListener('click', ()=>{
    l'habitant de la pièce directement sur sa fabrication (mode « artisanat »). */
 function ouvrirEtabliDeLHabitant(){
   if (!sceneViewAnnexe){ showToast('Cet établi ne sert que dans l\'atelier d\'un habitant'); return; }
+  if (!sceneViewAnnexe.recruitId){ showToast('Personne ne travaille ici pour l\'instant'); return; }   // v774 : pièce construite, encore vide
   const r = recruits.find(x=> x.id === sceneViewAnnexe.recruitId);
   if (!r){ showToast('Cet habitant n\'est plus à bord'); return; }
   if (r.recruitType === 'combattant'){ showToast((r.name || 'Cet habitant') + ' ne fabrique rien'); return; }
@@ -17733,7 +17806,7 @@ const CHARGE_MAX = 20;
 let pocheCompartiment = 'objets';
 /* v669 : un poids par défaut selon le type (une graine ne pèse presque rien, un meuble beaucoup) ;
    le champ de la fiche le remplace pour un objet précis. */
-const POIDS_PAR_TYPE = { graine:0.1, ressource:0.5, consommable:0.5, plat:0.5, apprentissage:0.5, composant:1, equipement:2, mobilier:3 };
+const POIDS_PAR_TYPE = { planPiece:0.1, graine:0.1, ressource:0.5, consommable:0.5, plat:0.5, apprentissage:0.5, composant:1, equipement:2, mobilier:3 };
 function poidsObjet(it){
   if (!it || it.type === 'quete') return 0;
   const p = parseFloat(it.poids);
@@ -31174,6 +31247,14 @@ function comNotifications(){
       t2: nouveaux.join(', ') + " — l'atelier" });
   }
 
+  // 4b. v774 — les CHANTIERS finis : une notification par pièce construite (clé = porte + fin des travaux)
+  Object.keys(piecesDuJoueur()).forEach(pid=>{
+    const pc = piecesDuJoueur()[pid];
+    if (!pc || !pc.fin || pieceEnTravaux(pc)) return;
+    out.push({ cle:'chantier:' + pid + '#' + pc.fin, type:'atelier', quand: pc.fin,
+      t1:'Construction terminée', t2: nomDePiece(pc) + " — le module 🏗️ du couloir" });
+  });
+
   // 5. Les négociations en attente. SEULE notification qui ouvre son écran : une négociation
   //    n'a pas de lieu dans le vaisseau, c'est un écran vivant à deux.
   if (typeof allMyNegotiations === 'function'){
@@ -31856,6 +31937,160 @@ function texteHolo(occupant){
   const l2 = (l1 === occupant.name) ? '' : (occupant.name || '');
   return { l1, l2, libre:false };
 }
+/* ═══ v774 — LES PIÈCES CONSTRUITES. Une porte du vaisseau n'appartient plus à l'artisan : on y
+   CONSTRUIT une pièce avec un plan (objet « plan de pièce ») et des matériaux communs, depuis le
+   module 🏗️ du couloir. La pièce est au joueur — `piecesConstruites[pointId de la porte]` =
+   { planId, zoneId, metierId, nom, sceneId, debut, fin } — et l'artisan de son métier s'y installe.
+   Un artisan déjà à bord avant la v774 garde sa pièce : elle compte comme construite. ═══ */
+function piecesDuJoueur(){ return (typeof playerSelfData !== 'undefined' && playerSelfData && playerSelfData.piecesConstruites) || {}; }
+function pieceEnTravaux(pc){ return !!(pc && pc.fin && Date.now() < pc.fin); }
+function nomDePiece(pc){ if (!pc) return ''; const z = pc.zoneId ? ficheParId(pc.zoneId) : null; return pc.nom || (z && z.name) || 'Pièce'; }
+function nomMetierParId(mid){ const m = (metiers || []).find(x=> x && x.id === mid); return (m && m.name) || 'son métier'; }
+function dureeRestante(fin){
+  const ms = Math.max(0, (fin || 0) - Date.now()), min = Math.ceil(ms / 60000);
+  return min >= 60 ? Math.floor(min / 60) + ' h ' + String(min % 60).padStart(2, '0') : min + ' min';
+}
+function pieceDeLaPorte(pointId){
+  if (!pointId) return null;
+  const pc = piecesDuJoueur()[pointId];
+  if (pc) return Object.assign({ pointId }, pc);
+  const occ = habitantDeLaPorte(pointId);   // l'ancien système : la pièce venait avec l'artisan
+  if (occ && occ.recruitType !== 'combattant'){
+    const f = occ.sourceCreatureId ? ficheParId(occ.sourceCreatureId) : null;
+    const zid = (f && f.atelierZoneId) || occ.atelierZoneId || null;
+    if (zid) return { pointId, zoneId: zid, metierId: occ.metierId || (f && f.metier) || null, ancienne: true };
+  }
+  return null;
+}
+function texteHoloPiece(pc){
+  if (!pc) return { l1:'Libre', l2:'', libre:true };
+  if (pieceEnTravaux(pc)) return { l1:'En travaux', l2: nomDePiece(pc) + ' · ' + dureeRestante(pc.fin), libre:true };
+  return { l1: nomDePiece(pc), l2:'en attente d\'un habitant', libre:true };
+}
+/* les plans de pièce (objets du type « planPiece ») */
+function plansDePiece(){ return (items || []).filter(it=> it && it.type === 'planPiece' && it.planPiece); }
+function nomPieceDuMetier(mid){
+  const it = plansDePiece().find(x=> x.planPiece.metierId === mid);
+  if (!it) return nomMetierParId(mid);
+  const z = it.planPiece.zoneId ? ficheParId(it.planPiece.zoneId) : null;
+  return it.planPiece.nomPiece || (z && z.name) || nomMetierParId(mid);
+}
+function metierDemandeUnePiece(mid){ return !!mid && plansDePiece().some(it=> it.planPiece.metierId === mid); }
+
+/* Le module de construction : les portes de la pièce du vaisseau où l'on est. */
+function ouvrirModuleConstruction(){
+  if (!sceneViewIsShip){ showToast('Le module de construction ne sert que dans le vaisseau'); return; }
+  const sc = (sceneViewScenes || []).find(x=> x.id === sceneViewCurrentSceneId);
+  const portes = portesDepuisScenes(sc ? [sc] : []);
+  const pts = sc ? (sc.points || []) : [];
+  const nomPorte = (pid, i)=>{ const p = pts.find(x=> x.id === pid); return (p && (p.label || p.nom)) || ('Porte ' + (i + 1)); };
+  const lignes = portes.map((po, i)=>{
+    const occ = habitantDeLaPorte(po.pointId), pc = pieceDeLaPorte(po.pointId);
+    let etat, boutons = '';
+    if (pc && pieceEnTravaux(pc)){ etat = '🏗️ ' + escSac(nomDePiece(pc)) + ' — en travaux, encore ' + dureeRestante(pc.fin); boutons = `<button class="btn-secondary" data-mc-detruire="${po.pointId}">🧨 Arrêter et démolir</button>`; }
+    else if (pc){ etat = '🏠 ' + escSac(nomDePiece(pc)) + (occ ? ' — ' + escSac(occ.name || '') : ' — vide'); boutons = `<button class="btn-secondary" data-mc-demenager="${po.pointId}">🚚 Déménager</button><button class="btn-secondary" data-mc-detruire="${po.pointId}" style="color:var(--danger);">🧨 Détruire</button>`; }
+    else if (occ){ etat = '🚪 ' + escSac(occ.name || '') + ' (sans pièce)'; }
+    else { etat = '⬜ Libre'; boutons = `<button class="btn-primary" data-mc-construire="${po.pointId}">🏗️ Construire ici</button>`; }
+    return `<div style="border:1px solid rgba(255,255,255,.15); border-radius:10px; padding:8px 10px; margin-top:8px;">
+      <div style="font-weight:700;">${escSac(nomPorte(po.pointId, i))}</div>
+      <div class="meta" style="font-size:12px; margin:2px 0 6px;">${etat}</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">${boutons}</div></div>`;
+  }).join('');
+  const f = fenetreSac(`<div style="display:flex; align-items:center; gap:8px;"><div style="font-size:28px;">🏗️</div>
+      <div style="flex:1; font-weight:700;">Module de construction</div><button class="sheet-x" data-fermer>✕</button></div>
+    <p class="meta" style="margin:6px 0 0; font-size:12px;">Les portes de « ${escSac((sc && sc.name) || 'cette pièce')} ». Une pièce se construit avec son plan (il reste dans ton sac) et des matériaux ; l'artisan de son métier peut ensuite s'y installer.</p>
+    ${lignes || '<p class="meta">Aucune porte d\'habitant dans cette pièce.</p>'}`);
+  f.querySelectorAll('[data-mc-construire]').forEach(b=> b.addEventListener('click', ()=>{ f.remove(); choisirPlanAConstruire(b.dataset.mcConstruire, sceneViewCurrentSceneId); }));
+  f.querySelectorAll('[data-mc-detruire]').forEach(b=> b.addEventListener('click', ()=>{ f.remove(); detruirePiece(b.dataset.mcDetruire); }));
+  f.querySelectorAll('[data-mc-demenager]').forEach(b=> b.addEventListener('click', ()=>{ f.remove(); demenagerPiece(b.dataset.mcDemenager); }));
+}
+function choisirPlanAConstruire(pointId, sceneId){
+  const plans = plansDePiece().filter(it=> qteAuSac(it.id) > 0);
+  if (!plans.length){ showToast('Il te faut le plan d\'une pièce : on en trouve en exploration, ou chez un artisan'); return; }
+  const ligne = (it)=>{
+    const pp = it.planPiece, mats = pp.materiaux || [];
+    const ok = mats.every(m=> qteAuSac(m.itemId) >= (m.qty || 1));
+    const detail = mats.map(m=>{ const mi = items.find(x=> x.id === m.itemId); const a = qteAuSac(m.itemId);
+      return `<span style="white-space:nowrap; color:${a >= (m.qty || 1) ? 'inherit' : '#ff8a80'};">${escSac(mi ? mi.name : '?')} ${a}/${m.qty || 1}</span>`; }).join(' · ');
+    return `<div style="border:1px solid rgba(255,255,255,.15); border-radius:10px; padding:8px 10px; margin-top:8px;">
+      <div style="display:flex; gap:8px; align-items:center;"><img src="${urlImageItem(it) || ITEM_PLACEHOLDER_IMG}" style="width:40px; height:40px; object-fit:contain;">
+      <div style="flex:1;"><div style="font-weight:700;">${escSac(it.name)}</div><div class="meta" style="font-size:11px;">${escSac(nomMetierParId(pp.metierId))} · travaux : ${pp.heures || 1} h</div></div></div>
+      <div class="meta" style="font-size:12px; margin:6px 0;">${detail || 'aucun matériau'}</div>
+      <button class="${ok ? 'btn-primary' : 'btn-secondary'}" data-plan="${it.id}" ${ok ? '' : 'disabled style="opacity:.6;"'} style="width:100%;">${ok ? '🏗️ Lancer les travaux' : 'Il manque des matériaux'}</button></div>`;
+  };
+  const f = fenetreSac(`<div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; font-weight:700;">🏗️ Quelle pièce construire ?</div><button class="sheet-x" data-fermer>✕</button></div>` + plans.map(ligne).join(''));
+  f.querySelectorAll('[data-plan]').forEach(b=> b.addEventListener('click', ()=>{ f.remove(); construirePiece(b.dataset.plan, pointId, sceneId); }));
+}
+async function construirePiece(planId, pointId, sceneId){
+  const it = items.find(x=> x.id === planId);
+  if (!it || !it.planPiece || !playerDocRef) return;
+  const pp = it.planPiece, mats = pp.materiaux || [];
+  if (piecesDuJoueur()[pointId] || habitantDeLaPorte(pointId)){ showToast('Cette porte n\'est plus libre'); return; }
+  if (!mats.every(m=> qteAuSac(m.itemId) >= (m.qty || 1))){ showToast('Il manque des matériaux'); return; }
+  const debut = Date.now(), fin = debut + Math.max(1, Math.round((+pp.heures || 1) * 60)) * 60000;
+  const z = pp.zoneId ? ficheParId(pp.zoneId) : null;
+  const pc = { planId, zoneId: pp.zoneId || null, metierId: pp.metierId || null, nom: pp.nomPiece || (z && z.name) || it.name, sceneId: sceneId || null, debut, fin };
+  const maj = { piecesConstruites: { [pointId]: pc }, inventory: {} };
+  mats.forEach(m=>{ maj.inventory[m.itemId] = firebase.firestore.FieldValue.increment(-(m.qty || 1)); });
+  try {
+    await playerDocRef.set(maj, { merge:true });
+    if (playerSelfData){ playerSelfData.piecesConstruites = Object.assign({}, playerSelfData.piecesConstruites || {}, { [pointId]: pc }); }
+    journal('base', 'construction lancée', pc.nom + ' · ' + (pp.heures || 1) + ' h');
+    showToast('🏗️ Travaux lancés : ' + pc.nom + ' — prête dans ' + dureeRestante(fin));
+    planifierFinDeChantier(pc, pointId);
+    redessinerSceneSiVisible();
+  } catch(e){ showToast('Échec : ' + e.message); }
+}
+/* À la fin des travaux, la porte change toute seule (si on la regarde) et le communicateur s'allume. */
+function planifierFinDeChantier(pc, pointId){
+  const reste = (pc && pc.fin || 0) - Date.now();
+  if (reste <= 0 || reste > 24 * 3600000) return;
+  setTimeout(()=>{ try { redessinerSceneSiVisible(); if (typeof refreshComBadge === 'function') refreshComBadge(); } catch(e){} }, reste + 500);
+}
+async function detruirePiece(pointId){
+  const pc = pieceDeLaPorte(pointId);
+  if (!pc || !playerDocRef) return;
+  const occ = habitantDeLaPorte(pointId);
+  const nom = nomDePiece(pc);
+  const msg = occ
+    ? 'Détruire « ' + nom + ' » ? Sans sa pièce, ' + (occ.name || 'son habitant') + ' va quitter le vaisseau (tu pourras aller le recruter à nouveau chez lui). Les matériaux sont perdus, le plan reste dans ton sac.'
+    : 'Détruire « ' + nom + ' » ? Les matériaux sont perdus, le plan reste dans ton sac.';
+  if (!(await appConfirm(msg))) return;
+  try {
+    if (occ) executerRenvoi(occ, null);
+    await playerDocRef.set({ piecesConstruites: { [pointId]: firebase.firestore.FieldValue.delete() } }, { merge:true });
+    if (playerSelfData && playerSelfData.piecesConstruites) delete playerSelfData.piecesConstruites[pointId];
+    showToast('🧨 « ' + nom + ' » est démolie' + (occ ? ' — ' + (occ.name || 'son habitant') + ' est parti' : ''));
+    redessinerSceneSiVisible();
+  } catch(e){ showToast('Échec : ' + e.message); }
+}
+/* Déménager : la pièce (et son habitant) passe derrière une autre porte du vaisseau ; si la porte
+   choisie a déjà une pièce, les deux échangent leur place. */
+async function demenagerPiece(pointId){
+  const pc = pieceDeLaPorte(pointId);
+  if (!pc) return;
+  const portes = await portesDuVaisseau();
+  const autres = portes.filter(p=> p.pointId !== pointId);
+  if (!autres.length){ showToast('Aucune autre porte dans le vaisseau'); return; }
+  const f = fenetreSac(`<div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; font-weight:700;">🚚 Déménager « ${escSac(nomDePiece(pc))} » vers…</div><button class="sheet-x" data-fermer>✕</button></div>`
+    + autres.map((p, i)=>{ const o = pieceDeLaPorte(p.pointId); return `<button class="btn-secondary" data-vers="${p.pointId}" data-scene="${p.sceneId}" style="width:100%; margin-top:6px; text-align:left;">${escSac(p.sceneName || 'Vaisseau')} — porte ${i + 1} : ${o ? '↔️ ' + escSac(nomDePiece(o)) + ' (échange)' : 'libre'}</button>`; }).join(''));
+  f.querySelectorAll('[data-vers]').forEach(b=> b.addEventListener('click', async ()=>{
+    f.remove();
+    const vers = b.dataset.vers, scVers = b.dataset.scene;
+    const ici = (portes.find(p=> p.pointId === pointId) || {}).sceneId || null;
+    const pcA = pieceDeLaPorte(pointId), pcB = pieceDeLaPorte(vers);
+    const occA = habitantDeLaPorte(pointId), occB = habitantDeLaPorte(vers);
+    const propre = (x, sid)=>{ if (!x) return firebase.firestore.FieldValue.delete(); const c = Object.assign({}, x); delete c.pointId; delete c.ancienne; c.sceneId = sid; return c; };
+    try {
+      await playerDocRef.set({ piecesConstruites: { [vers]: propre(pcA, scVers), [pointId]: propre(pcB, ici) } }, { merge:true });
+      if (occA) await recruitsCol.doc(occA.id).update({ porte: { sceneId: scVers, pointId: vers } });
+      if (occB) await recruitsCol.doc(occB.id).update({ porte: { sceneId: ici, pointId } });
+      showToast('🚚 « ' + nomDePiece(pcA) + ' » a déménagé');
+      setTimeout(redessinerSceneSiVisible, 300);
+    } catch(e){ showToast('Échec : ' + e.message); }
+  }));
+}
+
 /* Toutes les portes d'une liste de scènes, dans l'ordre des scènes puis des points. Les variantes
    d'une scène comptent (un point peut n'exister que dans l'une d'elles), sans doublon d'id. */
 function portesDepuisScenes(scenes){
@@ -31878,7 +32113,8 @@ function portesDuVaisseau(zoneId){
     .catch(()=> []);
 }
 function portesLibres(portes){
-  return portes.filter(p=> !habitantDeLaPorte(p.pointId));
+  const pcs = piecesDuJoueur();   // v774 : une porte où une pièce est construite n'est plus libre
+  return portes.filter(p=> !habitantDeLaPorte(p.pointId) && !pcs[p.pointId]);
 }
 function nomDeScene(sceneId){
   const sc = (sceneViewScenes || []).find(s=> s.id === sceneId);
@@ -31948,7 +32184,16 @@ function toucherPorteHabitant(pt){
   }
   const occupant = habitantDeLaPorte(pt.id);
   if (occupant){ roomOuverteDepuisPorte = true; openRecruitRoom(occupant); return; }
-  showToast('Porte libre — le prochain habitant recruté s\'installera ici');
+  /* v774 : une pièce construite sans habitant se visite ; en travaux, on dit combien de temps il reste */
+  const pc = pieceDeLaPorte(pt.id);
+  if (pc && pieceEnTravaux(pc)){ showToast('🏗️ ' + nomDePiece(pc) + ' en travaux — encore ' + dureeRestante(pc.fin)); return; }
+  if (pc && pc.zoneId && ficheParId(pc.zoneId)){
+    document.getElementById('quartersOverlay').classList.remove('show');
+    const retour = sceneViewIsShip ? sceneViewCurrentSceneId : null;
+    openSceneView({ id: pc.zoneId, name: nomDePiece(pc) }, null, { annexe: { recruitId: null, pointId: pt.id, retourSceneId: retour } });
+    return;
+  }
+  showToast('Porte libre — construis-y une pièce depuis le module 🏗️ du couloir');
 }
 
 function openRecruitRoom(hab){
@@ -31985,6 +32230,8 @@ function openRecruitRoom(hab){
   /* v488 — un habitant dont la fiche désigne un atelier-zone y entre directement. On relit la
      fiche d'abord (l'auteur peut avoir changé de zone après le recrutement), le recruté ensuite. */
   const zoneAnnexe = ()=>{
+    const pc = hab.porte && piecesDuJoueur()[hab.porte.pointId];   // v774 : la pièce construite à sa porte
+    if (pc && pc.zoneId && !pieceEnTravaux(pc)) return pc.zoneId;
     const f = hab.sourceCreatureId ? ficheParId(hab.sourceCreatureId) : null;
     return (f && f.atelierZoneId) || hab.atelierZoneId || null;
   };
@@ -32525,6 +32772,7 @@ const SCENE_POINT_TYPES = [
   { id:'plans', label:'📐 Étagère à plans' },
   { id:'atelier', label:'🔧 Atelier de fabrication' },
   { id:'etabli', label:'⚗️ Établi de l\'habitant (creuset, fourneau…)' },   // v490
+  { id:'construction', label:'🏗️ Module de construction (construire, déménager, détruire les pièces)' },   // v774
   { id:'bac', label:'🪴 Bac de culture (serre)' },   // v491
   { id:'emplacement', label:'🧍 Emplacement de PNJ (pièce commune)' },   // v497
   { id:'explorateur', label:'🧭 Poste de l\'explorateur' },
@@ -35010,6 +35258,10 @@ function renderSceneDetailTypeSpecific(pt){
     return;
   }
 
+  if (pt.type === 'construction'){   // v774
+    typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre le <b>module de construction</b> : les portes d'habitant de cette pièce du vaisseau, et pour chacune construire une pièce (avec son plan et ses matériaux), la déménager ou la détruire. Rien à régler ici.<br><br>Tant qu'aucun module n'est posé, un bouton 🏗️ apparaît tout seul dans les pièces du vaisseau qui ont des portes. C'est <b>l'image du point</b> qui lui donne son allure (une borne, un panneau…).</p>`;
+    return;
+  }
   if (pt.type === 'etabli'){
     typeWrap.innerHTML = `<p class="meta" style="color:rgba(255,255,255,.75); margin:0;">Ce point ouvre directement <b>la fabrication de l'habitant de la pièce</b> : ses recettes disponibles, ce qu'il est en train de fabriquer, et les manuels qu'il peut apprendre. Rien à régler ici.<br><br>Il ne fonctionne que dans l'atelier d'un habitant, ouvert depuis sa porte. C'est <b>l'image du point</b> qui lui donne son identité — creuset du fondeur, fourneau du cuisinier, établi…</p>`;
     return;
@@ -36412,7 +36664,7 @@ function openSceneView(creature, resumeSceneId, opts){
       saveCurrentZoneScene();
       if (!resumeSceneId) rollSceneEncounter();
     }
-  }).catch(()=>{ empty.style.display = 'block'; });
+  }).catch((e)=>{ empty.style.display = 'block'; try { journal('erreur', 'ouverture de zone', (e && e.message) || String(e)); } catch(x){} });   // v774 : l'erreur dans la boîte noire
 }
 
 /* v661 — ENTRER DANS UNE ZONE, C'EST TOUT CHARGER D'ABORD. Avant, une pièce s'affichait puis ses
@@ -36652,7 +36904,10 @@ async function renderSceneViewCurrentScene(){
     empty.style.display = 'block';
     return;
   }
-  const sc = resolveSceneContent(scRaw);
+  let sc = resolveSceneContent(scRaw);
+  /* v774 : un couloir du vaisseau avec des portes, sans module de construction posé → un module 🏗️ d'office */
+  if (sceneViewIsShip && !sceneViewAnnexe && (sc.points || []).some(p=> p && p.type === 'habitant') && !(sc.points || []).some(p=> p && p.type === 'construction'))
+    sc = Object.assign({}, sc, { points: (sc.points || []).concat([{ id: 'module-construction-auto', type: 'construction', x: 7, y: 88, w: 11, h: 9 }]) });
   empty.style.display = 'none';
   /* v663 : la photo de la pièce (fond + décors fixes déjà posés), prise à l'enregistrement dans
      l'éditeur. Valable seulement si rien n'a bougé depuis ; sinon on monte la pièce comme avant. */
@@ -36730,6 +36985,9 @@ async function renderSceneViewCurrentScene(){
     }
 
     if (pt.type === 'commande') marquerEtatCommande(el, pt);   // v772 : après le style, qui l'effacerait
+    if (pt.type === 'construction' && !url && !pt.hideIcon){   // v774 : sans image, le module se voit quand même
+      el.innerHTML = '<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><div style="height:100%; aspect-ratio:1; max-height:56px; display:flex; align-items:center; justify-content:center; font-size:26px; border-radius:14px; background:rgba(20,26,38,.72); border:1px solid rgba(127,246,255,.55); box-shadow:0 0 12px rgba(127,246,255,.35);">🏗️</div></div>';
+    }
 
     if (pt.type === 'bac'){
       /* v492 : la plante par-dessus le bac (aussi quand le bac est dessiné dans le décor et
@@ -36754,7 +37012,7 @@ async function renderSceneViewCurrentScene(){
       el.style.overflow = 'visible';
       if (!url && !pt.hideIcon) el.textContent = '';
       const occ = habitantDeLaPorte(pt.id);
-      const t = texteHolo(occ);
+      const t = occ ? texteHolo(occ) : texteHoloPiece(pieceDeLaPorte(pt.id));   // v774 : pièce construite vide, ou en travaux
       const holo = document.createElement('div');
       holo.className = 'holo-panel' + (t.libre ? ' holo-libre' : '') + (deplacementHabitant ? ' holo-cible' : '');
       holo.style.setProperty('--holo', pt.holoTeinte || HOLO_TEINTE_DEFAUT);
@@ -36838,6 +37096,8 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=> toucherBac(pt);   // v491
     } else if (pt.type === 'emplacement'){
       wrapPointActions[pt.id] = ()=> toucherEmplacement(pt);   // v497
+    } else if (pt.type === 'construction'){
+      wrapPointActions[pt.id] = ()=> ouvrirModuleConstruction();   // v774
     } else if (pt.type === 'etabli'){
       /* v490 : l'établi de la pièce ouvre la fabrication de SON habitant, sans passer par
          sa fiche. Il n'a de sens que dans un atelier ouvert depuis une porte d'habitant. */
@@ -43762,6 +44022,21 @@ async function importerScenario(sc){
     const pcs = liste.map(c=> importResoudre(cles.objets, c, items, journal, 'Puzzle « ' + o.name + ' »')).filter(Boolean);
     if (id && pcs.length >= 2){ await itemsCol.doc(id).set({ assemblage: { pieces: pcs } }, { merge:true }); journal.push('🧩 « ' + o.name + ' » : ' + pcs.length + ' morceaux reliés'); }
   }
+  /* v774 — les PLANS DE PIÈCE : `type: "planPiece", plan: { piece: "Cuisine du vaisseau", metier: "Cuisinier",
+     nomPiece?, heures, materiaux: [{ objet, qty }] }` — résolus une fois tous les objets créés. */
+  for (const o of (sc.objets||[])){
+    if (!o || o.type !== 'planPiece' || !o.plan) continue;
+    const id = cles.objets[o.cle || o.name]; if (!id) continue;
+    const z = toutesLesFiches().find(f=> (f.interactionType || '') === 'zone' && cleNom(f.name) === cleNom(o.plan.piece || ''));
+    const m = (metiers || []).find(x=> x && cleNom(x.name) === cleNom(o.plan.metier || ''));
+    if (!z) journal.push('⚠️ Plan « ' + o.name + ' » : pièce « ' + o.plan.piece + ' » introuvable');
+    if (!m) journal.push('⚠️ Plan « ' + o.name + ' » : métier « ' + o.plan.metier + ' » introuvable');
+    const mats = (o.plan.materiaux || []).map(x=>{ const mid = importResoudre(cles.objets, x.objet || x.itemName, items, journal, 'Plan « ' + o.name + ' »'); return mid ? { itemId: mid, qty: Math.max(1, parseInt(x.qty, 10) || 1) } : null; }).filter(Boolean);
+    const planPiece = { zoneId: z ? z.id : null, metierId: m ? m.id : null, nomPiece: o.plan.nomPiece || '', heures: Math.max(0.1, +o.plan.heures || 1), materiaux: mats };
+    await itemsCol.doc(id).set({ planPiece }, { merge:true });
+    const it = (items || []).find(x=> x.id === id); if (it) it.planPiece = planPiece;
+    journal.push('🏗️ Plan « ' + o.name + ' » : ' + (z ? z.name : '?') + ' · ' + mats.length + ' matériau(x) · ' + planPiece.heures + ' h');
+  }
 
   /* --- 2. Recettes (renvoient aux objets) --- */
   for (const r of (sc.recettes||[])){
@@ -44538,7 +44813,7 @@ document.getElementById('scenarioImportDepotBtn').addEventListener('click', ()=>
    ===================================================================================== */
 const CTRL_LIBELLES = { erreur:'ERREUR', avert:'AVERTISSEMENT', info:'INFORMATION' };
 const CTRL_DIST_MIN_M = 80, CTRL_DIST_CONSEIL_M = 100;
-const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli','bac','rangement'];   // points du vaisseau : hors scénario
+const CTRL_TYPES_IGNORES = ['chambre','missions','soin','explorateur','plans','atelier','etabli','bac','rangement','construction'];   // points du vaisseau : hors scénario
 
 function ctrlEtapesDe(f){
   return (Array.isArray(f.dialogueSteps) && f.dialogueSteps.length) ? f.dialogueSteps : (f.dialogueScript ? parseDialogueScript(f.dialogueScript) : []);
