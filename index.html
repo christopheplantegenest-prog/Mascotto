@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v780</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v781</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -6832,6 +6832,11 @@ function fenetreEffetsReponse(ch){
       if (cond.kind === 'combat'){
         return (cond.state === 'not_won' ? 'il n\'a PAS encore battu ' : 'il a déjà battu ') + chezQui;
       }
+      if (cond.kind === 'piece'){   // v781
+        const m = (typeof metiers !== 'undefined' ? metiers : []).find(x=> x && (x.id === (cond.metierId || cond.metier) || x.name === cond.metier));
+        const nom = m ? nomPieceDuMetier(m.id) : (cond.metier || 'sa pièce');
+        return cond.state === 'aucune' ? 'il n\'a aucune pièce « ' + nom + ' » libre à bord' : 'une pièce « ' + nom + ' » est construite et libre à bord';
+      }
       const trouve = choixConnusPartout().find(o=> o.id === cond.choiceId);
       const quoi = trouve ? ('« ' + trouve.reponse + ' »') : 'une réponse supprimée';
       return (cond.taken === 'no' ? 'il n\'a PAS dit ' : 'il a dit ') + quoi + ' à ' + chezQui;
@@ -8637,6 +8642,11 @@ function choixVisible(ch, key, creatureId, etat, listeQuetes){
       if (!etatQueteCorrespond(cond.state, etatQuete(quetes, cond.questId))) return false;
       continue;
     }
+    if (cond.kind === 'piece'){   // v781 : une pièce de tel métier, construite et libre, à bord
+      const libre = pieceLibreDuMetier(cond.metierId || cond.metier);
+      if (cond.state === 'aucune' ? libre : !libre) return false;
+      continue;
+    }
     if (!cond.choiceId) continue;
     const taken = !!choix[choiceUsedKey(cond.creatureId || creatureId, cond.choiceId)];
     if (cond.taken === 'no'){ if (taken) return false; }
@@ -8697,6 +8707,11 @@ function resolveStepText(step, creatureId){
     if (v.kind === 'combat'){   // v750 : « une fois tel personnage battu, il dit autre chose »
       const battu = !!playerCombatsWon[v.creatureId || creatureId];
       if (v.state === 'not_won' ? !battu : battu) return resoudreMarqueurs(v.text);
+      continue;
+    }
+    if (v.kind === 'piece'){   // v781
+      const libre = pieceLibreDuMetier(v.metierId || v.metier);
+      if (v.state === 'aucune' ? !libre : libre) return resoudreMarqueurs(v.text);
       continue;
     }
     if (v.kind === 'choice'){
@@ -31995,6 +32010,16 @@ function nomPieceDuMetier(mid){
   if (!it) return nomMetierParId(mid);
   const z = it.planPiece.zoneId ? ficheParId(it.planPiece.zoneId) : null;
   return it.planPiece.nomPiece || (z && z.name) || nomMetierParId(mid);
+}
+/* v781 — CONDITION DE DIALOGUE « pièce » : { kind:'piece', metier:'Cuisinier', state:'libre' | 'aucune' }.
+   Vraie (libre) si une pièce de ce métier est construite, finie, et que personne ne l'occupe —
+   quel que soit le plan qui l'a bâtie. Le métier se donne par son nom ou son id. */
+function pieceLibreDuMetier(metier){
+  if (!metier) return false;
+  const m = (typeof metiers !== 'undefined' ? metiers : []).find(x=> x && (x.id === metier || x.name === metier));
+  const mid = m ? m.id : metier;
+  const pcs = piecesDuJoueur();
+  return Object.keys(pcs).some(pid=> pcs[pid] && pcs[pid].metierId === mid && !pieceEnTravaux(pcs[pid]) && !habitantDeLaPorte(pid));
 }
 function metierDemandeUnePiece(mid){ return !!mid && plansDePiece().some(it=> it.planPiece.metierId === mid); }
 
