@@ -1620,7 +1620,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v800</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v801</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -12374,7 +12374,8 @@ MÉTHODE DE CONCEPTION — à dérouler AVANT toute image ou tout objet (Claude 
 33. TOUTE VITRE A SA VUE DU DEHORS, DE JOUR ET DE NUIT (21/11). Chaque pièce dont le schéma montre une vitre (fenêtre, baie, verrière, dôme, hublot) reçoit dans le fichier d'import « vueDehors » : « ciel » pour un plafond vitré ou une coupole, sinon le nom d'une vue de la bibliothèque. Sans elle, le magenta prend une vue par défaut qui n'est pas la bonne. Le schéma marque la vitre en bleu clair « vitre » et la ligne du prompt qui la décrit répète le magenta (règle 23).
 34. LES ARCHES OUVERTES (21/11). Pour l'impression d'espace, une pièce qui en continue une autre au FOND (enfilade, galerie, couloir) a une grande ARCHE OUVERTE au milieu du mur du fond, sans porte, son ouverture peinte en magenta comme une vitre (schéma : bleu clair « arche ouverte (vitre) »). Dans le fichier d'import, c'est la sortie vers la pièce suivante avec « arche: true » et le rectangle de l'ouverture : le jeu y montre la pièce suivante en miniature, vivante (décors, personnages du moment, jour et nuit), et entre dedans en zoomant. Seulement au mur du fond, jamais sur un mur de côté. Pour une GRANDE PIÈCE qui se prolonge, c'est TOUT le mur du fond qui est ouvert (rectangle = le mur du fond entier, profondeur ~66 %, hauteur des yeux ~26 % pour que la miniature couvre tout le mur et que les pieds des personnages du fond restent au-dessus du seuil) : les commerçants et leurs comptoirs se tiennent alors DEVANT l'ouverture, sur du sol dégagé.
 35. LES PREMIERS PLANS SONT DÉGAGÉS (21/11). L'image d'une pièce ne contient de meubles que CONTRE LES MURS (fond et côtés). Tout ce qui est posé au milieu du sol — tables, chaises, comptoirs, étals, plantes en pot — est un point de DÉCOR posé par le jeu, dans l'ordre arrière-plan → premier plan, sinon un personnage ou un objet posé là se retrouve dessus. Le schéma laisse tout le sol libre (zones magenta « SOL LIBRE » là où l'on posera quelqu'un).
-36. DES PIÈCES SPACIEUSES (21/11, modèle : le hall du vaisseau de l'utilisateur). Caméra EN HAUTEUR, en plongée marquée, comme depuis une mezzanine ; mur du fond LOIN (il commence vers 22 % de la hauteur et finit vers 52 %), le SOL occupe toute la moitié basse ; plafond haut (verrière, coursive). Les personnages se tiennent au milieu du sol, plus petits (rectangle ~26 % de la hauteur, pieds vers 77 %). Une pièce suivante vue par une ouverture du fond : profondeur ~46 %, hauteur des yeux ~30 %.`;
+36. DES PIÈCES SPACIEUSES (21/11, modèle : le hall du vaisseau de l'utilisateur). Caméra EN HAUTEUR, en plongée marquée, comme depuis une mezzanine ; mur du fond LOIN (il commence vers 22 % de la hauteur et finit vers 52 %), le SOL occupe toute la moitié basse ; plafond haut (verrière, coursive). Les personnages se tiennent au milieu du sol, plus petits (rectangle ~26 % de la hauteur, pieds vers 77 %). Une pièce suivante vue par une ouverture du fond : profondeur ~46 %, hauteur des yeux ~30 %. MAIS une grande salle doit être REMPLIE (21/11 : « trop grande, vide ») : on ne fait grand que ce qui a de quoi l'être (un hall de marché avec tous ses comptoirs, une salle de restaurant) ; une pièce à un ou deux commerçants reste de taille moyenne. Plusieurs commerçants dans la même salle : de chaque côté de l'allée, à deux profondeurs (les plus loin plus petits).
+37. PAS DE PORTE QUI NE MÈNE NULLE PART (21/11). Une porte n'existe dans l'image que si c'est une vraie sortie posée dans le schéma. Le prompt le dit en toutes lettres : « les murs de côté sont pleins, sans porte ni ouverture ». Une salle vide pousse ChatGPT à inventer des portes : la remplir de ce qu'elle contient (étagères, vitrines, enseignes) contre les murs.`;
 const CHARTE_CONCEPTION_DEFAUT = `CHARTE DE CONCEPTION MASCOTTO — règles à appliquer à toute nouvelle zone, pièce ou personnage.
 
 UNIVERS
@@ -44648,6 +44649,22 @@ async function importerMiseAJour(sc){
        dessin de structure, points simples : sorties par nom de pièce, flèche à sa place habituelle).
        Une pièce qui existe déjà sous ce nom n'est pas touchée. */
     const parNomZ = (n)=> scenes.find(x=> x && String(x.name || '').trim().toLowerCase() === String(n || '').trim().toLowerCase());
+    /* v801 : `renommerScenes: [{ ancien, nouveau }]` (mêmes identifiants : les personnages et sorties suivent)
+       et `retirerScenes: [noms]` (les sorties qui y menaient sont retirées, la scène de départ est recalée). */
+    for (const r of (Array.isArray(z.renommerScenes) ? z.renommerScenes : [])){
+      const sc0 = parNomZ(r.ancien);
+      if (!sc0){ if (!parNomZ(r.nouveau)) journal.push('⚠️ « ' + zf.name + ' » : pièce « ' + r.ancien + ' » introuvable'); continue; }
+      sc0.name = String(r.nouveau); touche = true;
+      journal.push('✏️ « ' + zf.name + ' » : « ' + r.ancien + ' » s\'appelle maintenant « ' + r.nouveau + ' »');
+    }
+    for (const nomR of (Array.isArray(z.retirerScenes) ? z.retirerScenes : [])){
+      const sc0 = parNomZ(nomR);
+      if (!sc0) continue;
+      scenes.splice(scenes.indexOf(sc0), 1);
+      scenes.forEach(x=>{ x.points = (x.points || []).filter(pt=> !(pt && pt.targetSceneId === sc0.id)); });
+      if (doc.exists && doc.data().startSceneId === sc0.id && scenes[0]) await zonesCol.doc(zf.id).set({ startSceneId: scenes[0].id }, { merge:true });
+      touche = true; journal.push('🗑️ « ' + zf.name + ' » : pièce « ' + nomR + ' » retirée');
+    }
     const ajoutees = [];
     for (const ns of (Array.isArray(z.nouvellesScenes) ? z.nouvellesScenes : [])){
       if (!ns || !ns.name) continue;
