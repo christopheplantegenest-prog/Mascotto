@@ -576,10 +576,10 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
   #fabOverlay .fab-case .q{ position:absolute; right:3px; bottom:1px; font-size:10px; font-weight:800; color:#1d2433; font-family:var(--mono); }
   #fabOverlay .fab-vide{ grid-column:1 / -1; text-align:center; color:#8a93a6; font-size:13px; padding:14px 0; }
   /* v787 — LA PETITE BULLE : une phrase dite en passant, au-dessus de celui qui parle (même style que le dialogue) */
-  .bulle-passage{ position:fixed; z-index:4300; max-width:min(240px, 70vw); background:#fff; color:#1d2433; border-radius:16px; padding:8px 12px;
+  .bulle-passage{ position:fixed; z-index:4690; max-width:min(240px, 70vw); background:#fff; color:#1d2433; border-radius:16px; padding:8px 12px;
     font-size:13px; line-height:1.35; font-weight:600; box-shadow:0 3px 10px rgba(0,0,0,.28); pointer-events:none; transform:translate(-50%, -100%);
     animation:bullePop .22s cubic-bezier(.2,.9,.3,1.3) both; }
-  .bulle-passage::after{ content:''; position:absolute; left:50%; bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:0; border-top-color:#fff; }
+  .bulle-passage::after{ content:''; position:absolute; left:calc(50% + var(--dx, 0px)); bottom:-7px; margin-left:-7px; border:7px solid transparent; border-bottom:0; border-top-color:#fff; }
   .bulle-passage.part{ animation:bulleFin .2s ease forwards; }
   @keyframes bullePop{ from{ opacity:0; transform:translate(-50%, -80%) scale(.7); } to{ opacity:1; transform:translate(-50%, -100%) scale(1); } }
   @keyframes bulleFin{ to{ opacity:0; transform:translate(-50%, -110%) scale(.9); } }
@@ -1596,7 +1596,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v787</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v788</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -3555,6 +3555,11 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
       <div id="dialogueBlock">
         <div class="field-label">Dialogue</div>
         <div id="dialogueStepsBuilder"></div>
+      </div>
+      <div id="phrasesPassageBlock">
+        <div class="field-label">Phrases en passant (une par ligne)</div>
+        <textarea id="editPhrasesPassage" class="field-input" rows="3" placeholder="Encore toi ?"></textarea>
+        <span id="phrasesPassageAlerte" class="compteur-limite"></span>
       </div>
 
       <div data-rubrique="boutique" data-titre="🛒 Boutique"></div>
@@ -8817,7 +8822,7 @@ function resolveStepText(step, creatureId){
    compteur ; un texte déjà plus long (écrit avant, ou importé) s'affiche en rouge pour qu'on le
    raccourcisse. Les valeurs viennent de la place à l'écran : la réplique tient dans son bloc sans
    défiler, une réponse sur deux lignes, un nom d'attaque dans sa case de combat. */
-const LIMITES_TEXTE = { replique: 260, reponse: 40, attaque: 18, nomPerso: 24 };   // v785 : réponses à 40 (pastilles)
+const LIMITES_TEXTE = { replique: 260, reponse: 40, attaque: 18, nomPerso: 24, phrase: 60 };   // v785 : réponses à 40 (pastilles)
 function limiterChamp(el, genre){
   const max = LIMITES_TEXTE[genre];
   if (!el || !max) return el;
@@ -11484,6 +11489,7 @@ function loadForEdit(id){
   document.getElementById('editVisibilityState').value = (d.visibilityCondition && d.visibilityCondition.state) || 'not_completed';
   document.getElementById('editHideImmediately').checked = !!d.hideOnExitRadius;
   document.getElementById('editName').value = d.name || '';
+  document.getElementById('editPhrasesPassage').value = (d.phrasesPassage || []).join('\n'); verifierPhrasesPassage();   // v788
   limiterChamp(document.getElementById('editName'), 'nomPerso');
   document.getElementById('editMetier').value = d.metier || '';
   document.getElementById('editFonction').value = d.fonction || '';   // v479, facultatif depuis la v487
@@ -11969,6 +11975,7 @@ function resetForm(){
      d'un PNJ tout neuf. On retire l'attribut plutôt que de poser un `src` vide (règle v426). */
   document.getElementById('imagePreview').removeAttribute('src');
   document.getElementById('editName').value = '';
+  document.getElementById('editPhrasesPassage').value = ''; verifierPhrasesPassage();   // v788
   limiterChamp(document.getElementById('editName'), 'nomPerso');
   document.getElementById('editMetier').value = '';
   document.getElementById('editFonction').value = '';   // v479, facultatif depuis la v487
@@ -15726,7 +15733,7 @@ document.getElementById('editSaveBtn').addEventListener('click', async ()=>{
   const recruitScope = document.getElementById('editRecruitScope').value === 'shared' ? 'shared' : 'perPlayer';
   const closedMessage = document.getElementById('editZoneClosedMessage').value.trim();
   const imagePath = uploadedImagePath || null;
-  const data = { name, metier, fonction, atelierZoneId, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, vendVaisseaux, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, pieceVaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, pieceCommune: pendingPieceCommune || null, tailleEmplacement: pendingPieceCommune ? (tailleEmplacementDe(editingId ? ficheParId(editingId) : null)) : 100,   /* v780 : réglée dans l'éditeur de scène */ startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
+  const data = { name, metier, fonction, atelierZoneId, emoji, imageUrl, imagePath, visibilityCondition, hideOnExitRadius, dupeGroup, dialogueSteps, interactionType, canFight, enTravaux, recruitScope, closedMessage, shopItems, shopPhrase, concessionPhrase, vendVaisseaux, combatStats, zoneShowName, combatArenaImageRef, combatArenaImagePath, roomImageRef, roomImagePath, backImageRef, backImagePath, bustImageRef, bustImagePath, combatImageRef, combatImagePath, combatImageScale: editCombatScale, combatImageOffsetY: editCombatOffsetY, backImageOffsetY: editBackOffsetY, explorable, explorerReport, vaisseau, pieceVaisseau, combatPortraitCrop: pendingCombatPortraitCrop || null, lat: pendingLat, lng: pendingLng, assignedZoneId: pendingAssignedZoneId || null, pieceCommune: pendingPieceCommune || null, tailleEmplacement: pendingPieceCommune ? (tailleEmplacementDe(editingId ? ficheParId(editingId) : null)) : 100, phrasesPassage: lirePhrasesPassage(),   /* v780 : réglée dans l'éditeur de scène */ startDate, endDate, startTime, endTime, timeRanges, daysOfWeek, mapIconScale: pendingMapIconScale, mapIconRotation: pendingMapIconRotation, updatedAt: Date.now() };
   /* Une fiche PAS en travaux publie ce qu'elle enregistre : la version figée suit. Une fiche
      en travaux garde la version figée telle quelle — c'est tout l'intérêt. */
   if (!enTravaux){
@@ -25198,6 +25205,7 @@ async function startCombatM2(config, arenaBgUrl, opts){
   } else {
     M2.demarrer(combatState, { allies: config.allies, ennemis: config.ennemis, objets: config.objets, objetsDef: config.objetsDef });
     cfgs = { player: config.allies, enemy: config.ennemis };
+    if (!config.pvp && !opts.test) setTimeout(provoquerAuDebutDuCombat, 900);   // v788 : la provocation
     /* v772 : les vraies stats de chaque combattant, dans la boîte noire — pour comprendre un combat
        qui paraît déséquilibré sans devoir le rejouer (vice, multiplicateur de catégorie, plat, PV de départ). */
     try {
@@ -29597,6 +29605,7 @@ function livrerCraft(recruit){
     return true;
   }).then((ok)=>{
     const recipe = recipes.find(r=> r.id === recipeId);
+    if (ok && recipe) annoncerFabricationFinie(recruit.id, recipe);   // v788
     if (ok && recipe && playerDocRef){
       return playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
     }
@@ -37563,6 +37572,7 @@ async function renderSceneViewCurrentScene(){
 
   const wrapPointActions = {};
   sceneViewPointActions = wrapPointActions;
+  planifierBullesScene();   // v788
   /* v497 : qui se tient dans les emplacements de cette pièce, décidé une fois pour toute la scène. */
   const attribution = attribuerEmplacements(sc, scRaw.id);
   emplacementsSceneCourante = { points: sc.points || [], sceneId: scRaw.id, attribution };
@@ -37666,7 +37676,7 @@ async function renderSceneViewCurrentScene(){
            a la clé, exactement comme une zone hors de ses horaires. */
         const creneauxPorte = (pt.openRanges || []).filter(c=> c && (c.start || c.end));
         if (creneauxPorte.length && !heureDansCreneaux(creneauxPorte)){
-          showToast(pt.closedMessage || 'C\'est fermé pour le moment.');
+          bulleSurPoint(pt, pt.closedMessage || 'C\'est fermé pour le moment.');
           return;
         }
         if (pt.lockType === 'item'){
@@ -37679,7 +37689,7 @@ async function renderSceneViewCurrentScene(){
             } else {
               const it = items.find(i=>i.id===pt.lockItemId);
               /* v733 : un message choisi (« Rien ne se passe. ») garde le secret d'un passage caché */
-              showToast(pt.lockMessage || `🔒 Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
+              bulleSurPoint(pt, pt.lockMessage || `Il te faut ${it ? it.name : 'un objet particulier'} pour passer`);
             }
           });
         } else if (pt.lockType === 'code'){
@@ -37689,7 +37699,7 @@ async function renderSceneViewCurrentScene(){
             .then((saisi)=>{ if (saisi !== null) proceed(); });
         } else if (pt.lockType === 'commandes'){   // v760 : la combinaison des commandes du groupe
           if (commandesOuvertes(pt.lockGroupe)) proceed();
-          else showToast(pt.lockMessage || 'Rien ne se passe.');
+          else bulleSurPoint(pt, pt.lockMessage || 'Rien ne se passe.');
         } else {
           proceed();
         }
@@ -37745,7 +37755,7 @@ async function renderSceneViewCurrentScene(){
             chestVisualState[pt.id] = 'closed';
             renderSceneViewCurrentScene();
           } else {
-            showToast(pt.emptyMessage || (pt.type === 'recolte' ? 'Rien à récolter pour l\'instant, ça repousse.' : 'Tu as déjà fouillé ça.'));
+            bulleSurPoint(pt, pt.emptyMessage || (pt.type === 'recolte' ? 'Rien à récolter pour l\'instant, ça repousse.' : 'Tu as déjà fouillé ça.'));
           }
           return;
         }
@@ -37797,7 +37807,7 @@ async function renderSceneViewCurrentScene(){
               ouvrir();
             } else {
               const it = items.find(i=>i.id===pt.lockItemId);
-              showToast(pt.lockMessage || ('🔒 Il te faut ' + (it ? it.name : 'un objet particulier') + ' pour ouvrir'));
+              bulleSurPoint(pt, pt.lockMessage || ('Il te faut ' + (it ? it.name : 'un objet particulier') + ' pour ouvrir'));
             }
           });
         } else if (pt.lockType === 'code'){
@@ -37805,7 +37815,7 @@ async function renderSceneViewCurrentScene(){
             .then((saisi)=>{ if (saisi !== null) ouvrir(); });
         } else if (pt.lockType === 'commandes'){   // v760
           if (commandesOuvertes(pt.lockGroupe)) ouvrir();
-          else showToast(pt.lockMessage || 'Rien ne se passe.');
+          else bulleSurPoint(pt, pt.lockMessage || 'Rien ne se passe.');
         } else {
           ouvrir();
         }
@@ -37834,7 +37844,7 @@ async function renderSceneViewCurrentScene(){
           const need = pt.reqQty || 1;
           if (have < need){
             const reqIt = items.find(i=>i.id===pt.reqItemId);
-            showToast(`Il te faut ${need} × ${reqIt ? reqIt.name : 'objet requis'}`);
+            bulleSurPoint(pt, `Il te faut ${need} × ${reqIt ? reqIt.name : 'objet requis'}`);
             return;
           }
           const inc = { [pt.reqItemId]: firebase.firestore.FieldValue.increment(-need) };
@@ -37846,7 +37856,7 @@ async function renderSceneViewCurrentScene(){
               const resIt = items.find(i=>i.id===pt.resultItemId);
               showToast(resIt ? `+${pt.resultQty||1} ${resIt.emoji||''} ${resIt.name}` : 'Fait');
             } else {
-              showToast(pt.resultMessage || 'Ça a fonctionné.');
+              bulleSurPoint(pt, pt.resultMessage || 'Ça a fonctionné.');
             }
             const mode = pt.resetMode || 'perPlayer';
             if (mode !== 'unlimited'){
@@ -39353,7 +39363,13 @@ async function montrerChambreNeutre(hab){
   if (!uC) return false;
   const vue = document.getElementById('chambreNeutreVue');
   const pano = monterPanorama(vue, uC, '100%', { css: 'position:absolute; inset:0; width:auto; height:auto;', fixe: true });   // v628 : bord à bord ; v678 : sans défilement
-  if (p){ const r = await elementRobotFlottant(hab, p); if (r) pano.calque.appendChild(r); }
+  if (p){
+    const r = await elementRobotFlottant(hab, p);
+    if (r){
+      pano.calque.appendChild(r);
+      setTimeout(()=>{ if (r.isConnected && !document.getElementById('overlay').classList.contains('show')){ const b = boiteDeLElement(r) || r.getBoundingClientRect(); if (b && b.right - b.left > 0) bulleSur(b, phraseRobotChambre(hab)); } }, 1200);   // v788
+    }
+  }
   return true;
 }
 /* la chambre visible se remet à jour (après 🎨) sans retirer le robot de sa place */
@@ -40577,7 +40593,9 @@ function bulleSur(cible, texte, duree){
   b.className = 'bulle-passage';
   b.textContent = texte;
   document.body.appendChild(b);
-  const x = Math.max(12 + b.offsetWidth / 2, Math.min(window.innerWidth - 12 - b.offsetWidth / 2, (r.left + r.right) / 2));
+  const cx = (r.left + r.right) / 2;
+  const x = Math.max(12 + b.offsetWidth / 2, Math.min(window.innerWidth - 12 - b.offsetWidth / 2, cx));
+  b.style.setProperty('--dx', Math.max(-b.offsetWidth / 2 + 16, Math.min(b.offsetWidth / 2 - 16, cx - x)) + 'px');   // v788 : la pointe vise celui qui parle
   const y = Math.max(b.offsetHeight + 10, r.top - 8);
   b.style.left = x + 'px'; b.style.top = y + 'px';
   bulleCourante = b;
@@ -40585,28 +40603,146 @@ function bulleSur(cible, texte, duree){
   const t = setTimeout(partir, duree || 3000);
   setTimeout(()=> document.addEventListener('pointerdown', partir, true), 50);
 }
+/* ═══ v788 — LES BULLES QUI RENDENT LES PERSONNAGES VIVANTS.
+   Chaque fiche a ses « phrases en passant » (éditeur, rubrique Dialogue ; import `phrasesPassage`).
+   En entrant dans une pièce, un personnage présent en dit une (1,2 s), puis un autre (6 s). Les
+   robots de passage et les robots en chambre ont leurs phrases à eux. Les messages des points d'une
+   zone (fermé, verrouillé, déjà fouillé…) s'affichent en bulle sur le point. ═══ */
+function lirePhrasesPassage(){
+  const el = document.getElementById('editPhrasesPassage');
+  return el ? el.value.split('\n').map(t=> t.trim()).filter(Boolean) : [];
+}
+function verifierPhrasesPassage(){
+  const al = document.getElementById('phrasesPassageAlerte');
+  if (!al) return;
+  const l = lirePhrasesPassage(), trop = l.filter(t=> t.length > LIMITES_TEXTE.phrase).length;
+  al.textContent = l.length ? (trop ? trop + ' phrase' + (trop > 1 ? 's' : '') + ' de plus de ' + LIMITES_TEXTE.phrase + ' lettres' : l.length + ' phrase' + (l.length > 1 ? 's' : '') + ' · ' + LIMITES_TEXTE.phrase + ' lettres max') : LIMITES_TEXTE.phrase + ' lettres max par phrase';
+  al.classList.toggle('trop', trop > 0);
+}
+document.addEventListener('input', (e)=>{ if (e.target && e.target.id === 'editPhrasesPassage') verifierPhrasesPassage(); });
+function phrasesDeFiche(f){
+  if (!f) return [];
+  const lire = (x)=>{ const j = (typeof ficheJouable === 'function' ? ficheJouable(x) : null) || x;
+    return Array.isArray(j.phrasesPassage) && j.phrasesPassage.length ? j.phrasesPassage : (Array.isArray(x.phrasesPassage) ? x.phrasesPassage : []); };
+  const l = lire(f);
+  if (l.length) return l;
+  /* sans phrases à elle, celles d'une autre version du même personnage */
+  const g = f.dupeGroup || f.id, autre = (toutesLesFiches() || []).find(x=> x && x.id !== f.id && (x.dupeGroup || x.id) === g && lire(x).length);
+  return autre ? lire(autre) : [];
+}
+function auHasard(l){ return l && l.length ? l[Math.floor(Math.random() * l.length)] : null; }
+function phraseRobotVisiteur(r){
+  const pa = (typeof platActif === 'function' && r) ? platActif(r) : null;
+  if (pa) return 'Je savoure « ' + pa.nom + ' » !';
+  const mCuis = (typeof metiers !== 'undefined' ? metiers : []).find(m=> m && m.name === 'Cuisinier');
+  const cuistot = !!(mCuis && (recruits || []).some(x=> x && x.metierId === mCuis.id));
+  return auHasard(['Petite pause.', 'Je recharge mes batteries…', 'Tu entends le vaisseau ronronner ?', 'Mes capteurs brillent, non ?',
+    'Zzz… ventilateurs au ralenti…', 'Je rejoue mon dernier combat…', 'Cette table a 42 rivets.', 'Je traîne un peu ici.']
+    .concat(cuistot ? ['J\'attends mon tour au comptoir.', 'Ça sent bon, en cuisine !'] : ['Le comptoir est bien vide…', 'Qui viendra cuisiner ici ?']));
+}
+function boiteDeLElement(el){
+  if (!el) return null;
+  const img = el.querySelector('img');
+  const b = (img && typeof boiteOpaqueAffichee === 'function' && boiteOpaqueAffichee(img)) || el.getBoundingClientRect();
+  return (b && (b.right - b.left) > 0) ? b : null;
+}
+function bulleSurPoint(pt, texte){
+  const el = document.querySelector('#sceneViewImgWrap .scene-point[data-ptid="' + pt.id + '"]');
+  const b = boiteDeLElement(el);
+  if (b) bulleSur(b, texte); else showToast(texte);
+}
+/* qui peut parler dans la pièce affichée : [{ el, phrase() }] */
+function parleursDeLaScene(){
+  const wrap = document.getElementById('sceneViewImgWrap');
+  if (!wrap) return [];
+  const out = [];
+  wrap.querySelectorAll('.scene-point[data-pnjid]').forEach(el=>{
+    if (el.style.display === 'none' || el.style.visibility === 'hidden') return;
+    const f = ficheParId(el.dataset.pnjid);
+    const l = phrasesDeFiche(f);
+    if (l.length) out.push({ el, phrase: ()=> auHasard(l) });
+  });
+  const att = (emplacementsSceneCourante && emplacementsSceneCourante.attribution) || {};
+  Object.keys(att).forEach(pid=>{
+    const el = wrap.querySelector('.scene-point[data-ptid="' + pid + '"]');
+    if (!el) return;
+    const f = att[pid];
+    if (f && f.interactionType === 'robotVisiteur') out.push({ el, phrase: ()=> phraseRobotVisiteur(f._recrue) });
+    else { const l = phrasesDeFiche(f); if (l.length) out.push({ el, phrase: ()=> auHasard(l) }); }
+  });
+  return out;
+}
+let bullesSceneMinuteurs = [];
+function planifierBullesScene(){
+  bullesSceneMinuteurs.forEach(clearTimeout); bullesSceneMinuteurs = [];
+  const jeton = renderSceneViewCurrentScene._jeton;
+  const dejaDit = new Set();
+  const dire = ()=>{
+    if (renderSceneViewCurrentScene._jeton !== jeton) return;
+    const plein = document.getElementById('sceneViewFull');
+    if (!plein || !plein.classList.contains('show')) return;
+    if (document.getElementById('overlay').classList.contains('show') || document.getElementById('fabOverlay') || (typeof combatState !== 'undefined' && combatState && !combatState.finished)) return;
+    const l = parleursDeLaScene().filter(p=> !dejaDit.has(p.el));
+    const p = auHasard(l);
+    if (!p) return;
+    dejaDit.add(p.el);
+    const b = boiteDeLElement(p.el), t = p.phrase();
+    if (b && t) bulleSur(b, t);
+  };
+  bullesSceneMinuteurs.push(setTimeout(dire, 1200), setTimeout(dire, 6000));
+}
+/* l'élément d'un habitant dans sa pièce (son point PNJ ou son rectangle) */
+function elementDeLHabitant(r){
+  const wrap = document.getElementById('sceneViewImgWrap');
+  if (!wrap || !r || !r.sourceCreatureId) return null;
+  const src = ficheParId(r.sourceCreatureId), g = src ? (src.dupeGroup || src.id) : r.sourceCreatureId;
+  const memeGroupe = (id)=>{ const f = ficheParId(id); return id === r.sourceCreatureId || (f && (f.dupeGroup || f.id) === g); };
+  const el = Array.from(wrap.querySelectorAll('.scene-point[data-pnjid]')).find(e=> memeGroupe(e.dataset.pnjid));
+  if (el) return el;
+  const att = (emplacementsSceneCourante && emplacementsSceneCourante.attribution) || {};
+  const pid = Object.keys(att).find(k=> att[k] && att[k].id && memeGroupe(att[k].id));
+  return pid ? wrap.querySelector('.scene-point[data-ptid="' + pid + '"]') : null;
+}
+function annoncerFabricationFinie(recruitId, recipe){
+  if (typeof sceneViewAnnexe === 'undefined' || !sceneViewAnnexe || sceneViewAnnexe.recruitId !== recruitId) return false;
+  const r = recruits.find(x=> x.id === recruitId);
+  const b = boiteDeLElement(elementDeLHabitant(r));
+  if (!b) return false;
+  bulleSur(b, (recipe ? nomDeRecette(recipe) : 'C\'est') + ' : c\'est prêt !');
+  return true;
+}
+function phraseRobotChambre(hab){
+  const m = hab && hab.robotModeleId ? ctModele(hab.robotModeleId) : null;
+  const p = panoplieDuModele(m);
+  if (p.length && Math.random() < 0.4){
+    const poses = new Set(panopliePresente(hab));
+    const manque = p.find(x=> !poses.has(x.itemId));
+    if (manque) return manque.indice || indiceParDefaut(objetDeco(manque.itemId));
+    return 'Je me sens vraiment chez moi.';
+  }
+  const f = hab && hab.sourceCreatureId ? ficheParId(hab.sourceCreatureId) : null;
+  const l = phrasesDeFiche(f);
+  return auHasard(l.length ? l : ['Te voilà !', 'Bienvenue dans ma chambre.', 'J\'étais en veille, pardon.', 'Tu restes un peu ?', 'Je m\'ennuyais de toi.']);
+}
+/* v788 — LA PROVOCATION : au début d'un combat, un adversaire dit une de ses phrases en passant */
+function provoquerAuDebutDuCombat(){
+  if (!combatState || combatState.finished) return;
+  const l = (combatState.fighters || []).filter(f=> f.side === 'enemy' && f.sourceId)
+    .map(f=> ({ f, phrases: phrasesDeFiche(ficheParId(f.sourceId)) })).filter(x=> x.phrases.length);
+  const x = auHasard(l);
+  if (!x) return;
+  const el = document.querySelector('#combatEnemyRow [data-fighter="' + x.f.uid + '"]');
+  const b = boiteDeLElement(el);
+  if (b) bulleSur(b, auHasard(x.phrases), 2600);
+}
 function toucherEmplacement(pt){
   const f = emplacementsSceneCourante && emplacementsSceneCourante.attribution[pt.id];
   if (!f) return;
   if (f.interactionType === 'robotVisiteur'){   // v765 : un robot de l'équipage de passage
     const pa = (typeof platActif === 'function') ? platActif(f._recrue) : null;
-    /* v783 : des phrases qui tiennent avec ou sans cuisinier à bord ; celles qui parlent de la
-       cuisine dépendent de sa présence */
-    const mCuis = (typeof metiers !== 'undefined' ? metiers : []).find(m=> m && m.name === 'Cuisinier');
-    const cuistot = !!(mCuis && (recruits || []).some(r=> r && r.metierId === mCuis.id));
-    const phrases = [' fait une pause.', ' recharge ses batteries.', ' écoute ronronner le vaisseau.', ' fait briller ses capteurs.',
-      ' somnole, ventilateurs au ralenti.', ' rejoue son dernier combat dans sa tête.', ' compte les rivets de la table.', ' traîne un peu ici.']
-      .concat(cuistot ? [' attend son tour au comptoir.', ' renifle ce qui mijote en cuisine.'] : [' fixe le comptoir vide.', ' se demande qui viendra cuisiner ici.']);
-    /* v787 : une petite bulle au-dessus du robot, plus le bandeau du haut. Il parle à la première personne. */
-    const PREM = { ' fait une pause.':'Petite pause.', ' recharge ses batteries.':'Je recharge mes batteries…', ' écoute ronronner le vaisseau.':'Tu entends le vaisseau ronronner ?',
-      ' fait briller ses capteurs.':'Mes capteurs brillent, non ?', ' somnole, ventilateurs au ralenti.':'Zzz… ventilateurs au ralenti…', ' rejoue son dernier combat dans sa tête.':'Je rejoue mon dernier combat…',
-      ' compte les rivets de la table.':'Cette table a 42 rivets.', ' traîne un peu ici.':'Je traîne un peu ici.', ' attend son tour au comptoir.':'J\'attends mon tour au comptoir.',
-      ' renifle ce qui mijote en cuisine.':'Ça sent bon, en cuisine !', ' fixe le comptoir vide.':'Le comptoir est bien vide…', ' se demande qui viendra cuisiner ici.':'Qui viendra cuisiner ici ?' };
-    const ph = phrases[Math.floor(Math.random() * phrases.length)];
-    const texte = pa ? 'Je savoure « ' + pa.nom + ' » !' : (PREM[ph] || ph.trim());
+    const texte = phraseRobotVisiteur(f._recrue);   // v788 : les mêmes que celles dites en entrant
     const el = document.querySelector('#sceneViewImgWrap .scene-point[data-ptid="' + pt.id + '"]');
-    const img = el && el.querySelector('img');
-    const boite = (img && boiteOpaqueAffichee(img)) || (el && el.getBoundingClientRect());
+    const boite = boiteDeLElement(el);
     if (boite) bulleSur(boite, texte); else showToast(f.name + ' : ' + texte);
     return;
   }
@@ -44405,6 +44541,13 @@ async function importerMiseAJour(sc){
         if (f.versionPubliee) maj.versionPubliee = { combatStats: Object.assign({}, f.versionPubliee.combatStats || {}, cs) };   // la version jouée suit
       }
     }
+    if (Array.isArray(p.phrasesPassage)){   // v788 : les phrases en passant (remplacent)
+      maj.phrasesPassage = p.phrasesPassage.map(String);
+      const trop = maj.phrasesPassage.filter(t=> t.length > LIMITES_TEXTE.phrase).length;
+      if (trop) journal.push('⚠️ ' + qui + ' : ' + trop + ' phrase(s) en passant de plus de ' + LIMITES_TEXTE.phrase + ' lettres');
+      if (f.versionPubliee) maj.versionPubliee = Object.assign(maj.versionPubliee || {}, { phrasesPassage: maj.phrasesPassage });
+      quoi.push(maj.phrasesPassage.length + ' phrases en passant');
+    }
     if (p.atelier){ const az = fiches.find(x=> (x.interactionType || '') === 'zone' && x.name === p.atelier); if (az){ maj.atelierZoneId = az.id; quoi.push('atelier « ' + p.atelier + ' »'); } else journal.push('⚠️ ' + qui + ' : atelier « ' + p.atelier + ' » introuvable'); }
     if (Array.isArray(p.dialogueSteps)){
       /* La mise à jour ne résout aucune référence : un dialogue qui renvoie à une quête, un métier
@@ -44903,6 +45046,7 @@ async function importerScenario(sc){
       hideOnExitRadius: !!p.hideOnExitRadius,
       dupeGroup:p.dupeGroup || null,
       dialogueSteps: resoudreDialogue(p.dialogueSteps, 'Dialogue de ' + p.name),
+      phrasesPassage: Array.isArray(p.phrasesPassage) ? p.phrasesPassage.map(String) : [],   // v788
       interactionType:p.interactionType || 'dialogue',
       recruitScope:p.recruitScope || null,
       /* Une ligne de boutique, c'est un objet ET un prix. Le fichier peut écrire
