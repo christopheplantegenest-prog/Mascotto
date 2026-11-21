@@ -1517,7 +1517,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v781</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v782</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -17943,10 +17943,31 @@ function enteteObjetSac(it, qte, grand){
     <button class="sheet-x" data-fermer>✕</button>
   </div>`;
 }
+function libellesCommandes(it){
+  return { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
+    equiper: '🛡️ Équiper', observer: '🔍 Observer', servir: (it && it.plat && it.plat.equipe) ? '🍽️ Servir à toute l\'équipe' : '🍽️ Donner à un robot', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter', assembler: '🧩 Assembler les morceaux' };
+}
+/* v782 : ce que fait une commande du menu d'un objet — partagé par le menu du sac et la fenêtre
+   « Trop chargé » (on peut y manger un plat au lieu de le jeter) */
+function executerCommandeObjet(itemId, c){
+  const it = items.find(i=> i.id === itemId) || null;
+  if (!it && c !== 'jeter') return;
+  if (c === 'servir' && it.plat && it.plat.equipe){   // v764 : le banquet, pour toute l'équipe d'un coup
+    const equipe = (activeTeamIds || []).map(id=> recruits.find(r=> r.id === id)).filter(r=> r && r.recruitType === 'combattant');
+    if (!equipe.length){ showToast('Ton équipe est vide'); return; }
+    servirPlat(equipe, it).then(()=> renderInventory()).catch((err)=> showToast('Échec : ' + err.message));
+    return;
+  }
+  if (c === 'utiliser' || c === 'equiper' || c === 'servir') ouvrirRobotsPourObjet(itemId, c);
+  else if (c === 'observer') observerObjet(it);
+  else if (c === 'assembler') ouvrirPuzzle(assemblageDeLaPiece(itemId));
+  else if (c === 'poser'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPoseChambre(itemId); }
+  else if (c === 'planter'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPlantation(itemId); }
+  else if (c === 'jeter') jeterObjetSac(itemId);
+}
 function ouvrirMenuObjet(itemId){
   const it = items.find(i=> i.id === itemId) || null;
-  const LIB = { utiliser: isCareItem(it) && it.combatUse.mode === 'revive' ? '✨ Utiliser (réanimer)' : isCareItem(it) && it.combatUse.mode === 'mana' ? '🔷 Utiliser (recharger)' : '🧪 Utiliser',
-    equiper: '🛡️ Équiper', observer: '🔍 Observer', servir: (it && it.plat && it.plat.equipe) ? '🍽️ Servir à toute l\'équipe' : '🍽️ Donner à un robot', jeter: '🗑️ Jeter', poser: '🪑 Poser', planter: '🌱 Planter', assembler: '🧩 Assembler les morceaux' };
+  const LIB = libellesCommandes(it);
   /* Poser et Planter ne marchent qu'au bon endroit : ailleurs, le bouton dit où aller */
   const horsDePlace = { poser: chambrePourPoser() ? '' : 'dans la chambre d\'un robot', planter: bacsLibres().length ? '' : 'devant un bac libre' };
   const f = fenetreSac(enteteObjetSac(it, qteAuSac(itemId))
@@ -17957,19 +17978,7 @@ function ouvrirMenuObjet(itemId){
     + '</div>');
   f.querySelectorAll('[data-cmd]').forEach(b=> b.addEventListener('click', ()=>{
     f.remove();
-    const c = b.dataset.cmd;
-    if (c === 'servir' && it.plat && it.plat.equipe){   // v764 : le banquet, pour toute l'équipe d'un coup
-      const equipe = (activeTeamIds || []).map(id=> recruits.find(r=> r.id === id)).filter(r=> r && r.recruitType === 'combattant');
-      if (!equipe.length){ showToast('Ton équipe est vide'); return; }
-      servirPlat(equipe, it).then(()=> renderInventory()).catch((err)=> showToast('Échec : ' + err.message));
-      return;
-    }
-    if (c === 'utiliser' || c === 'equiper' || c === 'servir') ouvrirRobotsPourObjet(itemId, c);
-    else if (c === 'observer') observerObjet(it);
-    else if (c === 'assembler') ouvrirPuzzle(assemblageDeLaPiece(itemId));
-    else if (c === 'poser'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPoseChambre(itemId); }
-    else if (c === 'planter'){ document.getElementById('inventoryOverlay').classList.remove('show'); commencerPlantation(itemId); }
-    else if (c === 'jeter') jeterObjetSac(itemId);
+    executerCommandeObjet(itemId, b.dataset.cmd);
   }));
 }
 /* ═══ v733 — LE PUZZLE. Un objet de quête (une photo, un message…) porte la liste de ses
@@ -18475,7 +18484,10 @@ function ouvrirTri(){
   rafraichirInventaireUI.add(enDirect);
   const entrees = (m, filtre)=> Object.keys(m || {}).filter(id=> (m[id] || 0) > 0 && (!filtre || filtre[id]))
     .map(id=> ({ itemId:id, qty: filtre ? Math.min(filtre[id], m[id]) : m[id], it: items.find(i=> i.id === id) }))
-    .filter(e=> e.it && e.it.type !== 'quete');
+    .filter(e=> e.it && e.it.type !== 'quete')
+    /* v782 : toujours le même ordre (comme le compartiment) — l'ordre des clés de la fiche change
+       à chaque mise à jour, et les objets sautaient sous le doigt */
+    .sort((a, b)=> (a.it.type || '').localeCompare(b.it.type || '') || (a.it.name || '').localeCompare(b.it.name || '', 'fr') || a.itemId.localeCompare(b.itemId));
   const dessiner = ()=>{
     if (!document.body.contains(f)) return;
     const ch = chargeDe(baseResources), ok = ch <= t.cible + 0.05;
@@ -18490,7 +18502,7 @@ function ouvrirTri(){
     f.querySelector('[data-tout]').innerHTML = grilleObjetsHtml(entrees(baseResources), 'data-tri', 5);
     const fini = f.querySelector('[data-fini]');
     fini.disabled = !ok; fini.style.opacity = ok ? '' : '.45';
-    f.querySelectorAll('[data-tri]').forEach(b=> b.addEventListener('click', ()=> retirer(b.dataset.tri)));
+    f.querySelectorAll('[data-tri]').forEach(b=> b.addEventListener('click', ()=> toucher(b.dataset.tri)));
     const l = f.querySelector('[data-laisser]');
     if (l) l.addEventListener('click', ()=> retirerPlusieurs(Object.fromEntries(nv.map(e=> [e.itemId, e.qty]))));
   };
@@ -18505,6 +18517,20 @@ function ouvrirTri(){
     if (occupe) return; occupe = true;
     try { await ecrire(conso); } catch(err){ showToast('Échec : ' + err.message); }
     occupe = false; dessiner();
+  };
+  /* v782 : un objet qui s'utilise (plat, soin) propose d'abord de s'en servir, plutôt que de le jeter */
+  const toucher = (id)=>{
+    if (occupe) return;
+    const it = items.find(i=> i.id === id);
+    const usages = commandesObjet(it).filter(c=> c === 'utiliser' || c === 'servir');
+    if (!usages.length) return retirer(id);
+    const LIB = libellesCommandes(it);
+    const m = fenetreSac(enteteObjetSac(it, baseResources[id] || 0)
+      + '<div style="display:flex; flex-direction:column; gap:6px; margin-top:12px;">'
+      + usages.map(c=> `<button class="btn-capture" data-u="${c}" style="width:100%;">${LIB[c]}</button>`).join('')
+      + `<button class="btn-secondary" data-j style="width:100%; color:var(--danger); border-color:rgba(192,57,43,.4) !important;">${aBord ? '🗄️ Ranger' : '🗑️ Jeter'}</button></div>`);
+    m.querySelectorAll('[data-u]').forEach(b=> b.addEventListener('click', ()=>{ m.remove(); executerCommandeObjet(id, b.dataset.u); }));
+    m.querySelector('[data-j]').addEventListener('click', ()=>{ m.remove(); retirer(id); });
   };
   const retirer = async (id)=>{
     if (occupe) return;
@@ -29245,15 +29271,38 @@ document.getElementById('recruitSheetCloseBtn').addEventListener('click', ()=>{
 });
 
 /* Vérifie régulièrement si une fabrication est terminée */
+/* v782 — UNE FABRICATION N'EST LIVRÉE QU'UNE FOIS. Ce contrôle tourne chaque seconde ; avant, tant
+   que le serveur n'avait pas renvoyé la recrue « vidée » (souvent plus d'une seconde au démarrage),
+   le même plat retombait dans le sac à chaque tour : deux, trois plats pour un seul. On retient
+   la fabrication livrée (recrue + heure de départ), et c'est une transaction sur la recrue qui
+   décide : seul celui qui la trouve encore en cours livre le plat. */
+const craftsLivres = new Set();
+function livrerCraft(recruit){
+  const cle = recruit.id + '@' + recruit.craftingStartedAt;
+  if (craftsLivres.has(cle)) return;
+  craftsLivres.add(cle);
+  const recipeId = recruit.craftingRecipeId, depart = recruit.craftingStartedAt;
+  recruit.craftingRecipeId = null; recruit.craftingStartedAt = null;   // effet immédiat ici
+  const ref = recruitsCol.doc(recruit.id);
+  db.runTransaction(async (tx)=>{
+    const d = await tx.get(ref);
+    const r = d.exists ? d.data() : null;
+    if (!r || r.craftingRecipeId !== recipeId || r.craftingStartedAt !== depart) return false;
+    tx.update(ref, { craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
+    return true;
+  }).then((ok)=>{
+    const recipe = recipes.find(r=> r.id === recipeId);
+    if (ok && recipe && playerDocRef){
+      return playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
+    }
+  }).catch((err)=>{
+    journal('erreur', 'fabrication : livraison', (err && err.message) || String(err), true);
+    setTimeout(()=> craftsLivres.delete(cle), 30000);   // hors ligne : on réessaie dans 30 s, pas chaque seconde
+  });
+}
 setInterval(()=>{
   recruits.forEach(recruit=>{
-    if (recruit.craftingRecipeId && recruitCraftProgress(recruit) >= 1){
-      const recipe = recipes.find(r=>r.id===recruit.craftingRecipeId);
-      if (recipe && playerDocRef){
-        playerDocRef.set({ inventory: { [recipe.outputItemId]: firebase.firestore.FieldValue.increment(recipe.outputQty) } }, { merge:true });
-      }
-      recruitsCol.doc(recruit.id).update({ craftingRecipeId: null, craftingStartedAt: null, craftingDuration: null });
-    }
+    if (recruit.craftingRecipeId && recruitCraftProgress(recruit) >= 1) livrerCraft(recruit);
     if (recruit.recipeTrainingId && recruitRecipeTrainingProgress(recruit) >= 1){
       const learnedRecipes = (recruit.learnedRecipeIds || []).concat(recruit.recipeTrainingId);
       const recipe = recipes.find(r=>r.id===recruit.recipeTrainingId);
