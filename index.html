@@ -604,6 +604,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
   .ecran-artisan .bt-qte button.pm{ width:30px; height:30px; border-radius:50%; border:none; background:#eef1f6; color:#1d2433; font-size:18px; font-weight:800; line-height:1; }
   .ecran-artisan .bt-qte b{ min-width:22px; text-align:center; font-size:15px; font-family:var(--mono); }
   .ecran-artisan .bt-sous{ font-size:11.5px; color:#6b7385; font-weight:600; margin-top:2px; }
+  .ecran-artisan .bt-desc{ margin-top:6px; font-size:12.5px; line-height:1.35; color:#4a5368; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .ecran-artisan .bt-barre{ text-decoration:line-through; opacity:.6; margin-right:4px; }
   .compteur-limite{ display:block; text-align:right; font-size:11px; color:var(--muted); margin:-4px 2px 6px; font-family:var(--mono); }
   .compteur-limite.trop{ color:var(--danger); font-weight:700; }
@@ -1618,7 +1619,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v790</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v791</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -8243,12 +8244,12 @@ function ouvrirBoutique(c){
     const z = ov.querySelector('[data-buste]'), b0 = z && (boiteDeLElement(z) || z.getBoundingClientRect());
     if (!b0 || !document.body.contains(ov)) return;
     const haut = ov.querySelector('.fab-file').getBoundingClientRect().bottom;
-    bulleSur({ left: b0.left, right: b0.right, top: Math.max(b0.top + 20, haut + 90) }, phrase);   // sous la barre du haut
+    bulleSur({ left: b0.left, right: b0.right, top: Math.max(b0.top + 20, haut + 90) }, phrase, 0, true);   // sous la barre du haut ; v791 : elle reste
   }, 600);
   dessinerBoutique();
   chargerBoutique();
 }
-function fermerBoutique(){ const ov = document.getElementById('boutOverlay'); if (ov) ov.remove(); boutEtat = null; }
+function fermerBoutique(){ const ov = document.getElementById('boutOverlay'); if (ov) ov.remove(); boutEtat = null; if (bulleCourante){ bulleCourante.remove(); bulleCourante = null; } }
 async function chargerBoutique(){
   if (!boutEtat || !currentUser || !db) return;
   try {
@@ -8307,9 +8308,14 @@ function dessinerBoutique(){
   const max = e.mode === 'vendre' ? a.n : Math.max(1, Math.floor(e.coins / Math.max(1, a.prix)));
   e.qte = Math.max(1, Math.min(e.qte, Math.max(1, max)));
   const total = a.prix * e.qte, ok = e.mode === 'vendre' ? a.n > 0 : total <= e.coins;
-  bulle.innerHTML = `<div class="fab-tete"><div class="fab-plat" style="border-radius:14px;"><img src="${urlImageItem(a.it) || ITEM_PLACEHOLDER_IMG}" alt=""></div><div style="min-width:0;"><div class="fab-nom">${escSac(a.it.name)}</div><div class="bt-sous">${a.n ? 'Tu en as ' + a.n : 'Tu n\'en as pas'}</div></div></div>
+  /* v791 : ce que fait l'objet et sa description ; toucher l'image ouvre la fiche entière */
+  const effetIt = a.it.plat ? texteEffetPlat(a.it.plat) : ((a.it.equippable || a.it.combatUse) && typeof itemEffectSummary === 'function' ? itemEffectSummary(a.it) : '');
+  bulle.innerHTML = `<div class="fab-tete"><button class="fab-plat" data-voir style="border-radius:14px; border:none; padding:0;"><img src="${urlImageItem(a.it) || ITEM_PLACEHOLDER_IMG}" alt=""></button><div style="min-width:0;"><div class="fab-nom">${escSac(a.it.name)}</div><div class="bt-sous">${a.n ? 'Tu en as ' + a.n : 'Tu n\'en as pas'}</div></div></div>
+    ${effetIt ? '<div class="fab-effet" style="margin-top:6px;">' + escSac(effetIt) + '</div>' : ''}
+    ${a.it.description ? '<div class="bt-desc" data-voir>' + escSac(a.it.description) + '</div>' : ''}
     <div class="bt-qte"><button class="pm" data-moins aria-label="Moins">−</button><b>${e.qte}</b><button class="pm" data-plus aria-label="Plus">+</button>
       <button class="fab-go" data-go ${ok ? '' : 'disabled'}>${e.mode === 'vendre' ? 'Vendre' : 'Acheter'} ${total.toLocaleString('fr-FR')}</button></div>`;
+  bulle.querySelectorAll('[data-voir]').forEach(x=> x.addEventListener('click', ()=>{ observerObjet(a.it); const f = Array.from(document.querySelectorAll('.overlay.show')).pop(); if (f) f.style.zIndex = '4900'; }));
   bulle.querySelector('[data-moins]').addEventListener('click', ()=>{ e.qte = Math.max(1, e.qte - 1); dessinerBoutique(); });
   bulle.querySelector('[data-plus]').addEventListener('click', ()=>{ e.qte = Math.min(Math.max(1, max), e.qte + 1); dessinerBoutique(); });
   bulle.querySelector('[data-go]').addEventListener('click', ()=> echangerEnBoutique(a, e.qte));
@@ -40724,7 +40730,7 @@ function boiteOpaqueAffichee(img){
 /* v787 — LA PETITE BULLE, réutilisable partout : bulleSur(élément ou rectangle écran, texte). Une seule
    à la fois ; elle part toute seule (3 s) ou au premier toucher ailleurs. */
 let bulleCourante = null;
-function bulleSur(cible, texte, duree){
+function bulleSur(cible, texte, duree, fixe){
   if (bulleCourante){ bulleCourante.remove(); bulleCourante = null; }
   const r = cible && cible.getBoundingClientRect ? cible.getBoundingClientRect() : cible;
   if (!r) return;
@@ -40739,8 +40745,10 @@ function bulleSur(cible, texte, duree){
   b.style.left = x + 'px'; b.style.top = y + 'px';
   bulleCourante = b;
   const partir = ()=>{ document.removeEventListener('pointerdown', partir, true); clearTimeout(t); if (!b.isConnected) return; b.classList.add('part'); setTimeout(()=> b.remove(), 220); if (bulleCourante === b) bulleCourante = null; };
+  if (fixe) return b;   // v791 : reste jusqu'à ce qu'on l'enlève (la phrase du vendeur)
   const t = setTimeout(partir, duree || 3000);
   setTimeout(()=> document.addEventListener('pointerdown', partir, true), 50);
+  return b;
 }
 /* ═══ v788 — LES BULLES QUI RENDENT LES PERSONNAGES VIVANTS.
    Chaque fiche a ses « phrases en passant » (éditeur, rubrique Dialogue ; import `phrasesPassage`).
