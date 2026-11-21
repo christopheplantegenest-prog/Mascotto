@@ -1620,7 +1620,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v805</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v806</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13161,6 +13161,8 @@ const ANGLES_DECOR = {
   /* v797 : un meuble posé AU SOL devant un personnage (comptoir, étal, bureau d'accueil) : la caméra de la pièce jointe */
   devant: { nom:'au sol, devant un personnage', prompt:'posé AU SOL au premier plan de la pièce jointe, vu EXACTEMENT avec sa caméra (même hauteur, même plongée) : la façade avant bien droite face à nous, le dessus du plateau légèrement visible, aucune vue de côté' },
   /* v800 : un meuble au sol posé DE PROFIL (comptoir le long de l'allée) — on ne cale jamais proprement un meuble de face */
+  /* v806 : un meuble DESSINÉ DANS LA PIÈCE par ChatGPT (le reste repeint en magenta) : l'angle juste, sans coins à régler */
+  enPlace: { nom:'dessiné dans la pièce', prompt:'dessiné directement dans la pièce jointe, à sa place' },
   profil: { nom:'au sol, de profil', prompt:'posé AU SOL dans la pièce jointe, à GAUCHE de l\'allée centrale, et vu DE PROFIL avec exactement sa caméra (même hauteur, même plongée) : sa longueur part en fuyant vers le fond de la pièce, on voit tout son grand côté en perspective (tourné vers la droite de l\'image, vers l\'allée), son petit bout avant face à nous, et le dessus du plateau en plongée. Jamais de face' },
 };
 const CATEGORIES_DECOR = ['Affiche', 'Panneau', 'Écran', 'Étagère', 'Armoire', 'Rangement', 'Machine', 'Luminaire', 'Plante', 'Tapis', 'Table', 'Siège', 'Autre'];
@@ -13276,13 +13278,118 @@ async function poserPlancheDecor(zid, pid){
   return true;
 }
 /* les planches d'un fichier d'import : objets désignés par le nom de leur pièce et de leur point */
+/* ═══ v806 — LE MEUBLE DESSINÉ DANS LA PIÈCE. Un meuble au sol de travers (comptoir) ne se cale pas à
+   la main : ChatGPT le dessine directement dans l'image de la pièce, dans un cadre rouge qui marque sa
+   place, et repeint tout le reste en magenta. Le jeu enlève le magenta, garde le meuble avec son angle
+   juste et sa place exacte, le range dans sa fiche de la bibliothèque et le pose aussi sur les autres
+   points du même nom (miroir et taille de chacun gardés). ═══ */
+const planchEnPlace = (pl)=> !!(pl && (pl.objets || []).length === 1 && pl.objets[0] && pl.objets[0].angle === 'enPlace');
+async function cadreEnPlace(urlPiece, pt){
+  const img = await chargerImage(await urlPiece); if (!img) return null;
+  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0, W, H);
+  const b = boitePointPct(pt);
+  g.strokeStyle = '#ff1a1a'; g.lineWidth = Math.max(4, Math.round(W * 0.008));
+  g.strokeRect(b.x0 / 100 * W, b.y0 / 100 * H, (b.x1 - b.x0) / 100 * W, (b.y1 - b.y0) / 100 * H);
+  return c.toDataURL('image/jpeg', 0.9);
+}
+function promptMeubleEnPlace(pl, pt){
+  const o = pl.objets[0], gauche = !pt || (pt.x || 50) < 50;
+  return `L'IMAGE JOINTE est une pièce du jeu. Le CADRE ROUGE y marque la place d'un meuble.
+
+Dessine UNE SEULE IMAGE, au MÊME FORMAT et au MÊME CADRAGE que l'image jointe :
+1. Dans le cadre rouge, dessine ${o.nom.toUpperCase()} : ${o.description || ''}
+   Il est posé AU SOL, vu EXACTEMENT avec la caméra de la pièce (caméra à hauteur d'homme, même fuite, même échelle qu'un personnage debout à cet endroit). Il est TRÈS DE TRAVERS, presque DE PROFIL : sa longueur part en fuyant vers le fond de la pièce le long de l'allée, on voit tout son grand côté en perspective, tourné vers ${gauche ? 'la DROITE' : 'la GAUCHE'} de l'image (vers l'allée), son petit bout avant face à nous et un peu le dessus du plateau. Il remplit le cadre, posé en bas du cadre.
+2. Puis repeins TOUT LE RESTE de l'image en MAGENTA PUR (#FF00FF), uni, sans dégradé, sans ombre, sans texture : murs, sol, plafond, personnages, autres meubles, et le cadre rouge lui-même. Seul le meuble reste dessiné, entier, net, sans ombre portée au sol.
+
+${pl.style || ''}
+
+LIVRABLE : une seule image au format de l'image jointe : le meuble seul, à sa place, sur un fond magenta uni. Aucun texte, aucune lettre, aucun chiffre.`;
+}
+function decouperMagenta(img){
+  const W = img.width, H = img.height;
+  if (!W || !H) return { erreur:'image illisible' };
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d', { willReadFrequently:true }); g.drawImage(img, 0, 0);
+  const id = g.getImageData(0, 0, W, H), d = id.data;
+  const col = new Uint32Array(W), lig = new Uint32Array(H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    const i = (y * W + x) * 4, r = d[i], v = d[i + 1], bl = d[i + 2];
+    if (estMagenta(r, v, bl)){ d[i + 3] = 0; continue; }
+    /* bord adouci : un mélange magenta / meuble devient à moitié transparent, sa teinte rose retirée */
+    const m = Math.min(r, bl) - v;
+    if (m > 40 && r > 110 && bl > 110){ const a = Math.max(0, Math.min(1, 1 - (m - 40) / 80)); d[i + 3] = Math.round(255 * a); d[i] = d[i + 2] = Math.min(r, Math.max(v, Math.round((r + v) / 2))); }
+    if (d[i + 3] > 128){ col[x]++; lig[y]++; }
+  }
+  g.putImageData(id, 0, 0);
+  const sx = Math.max(3, H * 0.004), sy = Math.max(3, W * 0.004);
+  let x0 = 0, x1 = W - 1, y0 = 0, y1 = H - 1;
+  while (x0 < W && col[x0] < sx) x0++; while (x1 > x0 && col[x1] < sx) x1--;
+  while (y0 < H && lig[y0] < sy) y0++; while (y1 > y0 && lig[y1] < sy) y1--;
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  if (x0 >= W || w * h < W * H * 0.004) return { erreur:'aucun meuble trouvé (le fond doit être magenta pur)' };
+  if (w * h > W * H * 0.7) return { erreur:'le fond n\'est pas magenta : tout le décor est resté' };
+  const o = document.createElement('canvas'); o.width = w; o.height = h;
+  o.getContext('2d').drawImage(c, x0, y0, w, h, 0, 0, w, h);
+  return { canvas: o, b: { x0: x0 / W * 100, y0: y0 / H * 100, x1: (x1 + 1) / W * 100, y1: (y1 + 1) / H * 100 } };
+}
+async function poserMeubleEnPlace(zid, pid){
+  const doc = await zonesCol.doc(zid).get();
+  const data = (doc.exists && doc.data()) || {};
+  const pl = (data.planchesDecor || []).find(x=> x && x.id === pid);
+  if (!planchEnPlace(pl)){ showToast('Meuble introuvable'); return false; }
+  const o = pl.objets[0], scenes = data.scenes || [];
+  const img = await choisirFichierImage(); if (!img) return false;
+  const r = decouperMagenta(img);
+  if (r.erreur){ showToast('Image refusée : ' + r.erreur + '. Redemande-la à ChatGPT.'); return false; }
+  const ref = await externalizeSceneImage(encoderImageSousLimite(r.canvas, 700, true));
+  if (!ref){ showToast('Échec : image non enregistrée'); return false; }
+  /* sa fiche de la bibliothèque (même nom = même fiche), à l'angle « mur de gauche » comme un meuble de profil */
+  const ex = (typeof items !== 'undefined' ? items : []).find(i=> cleNom(i.name) === cleNom(o.nom) && (famileDe(i) === 'mobilier' || i.deco));
+  const cat = categorieMobilier(o.categorie, o.nom);
+  const mob = JSON.parse(JSON.stringify((ex && ex.mob) || Object.assign(mobVide(), { categorie: cat, pose: 'sol_debout' })));
+  if (!mob.vues) mob.vues = {};
+  mob.vues.gauche = Object.assign(mob.vues.gauche || {}, { ref, path: null });
+  let ficheId = ex ? ex.id : null;
+  const dFiche = { type: 'mobilier', mob, updatedAt: Date.now() };
+  const vg = await vignetteDeMob(mob); if (vg) dFiche.imageUrl = vg;
+  if (ficheId) await itemsCol.doc(ficheId).set(dFiche, { merge:true });
+  else ficheId = (await itemsCol.add(Object.assign({ name: String(o.nom || 'Meuble').trim(), emoji: '🪑', imagePath: null, description: o.description || '', poids: null,
+    sellable: false, basePrice: 10, equippable: false, createdAt: Date.now() }, dFiche))).id;
+  const bw = r.b.x1 - r.b.x0, bh = r.b.y1 - r.b.y0;
+  let poses = 0;
+  scenes.forEach(sc=> (sc && sc.points || []).forEach(pt=>{
+    if (!pt || pt.type !== 'decor') return;
+    const lui = pt.id === o.pointId;
+    if (!lui && !memeNomDecor(pt.label, o.nom)) return;
+    pt.imageRef = ref; pt.imageUrl = ''; pt.imagePath = null; pt.hideIcon = false; delete pt.attendPlanche;
+    pt.ficheId = ficheId; pt.ficheAngle = 'gauche';
+    delete pt.coins; delete pt.pli; pt.rotation = 0; pt.pied = true;
+    if (lui){   // à la place exacte où ChatGPT l'a dessiné
+      pt.x = +((r.b.x0 + r.b.x1) / 2).toFixed(2); pt.y = +((r.b.y0 + r.b.y1) / 2).toFixed(2);
+      pt.w = +bw.toFixed(2); pt.h = +bh.toFixed(2); pt.flipped = false; pt.etirer = true;
+    } else {    // même largeur, même pied ; la hauteur suit les proportions du dessin
+      const bas = (pt.y || 50) + (pt.h || 8) / 2, nh = +((pt.w || 8) * bh / bw).toFixed(2);
+      pt.h = nh; pt.y = +(bas - nh / 2).toFixed(2); pt.etirer = false;
+    }
+    poses++;
+  }));
+  o.posee = true; o.ficheNom = String(o.nom || '').trim();
+  await zonesCol.doc(zid).set({ scenes, planchesDecor: data.planchesDecor, updatedAt: Date.now() }, { merge:true });
+  oublierScenesDeZone(zid);
+  showToast('« ' + o.nom + ' » rangé dans la bibliothèque et posé sur ' + poses + ' place(s) ✅');
+  return true;
+}
 function resoudrePlanchesDecor(liste, scenes, journal, nomZone){
   const nomMin = (t)=> String(t || '').trim().toLowerCase();
   return (liste || []).map((pl, k)=> ({
     id: 'pdz_' + Date.now().toString(36) + '_' + k, nom: pl.nom || ('Planche ' + (k + 1)), style: pl.style || '',
     objets: (pl.objets || []).slice(0, 6).map(o=>{
       const sc = (scenes || []).find(x=> x && nomMin(x.name) === nomMin(o.scene));
-      const pt = sc && (sc.points || []).find(x=> x && x.label === o.point);
+      const cands = sc ? (sc.points || []).filter(x=> x && x.label === o.point) : [];
+      const pres = Array.isArray(o.pres) ? o.pres : null;   // v806 : parmi les points du même nom, le plus proche de [x, y]
+      const pt = pres ? cands.slice().sort((a, b)=> Math.hypot(a.x - pres[0], a.y - pres[1]) - Math.hypot(b.x - pres[0], b.y - pres[1]))[0] : cands[0];
       if (!pt) journal.push('⚠️ « ' + nomZone + ' » : planche « ' + (pl.nom || '') + ' » — point « ' + o.point + ' » introuvable dans « ' + o.scene + ' »');
       return { nom: o.nom || o.point || 'Objet', categorie: o.categorie || o.type || null, angle: ANGLES_DECOR[o.angle] ? o.angle : 'face', description: o.description || '', sceneId: sc ? sc.id : null, pointId: pt ? pt.id : null };
     }),
@@ -13861,6 +13968,24 @@ async function construireBrouillons(){
       const ptsDePlanche = new Set();
       (planchesDe[z.id] || []).forEach(pl=>{
         if (!pl || !pl.id) return;
+        if (planchEnPlace(pl)){   // v806 : le meuble dessiné dans la pièce
+          const o = pl.objets[0]; ptsDePlanche.add(o.pointId);
+          let ptE = null; const scE = scenes.find(sc=> sc && (sc.points || []).some(x=> x && x.id === o.pointId && (ptE = x)));
+          const okE = !!o.posee; if (!okE) manque++;
+          const vraie = scE && (scE.imageUrl || scE.imagePath || scE.imageRef) && !(scE.structureRef && scE.imageRef === scE.structureRef);
+          const cleE = 'pdz|' + z.id + '|' + pl.id;
+          const envoiE = !scE || !ptE ? '<div style="font-size:12px; margin:4px 0;">⚠️ Sa place est introuvable dans la zone.</div>'
+            : !vraie ? '<div style="font-size:12px; margin:4px 0;">⏳ Fais d\'abord l\'image de « ' + esc(scE.name) + ' » : le meuble y est dessiné.</div>'
+            : bouton('data-envoi="' + cleE + '"', '📤 Envoyer à ChatGPT', !okE) + bouton('data-envoi-copie="' + cleE + '"', '📋 Copier');
+          const gestesE = envoiE + bouton('data-poser-enplace="' + z.id + '|' + pl.id + '"', okE ? '📷 Reposer le meuble' : '📷 Poser le meuble');
+          blocs += tache(okE, '🪑 « ' + esc(o.nom) + ' » dessiné dans la pièce',
+            'ChatGPT le dessine directement dans « ' + esc(scE ? scE.name : '?') + ' », à la place du cadre rouge, avec le bon angle : plus de coins à régler.',
+            '1. <b>📤 Envoyer à ChatGPT</b> : la pièce part avec le cadre rouge.<br>2. Enregistre l\'image (le meuble seul sur fond magenta).<br>3. <b>📷 Poser le meuble</b> : le jeu enlève le magenta, le range dans la bibliothèque et le pose sur toutes ses places.',
+            gestesE, false, '<div style="display:flex; flex-wrap:wrap; gap:5px;">' + gestesE + '</div>');
+          if (scE && ptE && vraie) envois[cleE] = ()=> ({ texte: promptMeubleEnPlace(pl, ptE), imgs: [fichierPourPartage('piece-cadre-' + scE.id + '-' + pl.id,
+            cadreEnPlace(scE.imageUrl || (scE.imagePath ? resolveMediaPath(scE.imagePath) : internalizeSceneImage(scE.imageRef)), ptE))] });
+          return;
+        }
         const pts = (pl.objets || []).map(o=>{ ptsDePlanche.add(o.pointId); let p = null; scenes.some(sc=> (p = sc && (sc.points || []).find(x=> x && x.id === o.pointId))); return p; });   // v659 : cherché dans toute la zone
         const okPl = pts.length && pts.every(pt=> pt && (pt.imageRef || pt.imageUrl || pt.imagePath));
         if (!okPl) manque++;
@@ -14255,6 +14380,10 @@ async function construireBrouillons(){
     if (!el){ showToast('Ce robot n\'a pas encore d\'apparence : rien à dessiner pour l\'instant'); return; }
     el.scrollIntoView({ behavior:'smooth', block:'start' });
     el.style.outline = '3px solid var(--accent, #f59a23)'; setTimeout(()=>{ el.style.outline = ''; }, 2500);
+  });
+  sur('[data-poser-enplace]', async (b)=>{   // v806
+    const [zid, pid] = b.dataset.poserEnplace.split('|');
+    if (await poserMeubleEnPlace(zid, pid)) rouvrir();
   });
   sur('[data-poser-pdz]', async (b)=>{   // v657
     const [zid, pid] = b.dataset.poserPdz.split('|');
@@ -17740,7 +17869,7 @@ function controleConceptionPlanche(pl){
   const f = [];
   (pl && pl.objets || []).forEach(o=>{
     if (!o) return;
-    if (/comptoir|[ée]tal|bureau d'accueil|guichet/i.test(o.nom || '') && o.angle !== 'profil') f.push('« ' + o.nom + ' » : un comptoir se demande DE PROFIL, jamais de face (règle 32)');
+    if (/comptoir|[ée]tal|bureau d'accueil|guichet/i.test(o.nom || '') && o.angle !== 'profil' && o.angle !== 'enPlace') f.push('« ' + o.nom + ' » : un comptoir se demande DE PROFIL, jamais de face (règle 32)');
     const cat = o.categorie || '';
     const memes = (typeof items !== 'undefined' ? items : []).filter(i=> i && i.type === 'mobilier' && i.mob && i.mob.categorie === cat && String(i.name || '').trim().toLowerCase() !== String(o.nom || '').trim().toLowerCase());   // v804 : memeNom n'existe pas ici (le guide restait figé)
     if (cat && memes.length >= 10) f.push('« ' + o.nom + ' » : la bibliothèque a déjà ' + memes.length + ' meubles « ' + cat + ' » — en reprendre un');
@@ -35238,6 +35367,7 @@ function renderSceneEditorPoints(){
       ensurePointPixelCache(url);
       el.className = 'scene-point';
       el.style.cssText = `position:absolute; left:${left}px; top:${top}px; width:${w}px; height:${h}px; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; ${selected ? 'outline:3px solid var(--danger); outline-offset:3px;' : ''}`;
+      el.style.filter = filtreTeinte(pt);   // v806
       if (coinsActifs(pt)){ el.innerHTML = ''; poserImageEnCoins(el, url, pt); }   // v643
       else el.innerHTML = `<img src="${url}" style="width:100%; height:100%; ${fitImagePoint(pt)} transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none; -webkit-touch-callout:none;">`;
     } else if (pt.hideIcon){
@@ -35550,6 +35680,10 @@ function renderSceneEditorDpad(){
       /* v768 : sur un décor, ↔ et ↕ ÉTIRENT l'image (largeur et hauteur chacune de son côté) ; ⊡ la remet à ses proportions */
       taille: [{ l:'↔＋', petit:true, act: ()=>{ etirerDecor(); pt.w = clamp((pt.w||8)+step,2,MAXT); after(); } }, { l:'＋', act: ()=> prop(1.08) }, { l:'↕＋', petit:true, act: ()=>{ etirerDecor(); pt.h = clamp((pt.h||8)+step,2,MAXT); after(); } },
         { l:'↔－', petit:true, act: ()=>{ etirerDecor(); pt.w = clamp((pt.w||8)-step,2,MAXT); after(); } }, { l:'－', act: ()=> prop(1 / 1.08) }, { l:'↕－', petit:true, act: ()=>{ etirerDecor(); pt.h = clamp((pt.h||8)-step,2,MAXT); after(); } }]
+        /* v806 : 🎨 la teinte du meuble, par pas de 20° (⟲ la remet d'origine) */
+        .concat(!['emplacement', 'fenetre'].includes(pt.type) && pointEffectiveImageUrl(pt) ? [{ l:'🎨－', petit:true, titre:'Teinte', act: ()=>{ pt.teinte = ((+pt.teinte || 0) + 340) % 360; if (!pt.teinte) delete pt.teinte; after(); } },
+          { l: pt.teinte ? '🎨 ' + pt.teinte + '°' : '🎨', petit:true, actif: !!pt.teinte, titre:'Teinte d\'origine', act: ()=>{ delete pt.teinte; after(); } },
+          { l:'🎨＋', petit:true, titre:'Teinte', act: ()=>{ pt.teinte = ((+pt.teinte || 0) + 20) % 360; if (!pt.teinte) delete pt.teinte; after(); } }] : [])
         .concat(aCoins && pt.type !== 'fenetre' ? [pt.type !== 'emplacement' ? { l: pt.etirer ? '⬌' : '⊡', petit:true, actif: !!pt.etirer, titre: pt.etirer ? 'Étiré : remplit le rectangle (toucher : remettre à ses proportions)' : 'À ses proportions (↔ ou ↕ l\'étirent)', act: ()=>{ pt.etirer = !pt.etirer; after(); } } : null, { l: pt.pied ? '⬇' : '⦿', petit:true, actif: !!pt.pied, titre: pt.pied ? 'Posé par le pied (bas du rectangle)' : 'Centré dans le rectangle', act: ()=>{ pt.pied = !pt.pied; after(); } }, null] : [], cGarder),
       coins: [coin('tl', '◤'), { l:'▲', act: ()=> bougerCoin(0, -pasCoin) }, coin('tr', '◥'),
         { l:'◀', act: ()=> bougerCoin(-pasCoin, 0) }, { l:'⟲', petit:true, titre:'Remettre à plat', act: ()=>{ delete pt.coins; delete pt.pli; after(); } }, { l:'▶', act: ()=> bougerCoin(pasCoin, 0) },
@@ -37701,7 +37835,7 @@ async function prechargerImagesDeZone(zoneId, scenes){
    décors figés) : si on modifie un décor sans réenregistrer, elle est ignorée et la pièce se
    monte comme avant. ═══ */
 let attentesImagesScene = null;
-function pointFigeable(pt){ return !!pt && pt.type === 'decor' && !pt.hideIcon && coinsActifs(pt) && !!(pt.imageRef || pt.imagePath || pt.imageUrl); }
+function pointFigeable(pt){ return !!pt && pt.type === 'decor' && !pt.hideIcon && !pt.teinte && coinsActifs(pt) && !!(pt.imageRef || pt.imagePath || pt.imageUrl); }
 function boitePointPct(pt){
   const w = parseFloat(pt.w) || 8, h = parseFloat(pt.h) || 8;
   const x0 = (parseFloat(pt.x) || 0) - w / 2, y0 = (parseFloat(pt.y) || 0) - h / 2;
@@ -37982,6 +38116,7 @@ async function renderSceneViewCurrentScene(){
     if (url){
       ensurePointPixelCache(url);
       el.style.cssText = `position:absolute; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none;`;
+      el.style.filter = filtreTeinte(pt);   // v806
       if (coinsActifs(pt)) poserImageEnCoins(el, url, pt);   // v643 : déformé dans ses 4 coins
       else el.innerHTML = `<img src="${url}" style="width:100%; height:100%; ${fitImagePoint(pt)} transform:scaleX(${pt.flipped?-1:1}) rotate(${pt.rotation||0}deg); pointer-events:none;">`;
     } else if (pt.hideIcon){
@@ -38740,6 +38875,8 @@ function fondAvecVitres(url, scRaw, nuit, opts){
 function positionImagePoint(pt){ return pt && pt.pied ? 'object-position:50% 100%;' : ''; }
 /* v768 : un décor « étiré » remplit tout son rectangle (largeur et hauteur réglées chacune de son côté :
    un comptoir plus court sans devenir minuscule) ; sinon l'image garde ses proportions */
+/* v806 : la TEINTE d'un meuble (le même comptoir recoloré d'un marchand à l'autre) : les gris restent gris */
+function filtreTeinte(pt){ return pt && pt.teinte ? 'hue-rotate(' + (+pt.teinte || 0) + 'deg)' : ''; }
 function fitImagePoint(pt){ return pt && pt.etirer ? 'object-fit:fill;' : 'object-fit:contain; ' + positionImagePoint(pt); }
 const COINS_ORDRE = ['tl', 'tr', 'br', 'bl'];
 function coinsActifs(pt){
