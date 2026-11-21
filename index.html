@@ -507,6 +507,33 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
   .choice-btn:active{ opacity:.8; }
   .choice-btn.end{ background:var(--accent); color:#fff; border-color:var(--accent); text-align:center; }
 
+  /* ===== v784 — LA FENÊTRE DE DIALOGUE. Plein écran, buste fixe en haut, la réplique dans un bloc
+     clair (texte foncé : lisible en plein soleil), les réponses en tuiles. Bleu = répondre ;
+     or = une réponse qui fait quelque chose (quête, recrutement, objet, combat) ; gris = déjà dite ;
+     la sortie, un lien discret en bas. Les longueurs sont bornées dans l'éditeur (LIMITES_TEXTE). ===== */
+  #overlay.show{ align-items:stretch; justify-content:stretch; }
+  #overlay .sheet{ position:fixed; inset:0; width:100%; max-width:none; height:100%; max-height:none; margin:0; border:none; border-radius:0;
+    padding:0 0 max(10px, env(safe-area-inset-bottom)); background:#0e1424; display:flex; flex-direction:column; overflow:hidden; }
+  #overlay .sheet-top{ flex:0 0 42%; min-height:0; position:relative; display:block; background:linear-gradient(180deg, #24304d, #18213a); border-bottom:2px solid #7fe7ff; }
+  #overlay #sheetEmoji{ width:100%; height:100%; display:flex; align-items:flex-end; justify-content:center; font-size:96px; line-height:1; }
+  #overlay #sheetEmoji img{ width:100% !important; height:100% !important; max-width:none; object-fit:contain; object-position:center bottom; display:block; }
+  #overlay #sheetName{ align-self:flex-start; margin:-13px 0 0 12px; position:relative; z-index:1; background:#7fe7ff; color:#0b1a2a;
+    font-size:13px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; padding:4px 12px; border-radius:4px; }
+  #overlay #sheetMeta{ flex:none; margin:8px 10px 0; background:#f4f7fb; color:#101828; border-radius:10px; padding:10px 12px;
+    font-size:13.5px; line-height:1.42; max-height:32%; overflow-y:auto; font-family:inherit; }
+  #overlay #sheetDist{ display:none; }
+  #overlay #sheetChoices{ flex:1 1 auto; min-height:0; overflow-y:auto; margin:8px 10px 0; display:grid; grid-template-columns:1fr 1fr; gap:6px; align-content:start; }
+  #overlay .choice-btn{ margin:0; min-height:46px; padding:9px 10px; border-radius:8px; border:2px solid #7fe7ff; background:#16213a; color:#fff;
+    font-size:13px; line-height:1.3; font-weight:600; text-align:left; }
+  #overlay .choice-btn.large{ grid-column:1 / -1; }
+  #overlay .choice-btn.effet{ border-color:#ffc34d; background:#2b2412; }
+  #overlay .choice-btn.effet::before{ content:''; display:inline-block; width:7px; height:7px; margin:0 7px 1px 0; background:#ffc34d; transform:rotate(45deg); }
+  #overlay .choice-btn.vu{ border-color:#3b4a66; color:#aab6cc; }
+  #overlay .choice-btn.sortie{ grid-column:1 / -1; min-height:40px; background:none; border:none; color:#c3cde0; text-align:center; font-weight:600; }
+  #overlay .choice-btn.sortie::after{ content:' \203A'; font-size:16px; }
+  .compteur-limite{ display:block; text-align:right; font-size:11px; color:var(--muted); margin:-4px 2px 6px; font-family:var(--mono); }
+  .compteur-limite.trop{ color:var(--danger); font-weight:700; }
+
   .toast{
     position:fixed; top:14px; left:50%; transform:translateX(-50%);
     background:var(--accent); color:#ffffff; font-weight:700; font-size:13px;
@@ -1517,7 +1544,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v783</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v784</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -6096,6 +6123,7 @@ function renderDialogueBuilder(){
     textInput.value = step.text || '';
     textInput.addEventListener('input', ()=>{ step.text = textInput.value; });
     card.appendChild(textInput);
+    limiterChamp(textInput, 'replique');
   } else {
     const variant = step.textVariants[dlgVariantIdx];
     const vIdx = dlgVariantIdx;
@@ -6200,6 +6228,7 @@ function renderDialogueBuilder(){
     vText.value = variant.text || '';
     vText.addEventListener('input', ()=>{ variant.text = vText.value; });
     vRow.appendChild(vText);
+    limiterChamp(vText, 'replique');
 
     const delVBtn = document.createElement('button');
     delVBtn.type = 'button';
@@ -6274,6 +6303,7 @@ function renderDialogueBuilder(){
       if (choicePills[choiceIdx]) choicePills[choiceIdx].textContent = dlgShortText(choice.label, 16);
     });
     row.appendChild(labelInput);
+    limiterChamp(labelInput, 'reponse');
 
     /* Condition d'affichage : quête (comme avant) OU « tel autre choix a déjà été pris »
        — la même liste que dans les variantes de texte, pour que les deux mécanismes
@@ -7104,6 +7134,7 @@ function renderDialogueParcours(wrap){
   texte.value = st.text || '';
   texte.addEventListener('input', ()=>{ st.text = texte.value; });
   box.appendChild(texte);
+  limiterChamp(texte, 'replique');
   box.appendChild(barreDeMarqueurs(texte, (v)=>{ st.text = v; }));
 
   /* Le cas courant : se présenter une fois, puis dire autre chose — SANS toucher aux
@@ -7123,6 +7154,7 @@ function renderDialogueParcours(wrap){
     zoneApres.value = st.textApres || '';
     zoneApres.addEventListener('input', ()=>{ st.textApres = zoneApres.value.trim() ? zoneApres.value : ''; });
     blocApres.appendChild(zoneApres);
+    limiterChamp(zoneApres, 'replique');
     blocApres.appendChild(barreDeMarqueurs(zoneApres, (v)=>{ st.textApres = v.trim() ? v : ''; }));
     const noteApres = document.createElement('p');
     noteApres.className = 'meta';
@@ -7207,6 +7239,7 @@ function renderDialogueParcours(wrap){
     champ.value = ch.label || '';
     champ.addEventListener('input', ()=>{ ch.label = champ.value; });
     ligne.appendChild(champ);
+    limiterChamp(champ, 'reponse');
 
     const aller = document.createElement('button');
     aller.type = 'button';
@@ -8727,6 +8760,41 @@ function resolveStepText(step, creatureId){
   }
   return resoudreMarqueurs(step.text);
 }
+/* v784 — LES LIMITES DE LONGUEUR DES TEXTES, pour tout le jeu. Un seul tableau : chaque champ de
+   l'éditeur qui écrit un de ces textes porte sa limite (on ne peut pas taper au-delà) et un
+   compteur ; un texte déjà plus long (écrit avant, ou importé) s'affiche en rouge pour qu'on le
+   raccourcisse. Les valeurs viennent de la place à l'écran : la réplique tient dans son bloc sans
+   défiler, une réponse sur deux lignes, un nom d'attaque dans sa case de combat. */
+const LIMITES_TEXTE = { replique: 260, reponse: 70, attaque: 18, nomPerso: 24 };
+function limiterChamp(el, genre){
+  const max = LIMITES_TEXTE[genre];
+  if (!el || !max) return el;
+  el.maxLength = Math.max(max, (el.value || '').length);   // un texte déjà trop long reste modifiable (on peut l'écourter)
+  el.dataset.limite = genre;
+  let c = el.nextElementSibling;
+  if (!c || !c.classList.contains('compteur-limite')){ c = document.createElement('span'); c.className = 'compteur-limite'; el.insertAdjacentElement('afterend', c); }
+  const maj = ()=>{
+    const n = (el.value || '').length;
+    c.textContent = n + ' / ' + max;
+    c.classList.toggle('trop', n > max);
+    el.maxLength = Math.max(max, n);
+  };
+  if (!el.dataset.limiteBranche){ el.addEventListener('input', maj); el.dataset.limiteBranche = '1'; }
+  maj();
+  return el;
+}
+/* à l'import : les textes trop longs sont signalés dans le compte rendu, pas coupés */
+function verifierLongueursDialogue(steps, ctx, journal){
+  (steps || []).forEach((st, i)=>{
+    if (!st) return;
+    [['text', st.text], ['textApres', st.textApres]].concat((st.textVariants || []).map(v=> ['variante', v && v.text])).forEach(([q, t])=>{
+      if (t && t.length > LIMITES_TEXTE.replique) journal.push('⚠️ ' + ctx + ' · étape ' + i + ' : réplique de ' + t.length + ' lettres (limite ' + LIMITES_TEXTE.replique + ')');
+    });
+    (st.choices || []).forEach(ch=>{
+      if (ch && ch.label && ch.label.length > LIMITES_TEXTE.reponse) journal.push('⚠️ ' + ctx + ' · étape ' + i + ' : réponse « ' + ch.label.slice(0, 30) + '… » de ' + ch.label.length + ' lettres (limite ' + LIMITES_TEXTE.reponse + ')');
+    });
+  });
+}
 function renderSheet(){
   const c = activeCreature;
   const dist = c._dist !== undefined ? Math.round(c._dist) : null;
@@ -8735,7 +8803,7 @@ function renderSheet(){
   const portrait = buste || urlImageDeFiche(c);   // v771 : l'image d'une autre version si besoin
   emojiEl.innerHTML = bustEnAttente(c)
     ? `<div style="width:160px;height:160px;max-width:100%;margin:0 auto;"></div>`   // v608 : place réservée, pas de clignotement
-    : (portrait ? `<img src="${portrait}" style="width:160px;height:160px;object-fit:contain;max-width:100%;">` : (c.emoji || '🐾'));
+    : (portrait ? `<img src="${portrait}" alt="">` : (c.emoji || '🐾'));   // v784 : le buste remplit le haut de l'écran
   document.getElementById('sheetName').textContent = c.name || '(sans nom)';
   document.getElementById('sheetDist').textContent = dist !== null ? `à ${dist} m` + (c.active ? '' : ' · inactif en ce moment') : '';
 
@@ -8747,7 +8815,7 @@ function renderSheet(){
     /* La croix ayant disparu, c'est ici le seul endroit où l'on pouvait se retrouver
        enfermé : une fiche sans la moindre réplique n'offrait aucun bouton. */
     const sortie = document.createElement('button');
-    sortie.className = 'choice-btn end';
+    sortie.className = 'choice-btn large';
     sortie.textContent = 'Fermer';
     sortie.addEventListener('click', fermerDialogue);
     choicesEl.appendChild(sortie);
@@ -8777,17 +8845,29 @@ function renderSheet(){
 
   if (visibleChoices.length === 0){
     const btn = document.createElement('button');
-    btn.className = 'choice-btn end';
+    btn.className = 'choice-btn large';
     btn.textContent = 'Fermer';
     btn.addEventListener('click', fermerDialogue);
     choicesEl.appendChild(btn);
     return;
   }
 
+  /* v784 : la sortie simple (fin sans effet) va en bas, en lien discret */
+  const aEffet = (ch)=> !!(ch.recruit || ch.questGive || ch.questValidate || ch.itemGrant || ch.action || ch.recherche
+    || (ch.combat && ((Array.isArray(ch.combat.creatureIds) && ch.combat.creatureIds.length) || ch.combat.creatureId)));
+  const estSortie = (ch)=> ch.next === null && !aEffet(ch);
+  const seule = visibleChoices.length === 1;
+  visibleChoices.sort((a, b)=> (estSortie(a.ch) ? 1 : 0) - (estSortie(b.ch) ? 1 : 0));
   visibleChoices.forEach(({ ch, key })=>{
     const btn = document.createElement('button');
-    btn.className = 'choice-btn' + (ch.next === null ? ' end' : '');
-    btn.textContent = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
+    const libelle = ch.label || (ch.next === null ? 'Fermer' : 'Suivant');
+    const classes = ['choice-btn'];
+    if (aEffet(ch)) classes.push('effet');
+    else if (estSortie(ch) && !seule) classes.push('sortie');
+    else if (playerUsedChoices[key]) classes.push('vu');
+    if (seule || libelle.length > 24) classes.push('large');
+    btn.className = classes.join(' ');
+    btn.textContent = libelle;
     btn.addEventListener('click', ()=>{
       if (btn.disabled) return;
       btn.disabled = true;   // v462 : un appui = un effet, même si l'écriture prend quelques ms
@@ -11348,6 +11428,7 @@ function loadForEdit(id){
   document.getElementById('editVisibilityState').value = (d.visibilityCondition && d.visibilityCondition.state) || 'not_completed';
   document.getElementById('editHideImmediately').checked = !!d.hideOnExitRadius;
   document.getElementById('editName').value = d.name || '';
+  limiterChamp(document.getElementById('editName'), 'nomPerso');
   document.getElementById('editMetier').value = d.metier || '';
   document.getElementById('editFonction').value = d.fonction || '';   // v479, facultatif depuis la v487
   renderPnjAtelierZoneSelect(d.atelierZoneId || '');   // v488
@@ -11832,6 +11913,7 @@ function resetForm(){
      d'un PNJ tout neuf. On retire l'attribut plutôt que de poser un `src` vide (règle v426). */
   document.getElementById('imagePreview').removeAttribute('src');
   document.getElementById('editName').value = '';
+  limiterChamp(document.getElementById('editName'), 'nomPerso');
   document.getElementById('editMetier').value = '';
   document.getElementById('editFonction').value = '';   // v479, facultatif depuis la v487
   renderPnjAtelierZoneSelect('');   // v488
@@ -20863,6 +20945,7 @@ function loadAttackForEdit(id){
   if (!a) return;
   editingAttackId = id;
   document.getElementById('attackName').value = a.nom || '';
+  limiterChamp(document.getElementById('attackName'), 'attaque');
   document.getElementById('attackEmoji').value = a.emoji || '';
   document.getElementById('attackDescription').value = a.desc || '';
   document.getElementById('attackVice').value = a.vice || CLES_VICES[0];
@@ -20887,6 +20970,7 @@ function loadAttackForEdit(id){
 function resetAttackForm(){
   editingAttackId = null;
   document.getElementById('attackName').value = '';
+  limiterChamp(document.getElementById('attackName'), 'attaque');
   document.getElementById('attackEmoji').value = '';
   document.getElementById('attackDescription').value = '';
   document.getElementById('attackVice').value = attackListVice || CLES_VICES[0];
@@ -44088,6 +44172,7 @@ async function importerMiseAJour(sc){
         return c;
       };
       const steps = JSON.parse(JSON.stringify(p.dialogueSteps));
+      verifierLongueursDialogue(steps, 'Dialogue de ' + p.name, journal);   // v784
       steps.forEach(st=>{
         (st.textVariants || []).forEach(cond);
         (st.choices || []).forEach(ch=>{
@@ -44457,6 +44542,7 @@ async function importerScenario(sc){
      attend des identifiants. La conversion se fait ici, une fois les quêtes créées.
      `next` reste un numéro d'étape : c'est déjà ce que le jeu enregistre. */
   const resoudreDialogue = (steps, ctx)=>{
+    verifierLongueursDialogue(steps, ctx, journal);   // v784
     (steps||[]).forEach(st=>{
       (st.textVariants || []).forEach(v=>{
         if (!v || !v.questName) return;
