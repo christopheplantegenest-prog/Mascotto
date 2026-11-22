@@ -1620,7 +1620,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v809</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v810</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -38114,7 +38114,7 @@ function figerAncienneScene(wrap){
      point de fuite jusqu'à ce que la miniature remplisse l'écran ; la vraie pièce est dessous. */
   if (zoomArcheProchain){
     const z = zoomArcheProchain; zoomArcheProchain = null;
-    calque.style.transformOrigin = (f.l + f.w / 2) + 'px ' + (f.t + f.h * z.hz) + 'px';
+    calque.style.transformOrigin = (f.l + f.w * (z.cx == null ? 0.5 : z.cx)) + 'px ' + (f.t + f.h * z.hz) + 'px';
     calque.dataset.zoomFin = Date.now() + 520;
     requestAnimationFrame(()=> requestAnimationFrame(()=>{ calque.style.transition = 'transform .5s cubic-bezier(.4,0,.6,1), opacity .22s ease'; calque.style.transform = 'scale(' + (1 / z.k) + ')'; }));
   }
@@ -38268,7 +38268,11 @@ async function renderSceneViewCurrentScene(){
       wrapPointActions[pt.id] = ()=>{
         const proceed = async ()=>{
           if (pt.targetSceneId && sceneViewScenes.find(s=>s.id===pt.targetSceneId)){
-            if (pt.arche) zoomArcheProchain = { k: (pt.archeEchelle || ARCHE_ECHELLE) / 100, hz: (pt.archeHorizon || ARCHE_HORIZON) / 100 };   // v797
+            if (pt.arche){   // v797 ; v810 : l'homothétie réelle de la vue affichée
+              const v = document.querySelector('#sceneViewImgWrap .arche-vue[data-arche-id="' + pt.id + '"]');
+              zoomArcheProchain = v ? { k: +v.dataset.archeK, hz: +v.dataset.archeH / 100, cx: +v.dataset.archeX / 100 }
+                : { k: (pt.archeEchelle || ARCHE_ECHELLE) / 100, hz: (pt.archeHorizon || ARCHE_HORIZON) / 100 };
+            }
             sceneViewCurrentSceneId = pt.targetSceneId;
             agressionsJouees = new Set();   // nouvelle pièce, nouveaux agresseurs
             renderSceneViewCurrentScene();
@@ -38810,9 +38814,16 @@ function masqueArche(url, a){
         const i = y * W + x; if (m[i] || !zone[i]) continue;
         if (m[i-1] || m[i+1] || m[i-W] || m[i+W] || m[i-2] || m[i+2] || m[i-2*W] || m[i+2*W]){ const r = px[i*4], g = px[i*4+1], b = px[i*4+2]; if (r - g > 30 && b - g > 30) out[i] = 1; }
       }
-      for (let i = 0; i < W * H; i++){ px[i*4] = 255; px[i*4+1] = 255; px[i*4+2] = 255; px[i*4+3] = out[i] ? 255 : 0; }
+      let bx0 = W, by0 = H, bx1 = -1, by1 = -1;
+      for (let i = 0; i < W * H; i++){ px[i*4] = 255; px[i*4+1] = 255; px[i*4+2] = 255; px[i*4+3] = out[i] ? 255 : 0;
+        if (out[i]){ const x = i % W, y = (i / W) | 0; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; } }
       cx.putImageData(d, 0, 0);
-      return c.toDataURL('image/png');
+      /* v810 : l'ÉPAISSEUR du passage — une ombre douce sur le pourtour, à l'intérieur de l'ouverture */
+      const o = document.createElement('canvas'); o.width = W; o.height = H;
+      const og = o.getContext('2d'); og.fillStyle = '#000'; og.fillRect(0, 0, W, H);
+      og.globalCompositeOperation = 'destination-out'; og.filter = 'blur(' + Math.max(4, Math.round(W * 0.012)) + 'px)'; og.drawImage(c, 0, 0);
+      return { url: c.toDataURL('image/png'), ombre: o.toDataURL('image/png'),
+        b: { x0: bx0 / W * 100, y0: by0 / H * 100, x1: (bx1 + 1) / W * 100, y1: (by1 + 1) / H * 100 } };
     } catch(e){ return null; }
   })();
   masqueArcheCache.set(cle, p);
@@ -38823,21 +38834,30 @@ function masqueArche(url, a){
 async function vueArche(a, urlFond, nuit){
   const tRaw = sceneViewScenes.find(s=> s.id === a.targetSceneId);
   if (!tRaw || !tRaw.imageUrl) return null;
-  const masque = await masqueArche(urlFond, a);
-  if (!masque) return null;
+  const mq = await masqueArche(urlFond, a);
+  if (!mq) return null;
+  const masque = mq.url;
   const tsc = avecModuleAuto(resolveSceneContent(tRaw));
   const urlNuitT = (tsc.fond === tRaw && tRaw.imageNuitRef && nuit) ? await urlDeRef(tRaw.imageNuitRef) : '';
   let photo = urlNuitT ? null : photoValide(tsc.fond, tsc.points, tsc.photo);
   const fondT = await fondAvecVitres(urlNuitT || (photo ? photo.url : tsc.imageUrl), tRaw, nuit, { sansArches:true });
-  const k = (a.archeEchelle || ARCHE_ECHELLE) / 100, hz = (a.archeHorizon || ARCHE_HORIZON);
+  /* v810 : la pièce du fond CADRÉE dans l'ouverture (retour du 22/11 : « on dirait un tableau, pas assez profond,
+     on voit toute l'image et son plafond ») : elle couvre toute la largeur de l'ouverture, son sol part du
+     seuil — ses comptoirs et ses personnages se voient — et son plafond passe au-dessus du haut de l'ouverture.
+     Une échelle + un décalage, c'est une homothétie : son centre sert au zoom du passage. */
+  const B = mq.b, kw = (B.x1 - B.x0) / 100 * 1.04, kh = (B.y1 - B.y0) / 100 * 1.25;
+  const k = Math.min(0.92, Math.max(0.12, kw, kh));
+  const tx = (B.x0 + B.x1) / 2 - 50 * k, ty = B.y1 + 0.6 - 100 * k;
+  const cxh = tx / (1 - k), hz = ty / (1 - k);
   const el = document.createElement('div');
   el.className = 'scene-point arche-vue';
   el.dataset.ptx = 50; el.dataset.pty = 50; el.dataset.ptw = 100; el.dataset.pth = 100;
   el.style.cssText = 'position:absolute; transform:translate(-50%,-50%); background:none; border:none; box-shadow:none; border-radius:0; pointer-events:none; overflow:hidden;'
     + '-webkit-mask-image:url(' + masque + '); mask-image:url(' + masque + '); -webkit-mask-size:100% 100%; mask-size:100% 100%; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;';
-  el.dataset.archeK = k; el.dataset.archeH = hz;
+  el.dataset.archeK = k; el.dataset.archeH = hz; el.dataset.archeX = cxh; el.dataset.archeId = a.id;
   const monde = document.createElement('div');
-  monde.style.cssText = 'position:absolute; inset:0; transform-origin:50% ' + hz + '%; transform:scale(' + k + ');';
+  /* v810 : la DISTANCE — un peu voilée, moins contrastée, à peine adoucie, comme tout ce qui est loin */
+  monde.style.cssText = 'position:absolute; inset:0; transform-origin:' + cxh + '% ' + hz + '%; transform:scale(' + k + '); filter:saturate(.8) contrast(.86) brightness(1.03) blur(.35px);';
   monde.innerHTML = '<img src="' + fondT + '" style="position:absolute; inset:0; width:100%; height:100%; max-width:none; max-height:none; object-fit:fill;">';
   const attribution = attribuerEmplacements(tsc, tRaw.id);
   (tsc.points || []).forEach(pt=>{
@@ -38855,6 +38875,8 @@ async function vueArche(a, urlFond, nuit){
     monde.appendChild(b);
   });
   el.appendChild(monde);
+  el.insertAdjacentHTML('beforeend', '<div style="position:absolute; inset:0; background:rgba(205,225,245,.16);"></div>'
+    + '<img src="' + mq.ombre + '" style="position:absolute; inset:0; width:100%; height:100%; max-width:none; max-height:none; object-fit:fill; opacity:.55;">');
   return el;
 }
 let zoomArcheProchain = null;   // posé au toucher d'une arche, consommé par figerAncienneScene
