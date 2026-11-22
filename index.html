@@ -937,7 +937,8 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
     position:absolute; inset:0; overflow:hidden;
     display:flex; align-items:center; justify-content:center; background:#111;
   }
-  .scene-imgwrap img{ max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; display:block; user-select:none; -webkit-user-drag:none; -webkit-touch-callout:none; }
+  #sceneViewImgWrap > .scene-point[data-cache="1"]{ display:none !important; }   /* v816 : décor sous condition */
+.scene-imgwrap img{ max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; display:block; user-select:none; -webkit-user-drag:none; -webkit-touch-callout:none; }
   /* v508 : l'IMAGE DE FOND (enfant direct du cadre) est étirée au format de l'écran — plus de
      bandes noires, et une même scène occupe tout le téléphone quel que soit le format fourni.
      Les points étant en % de l'image, ils suivent. Les images de point, elles, restent en contain. */
@@ -1620,7 +1621,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v815</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v816</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -37957,7 +37958,18 @@ async function prechargerImagesDeZone(zoneId, scenes){
    décors figés) : si on modifie un décor sans réenregistrer, elle est ignorée et la pièce se
    monte comme avant. ═══ */
 let attentesImagesScene = null;
-function pointFigeable(pt){ return !!pt && pt.type === 'decor' && !pt.hideIcon && !pt.teinte && coinsActifs(pt) && !!(pt.imageRef || pt.imagePath || pt.imageUrl); }
+/* v816 — un décor qui n'apparaît que dans certaines conditions : tels personnages présents dans la pièce
+   (assis à leur place) et au moins une place occupée parmi une liste (le plat sur la table des clients). */
+function decorVisibleSelon(pt, attribution, points){
+  const v = pt && pt.visibleSi; if (!v) return true;
+  const occ = attribution || {};
+  const noms = new Set(Object.keys(occ).map(id=> occ[id] && occ[id].name).filter(Boolean));
+  if ((v.presents || []).some(n=> !noms.has(n))) return false;
+  const places = (points || []).filter(p=> p && p.type === 'emplacement' && (v.unOccupe || []).includes(p.label));
+  if ((v.unOccupe || []).length && !places.some(p=> occ[p.id])) return false;
+  return true;
+}
+function pointFigeable(pt){ return !!pt && pt.type === 'decor' && !pt.hideIcon && !pt.teinte && !pt.visibleSi && coinsActifs(pt) && !!(pt.imageRef || pt.imagePath || pt.imageUrl); }
 function boitePointPct(pt){
   const w = parseFloat(pt.w) || 8, h = parseFloat(pt.h) || 8;
   const x0 = (parseFloat(pt.x) || 0) - w / 2, y0 = (parseFloat(pt.y) || 0) - h / 2;
@@ -38235,6 +38247,7 @@ async function renderSceneViewCurrentScene(){
     el.dataset.ptid = pt.id;
     el.dataset.ptx = pt.x; el.dataset.pty = pt.y; el.dataset.ptw = pt.w||8; el.dataset.pth = pt.h||8;
     if (pt.type === 'pnj' && pt.linkedPnjId) el.dataset.pnjid = pt.linkedPnjId;
+    if (pt.visibleSi){ el.dataset.visibleSi = '1'; if (!decorVisibleSelon(pt, attribution, sc.points)) el.dataset.cache = '1'; }   // v816
     /* hideIcon l'emporte sur l'image : le point est posé sur un élément déjà dessiné dans le décor. */
     const url = pt.hideIcon ? null : pointEffectiveImageUrl(pt);
     if (url){
@@ -38898,6 +38911,7 @@ async function vueArche(a, urlFond, nuit){
     }
     if (!['decor', 'objet', 'coffre', 'recolte', 'commande', 'bac'].includes(pt.type) || pt.hideIcon) return;
     if ((pt.type === 'objet') && !isScenePointAvailable(pt)) return;
+    if (!decorVisibleSelon(pt, attribution, tsc.points)) return;   // v816
     const url = pointEffectiveImageUrl(pt); if (!url) return;
     const b = boite();
     b.innerHTML = '<img src="' + url + '" style="width:100%; height:100%; max-width:none; max-height:none; ' + fitImagePoint(pt) + ' transform:scaleX(' + (pt.flipped ? -1 : 1) + ') rotate(' + (pt.rotation || 0) + 'deg);">';
@@ -41538,7 +41552,12 @@ function majEmplacementsScene(){
     wrap.appendChild(el);
   });
   cur.attribution = neuf;
-  if (change) positionSceneViewPoints();
+  if (change){   // v816 : les décors sous condition suivent les arrivées et les départs
+    cur.points.forEach(pt=>{ if (!pt || !pt.visibleSi) return;
+      const e = wrap.querySelector('.scene-point[data-ptid="' + pt.id + '"]'); if (!e) return;
+      if (decorVisibleSelon(pt, neuf, cur.points)) delete e.dataset.cache; else e.dataset.cache = '1'; });
+    positionSceneViewPoints();
+  }
 }
 setInterval(majEmplacementsScene, 15000);
 
@@ -45209,6 +45228,40 @@ async function importerMiseAJour(sc){
         touche = true;
         journal.push('🧍 « ' + scn.name + ' » : ' + neufs.length + ' point(s) posé(s) (' + Array.from(new Set(s.points.map(pt=> pt.type || 'decor'))).join(', ') + '), ' + (avant - gardes.length) + ' ancien(s) retiré(s), ' + gardes.length + ' autre(s) inchangé(s)');
       }
+      /* v816 — `ajouterPoints` : des points EN PLUS, sans toucher à ceux déjà posés et réglés (les clients
+         d'un restaurant, le plat sur leur table). Un point du même type et du même nom déjà là est gardé tel
+         quel. `avant: { nom, pres:[x,y] }` le range juste avant ce point (un client derrière sa table) ;
+         `objetImage` prend l'image d'un objet existant ; `visibleSi` : { presents:[noms], unOccupe:[places] }. */
+      if (Array.isArray(s.ajouterPoints)){
+        for (const [i, pt] of s.ajouterPoints.entries()){
+          const type = pt.type || 'decor', label = pt.nom ? String(pt.nom) : '';
+          if (label && (scn.points || []).some(x=> x && x.type === type && x.label === label)){ journal.push('ℹ️ « ' + scn.name + ' » : « ' + label + ' » déjà là — gardé tel quel'); continue; }
+          const np = { id: 'pt_' + Date.now() + '_a' + i + '_' + Math.floor(Math.random() * 1000), type,
+            x: typeof pt.x === 'number' ? pt.x : 50, y: typeof pt.y === 'number' ? pt.y : 50, w: pt.w || 10, h: pt.h || 10, rotation: 0, flipped: !!(pt.flipped || pt.miroir) };
+          if (label) np.label = label;
+          if (type === 'emplacement') np.hideIcon = true;
+          if (pt.pied) np.pied = true;
+          if (pt.visibleSi && typeof pt.visibleSi === 'object') np.visibleSi = { presents: (pt.visibleSi.presents || []).map(String), unOccupe: (pt.visibleSi.unOccupe || []).map(String) };
+          if (pt.objetImage){
+            const it = (items || []).find(x=> x && cleNom(x.name) === cleNom(pt.objetImage));
+            if (!it) journal.push('⚠️ « ' + scn.name + ' » : objet « ' + pt.objetImage + ' » introuvable pour « ' + label + ' »');
+            else if (it.imagePath) np.imagePath = it.imagePath;
+            else if (it.imageUrl && String(it.imageUrl).startsWith('data:')) np.imageRef = await externalizeSceneImage(it.imageUrl);
+            else if (it.imageUrl) np.imageUrl = it.imageUrl;
+            else journal.push('⚠️ « ' + scn.name + ' » : « ' + pt.objetImage + ' » n\'a pas encore d\'image — « ' + label + ' » reste vide');
+          }
+          const liste = (scn.points || []).slice();
+          let k = liste.length;
+          if (pt.avant && pt.avant.nom){
+            const cands = liste.map((x, j)=> ({ x, j })).filter(o=> o.x && o.x.label === pt.avant.nom);
+            const pres = Array.isArray(pt.avant.pres) ? pt.avant.pres : null;
+            if (pres) cands.sort((a, b)=> Math.hypot(a.x.x - pres[0], a.x.y - pres[1]) - Math.hypot(b.x.x - pres[0], b.x.y - pres[1]));
+            if (cands[0]) k = cands[0].j; else journal.push('⚠️ « ' + scn.name + ' » : « ' + pt.avant.nom + ' » introuvable — « ' + label + ' » posé au-dessus de tout');
+          }
+          liste.splice(k, 0, np); scn.points = liste; touche = true;
+          journal.push('➕ « ' + scn.name + ' » : ' + (type === 'emplacement' ? 'place' : 'décor') + ' « ' + label + ' » ajouté(e)' + (np.visibleSi ? ' (visible seulement si ' + np.visibleSi.presents.concat(np.visibleSi.unOccupe.length ? ['une place parmi ' + np.visibleSi.unOccupe.join(', ')] : []).join(' + ') + ')' : ''));
+        }
+      }
     }
     let planchesMaj = null;
     if (Array.isArray(z.planchesDecor)){   // v657 : les planches du fichier remplacent celles de même nom
@@ -45282,9 +45335,21 @@ async function importerMiseAJour(sc){
       majAppliquees: p.cle ? [p.cle] : [], createdAt: Date.now(), updatedAt: Date.now(),
     });
     if (typeof p.apparence === 'string') data.apparence = p.apparence;
+    if (Array.isArray(p.phrasesPassage)) data.phrasesPassage = p.phrasesPassage.map(String);   // v816
+    if (Array.isArray(p.daysOfWeek)) data.daysOfWeek = p.daysOfWeek.map(n=> parseInt(n, 10)).filter(n=> n >= 0 && n <= 6);
+    /* v816 — `dans: { zone, scene }` : la nouvelle version se tient AILLEURS que la source (Mado et son père
+       qui déjeunent chez Taro, à La Coupole) */
+    if (nv.dans && nv.dans.zone){
+      const zf2 = fiches.find(f=> (f.interactionType || '') === 'zone' && cleNom(f.name) === cleNom(nv.dans.zone));
+      const sc2 = zf2 && await zonesCol.doc(zf2.id).get().then(d=> ((d.exists && d.data().scenes) || []).find(x=> x && cleNom(x.name) === cleNom(nv.dans.scene || ''))).catch(()=> null);
+      if (!sc2){ journal.push('⚠️ ' + qui + ' : pièce « ' + (nv.dans.scene || '?') + ' » de « ' + nv.dans.zone + ' » introuvable — nouvelle version non créée'); continue; }
+      data.pieceCommune = { zoneId: zf2.id, sceneId: sc2.id, nom: zf2.name + ' · ' + sc2.name };
+      delete data.assignedZoneId;
+    }
+    const pcV = data.pieceCommune || src.pieceCommune;
     /* son rectangle à elle : retrouvé par son nom, sinon un lien « à poser » → le guide 🧰 le fait poser */
-    if (p.emplacement && p.emplacement.place && src.pieceCommune){
-      const scn = await zonesCol.doc(src.pieceCommune.zoneId).get().then(d=> ((d.exists && d.data().scenes) || []).find(x=> x && x.id === src.pieceCommune.sceneId)).catch(()=> null);
+    if (p.emplacement && p.emplacement.place && pcV){
+      const scn = await zonesCol.doc(pcV.zoneId).get().then(d=> ((d.exists && d.data().scenes) || []).find(x=> x && x.id === pcV.sceneId)).catch(()=> null);
       const pl = scn && (scn.points || []).find(pt=> pt && pt.type === 'emplacement' && pt.label === p.emplacement.place);
       data.emplacementPointId = pl ? pl.id : 'a-poser:' + p.emplacement.place;
     }
