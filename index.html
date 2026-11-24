@@ -1676,7 +1676,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v826</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v827</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -23408,6 +23408,17 @@ function utiliserObjet(acteur, id, cible){
     const n = nettoyerStatuts(c);
     log(`${o.emoji} ${o.nom} : ${n} statut(s) purifie(s) sur ${c.nom}.`);
   }
+  /* v827 : un objet qui pose un ÉTAT — sur un ennemi (poison…) ou sur un allié (bouclier, phénix…) */
+  if (o.effet === 'etat_ennemi' || o.effet === 'etat_allie'){
+    const ennemi = o.effet === 'etat_ennemi';
+    const adverse = acteur.side === 'player' ? 'enemy' : 'player';
+    const bonCamp = (c)=> c && c.alive && (ennemi ? c.side !== acteur.side : c.side === acteur.side);
+    const c = bonCamp(cible) ? cible : (ennemi ? vivants(adverse)[0] : acteur);
+    if (!c){ log('Personne a viser.'); stock[id]++; return false; }
+    const VALEURS = { bouclier:0.25, regen:0.08, atkUp:0.25, vitUp:0.25 };
+    if (hasard(o.chance || 100)) poserStatut(c, o.statut, o.statut === 'phoenix' ? undefined : (o.duree || undefined),   /* le phénix tient jusqu'à la chute */ VALEURS[o.statut], ennemi ? acteur : undefined);
+    else log(`${o.emoji} ${o.nom} : rate sur ${c.nom}.`);
+  }
   if (combat.onObjet) combat.onObjet(acteur.side, id);   // étape 3 : l'objet est décompté du compte du joueur
   return true;
 }
@@ -26103,8 +26114,18 @@ function m2DefObjet(it){
   if (cu.mode === 'revive') return { ...base, effet:'reanimer', pct: cu.revivePercent || 30 };
   if (cu.mode === 'purify') return { ...base, effet:'purifier' };
   if (cu.mode === 'mana')   return { ...base, effet:'mana', valeur: cu.manaValue || 30 };
-  return null;   // états infligés / boosts par objet : pas encore portés sur le moteur 2
+  /* v827 : les objets à ÉTAT (cartouche de poison, balise de relance…) passent sur le moteur 2 */
+  if (cu.mode === 'status_enemy' || cu.mode === 'status_boost'){
+    const st = cu.statusEffect || {};
+    if (st.id === 'purify') return { ...base, effet:'purifier' };
+    const statut = ETAT_OBJET_VERS_M2[st.id];
+    if (!statut) return null;   // un état que le moteur 2 ne connaît pas (cécité) : l'objet reste hors du sac de combat
+    return { ...base, effet: cu.mode === 'status_enemy' ? 'etat_ennemi' : 'etat_allie', statut, duree: st.duration || null, chance: st.chance || 100 };
+  }
+  return null;
 }
+const ETAT_OBJET_VERS_M2 = { poison:'poison', burn:'brulure', sleep:'sommeil', stun:'paralysie', confuse:'confusion', paralysis:'paralysie',
+  silence:'sceau', slow:'ralenti', shield:'bouclier', regen:'regen', haste:'vitUp', taunt:'taunt', counter:'contre', reflect:'reflet', revive:'phoenix' };
 function m2ObjetsDuJoueur(){
   const stock = {}, def = {};
   items.forEach(it=>{
@@ -27577,7 +27598,7 @@ function m2LancerUltime(acteur){
 /* Pendant le choix d'une cible, les cartes de l'autre camp s'estompent : on voit tout de suite où taper. */
 function m2CarteHorsCible(f, att, acteur){
   if (!att || !acteur || !combatState) return false;
-  const camp = m2CampVise(att.kind);
+  const camp = att.versEnnemi ? 'adverse' : m2CampVise(att.kind);   // v827
   if (camp === 'allie') return f.side !== acteur.side;
   if (camp === 'adverse') return f.side === acteur.side;
   return false;
@@ -27594,10 +27615,11 @@ function m2MenuObjets(acteur){
     + `<button type="button" class="btn-secondary" id="m2ObjetsRetourBtn" style="width:calc(100% - 6px); margin:0 3px 3px;">↩️ Retour</button>`;
   panel.querySelectorAll('[data-objet]').forEach(b=> b.addEventListener('click', ()=>{
     const k = b.dataset.objet, o = defs[k];
-    const action = { objet:k, kind:'item', isItem:true, name: o.nom, combatUse:{ mode: o.effet === 'reanimer' ? 'revive' : 'heal' } };
+    const versEnnemi = o.effet === 'etat_ennemi';   // v827
+    const action = { objet:k, kind:'item', isItem:true, versEnnemi, name: o.nom, combatUse:{ mode: o.effet === 'reanimer' ? 'revive' : 'heal' } };
     const cibles = o.effet === 'reanimer'
       ? combatState.fighters.filter(x=> x.side === acteur.side && !x.alive && !x.aFui)
-      : M2.vivants(acteur.side);
+      : M2.vivants(versEnnemi ? (acteur.side === 'player' ? 'enemy' : 'player') : acteur.side);
     if (!cibles.length){ showToast(o.nom + ' : personne à réanimer'); return; }
     combatState.pendingAttack = action;   // v451 : toujours un tap sur la cible, même seule
     renderCombatTargetingPanel(acteur, `${o.emoji} ${o.nom} — pour qui ?`);
@@ -27631,6 +27653,12 @@ async function m2ClicCarte(uid){
   }
   if (att.kind === 'item'){
     const reanime = att.combatUse && att.combatUse.mode === 'revive';
+    if (att.versEnnemi){   // v827
+      if (cible.side === acteur.side){ showToast('Cible ennemie requise'); return; }
+      if (!cible.alive) return;
+      await m2Jouer(acteur, { objet: att.objet }, cible);
+      return;
+    }
     if (cible.side !== acteur.side){ showToast('Cible alliée requise'); return; }
     if (reanime && cible.alive){ showToast('Ce robot n\'est pas K.O.'); return; }
     if (!reanime && !cible.alive) return;
