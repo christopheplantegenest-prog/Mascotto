@@ -1676,7 +1676,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v827</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v828</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -45329,6 +45329,10 @@ async function importerAdversaires(liste, journal){
 }
 async function importerMiseAJour(sc){
   const journal = ['ℹ️ Mise à jour faite par ' + ((document.getElementById('appVersionLabel') || {}).textContent || '?')];
+  /* v828 — `objets: [{ name, supprimer: true }]` : l'objet est effacé du catalogue, À LA FIN de l'import
+     (les autres étapes ne le voient plus : elles ne risquent pas de le recréer). */
+  const objetsASupprimer = (Array.isArray(sc.objets) ? sc.objets : []).filter(o=> o && o.supprimer);
+  if (objetsASupprimer.length) sc = Object.assign({}, sc, { objets: sc.objets.filter(o=> !(o && o.supprimer)) });
   /* v618 — LES ADVERSAIRES. `adversaires: [{ nom, modele, emoji?, timeRanges?, ia?, ecart? }]` :
      une fiche de combat (monstre) par adversaire, retrouvée par son nom ; son robot vient du
      catalogue (stats et attaques du modèle). Ils passent AVANT les scènes, qui peuvent les citer. */
@@ -45917,6 +45921,12 @@ async function importerMiseAJour(sc){
   try { await importerReglagesAttaques(sc.attaquesCombat, journal); } catch(e){ journal.push('⚠️ Attaques : ' + e.message); }   // v603
   try { await importerModelesCombat(sc.modelesCombat, journal); } catch(e){ journal.push('⚠️ Modèles : ' + e.message); }   // v604
   try { await verifierImportCombat(sc, journal); } catch(e){ journal.push('⚠️ Vérification : ' + e.message); }   // v604
+  for (const o of objetsASupprimer){   // v828
+    const it = (items || []).find(i=> i && cleNom(i.name) === cleNom(o.name));
+    if (!it){ journal.push('ℹ️ Objet « ' + o.name + ' » : déjà absent'); continue; }
+    try { await itemsCol.doc(it.id).delete(); journal.push('🗑️ Objet « ' + it.name + ' » supprimé'); }
+    catch(e){ journal.push('⚠️ Objet « ' + o.name + ' » : ' + e.message); }
+  }
   journal.push('— Rien d\'autre n\'a bougé : images, objets et réglages posés à la main sont intacts.');
   return journal;
 }
