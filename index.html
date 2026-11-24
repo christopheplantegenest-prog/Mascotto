@@ -428,6 +428,13 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
   .comp-poche.actif{ background:var(--panel); color:var(--text); box-shadow:0 1px 4px rgba(18,36,26,.14); }
   .comp-poche .n{ font-weight:400; font-size:11px; opacity:.7; margin-left:3px; }
   .comp-charge{ flex:none; font-family:var(--mono); font-size:13px; font-weight:700; color:var(--muted); padding:6px 10px; border-radius:10px; background:var(--bg); border:1px solid var(--line); white-space:nowrap; }
+  .sac-grille{ position:relative; width:100%; border-radius:12px; touch-action:none; user-select:none; -webkit-user-select:none;
+    background-color:rgba(128,128,128,.10); background-image:linear-gradient(rgba(128,128,128,.28) 1px, transparent 1px), linear-gradient(90deg, rgba(128,128,128,.28) 1px, transparent 1px);
+    background-size:calc(100% / 8) calc(100% / 6); border:1px solid rgba(128,128,128,.35); }
+  .sac-piece{ position:absolute; box-sizing:border-box; padding:3px; border-radius:8px; background:var(--card, #fff); border:1px solid rgba(128,128,128,.45); display:flex; align-items:center; justify-content:center; touch-action:none; }
+  .sac-piece img{ width:100%; height:100%; object-fit:contain; pointer-events:none; -webkit-user-drag:none; }
+  .sac-piece .qte{ position:absolute; right:3px; bottom:2px; font-size:11px; font-weight:800; font-family:var(--mono); background:rgba(0,0,0,.62); color:#fff; border-radius:6px; padding:0 4px; }
+  .sac-piece.glisse{ z-index:5; opacity:.85; box-shadow:0 6px 18px rgba(0,0,0,.35); }
   .comp-charge.plein{ color:var(--warn); border-color:rgba(168,93,0,.35); }
   .comp-charge.trop{ color:var(--danger); border-color:rgba(192,57,43,.4); }
   .comp-grille{ display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; }
@@ -1621,7 +1628,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v817</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v818</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -3061,14 +3068,11 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
       <div class="field-label">Description</div>
       <textarea id="itemDescription" class="field-input" style="min-height:60px;" placeholder="Un morceau de bois brut."></textarea>
 
-      <div class="field-label">Poids dans le compartiment</div>
-      <select id="itemPoids" class="field-input">
-        <option value="">Automatique (selon le type : graine 0,1 · ressource 0,5 · composant 1 · équipement 2 · meuble 3)</option>
-        <option value="0.1">0,1 — minuscule</option>
-        <option value="0.5">0,5 — petit</option>
-        <option value="1">1 — léger</option>
-        <option value="2">2 — moyen</option>
-        <option value="3">3 — lourd</option>
+      <div class="field-label">Place dans le sac (cases)</div>
+      <select id="itemTaille" class="field-input">
+        <option value="">Automatique (1 case ; équipement 1×2 ; meuble 2×2)</option>
+        <option value="1x1">1 × 1</option><option value="1x2">1 × 2</option><option value="2x1">2 × 1</option><option value="1x3">1 × 3</option><option value="3x1">3 × 1</option>
+        <option value="2x2">2 × 2</option><option value="2x3">2 × 3</option><option value="3x2">3 × 2</option><option value="3x3">3 × 3</option>
       </select>
 
       <div class="field-label" id="itemCombatUsableRow" style="display:none; align-items:center; gap:8px;">
@@ -17876,7 +17880,7 @@ function loadItemForEdit(id){
   remplirChampsPlan(it.planPiece);   // v774
   if (it.composant && it.composant.vice) document.getElementById('itemComposantVice').value = it.composant.vice;
   document.getElementById('itemDescription').value = it.description || '';
-  document.getElementById('itemPoids').value = [0.1, 0.5, 1, 2, 3].includes(+it.poids) ? String(+it.poids) : '';   // v669
+  document.getElementById('itemTaille').value = /^[1-3]x[1-3]$/.test(String(it.taille || '')) ? it.taille : '';   // v818
   const equippable = !!it.equippable;
   const isEquipType = (it.type || 'ressource') === 'equipement';
   document.getElementById('itemEquippableRow').style.display = isEquipType ? 'none' : 'flex';
@@ -18122,7 +18126,7 @@ function resetItemForm(){
   remplirChampsPlat(null);   // v764
   remplirChampsPlan(null);   // v774
   document.getElementById('itemDescription').value = '';
-  document.getElementById('itemPoids').value = '';   // v669 : automatique
+  document.getElementById('itemTaille').value = '';   // v818 : automatique
   document.getElementById('itemEquippableRow').style.display = 'flex';
   document.getElementById('itemEquippable').checked = false;
   document.getElementById('itemEffectWrap').style.display = 'none';
@@ -18204,7 +18208,7 @@ document.getElementById('itemSaveBtn').addEventListener('click', async ()=>{
     };
     if (culture.stages.length < 2){ showToast('Une graine demande au moins deux stades'); return; }
   }
-  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, poids: parseFloat(document.getElementById('itemPoids').value) || null, updatedAt: Date.now() };
+  const data = { name, emoji, imageUrl, imagePath: uploadedItemImagePath || null, type, description, equippable, equipCategory, ultimeCle, ultimeRestriction, effectType, effectValue, effectDuration, effectSeconds, effectMetiers, sellable, basePrice, combatUse, composant, culture, taille: document.getElementById('itemTaille').value || null, updatedAt: Date.now() };
   data.plat = type === 'plat' ? lireChampsPlat() : null;   // v764
   data.planPiece = type === 'planPiece' ? lireChampsPlan() : null;   // v774
   if (type === 'planPiece' && (!data.planPiece.zoneId || !data.planPiece.metierId)){ showToast('Un plan de pièce : choisis la pièce et le métier'); return; }
@@ -18565,11 +18569,152 @@ function poidsObjet(it){
   return POIDS_PAR_TYPE[it.type] != null ? POIDS_PAR_TYPE[it.type] : 1;
 }
 const fmtPoids = (x)=> (Math.round(x * 10) / 10).toLocaleString('fr-FR');
+/* ═══ v818 — LE SAC EN GRILLE (24/11 : « la charge, c'est pas clair » ; modèle : Kenshi). Le sac est une
+   grille de 8 × 6 cases. Chaque objet a sa TAILLE (réglée dans sa fiche : 1×1 … 3×3, sinon une taille par
+   défaut selon son type) ; les petits objets identiques s'EMPILENT dans une case. Le jeu range tout seul ;
+   le joueur peut glisser un objet ailleurs, le tourner d'un appui long, et « Ranger » retasse tout. La
+   disposition est gardée dans la fiche joueur (sacDispo : { "id#n": {x,y,r} }). Un objet qui n'a pas la
+   place reste DEHORS : la fenêtre « Pas la place » le montre. Les objets de quête ne prennent pas de place. ═══ */
+const SAC_L = 8, SAC_H = 6;
+const TAILLE_PAR_TYPE = { planPiece:[1,1], graine:[1,1], ressource:[1,1], consommable:[1,1], plat:[1,1], apprentissage:[1,1], composant:[1,1], equipement:[1,2], mobilier:[2,2] };
+const PILE_PAR_TYPE = { planPiece:10, graine:10, ressource:10, consommable:5, plat:5, apprentissage:5, composant:5 };
+let sacDispo = {};
+function tailleObjet(it){
+  if (!it || it.type === 'quete') return null;
+  const m = /^\s*([1-4])\s*[x×]\s*([1-4])\s*$/i.exec(String(it.taille || ''));
+  if (m) return [+m[1], +m[2]];
+  if (it.deco || it.type === 'mobilier') return [2, 2];
+  return (TAILLE_PAR_TYPE[it.type] || [1, 1]).slice();
+}
+function pileMax(it){
+  const t = tailleObjet(it);
+  if (!t) return 1;
+  if (parseInt(it.pile, 10) > 0) return parseInt(it.pile, 10);   // une pile réglée dans la fiche (des planches 2×1 par 5)
+  if (t[0] * t[1] > 1) return 1;
+  return Math.max(1, parseInt(it.pile, 10) || PILE_PAR_TYPE[it.type] || 5);
+}
+function pilesSac(inv){
+  const out = [];
+  Object.keys(inv || {}).sort().forEach(id=>{
+    let q = inv[id] || 0; if (q <= 0) return;
+    const it = items.find(i=> i.id === id); const t = tailleObjet(it); if (!t) return;
+    const p = pileMax(it); let k = 0;
+    while (q > 0){ const n = Math.min(p, q); out.push({ cle: id + '#' + k, id, it, n, w: t[0], h: t[1] }); q -= n; k++; }
+  });
+  return out;
+}
+function disposerSac(inv, dispo, prioritaire){
+  const g = Array.from({ length: SAC_H }, ()=> Array(SAC_L).fill(null));
+  const libre = (x, y, w, h)=>{ if (x < 0 || y < 0 || x + w > SAC_L || y + h > SAC_H) return false; for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (g[j][i]) return false; return true; };
+  const poser = (p, x, y, r)=>{ const w = r ? p.h : p.w, h = r ? p.w : p.h; for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) g[j][i] = p.cle; Object.assign(p, { x, y, r: !!r, pw: w, ph: h }); };
+  const piles = pilesSac(inv), places = [], dehors = [], reste = [];
+  const ordre = prioritaire ? piles.slice().sort((a, b)=> (a.cle === prioritaire ? -1 : 0) - (b.cle === prioritaire ? -1 : 0)) : piles;
+  ordre.forEach(p=>{
+    const d = dispo && dispo[p.cle];
+    if (d && libre(d.x, d.y, d.r ? p.h : p.w, d.r ? p.w : p.h)){ poser(p, d.x, d.y, d.r); places.push(p); }
+    else reste.push(p);
+  });
+  reste.sort((a, b)=> (b.w * b.h) - (a.w * a.h) || String(a.it.type || '').localeCompare(String(b.it.type || '')) || String(a.it.name || '').localeCompare(String(b.it.name || ''), 'fr') || a.cle.localeCompare(b.cle));
+  reste.forEach(p=>{
+    for (const r of [false, true]){
+      if (r && p.w === p.h) continue;
+      const w = r ? p.h : p.w, h = r ? p.w : p.h;
+      for (let y = 0; y < SAC_H; y++) for (let x = 0; x < SAC_L; x++) if (libre(x, y, w, h)){ poser(p, x, y, r); places.push(p); return; }
+    }
+    dehors.push(p);
+  });
+  let libres = 0; g.forEach(l=> l.forEach(c=>{ if (!c) libres++; }));
+  return { places, dehors, libres };
+}
+/* la disposition à montrer : celle du joueur, sinon tout retassé si ça fait rentrer plus de choses */
+function dispositionSac(inv){
+  const a = disposerSac(inv, sacDispo);
+  if (!a.dehors.length) return a;
+  const b = disposerSac(inv, null);
+  return b.dehors.length < a.dehors.length ? b : a;
+}
+const sacRentre = (inv)=> !disposerSac(inv, null).dehors.length;
+/* combien d'exemplaires de cet objet tiennent encore dans le sac (jusqu'à max) */
+function placeLibrePour(inv, id, max){
+  let n = 0; const essai = Object.assign({}, inv || {});
+  while (n < (max || 1)){ essai[id] = (essai[id] || 0) + 1; if (!sacRentre(essai)) break; n++; }
+  return n;
+}
+function dispoDe(places){ const o = {}; places.forEach(p=>{ o[p.cle] = { x: p.x, y: p.y, r: !!p.r }; }); return o; }
+async function enregistrerDispoSac(o){
+  sacDispo = o;
+  if (playerDocRef) try { await playerDocRef.update({ sacDispo: o }); } catch(e){}
+}
+/* la grille dessinée ; `attr` porte la clé de la pile touchée */
+function grilleSacHtml(disp, attr){
+  const pc = (v, n)=> (v / n * 100).toFixed(4) + '%';
+  return '<div class="sac-grille" style="aspect-ratio:' + SAC_L + '/' + SAC_H + ';">'
+    + disp.places.map(p=> `<div class="sac-piece${p.pw * p.ph > 1 ? ' grand' : ''}" ${attr}="${p.cle}" data-id="${p.id}" style="left:${pc(p.x, SAC_L)}; top:${pc(p.y, SAC_H)}; width:${pc(p.pw, SAC_L)}; height:${pc(p.ph, SAC_H)};">
+        <img src="${urlImageItem(p.it) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${p.id}" alt=""${p.r ? ' style="position:absolute; left:50%; top:50%; width:' + (p.ph / p.pw * 100).toFixed(2) + '%; height:' + (p.pw / p.ph * 100).toFixed(2) + '%; transform:translate(-50%,-50%) rotate(90deg);"' : ''}>
+        ${p.n > 1 ? '<span class="qte">' + p.n + '</span>' : ''}</div>`).join('')
+    + '</div>';
+}
+/* glisser une pièce, la tourner d'un appui long, la toucher pour son menu */
+function brancherGrilleSac(racine, quandTouche){
+  const grille = racine.querySelector('.sac-grille'); if (!grille) return;
+  grille.querySelectorAll('.sac-piece').forEach(el=>{
+    let depart = null, long = null, bouge = false;
+    el.addEventListener('pointerdown', (ev)=>{
+      ev.preventDefault();
+      const b = el.getBoundingClientRect();
+      depart = { x: ev.clientX, y: ev.clientY, dx: ev.clientX - b.left, dy: ev.clientY - b.top, id: ev.pointerId };
+      bouge = false;
+      try { el.setPointerCapture(ev.pointerId); } catch(e){}
+      long = setTimeout(()=>{ long = null; if (!bouge){ depart = null; tournerPieceSac(el.dataset.cle); } }, 480);
+    });
+    el.addEventListener('pointermove', (ev)=>{
+      if (!depart) return;
+      const dx = ev.clientX - depart.x, dy = ev.clientY - depart.y;
+      if (!bouge && Math.hypot(dx, dy) < 8) return;
+      bouge = true; if (long){ clearTimeout(long); long = null; }
+      el.classList.add('glisse'); el.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    });
+    const fin = (ev)=>{
+      if (long){ clearTimeout(long); long = null; }
+      if (!depart) return;
+      const d = depart; depart = null;
+      const cle = el.dataset.cle;
+      if (!bouge){ quandTouche(el.dataset.id, cle); return; }
+      el.classList.remove('glisse'); el.style.transform = '';
+      const g = grille.getBoundingClientRect(), cw = g.width / SAC_L, ch = g.height / SAC_H;
+      const x = Math.round((ev.clientX - d.dx - g.left) / cw), y = Math.round((ev.clientY - d.dy - g.top) / ch);
+      deplacerPieceSac(cle, x, y);
+    };
+    el.addEventListener('pointerup', fin);
+    el.addEventListener('pointercancel', ()=>{ if (long){ clearTimeout(long); long = null; } depart = null; el.classList.remove('glisse'); el.style.transform = ''; });
+  });
+}
+function deplacerPieceSac(cle, x, y, rot){
+  const actuel = dispositionSac(baseResources);
+  const p = actuel.places.find(q=> q.cle === cle); if (!p) return;
+  const r = rot == null ? p.r : rot;
+  const o = Object.assign({ [cle]: { x, y, r } }, dispoDe(actuel.places.filter(q=> q.cle !== cle)));
+  const essai = disposerSac(baseResources, o, cle);
+  const moi = essai.places.find(q=> q.cle === cle);
+  if (!moi || moi.x !== x || moi.y !== y || moi.r !== !!r || essai.dehors.length > actuel.dehors.length){ showToast('Pas la place ici'); inventaireAChange(); return; }
+  enregistrerDispoSac(dispoDe(essai.places)).then(inventaireAChange);
+  inventaireAChange();
+}
+function tournerPieceSac(cle){
+  const p = dispositionSac(baseResources).places.find(q=> q.cle === cle);
+  if (!p || p.w === p.h){ return; }
+  deplacerPieceSac(cle, p.x, p.y, !p.r);
+}
+function rangerSac(){
+  const d = disposerSac(baseResources, null);
+  enregistrerDispoSac(dispoDe(d.places)).then(inventaireAChange);
+  inventaireAChange();
+}
 /* une grille de cases (compartiment, rangement) ; `attr` porte l'id de l'objet touché */
 function grilleObjetsHtml(liste, attr, minimum){
   const total = Math.max(minimum || 0, Math.ceil(liste.length / 5) * 5);
   return '<div class="comp-grille">' + liste.map(({ itemId, qty, it })=>{
-    const pts = Math.round(poidsObjet(it));
+    const pts = 0;   // v818 : plus de poids affiché (le sac est en cases)
     return `<button type="button" class="comp-case" ${attr}="${itemId}" aria-label="${it ? escSac(it.name) : 'objet'}">
       <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${it ? it.id : ''}" alt="">
       ${pts >= 2 ? '<span class="poids">' + '<i></i>'.repeat(Math.min(3, pts)) + '</span>' : ''}
@@ -18590,14 +18735,24 @@ function renderInventoryList(){
     const n = b.dataset.poche === 'quete' ? quete.length : objets.length;
     b.innerHTML = (b.dataset.poche === 'quete' ? 'Quête' : 'Objets') + (n ? '<span class="n">' + n + '</span>' : '');
   });
-  const charge = chargeDuCompartiment(), ch = document.getElementById('compCharge');
-  ch.textContent = pocheCompartiment === 'quete' ? 'ne pèse rien' : 'Charge ' + fmtPoids(charge) + ' / ' + CHARGE_MAX;
-  ch.classList.toggle('plein', pocheCompartiment !== 'quete' && Math.abs(charge - CHARGE_MAX) < 0.05);
-  ch.classList.toggle('trop', pocheCompartiment !== 'quete' && charge > CHARGE_MAX + 0.05);
-  const liste = pocheCompartiment === 'quete' ? quete : objets;
-  listEl.innerHTML = (liste.length ? '' : '<p class="comp-vide">' + (pocheCompartiment === 'quete' ? 'Aucun objet de quête pour l\'instant.' : 'Ton compartiment est vide.') + '</p>')
-    + grilleObjetsHtml(liste, 'data-objet-sac', 15);
+  const ch = document.getElementById('compCharge');
+  if (pocheCompartiment === 'quete'){
+    ch.textContent = 'sans place'; ch.classList.remove('plein', 'trop');
+    listEl.innerHTML = (quete.length ? '' : '<p class="comp-vide">Aucun objet de quête pour l\'instant.</p>') + grilleObjetsHtml(quete, 'data-objet-sac', 15);
+    listEl.querySelectorAll('[data-objet-sac]').forEach(b=> b.addEventListener('click', ()=> ouvrirMenuObjet(b.dataset.objetSac)));
+    return;
+  }
+  /* v818 : la grille du sac */
+  const inv = {}; objets.forEach(e=>{ inv[e.itemId] = e.qty; });
+  const disp = dispositionSac(inv);
+  ch.textContent = disp.libres + ' case' + (disp.libres > 1 ? 's' : '') + ' libre' + (disp.libres > 1 ? 's' : '');
+  ch.classList.toggle('plein', disp.libres === 0 && !disp.dehors.length); ch.classList.toggle('trop', disp.dehors.length > 0);
+  listEl.innerHTML = grilleSacHtml(disp, 'data-cle')
+    + (disp.dehors.length ? '<div class="comp-titre-bloc" style="margin-top:8px;"><span>Pas la place</span></div>' + grilleObjetsHtml(disp.dehors.map(p=> ({ itemId: p.id, qty: p.n, it: p.it })), 'data-objet-sac', 0) : '')
+    + '<div style="display:flex; justify-content:flex-end; margin-top:8px;"><button type="button" class="btn-secondary" data-ranger-sac style="flex:none; padding:6px 12px;">Ranger</button></div>';
+  brancherGrilleSac(listEl, (id)=> ouvrirMenuObjet(id));
   listEl.querySelectorAll('[data-objet-sac]').forEach(b=> b.addEventListener('click', ()=> ouvrirMenuObjet(b.dataset.objetSac)));
+  listEl.querySelector('[data-ranger-sac]').addEventListener('click', rangerSac);
 }
 document.querySelectorAll('.comp-poche').forEach(b=> b.addEventListener('click', ()=>{ pocheCompartiment = b.dataset.poche; renderInventoryList(); }));
 
@@ -18655,7 +18810,7 @@ function enteteObjetSac(it, qte, grand){
     <img src="${(it && urlImageItem(it)) || ITEM_PLACEHOLDER_IMG}" data-piece-img="${it ? it.id : ''}" style="width:${t}px; height:${t}px; object-fit:contain; flex:none;">
     <div style="flex:1; min-width:0;">
       <div style="font-weight:700;">${it ? escSac(it.name) : '(objet supprimé)'}</div>
-      <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? '×' + qte + (it && it.type !== 'quete' ? ' · poids ' + fmtPoids(poidsObjet(it)) + (qte > 1 ? ' (' + fmtPoids(poidsObjet(it) * qte) + ' en tout)' : '') : '') : 'Il ne t\'en reste plus'}</div>
+      <div class="meta" style="font-size:12px;" data-reste>${qte > 0 ? '×' + qte + (it && it.type !== 'quete' ? ' · ' + tailleObjet(it).join('×') + (pileMax(it) > 1 ? ' · s\'empile par ' + pileMax(it) : '') : '') : 'Il ne t\'en reste plus'}</div>
     </div>
     <button class="sheet-x" data-fermer>✕</button>
   </div>`;
@@ -19109,9 +19264,9 @@ function ouvrirRangement(){
     f.querySelector('[data-titre-r]').textContent = 'Dans le rangement' + (r.length ? ' · ' + r.length + ' sorte' + (r.length > 1 ? 's' : '') : '');
     f.querySelector('[data-rangement]').innerHTML = (r.length ? '' : '<p class="comp-vide">Rien de rangé pour l\'instant.</p>') + grilleObjetsHtml(r, 'data-vers-sac', 5);
     inventoryEntriesCache = Object.entries(baseResources).filter(([,q])=> q > 0);
-    const ch = chargeDuCompartiment(), el = f.querySelector('[data-charge]');
-    el.textContent = 'Charge ' + fmtPoids(ch) + ' / ' + CHARGE_MAX;
-    el.classList.toggle('plein', Math.abs(ch - CHARGE_MAX) < 0.05); el.classList.toggle('trop', ch > CHARGE_MAX + 0.05);
+    const dsp = dispositionSac(baseResources), el = f.querySelector('[data-charge]');   // v818
+    el.textContent = dsp.libres + ' case' + (dsp.libres > 1 ? 's' : '') + ' libre' + (dsp.libres > 1 ? 's' : '');
+    el.classList.toggle('plein', dsp.libres === 0); el.classList.toggle('trop', dsp.dehors.length > 0);
     f.querySelector('[data-compartiment]').innerHTML = (c.length ? '' : '<p class="comp-vide">Ton compartiment est vide.</p>') + grilleObjetsHtml(c, 'data-vers-rangement', 5);
     f.querySelectorAll('[data-vers-sac]').forEach(b=> b.addEventListener('click', ()=> deplacer(b.dataset.versSac, false)));
     f.querySelectorAll('[data-vers-rangement]').forEach(b=> b.addEventListener('click', ()=> deplacer(b.dataset.versRangement, true)));
@@ -19121,19 +19276,16 @@ function ouvrirRangement(){
     const it = items.find(i=> i.id === id) || null;
     let max = versRangement ? (baseResources[id] || 0) : (baseRangement[id] || 0);
     if (max <= 0) return;
-    if (!versRangement){   // v670 : on ne prend que ce qui tient dans le compartiment
-      const pd = poidsObjet(it), libre = CHARGE_MAX - chargeDe(baseResources);
-      if (pd > 0){
-        const cap = Math.floor(libre / pd + 1e-6);
-        if (cap <= 0){ showToast('Compartiment plein (charge ' + fmtPoids(chargeDe(baseResources)) + ' / ' + CHARGE_MAX + ')'); return; }
-        max = Math.min(max, cap);
-      }
+    if (!versRangement){   // v670 ; v818 : on ne prend que ce qui a sa place dans la grille
+      const cap = placeLibrePour(baseResources, id, max);
+      if (cap <= 0){ showToast('Pas la place dans le sac'); return; }
+      max = Math.min(max, cap);
     }
     let n = max === 1 ? 1 : await choisirQuantite(it, max, versRangement ? '🗄️ Ranger' : '🎒 Prendre');
     if (!n) return;
     /* v671 : on revérifie au moment d'écrire (la fiche a pu bouger pendant le choix) */
     n = Math.min(n, versRangement ? (baseResources[id] || 0) : (baseRangement[id] || 0));
-    if (!versRangement && poidsObjet(it) > 0) n = Math.min(n, Math.floor((CHARGE_MAX - chargeDe(baseResources)) / poidsObjet(it) + 1e-6));
+    if (!versRangement) n = Math.min(n, placeLibrePour(baseResources, id, n));   // v818
     if (n <= 0){ dessiner(); return; }
     occupe = true;
     const inc = firebase.firestore.FieldValue.increment;
@@ -19160,18 +19312,18 @@ function chargeDe(inv){
   return t;
 }
 let chargeConnue = null, inventaireConnu = null, triEnAttente = null, triOuvert = false;
-function surveillerCharge(inv){
+function surveillerCharge(inv){   // v818 : « il n'y a plus la place dans la grille », plus une charge
   if (typeof items === 'undefined' || !items.length){ chargeConnue = null; return; }
-  const ch = chargeDe(inv);
-  if (chargeConnue != null && ch > CHARGE_MAX + 0.05 && ch > chargeConnue + 0.05){
+  if (chargeConnue != null && !sacRentre(inv)){
     const nouveaux = triEnAttente ? triEnAttente.nouveaux : {};
+    let arrive = false;
     Object.keys(inv).forEach(id=>{
       const d = (inv[id] || 0) - ((inventaireConnu || {})[id] || 0);
-      if (d > 0 && poidsObjet(items.find(i=> i.id === id)) > 0) nouveaux[id] = (nouveaux[id] || 0) + d;
+      if (d > 0 && tailleObjet(items.find(i=> i.id === id))){ nouveaux[id] = (nouveaux[id] || 0) + d; arrive = true; }
     });
-    triEnAttente = { cible: triEnAttente ? triEnAttente.cible : Math.max(CHARGE_MAX, chargeConnue), nouveaux };
+    if (arrive || triEnAttente) triEnAttente = { nouveaux };
   }
-  chargeConnue = ch; inventaireConnu = Object.assign({}, inv);
+  chargeConnue = 1; inventaireConnu = Object.assign({}, inv);
 }
 function aBordMaintenant(){
   const full = document.getElementById('sceneViewFull');
@@ -19182,18 +19334,19 @@ setInterval(()=>{
   if (typeof combatState !== 'undefined' && combatState && !combatState.finished) return;   // pas en plein combat
   const dial = document.getElementById('overlay');
   if (dial && dial.classList.contains('show') && !(typeof combatState !== 'undefined' && combatState && combatState.finished)) return;   // pas en plein dialogue
-  if (chargeDe(baseResources) <= triEnAttente.cible + 0.05){ triEnAttente = null; return; }
+  if (document.getElementById('boutOverlay')) return;   // v818 : jamais derrière la boutique
+  if (sacRentre(baseResources)){ triEnAttente = null; return; }
   ouvrirTri();
 }, 700);
 function ouvrirTri(){
   triOuvert = true;
   const t = triEnAttente;
   const aBord = aBordMaintenant();
-  const f = fenetreSac(`<div class="sheet-top"><h3 style="margin-top:0;">⚖️ Trop chargé</h3></div>
+  const f = fenetreSac(`<div class="sheet-top"><h3 style="margin-top:0;">Pas la place</h3></div>
     <div class="comp-titre-bloc"><span data-consigne style="font-weight:400; font-size:13px;"></span><span class="comp-charge trop" data-charge></span></div>
     <div data-nouveaux></div>
-    <div class="comp-titre-bloc" style="margin-top:10px;"><span>Ton compartiment</span></div>
-    <div data-tout style="max-height:36vh; overflow-y:auto; padding:2px;"></div>
+    <div class="comp-titre-bloc" style="margin-top:10px;"><span>Ton sac</span></div>
+    <div data-tout style="padding:2px;"></div>
     <button class="btn-capture" data-fini style="width:100%; margin-top:12px;">✓ C'est bon</button>`, true);
   f.querySelector('.sheet').classList.add('comp-sheet');
   let occupe = false;
@@ -19207,16 +19360,17 @@ function ouvrirTri(){
     .sort((a, b)=> (a.it.type || '').localeCompare(b.it.type || '') || (a.it.name || '').localeCompare(b.it.name || '', 'fr') || a.itemId.localeCompare(b.itemId));
   const dessiner = ()=>{
     if (!document.body.contains(f)) return;
-    const ch = chargeDe(baseResources), ok = ch <= t.cible + 0.05;
+    const disp = dispositionSac(baseResources), ok = !disp.dehors.length;   // v818 : la grille
     const el = f.querySelector('[data-charge]');
-    el.textContent = 'Charge ' + fmtPoids(ch) + ' / ' + CHARGE_MAX;
+    el.textContent = disp.libres + ' case' + (disp.libres > 1 ? 's' : '') + ' libre' + (disp.libres > 1 ? 's' : '');
     el.classList.toggle('trop', !ok);
-    f.querySelector('[data-consigne]').textContent = ok ? 'C\'est bon, tout tient.' : (aBord ? 'Range' : 'Jette') + ' de quoi revenir à ' + fmtPoids(t.cible) + '.';
-    const nv = entrees(baseResources, t.nouveaux);
-    f.querySelector('[data-nouveaux]').innerHTML = nv.length ? '<div class="comp-titre-bloc"><span>Ce que tu viens de recevoir</span>'
-      + '<button class="btn-secondary" data-laisser style="flex:none; padding:5px 10px; font-size:12px;">' + (aBord ? '🗄️ Tout ranger' : '🗑️ Tout laisser') + '</button></div>'
+    f.querySelector('[data-consigne]').textContent = ok ? 'C\'est bon, tout tient.' : (aBord ? 'Range' : 'Jette') + ' quelque chose pour faire de la place.';
+    const nv = disp.dehors.map(p=> ({ itemId: p.id, qty: p.n, it: p.it }));
+    f.querySelector('[data-nouveaux]').innerHTML = nv.length ? '<div class="comp-titre-bloc"><span>Ce qui ne rentre pas</span>'
+      + '<button class="btn-secondary" data-laisser style="flex:none; padding:5px 10px; font-size:12px;">' + (aBord ? 'Tout ranger' : 'Tout laisser') + '</button></div>'
       + grilleObjetsHtml(nv, 'data-tri', 0) : '';
-    f.querySelector('[data-tout]').innerHTML = grilleObjetsHtml(entrees(baseResources), 'data-tri', 5);
+    f.querySelector('[data-tout]').innerHTML = grilleSacHtml(disp, 'data-cle');
+    brancherGrilleSac(f.querySelector('[data-tout]'), (id)=> toucher(id));
     const fini = f.querySelector('[data-fini]');
     fini.disabled = !ok; fini.style.opacity = ok ? '' : '.45';
     f.querySelectorAll('[data-tri]').forEach(b=> b.addEventListener('click', ()=> toucher(b.dataset.tri)));
@@ -19253,12 +19407,11 @@ function ouvrirTri(){
     if (occupe) return;
     const it = items.find(i=> i.id === id), max = baseResources[id] || 0;
     if (!it || max <= 0) return;
-    const pd = poidsObjet(it), besoin = Math.max(1, Math.ceil((chargeDe(baseResources) - t.cible - 1e-6) / (pd || 1)));
-    const n = max === 1 ? 1 : await choisirQuantite(it, max, aBord ? '🗄️ Ranger' : '🗑️ Jeter', besoin);
+    const n = max === 1 ? 1 : await choisirQuantite(it, max, aBord ? '🗄️ Ranger' : '🗑️ Jeter', Math.min(max, pileMax(it)));
     if (n) await retirerPlusieurs({ [id]: n });
   };
   f.querySelector('[data-fini]').addEventListener('click', ()=>{
-    if (chargeDe(baseResources) > t.cible + 0.05) return;
+    if (!sacRentre(baseResources)) return;   // v818
     f.remove(); triOuvert = false; triEnAttente = null;
     if (document.getElementById('inventoryOverlay').classList.contains('show')) renderInventory();
   });
@@ -19373,7 +19526,7 @@ function proposerRangerObjet(hab, e){
     dessinerCasesChambre();
   });
   f.querySelector('[data-ranger]').addEventListener('click', async ()=>{
-    if (chargeDe(baseResources) + poidsObjet(it) > CHARGE_MAX + 0.05){   // v670
+    if (placeLibrePour(baseResources, it.id, 1) < 1){   // v670 ; v818 : la place dans la grille
       showToast('Compartiment plein : fais de la place avant de reprendre cet objet'); return;
     }
     f.remove();
@@ -27596,6 +27749,7 @@ function watchPlayerInventoryForBase(){
   playerDocRef.onSnapshot((doc)=>{ mesurerEcoute('ma fiche joueur', doc, ()=>{
     baseResources = (doc.exists && doc.data().inventory) || {};
     baseRangement = (doc.exists && doc.data().rangement) || {};   // v669
+    sacDispo = (doc.exists && doc.data().sacDispo) || {};   // v818
     surveillerCharge(baseResources);   // v670 : la limite de charge
     reparerNegatifs(baseResources, baseRangement);   // v671
     setTimeout(inventaireAChange, 0);
@@ -44950,6 +45104,8 @@ async function importerMiseAJour(sc){
     /* v793 : `stadesDessin` (4 descriptions) et `culture.stages` ({minutes, echelle}) — les images de stade
        déjà posées sont gardées à leur rang ; le butin et la reprise restent ceux de la plante. */
     if (Array.isArray(o.stadesDessin) && o.stadesDessin.length === 4) m.stadesDessin = o.stadesDessin.map(String);
+    if (typeof o.taille === 'string' && /^[1-4]\s*[x×]\s*[1-4]$/i.test(o.taille.trim())) m.taille = o.taille.trim().toLowerCase().replace(/\s|×/g, (c)=> c === '×' ? 'x' : '');   // v818
+    if (o.pile != null) m.pile = Math.max(1, parseInt(o.pile, 10) || 1);
     if (o.nouvellesStades && it.culture && Array.isArray(it.culture.stages)){   // v795 : les images de stade s'effacent, le guide redemande la planche
       m.culture = Object.assign({}, it.culture, { stages: it.culture.stages.map(x=> Object.assign({}, x, { imageUrl: '', imagePath: null })) });
     }
@@ -45714,6 +45870,7 @@ async function importerScenario(sc){
       const deco = decoDeMob(data.mob); if (deco){ data.deco = deco; data.lumiere = !!data.mob.lumiere; }
       if (o.poids != null) data.poids = +o.poids;
     }
+    if (typeof o.taille === 'string' && /^[1-4]\s*[x×]\s*[1-4]$/i.test(o.taille.trim())) data.taille = o.taille.trim().toLowerCase().replace(/\s|×/g, (c)=> c === '×' ? 'x' : '');   // v818
     noter(cles.objets, o, await importEcrireDoc(itemsCol, o.name, data, 'Objet', journal));
   }
 
