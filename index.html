@@ -597,6 +597,16 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
   .ecran-artisan .bt-argent{ flex:1; text-align:right; font-size:14px; font-weight:800; color:#1d2433; font-family:var(--mono); }
   .piece-or{ display:inline-block; width:12px; height:12px; border-radius:50%; background:#f2b43a; box-shadow:inset 0 -2px 0 #c98a12; vertical-align:-1px; margin-right:4px; }
   .ecran-artisan .bt-grille{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  /* v819 : le sac en bas de la boutique */
+  .ecran-artisan .bt-sac{ flex:none; display:flex; gap:10px; align-items:center; background:rgba(255,255,255,.95); border-radius:18px; padding:8px 10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  .ecran-artisan .bt-sac .sac-grille{ width:min(52vw, 210px); flex:none; }
+  .ecran-artisan .bt-sac .sac-piece{ padding:1px; border-radius:5px; }
+  .ecran-artisan .bt-sac .sac-piece .qte{ font-size:9px; right:1px; bottom:0; padding:0 2px; }
+  .ecran-artisan .bt-sac .sac-piece.neuf{ animation:sacNeuf 1.4s ease-out 2; border-color:#2a9d5c; box-shadow:0 0 0 2px #2a9d5c; }
+  @keyframes sacNeuf{ 0%{ transform:scale(1.25); } 40%{ transform:scale(1); } }
+  .ecran-artisan .bt-sac-info{ flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; align-items:flex-start; font-size:12.5px; font-weight:800; color:#1d2433; }
+  .ecran-artisan .bt-sac-info .lib{ font-family:var(--mono); font-size:12px; color:#4a5368; }
+  .bt-vol{ position:fixed; z-index:4900; pointer-events:none; object-fit:contain; transition:left .55s cubic-bezier(.4,0,.2,1), top .55s cubic-bezier(.4,0,.2,1), width .55s, height .55s, opacity .55s; }
   .ecran-artisan .bt-case{ border-radius:12px; border:2px solid transparent; background:#eef1f6; padding:4px; display:flex; flex-direction:column; align-items:stretch; gap:2px; }
   .ecran-artisan .bt-case .im{ aspect-ratio:1; display:flex; align-items:center; justify-content:center; position:relative; }
   .ecran-artisan .bt-case .im img{ width:100%; height:100%; object-fit:contain; }
@@ -1628,7 +1638,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v818</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v819</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -8236,12 +8246,20 @@ function ouvrirBoutique(c){
   const buste = bustUrlPourFiche(c) || urlImageDeFiche(c) || '';
   ov.innerHTML = `<div class="fab-file"><div class="bt-onglets"><button data-mode="acheter">Acheter</button><button data-mode="vendre">Vendre</button></div><span class="bt-argent" data-argent></span><button class="fab-x" data-fermer aria-label="Fermer">×</button></div>
     <div class="fab-haut"><div class="fab-buste" data-buste>${buste ? '<img src="' + buste + '" alt="">' : ''}</div><div class="fab-bulle" data-bulle></div></div>
-    <div class="fab-bas"><div class="fab-filtres"><input type="search" data-cherche placeholder="Chercher"></div><div class="fab-grille bt-grille" data-grille></div></div>`;
+    <div class="fab-bas"><div class="fab-filtres"><input type="search" data-cherche placeholder="Chercher"></div><div class="fab-grille bt-grille" data-grille></div></div>
+    <div class="bt-sac"><div data-sac-mini></div><div class="bt-sac-info"><span>Ton sac</span><span class="lib" data-sac-libres></span><button class="btn-secondary" data-sac-ouvrir style="flex:none; padding:5px 12px; font-size:12px;">Ouvrir</button></div></div>`;
   document.body.appendChild(ov);
   boutEtat = { c, mode: 'acheter', sel: null, qte: 1, recherche: '', coins: playerCoins || 0, inv: {}, rang: {} };
   ov.querySelector('[data-fermer]').addEventListener('click', fermerBoutique);
   ov.querySelectorAll('[data-mode]').forEach(b=> b.addEventListener('click', ()=>{ boutEtat.mode = b.dataset.mode; boutEtat.sel = null; boutEtat.qte = 1; dessinerBoutique(); }));
   ov.querySelector('[data-cherche]').addEventListener('input', (e)=>{ boutEtat.recherche = e.target.value; dessinerBoutique(); });
+  /* v819 : le sac par-dessus la boutique ; à sa fermeture, la boutique se redessine */
+  ov.querySelector('[data-sac-ouvrir]').addEventListener('click', ()=>{
+    pocheCompartiment = 'objets'; renderInventory();
+    const io = document.getElementById('inventoryOverlay'); io.style.zIndex = '4800'; io.classList.add('show');
+  });
+  const majSacBoutique = ()=>{ if (!document.body.contains(ov)){ rafraichirInventaireUI.delete(majSacBoutique); return; } dessinerSacBoutique(); };
+  rafraichirInventaireUI.add(majSacBoutique);
   if (bustEnAttente(c)){
     internalizeSceneImage(c.bustImageRef).then((url)=>{ bustImageCache[c.bustImageRef] = url || false; const u = bustUrlPourFiche(c) || urlImageDeFiche(c); const z = ov.querySelector('[data-buste]'); if (u && z) z.innerHTML = '<img src="' + u + '" alt="">'; }).catch(()=>{});
   }
@@ -8283,10 +8301,20 @@ function articlesDeBoutique(){
   (e.vaisseaux || []).forEach(v=> l.push({ cle: 'v:' + v.id, vaisseau: v, prix: v.net }));
   return l;
 }
+function dessinerSacBoutique(neufId){
+  const ov = document.getElementById('boutOverlay'); if (!ov) return;
+  const disp = dispositionSac(baseResources || {});
+  const z = ov.querySelector('[data-sac-mini]'); if (!z) return;
+  z.innerHTML = grilleSacHtml(disp, 'data-cle');
+  ov.querySelector('[data-sac-libres]').textContent = disp.libres + ' case' + (disp.libres > 1 ? 's' : '') + ' libre' + (disp.libres > 1 ? 's' : '');
+  if (neufId) z.querySelectorAll('.sac-piece[data-id="' + neufId + '"]').forEach(x=> x.classList.add('neuf'));
+  z.querySelectorAll('.sac-piece').forEach(x=> x.addEventListener('click', ()=> ov.querySelector('[data-sac-ouvrir]').click()));
+}
 function dessinerBoutique(){
   const ov = document.getElementById('boutOverlay');
   if (!ov || !boutEtat) return;
   const e = boutEtat;
+  dessinerSacBoutique();
   ov.querySelectorAll('[data-mode]').forEach(b=> b.classList.toggle('actif', b.dataset.mode === e.mode));
   ov.querySelector('[data-argent]').innerHTML = '<span class="piece-or"></span>' + (e.coins || 0).toLocaleString('fr-FR');
   const q = sansAccents(e.recherche.trim());
@@ -8311,16 +8339,18 @@ function dessinerBoutique(){
     bulle.querySelector('[data-acheter-v]').addEventListener('click', async ()=>{ await acheterVaisseau(v.id); chargerBoutique(); });
     return;
   }
-  const max = e.mode === 'vendre' ? a.n : Math.max(1, Math.floor(e.coins / Math.max(1, a.prix)));
+  /* v819 : on n'achète que ce qui a sa place dans le sac */
+  const place = e.mode === 'vendre' ? Infinity : placeLibrePour(baseResources || {}, a.it.id, 99);
+  const max = e.mode === 'vendre' ? a.n : Math.max(1, Math.min(place, Math.floor(e.coins / Math.max(1, a.prix))));
   e.qte = Math.max(1, Math.min(e.qte, Math.max(1, max)));
-  const total = a.prix * e.qte, ok = e.mode === 'vendre' ? a.n > 0 : total <= e.coins;
+  const total = a.prix * e.qte, sansPlace = e.mode !== 'vendre' && place < 1, ok = e.mode === 'vendre' ? a.n > 0 : (total <= e.coins && !sansPlace);
   /* v791 : ce que fait l'objet et sa description ; toucher l'image ouvre la fiche entière */
   const effetIt = a.it.plat ? texteEffetPlat(a.it.plat) : ((a.it.equippable || a.it.combatUse) && typeof itemEffectSummary === 'function' ? itemEffectSummary(a.it) : '');
   bulle.innerHTML = `<div class="fab-tete"><button class="fab-plat" data-voir style="border-radius:14px; border:none; padding:0;"><img src="${urlImageItem(a.it) || ITEM_PLACEHOLDER_IMG}" alt=""></button><div style="min-width:0;"><div class="fab-nom">${escSac(a.it.name)}</div><div class="bt-sous">${a.n ? 'Tu en as ' + a.n : 'Tu n\'en as pas'}</div></div></div>
     ${effetIt ? '<div class="fab-effet" style="margin-top:6px;">' + escSac(effetIt) + '</div>' : ''}
     ${a.it.description ? '<div class="bt-desc" data-voir>' + escSac(a.it.description) + '</div>' : ''}
     <div class="bt-qte"><button class="pm" data-moins aria-label="Moins">−</button><b>${e.qte}</b><button class="pm" data-plus aria-label="Plus">+</button>
-      <button class="fab-go" data-go ${ok ? '' : 'disabled'}>${e.mode === 'vendre' ? 'Vendre' : 'Acheter'} ${total.toLocaleString('fr-FR')}</button></div>`;
+      <button class="fab-go" data-go ${ok ? '' : 'disabled'}>${sansPlace ? 'Pas la place' : (e.mode === 'vendre' ? 'Vendre' : 'Acheter') + ' ' + total.toLocaleString('fr-FR')}</button></div>`;
   bulle.querySelectorAll('[data-voir]').forEach(x=> x.addEventListener('click', ()=>{ observerObjet(a.it); const f = Array.from(document.querySelectorAll('.overlay.show')).pop(); if (f) f.style.zIndex = '4900'; }));
   bulle.querySelector('[data-moins]').addEventListener('click', ()=>{ e.qte = Math.max(1, e.qte - 1); dessinerBoutique(); });
   bulle.querySelector('[data-plus]').addEventListener('click', ()=>{ e.qte = Math.min(Math.max(1, max), e.qte + 1); dessinerBoutique(); });
@@ -8341,11 +8371,37 @@ async function echangerEnBoutique(a, qte){
       else await ref.set({ coins: firebase.firestore.FieldValue.increment(total), inventory: { [a.it.id]: firebase.firestore.FieldValue.increment(-qte) } }, { merge: true });
     } else {
       if (coins < total){ showToast('Pas assez de pièces'); }
-      else await ref.set({ coins: firebase.firestore.FieldValue.increment(-total), inventory: { [a.it.id]: firebase.firestore.FieldValue.increment(qte) } }, { merge: true });
+      else if (placeLibrePour(baseResources || {}, a.it.id, qte) < qte){ showToast('Pas la place dans ton sac'); }   // v819
+      else {
+        const avant = (baseResources || {})[a.it.id] || 0;
+        const depart = document.querySelector('#boutOverlay .fab-plat img');
+        const r0 = depart && depart.getBoundingClientRect();
+        await ref.set({ coins: firebase.firestore.FieldValue.increment(-total), inventory: { [a.it.id]: firebase.firestore.FieldValue.increment(qte) } }, { merge: true });
+        achatArrive(a.it, qte, avant, r0, depart && depart.src);
+      }
     }
   } catch(err){ showToast('Échec : ' + ((err && err.message) || err)); }
   boutOccupe = false;
   if (boutEtat){ boutEtat.qte = 1; await chargerBoutique(); }
+}
+/* v819 : la CONFIRMATION D'ACHAT qui se voit — l'objet vole jusqu'à sa place dans le sac du bas, sa case
+   s'allume, et le vendeur dit ce qui vient d'arriver dans le sac */
+async function achatArrive(it, qte, avant, r0, src){
+  for (let k = 0; k < 30 && ((baseResources || {})[it.id] || 0) < avant + qte; k++) await new Promise(r=> setTimeout(r, 100));
+  const ov = document.getElementById('boutOverlay'); if (!ov) return;
+  dessinerSacBoutique(it.id);
+  const cible = Array.from(ov.querySelectorAll('[data-sac-mini] .sac-piece[data-id="' + it.id + '"]')).pop();
+  if (r0 && src && cible){
+    const r1 = cible.getBoundingClientRect(), v = document.createElement('img');
+    v.className = 'bt-vol'; v.src = src;
+    Object.assign(v.style, { left: r0.left + 'px', top: r0.top + 'px', width: r0.width + 'px', height: r0.height + 'px' });
+    document.body.appendChild(v);
+    requestAnimationFrame(()=> requestAnimationFrame(()=> Object.assign(v.style, { left: r1.left + 'px', top: r1.top + 'px', width: r1.width + 'px', height: r1.height + 'px', opacity: '.2' })));
+    setTimeout(()=> v.remove(), 650);
+  }
+  const z = ov.querySelector('[data-buste]'), b0 = z && z.getBoundingClientRect();
+  if (b0){ const haut = ov.querySelector('.fab-file').getBoundingClientRect().bottom;
+    bulleSur({ left: b0.left, right: b0.right, top: Math.max(b0.top + 20, haut + 90) }, (qte > 1 ? qte + ' × ' : '') + it.name + ' dans ton sac.', 2600); }
 }
 function openShopWindowAncienne(c){
   activeShopCreature = c;
@@ -18505,6 +18561,7 @@ document.getElementById('sceneViewPorteBtn').addEventListener('click', ()=>{
   commencerDeplacement(r);
 });
 document.getElementById('sceneViewBagBtn').addEventListener('click', ()=>{
+  document.getElementById('inventoryOverlay').style.zIndex = '';   // v819
   inventoryPage = 0;
   document.getElementById('inventorySearch').value = '';
   renderInventory();
