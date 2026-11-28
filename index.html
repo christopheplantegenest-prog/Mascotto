@@ -1676,7 +1676,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v832</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v833</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -12550,7 +12550,8 @@ MÉTHODE DE CONCEPTION — à dérouler AVANT toute image ou tout objet (Claude 
 37. PAS DE PORTE QUI NE MÈNE NULLE PART (21/11). Une porte n'existe dans l'image que si c'est une vraie sortie posée dans le schéma. Le prompt le dit en toutes lettres : « les murs de côté sont pleins, sans porte ni ouverture ». Une salle vide pousse ChatGPT à inventer des portes : la remplir de ce qu'elle contient (étagères, vitrines, enseignes) contre les murs.
 38. LES COULEURS D'UN MÊME LIEU (22/11). Toutes les pièces d'un lieu ont le MÊME sol, les mêmes murs, le même plafond, les mêmes couleurs : on les voit les unes par les autres (arches ouvertes). Le guide joint automatiquement une pièce déjà dessinée du lieu comme RÉFÉRENCE DE COULEURS au prompt de chaque nouvelle pièce ; le prompt de pièce nomme les couleurs du sol et des murs, identiques d'une pièce à l'autre.
 39. CHAQUE ADVERSAIRE RAPPORTE QUELQUE CHOSE (22/11). Il n'y a pas d'expérience dans le jeu : un combat qui ne rapporte rien se fuit. Tout adversaire a un objet à voler FACILE, un DIFFICILE et un BUTIN de victoire, avec des objets qui EXISTENT déjà (ou créés dans le même fichier) ET QUI ONT LEUR PLACE DANS L'UNIVERS : un matériau dont les artisans se servent (Boulons, Huile de moteur…) pour le vol facile et le butin, une pièce de robot vendue en boutique pour le vol difficile. Jamais les anciens équipements du prototype de combat (Pierre de rage, Contre-sceau…), obsolètes, sans image ni histoire (erreur du 22/11). Le guide signale tout adversaire d'une zone à qui il en manque un.
-40. AVANT TOUT CONTENU, LA VRAIE BASE (22/11). Claude relit cette méthode, les chartes ET l'export complet de la base (📖 → 🔁 Échanges avec Claude → 📤 Tout exporter pour Claude), qu'il demande s'il ne l'a pas. Chaque personnage, objet ou lieu cité existe dans cet export et a sa place dans l'univers ; les personnages déjà créés sont réutilisés (visiteurs, clients) avant d'en inventer. Le fichier CLAUDE.md du dépôt le rappelle à chaque session.`;
+40. AVANT TOUT CONTENU, LA VRAIE BASE (22/11). Claude relit cette méthode, les chartes ET l'export complet de la base (📖 → 🔁 Échanges avec Claude → 📤 Tout exporter pour Claude), qu'il demande s'il ne l'a pas. Chaque personnage, objet ou lieu cité existe dans cet export et a sa place dans l'univers ; les personnages déjà créés sont réutilisés (visiteurs, clients) avant d'en inventer. Le fichier CLAUDE.md du dépôt le rappelle à chaque session.
+41. CE QUE DIT UN PERSONNAGE VAUT À TOUTES SES HEURES (28/11). Ses phrases (accueil, en passant, dialogue) ne citent jamais un moment de la journée (matin, midi, soir, nuit) s'il est là à d'autres heures — erreur du 28/11 : Bao disait « c'est moi le soir » à 14 h. Un remplaçant parle de LUI, de son métier, de ce qu'il vend, jamais de celui qu'il remplace ni de son absence. Le guide 🧰 À finir signale une phrase qui nomme un moment où le personnage n'est pas seulement là.`;
 const CHARTE_CONCEPTION_DEFAUT = `CHARTE DE CONCEPTION MASCOTTO — règles à appliquer à toute nouvelle zone, pièce ou personnage.
 
 UNIVERS
@@ -13176,6 +13177,30 @@ function texteCreneaux(f){
   const h = tr.length ? tr.map(t=> 'de ' + t.start.replace(':00','h').replace(':','h') + ' à ' + t.end.replace(':00','h').replace(':','h')).join(', ') : 'toute la journée';
   const j = texteJours(f.daysOfWeek);   // v832 : les jours aussi (deux versions aux mêmes heures, d'autres jours)
   return j ? j + ', ' + h : h;
+}
+/* v833 — RÈGLE 41 : les phrases (accueil, en passant) qui nomment un moment de la journée alors que le
+   personnage est AUSSI là à d'autres heures. Rend [{ phrase, moment }]. */
+const MOMENTS_JOURNEE = [
+  { re: /\bmatin(ée)?s?\b/i, nom: 'le matin', de: 5, a: 12 },
+  { re: /\bapr[eè]s[- ]midi\b/i, nom: "l'après-midi", de: 12, a: 18 },
+  { re: /(^|[^-])\bmidi\b/i, nom: 'midi', de: 11, a: 15 },
+  { re: /\bsoir(ée)?s?\b/i, nom: 'le soir', de: 17, a: 24 },
+  { re: /\bnuits?\b/i, nom: 'la nuit', de: 21, a: 30 },
+];
+function phrasesHorsMoment(f){
+  const phrases = [f.shopPhrase, f.concessionPhrase].concat(Array.isArray(f.phrasesPassage) ? f.phrasesPassage : []).filter(t=> typeof t === 'string' && t.trim());
+  if (!phrases.length) return [];
+  const heuresActives = [];
+  for (let j = 0; j < 7; j++) for (let h = 0; h < 24; h++){ const d = new Date(2026, 10, 29 + j, h, 30); if (isActiveAt(f, d)) heuresActives.push(h); }
+  if (!heuresActives.length) return [];
+  const out = [];
+  phrases.forEach(t=>{
+    const m = MOMENTS_JOURNEE.find(x=> x.re.test(t));
+    if (!m) return;
+    const dans = (h)=> (h >= m.de && h < m.a) || (h + 24 >= m.de && h + 24 < m.a);
+    if (heuresActives.some(h=> !dans(h))) out.push({ phrase: t, moment: m.nom });
+  });
+  return out;
 }
 /* v832 — « du lundi au samedi », « lundi et mardi », « le dimanche » ; rien si tous les jours */
 function texteJours(jours){
@@ -13987,6 +14012,14 @@ async function construireBrouillons(){
       (okImg ? bouton('data-envoi="buste|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecBuste) + bouton('data-envoi-copie="buste|' + f.id + '"', '📋 Copier') : '')
       + (okImg || autreAvecBuste ? bouton('data-poser-buste="' + f.id + '"', '📷 Choisir le buste') : ''), true));
     if (okImg && !okBuste) envois['buste|' + f.id] = ()=> ({ texte: promptBustePnj(f), imgs: [fichierPourPartage('mascotto-' + f.id, urlImageDeFiche(f))] });
+    }
+    /* v833 (règle 41) — une phrase qui nomme un moment de la journée où le personnage n'est pas seulement là */
+    const horsMoment = phrasesHorsMoment(f);
+    if (horsMoment.length){
+      manque++;
+      out.push(tache(false, '🕑 ' + nom + ' parle d\'un moment où il n\'est pas seulement là',
+        'Il est là ' + esc(texteCreneaux(f)) + ' : ' + horsMoment.map(x=> '« ' + esc(x.phrase) + ' » (' + x.moment + ')').join(' · '),
+        'Corrige la phrase dans sa fiche (Accueil ou Phrases en passant), ou demande à Claude un fichier de mise à jour.', ''));
     }
     /* 3. Où il se tient */
     const pc = f.pieceCommune;
@@ -45853,7 +45886,17 @@ async function importerMiseAJour(sc){
     journal.push('➕ ' + qui + ' : nouvelle version « ' + (p.pose || '').split(/[,.;]/)[0] + ' » ' + creneaux.map(c=> c.start + '-' + c.end).join(', ') + ' — en travaux 🚧' + (data.emplacementPointId && data.emplacementPointId.startsWith('a-poser') ? ' ; son rectangle 🧍 est à poser (🧰 À finir)' : ''));
     void ref;
   }
-  for (const p of (sc.pnj || [])){
+  /* v833 — `toutesVersions: true` : la même mise à jour sur CHAQUE version du personnage (Yuna en semaine
+     ET le dimanche, qui commencent toutes deux à 7 h et qu'on ne distingue pas par l'heure). */
+  const listePnjMaj = [];
+  (sc.pnj || []).forEach(p=>{
+    if (!p || !p.toutesVersions) { listePnjMaj.push(p); return; }
+    const vs = fiches.filter(f=> (f.interactionType || '') !== 'zone' && f.name === p.name);
+    if (!vs.length){ listePnjMaj.push(p); return; }
+    vs.forEach(v=> listePnjMaj.push(Object.assign({}, p, { ficheId: v.id, toutesVersions: false })));
+  });
+  for (const p of listePnjMaj){
+    if (!p) continue;
     if (p.cherche || p.nouvelleVersion) continue;   // v651 : déjà traités ci-dessus
     /* v737 : `estZone: true` vise la fiche d'une ZONE (pour lui changer son prompt de carte) */
     let memes = fiches.filter(f=> (p.estZone ? (f.interactionType || '') === 'zone' : (f.interactionType || '') !== 'zone') && f.name === p.name);
@@ -45915,6 +45958,11 @@ async function importerMiseAJour(sc){
     /* v794 : `nouvelleImage: true` efface son image
        (et son buste, qui en découle) : le guide 🧰 la redemande avec le prompt à jour. */
     if (p.nouvelleImage){ Object.assign(maj, { imageUrl: '', imagePath: null, bustImageRef: null, bustImagePath: null }); quoi.push('image à refaire'); }
+    if (typeof p.shopPhrase === 'string'){   // v833 : la phrase d'accueil (remplace)
+      maj.shopPhrase = p.shopPhrase; maj.concessionPhrase = '';
+      if (f.versionPubliee) maj.versionPubliee = Object.assign(maj.versionPubliee || {}, { shopPhrase: p.shopPhrase, concessionPhrase: '' });
+      quoi.push('phrase d\'accueil');
+    }
     if (Array.isArray(p.phrasesPassage)){   // v788 : les phrases en passant (remplacent)
       maj.phrasesPassage = p.phrasesPassage.map(String);
       const trop = maj.phrasesPassage.filter(t=> t.length > LIMITES_TEXTE.phrase).length;
