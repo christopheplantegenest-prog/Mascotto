@@ -1676,7 +1676,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v830</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v831</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -13934,8 +13934,13 @@ async function construireBrouillons(){
     const autreImg = versions.find(v=> v.id !== f.id && aImagePrincipale(v)) || toutesVersions.find(v=> v.id !== f.id && aImagePrincipale(v));
     /* v594 : une version qui a SA pose (f.pose) ne reprend pas l'image de l'autre : elle se dessine
        à partir d'elle, pour que ce soit le même personnage dans une autre attitude. */
-    const autreAvecImage = f.pose ? null : autreImg;
-    const okImg = aImagePrincipale(f) || !!autreAvecImage;   // v771 : sans pose à elle, elle prend AUTOMATIQUEMENT l'image de l'autre version
+    /* v831 — des versions JUMELLES (même personnage, même pose, autres horaires : Yuna en semaine et le
+       dimanche) n'ont besoin que d'UNE image : la première la demande, les autres la reprennent. */
+    const jumelles = f.pose ? toutesVersions.filter(v=> v.id !== f.id && cleNom(v.pose) === cleNom(f.pose)) : [];
+    const rangV = (v)=> String(v.createdAt || 0).padStart(15, '0') + v.id;
+    const attendJumelle = !aImagePrincipale(f) && jumelles.length && !jumelles.some(v=> aImagePrincipale(v)) && jumelles.some(v=> rangV(v) < rangV(f));
+    const autreAvecImage = f.pose ? (jumelles.find(v=> aImagePrincipale(v)) || null) : autreImg;
+    const okImg = aImagePrincipale(f) || !!autreAvecImage || !!attendJumelle;   // v771 : sans pose à elle, elle prend AUTOMATIQUEMENT l'image de l'autre version
     if (!okImg) envois['img|' + f.id] = ()=>{
       /* une autre version du même personnage est déjà la meilleure référence : Mado ne part qu'à défaut */
       const avecVersion = !!(f.pose && autreImg), avecStyle = !avecVersion && refStyleActive();
@@ -13945,7 +13950,7 @@ async function construireBrouillons(){
       return { texte: promptImagePnj(f, { avecVersion, avecStyle }), imgs };
     };
     if (!okImg) manque++;
-    out.push(tache(okImg, '🖼️ Image de ' + nom + ' en pied',
+    out.push(tache(okImg, '🖼️ Image de ' + nom + ' en pied' + (attendJumelle ? ' — reprise de son autre version (même pose)' : ''),
       /* v596 : le texte suit la pose de la version (« debout » était faux pour Mado en yoga). */
       (f.pose ? 'C\'est l\'image qu\'on voit dans la pièce : ' + nom + ' ' + esc(String(f.pose).split(/[,;]/)[0]) + '. Un PNG à fond transparent, le corps entier.' : 'C\'est l\'image qu\'on voit dans la scène et sur la carte. Un PNG à fond transparent, le corps entier.'),
       (autreAvecImage && !aImagePrincipale(f))
@@ -13956,8 +13961,9 @@ async function construireBrouillons(){
       bouton('data-envoi="img|' + f.id + '"', '📤 Envoyer à ChatGPT', !autreAvecImage) + bouton('data-envoi-copie="img|' + f.id + '"', '📋 Copier') + bouton('data-poser-img="' + f.id + '"', '📷 Choisir l\'image')
       + bouton('data-hebergee-img="' + f.id + '"', '📁 Image hébergée')));
     /* 2. Buste */
-    const autreAvecBuste = f.pose ? null : (versions.find(v=> v.id !== f.id && aImageBuste(v)) || toutesVersions.find(v=> v.id !== f.id && aImageBuste(v)));   // v594 : une pose propre = une tenue propre
-    const okBuste = aImageBuste(f) || !!autreAvecBuste;   // v771 : automatique aussi
+    const autreAvecBuste = f.pose ? (jumelles.find(v=> aImageBuste(v)) || null) : (versions.find(v=> v.id !== f.id && aImageBuste(v)) || toutesVersions.find(v=> v.id !== f.id && aImageBuste(v)));   // v594 : une pose propre = une tenue propre ; v831 : jumelles
+    const attendBusteJumelle = !aImageBuste(f) && !autreAvecBuste && jumelles.length && jumelles.some(v=> rangV(v) < rangV(f));   // v831
+    const okBuste = aImageBuste(f) || !!autreAvecBuste || !!attendBusteJumelle;   // v771 : automatique aussi
     out.push(tache(okBuste, '👤 Buste de ' + nom,
       'C\'est le portrait affiché en grand pendant que ' + nom + ' parle.',
       (autreAvecBuste && !aImageBuste(f))
