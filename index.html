@@ -1676,7 +1676,7 @@ try { db.enablePersistence({ synchronizeTabs: true }).catch(function(e){ try { w
         <div class="brand">Masc<span>otto</span></div>
         <button class="icon-btn" id="editHubBtn" title="Édition" style="width:24px; height:24px; font-size:12px;">✏️</button>
         <button class="icon-btn" id="bibleBtn" title="Bible du jeu" style="width:24px; height:24px; font-size:12px;">📖</button>
-        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v829</span>
+        <span class="meta" id="appVersionLabel" style="font-size:9px; opacity:.55; white-space:nowrap;">v830</span>
       </div>
       <!-- v731 : ⚙️ rejoint la ligne de la marque, à côté de l'heure. -->
       <div style="display:flex; align-items:center; gap:8px;">
@@ -22851,7 +22851,14 @@ const FAMILLES_COMPOSANTS = [['processeur','🧠 Processeur'],['chassis','🦾 C
 function fabricationDuModele(m){
   const f = (m && m.fab) || {};
   return { processeur: f.processeur != null ? f.processeur : FABRICATION_DEFAUT.processeur, chassis: f.chassis != null ? f.chassis : FABRICATION_DEFAUT.chassis,
-    articulation: f.articulation != null ? f.articulation : FABRICATION_DEFAUT.articulation, minutes: f.minutes != null ? f.minutes : FABRICATION_DEFAUT.minutes };
+    articulation: f.articulation != null ? f.articulation : FABRICATION_DEFAUT.articulation, minutes: f.minutes != null ? f.minutes : FABRICATION_DEFAUT.minutes,
+    pieces: piecesDeFab(f) };   // v830
+}
+/* v830 — LES PIÈCES PRÉCISES d'un plan : [{ itemId, qty }] — tel processeur, tel châssis, de l'huile,
+   des câbles… En plus des composants « n'importe lequel de la famille » et du noyau du vice. */
+function piecesDeFab(f){
+  return (Array.isArray(f && f.pieces) ? f.pieces : []).filter(x=> x && x.itemId && (parseInt(x.qty, 10) || 0) > 0)
+    .map(x=> ({ itemId: x.itemId, qty: Math.min(20, parseInt(x.qty, 10)) }));
 }
 
 function robotModeleVierge(vice){
@@ -22895,12 +22902,26 @@ function lireFormRobotModele(){
   f.apparence = ((document.getElementById('rmApparence') || {}).value || '').trim();   // v612
   f.robotDepart = !!(document.getElementById('rmDepart') || {}).checked;   // v729
   f.fab = { processeur: num('rmFabProcesseur', 0, 20, FABRICATION_DEFAUT.processeur), chassis: num('rmFabChassis', 0, 20, FABRICATION_DEFAUT.chassis),
-    articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes) };
+    articulation: num('rmFabArticulation', 0, 20, FABRICATION_DEFAUT.articulation), minutes: num('rmFabMinutes', 1, 100000, FABRICATION_DEFAUT.minutes),
+    pieces: piecesDeFab({ pieces: Array.from(document.querySelectorAll('#rmFabPieces .rm-piece')).map(l=> ({ itemId: l.querySelector('select').value, qty: l.querySelector('input').value })) }) };   // v830
   return f;
 }
 /* Les quatre emplacements du modèle : des rectangles pleins, au format des boutons de combat
    (nom, symboles, descriptif), empilés pour voir la main entière d'un coup d'œil. Un trou reste
    à sa place jusqu'à ce qu'on le remplisse. */
+/* v830 — une ligne « pièce précise » de l'éditeur de modèle : l'objet (composants et matériaux) et combien */
+function htmlLignePieceFab(x){
+  const choix = (items || []).filter(i=> i && (i.type === 'composant' || i.type === 'ressource') && !(i.composant && i.composant.famille === 'noyau'))
+    .sort((a, b)=> String(a.type).localeCompare(String(b.type)) || String(a.name).localeCompare(String(b.name), 'fr'));
+  return `<div class="rm-piece" style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+    <select class="field-input" style="flex:1; min-width:0;">${choix.map(i=> `<option value="${htmlEsc(i.id)}"${i.id === (x && x.itemId) ? ' selected' : ''}>${htmlEsc(i.name)}</option>`).join('')}</select>
+    <input type="number" class="field-input" min="1" max="20" value="${(x && x.qty) || 1}" style="width:58px; flex:none;">
+    <button type="button" class="btn-secondary" data-rm-piece-x style="flex:none; width:36px; padding:0;">×</button></div>`;
+}
+document.addEventListener('click', (e)=>{
+  if (e.target && e.target.id === 'rmFabPieceAjout'){ const z = document.getElementById('rmFabPieces'); if (z) z.insertAdjacentHTML('beforeend', htmlLignePieceFab(null)); }
+  const x = e.target && e.target.closest && e.target.closest('[data-rm-piece-x]'); if (x) x.closest('.rm-piece').remove();
+});
 function htmlJeuModele(f){
   const jeu = (f.jeu || []).slice(0, 4);
   return `<div class="main-slots" style="grid-template-columns:1fr;">${[0,1,2,3].map(p=>{
@@ -22943,13 +22964,16 @@ function renderRobotModeleForm(){
       <label class="meta">Fuite si le piratage rate (%)<input type="number" id="rmPirFuite" class="field-input" min="0" max="100" value="${f.pirFuite!=null?f.pirFuite:PIRATAGE_DEFAUT.fuite}"></label>
     </div>
     <div class="field-label">🔧 Fabrication — la recette du plan (v474)</div>
-    <p class="meta" style="margin:0 0 6px;">Ce qu'il faut donner à l'atelier avec le plan : des composants par famille (n'importe quel objet de la famille convient), plus <b>un noyau du vice du modèle</b>, toujours. La durée fait sentir la rareté : un modèle rare met plus longtemps.</p>
+    <p class="meta" style="margin:0 0 6px;">Ce qu'il faut donner à l'atelier avec le plan : des composants par famille (n'importe quel objet de la famille convient) et/ou des pièces précises, plus <b>un noyau du vice du modèle</b>, toujours. La durée fait sentir la rareté : un modèle rare met plus longtemps.</p>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
       <label class="meta">🧠 Processeurs<input type="number" id="rmFabProcesseur" class="field-input" min="0" max="20" value="${fabricationDuModele(f).processeur}"></label>
       <label class="meta">🦾 Châssis<input type="number" id="rmFabChassis" class="field-input" min="0" max="20" value="${fabricationDuModele(f).chassis}"></label>
       <label class="meta">⚙️ Articulations<input type="number" id="rmFabArticulation" class="field-input" min="0" max="20" value="${fabricationDuModele(f).articulation}"></label>
       <label class="meta">⏱️ Durée (minutes)<input type="number" id="rmFabMinutes" class="field-input" min="1" value="${fabricationDuModele(f).minutes}"></label>
     </div>
+    <div class="meta" style="margin:8px 0 4px;"><b>Pièces précises</b> — cet objet-là, pas un autre (en plus des familles ci-dessus)</div>
+    <div id="rmFabPieces">${fabricationDuModele(f).pieces.map(x=> htmlLignePieceFab(x)).join('')}</div>
+    <button type="button" class="btn-secondary" id="rmFabPieceAjout" style="width:100%; margin-top:4px;">＋ Une pièce précise</button>
     <label class="meta" style="display:block; margin-top:6px;">✨ Ce qu'il dit en naissant
       <input type="text" id="rmPhraseNaissance" class="field-input" maxlength="120" value="${htmlEsc(f.phraseNaissance || '')}" placeholder="Bonjour, capitaine.">
     </label>
@@ -27794,6 +27818,15 @@ function m2MiniJeuVerrou(acteur, cible){
 }
 
 /* La fiche d'analyse : vice et roue, immunités, états, réserve de cristal, ultime. Coûte le tour (comme dans le jeu). */
+/* v830 — ce qu'on peut lui voler : facile puis difficile, barré une fois volé */
+function m2LigneAVoler(f){
+  if (!f || f.side !== 'enemy') return '';
+  const nom = (id)=>{ const it = items.find(i=> i.id === id); return it ? escSac(it.name) : '?'; };
+  const l = [];
+  if (f.stealEasyItemId) l.push(f.stolenEasy ? '<s style="opacity:.5">' + nom(f.stealEasyItemId) + '</s>' : nom(f.stealEasyItemId) + ' (facile)');
+  if (f.stealHardItemId) l.push(f.stolenHard ? '<s style="opacity:.5">' + nom(f.stealHardItemId) + '</s>' : nom(f.stealHardItemId) + ' (difficile)');
+  return 'À voler : ' + (l.length ? l.join(', ') : 'rien');
+}
 function m2PanneauAnalyse(acteur, cible){
   const panel = document.getElementById('combatActionPanel');
   const V = VICES[cible.vice] || {};
@@ -27807,6 +27840,7 @@ function m2PanneauAnalyse(acteur, cible){
     (cible.trait && cible.trait !== 'aucun') ? `Trait : ${(TRAITS[cible.trait]||{}).nom || cible.trait}` : '',
     Object.keys(cible.statuts).length ? `États : ${Object.keys(cible.statuts).map(s=> libStatut(s) + (cible.statuts[s].tours ? ' ' + cible.statuts[s].tours + 'T' : '')).join(', ')}` : '',
     `IA : ${cible.ia}`,
+    m2LigneAVoler(cible),   // v830
   ].filter(Boolean);
   acteur.jauge = 0; acteur.gauge = 0;
   M2.log(`🔍 ${acteur.nom} analyse ${cible.nom}.`);
@@ -43167,11 +43201,19 @@ function bilanRecette(plan){
   if (!m) return null;
   const fab = fabricationDuModele(m);
   const sac = composantsDuSac();
+  /* v830 : une pièce demandée nommément n'est pas comptée aussi dans « n'importe lequel de sa famille » */
+  const exiges = new Set(fab.pieces.map(x=> x.itemId));
+  Object.keys(sac).forEach(k=>{ if (k !== 'noyau') sac[k] = sac[k].filter(c=> !exiges.has(c.item.id)); });
+  const lignesPieces = fab.pieces.map(x=>{
+    const it = items.find(i=> i.id === x.itemId);
+    const dispo = stockABord(x.itemId);
+    return { fam:'piece', itemId: x.itemId, item: it || null, lib: (it ? (it.emoji ? it.emoji + ' ' : '') + it.name : '❓ objet disparu'), besoin: x.qty, dispo, ok: !!it && dispo >= x.qty };
+  });
   const lignes = FAMILLES_COMPOSANTS.map(([fam, lib])=>{
     const besoin = fab[fam] || 0;
     const dispo = sac[fam].reduce((a, c)=> a + c.qty, 0);
     return { fam, lib, besoin, dispo, ok: dispo >= besoin };
-  }).filter(l=> l.besoin > 0);
+  }).filter(l=> l.besoin > 0).concat(lignesPieces);
   const V = VICES[m.vice] || {};
   const noyaux = sac.noyau.filter(c=> c.vice === m.vice);
   const dispoN = noyaux.reduce((a, c)=> a + c.qty, 0);
@@ -43182,6 +43224,7 @@ function bilanRecette(plan){
 function prelevementComposants(bilan){
   const conso = {};
   bilan.lignes.forEach(l=>{
+    if (l.fam === 'piece'){ conso[l.itemId] = (conso[l.itemId] || 0) + l.besoin; return; }   // v830
     let reste = l.besoin;
     const source = l.fam === 'noyau' ? bilan.sac.noyau.filter(c=> c.vice === bilan.modele.vice) : bilan.sac[l.fam];
     source.forEach(c=>{
@@ -45938,6 +45981,7 @@ async function importerMiseAJour(sc){
     try { await questsCol.doc(ex.id).set(Object.assign(majQ, { updatedAt: Date.now() }), { merge:true }); journal.push('📜 Quête « ' + ex.name + ' » : texte mis à jour'); }
     catch(e){ journal.push('⚠️ Quête « ' + q.name + ' » : ' + e.message); }
   }
+  try { await importerRecettesMaj(sc.recettes, journal); } catch(e){ journal.push('⚠️ Recettes : ' + e.message); }   // v830
   try { await importerBible(sc.bible, journal); } catch(e){ journal.push('⚠️ Bible : ' + e.message); }   // v599
   try { await importerReglagesAttaques(sc.attaquesCombat, journal); } catch(e){ journal.push('⚠️ Attaques : ' + e.message); }   // v603
   try { await importerModelesCombat(sc.modelesCombat, journal); } catch(e){ journal.push('⚠️ Modèles : ' + e.message); }   // v604
@@ -45952,6 +45996,32 @@ async function importerMiseAJour(sc){
   return journal;
 }
 
+/* v830 — LES RECETTES D'ARTISAN EN MISE À JOUR. `recettes: [{ name, inputs:[{objet, qty}], output, outputQty,
+   duration, allowedMetiers:[noms], emoji }]` : retrouvée par son nom, seuls les champs donnés changent ;
+   absente, elle est créée (il faut alors au moins inputs et output). */
+async function importerRecettesMaj(liste, journal){
+  if (!Array.isArray(liste) || !liste.length) return;
+  if (!recipesCol){ journal.push('⚠️ Recettes : base indisponible'); return; }
+  for (const r of liste){
+    const ex = (recipes || []).find(x=> x && cleNom(x.name) === cleNom(r.name));
+    const ctx = 'Recette « ' + r.name + ' »';
+    const data = {};
+    if (Array.isArray(r.inputs)){ data.inputs = importListeQtes(r.inputs, {}, journal, ctx); if (data.inputs.length !== r.inputs.length){ journal.push('⚠️ ' + ctx + ' : un ingrédient manque — laissée telle quelle'); continue; } }
+    if (r.output){ data.outputItemId = importResoudre({}, r.output, items, journal, ctx); if (!data.outputItemId) continue; }
+    if (r.outputQty != null) data.outputQty = parseInt(r.outputQty, 10) || 1;
+    if (r.duration != null) data.duration = parseInt(r.duration, 10) || 600;
+    if (Array.isArray(r.allowedMetiers)) data.allowedMetiers = r.allowedMetiers.map(x=> idDeMetier(x, journal, ctx)).filter(Boolean);
+    if (r.emoji) data.emoji = r.emoji;
+    try {
+      if (ex){ await recipesCol.doc(ex.id).set(Object.assign(data, { updatedAt: Date.now() }), { merge:true }); Object.assign(ex, data); journal.push('🛠️ ' + ctx + ' mise à jour'); }
+      else {
+        if (!data.inputs || !data.outputItemId){ journal.push('⚠️ ' + ctx + ' introuvable, et pas de quoi la créer'); continue; }
+        await recipesCol.add(Object.assign({ name: r.name, emoji: '🛠️', outputQty: 1, duration: 600, allowedMetiers: [], requiresLearning: false, learnDuration: 0, imageUrl: '', imagePath: null, createdAt: Date.now() }, data, { updatedAt: Date.now() }));
+        journal.push('🛠️ ' + ctx + ' créée');
+      }
+    } catch(e){ journal.push('⚠️ ' + ctx + ' : ' + e.message); }
+  }
+}
 /* v603 — LES RÉGLAGES D'ATTAQUES PAR IMPORT (l'équilibrage calculé par simulation).
    `attaquesCombat` : [{ nom, vice?, puissance?, cout?, … }] — on retrouve l'attaque du catalogue
    de combat par son nom (et son péché s'il est donné) et on ne réécrit QUE les chiffres fournis. */
@@ -45994,7 +46064,9 @@ async function importerModelesCombat(liste, journal){
   if (!robotsModelesCol){ journal.push('⚠️ Modèles : base indisponible'); return; }
   let crees = 0, majs = 0, dialogues = 0;
   for (const m of liste){
-    const id = 'cat_' + m.vice + '_' + slugId(m.nom);
+    /* v830 : un modèle qui n'a pas l'identifiant fixe (créé à la main, comme la Tirelire) est retrouvé par son nom */
+    const parNomSeul = !Array.isArray(m.attaques) && robotsModeles.find(x=> cleNom(x.nom) === cleNom(m.nom));
+    const id = (!robotsModeles.some(x=> x.id === 'cat_' + m.vice + '_' + slugId(m.nom)) && parNomSeul) ? parNomSeul.id : 'cat_' + m.vice + '_' + slugId(m.nom);
     const existant = robotsModeles.find(x=> x.id === id);
     const homonyme = robotsModeles.find(x=> x.id !== id && String(x.nom || '').toLowerCase() === String(m.nom || '').toLowerCase());
     if (homonyme && !existant){ journal.push('⚠️ Modèle « ' + m.nom + ' » : un autre modèle porte déjà ce nom — laissé de côté'); continue; }
@@ -46027,9 +46099,23 @@ async function importerModelesCombat(liste, journal){
       data.apparence = apparenceAvecVol(base, m.vol);
     }
     if (typeof m.phraseNaissance === 'string') data.phraseNaissance = m.phraseNaissance.trim();
+    /* v830 — `fab` : la recette du plan. { processeur, chassis, articulation, minutes, pieces:[{ objet, qty }] } ;
+       ce qui n'est pas donné garde la valeur actuelle. */
+    if (m.fab && typeof m.fab === 'object'){
+      const fab = fabricationDuModele(existant || {});
+      ['processeur', 'chassis', 'articulation'].forEach(k=>{ if (m.fab[k] != null) fab[k] = Math.max(0, Math.min(20, parseInt(m.fab[k], 10) || 0)); });
+      if (m.fab.minutes != null) fab.minutes = Math.max(1, parseInt(m.fab.minutes, 10) || 60);
+      if (Array.isArray(m.fab.pieces)){
+        fab.pieces = [];
+        m.fab.pieces.forEach(x=>{ const it = (items || []).find(i=> i && cleNom(i.name) === cleNom(x.objet));
+          if (it) fab.pieces.push({ itemId: it.id, qty: Math.max(1, parseInt(x.qty, 10) || 1) }); else journal.push('⚠️ Plan de « ' + m.nom + ' » : objet « ' + x.objet + ' » introuvable'); });
+      }
+      data.fab = fab;
+    }
 
     if (!existant){ data.nom = m.nom; data.createdAt = Date.now(); }
     await robotsModelesCol.doc(id).set(data, { merge:true });
+    if (existant) Object.assign(existant, data);   // v830 : la vérification relit la base, l'atelier lit le cache
     if (existant) majs++; else crees++;
     /* v628 : des répliques → la fiche de dialogue de sa chambre (créée ou réécrite) */
     if (m.repliques && typeof m.repliques === 'object'){
@@ -46064,8 +46150,14 @@ async function verifierImportCombat(sc, journal){
     const snap = await robotsModelesCol.get();
     const docs = []; snap.forEach(d=> docs.push({ id: d.id, ...d.data() }));
     mods.forEach(m=>{
-      const d = docs.find(x=> x.id === 'cat_' + m.vice + '_' + slugId(m.nom));
+      const d = docs.find(x=> x.id === 'cat_' + m.vice + '_' + slugId(m.nom)) || (!Array.isArray(m.attaques) && docs.find(x=> cleNom(x.nom) === cleNom(m.nom)));   // v830
       if (!d){ ecarts.push('modèle « ' + m.nom + ' » absent'); return; }
+      if (m.fab && Array.isArray(m.fab.pieces)){   // v830 : la recette du plan
+        const p = fabricationDuModele(d).pieces;
+        const voulu = m.fab.pieces.map(x=> ((items || []).find(i=> cleNom(i.name) === cleNom(x.objet)) || {}).id + '×' + (parseInt(x.qty, 10) || 1)).sort().join(',');
+        if (p.map(x=> x.itemId + '×' + x.qty).sort().join(',') !== voulu){ ecarts.push('« ' + m.nom + ' » : recette du plan différente'); return; }
+        if (!Array.isArray(m.attaques)){ okM++; return; }
+      }
       const main = mainDeModele(d, d.jeu);
       const noms = main.map(a=> a.nom);
       const st = statsValides(d.stats);
